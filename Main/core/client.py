@@ -130,7 +130,7 @@ class AltruixClient:
             level=logging.INFO,
             datefmt="[%d/%m/%Y %H:%M:%S]",
             format="%(asctime)s - [Altruix] >> %(levelname)s << %(message)s",
-            handlers=[logging.FileHandler("altruix.log"), logging.StreamHandler()],
+            handlers=[logging.FileHandler("/app/altruix.log"), logging.StreamHandler()],
         )
         self.log("Initialized Logger successfully!")
 
