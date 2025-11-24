@@ -835,7 +835,9 @@ class AltruixClient:
                     ] += "<b>Arguments:</b>\n"
                     for arg_data in user_args:
                         arg_name = arg_data.get("arg")
-                        arg_help = html.escape(arg_data.get("help"))
+                        # arg_help = html.escape(arg_data.get("help"))
+                        help_text = arg_data.get("help")
+                        arg_help = html.escape(help_text if help_text is not None else "")
                         arg_requires_input = arg_data.get("requires_input")
                         self._command_help_message_data[
                             plugin_name
