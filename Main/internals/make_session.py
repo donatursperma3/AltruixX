@@ -1,164 +1,225 @@
-# Copyright (C) 2021-present by Altruix@Github, < https://github.com/Altruix >.
+# Copyright (C) 2021-present by Altruix@Github, <https://github.com/Altruix>
 #
-# This file is part of < https://github.com/Altruix/Altruix > project,
+# This file is part of <https://github.com/Altruix/Altruix> project,
 # and is released under the "GNU v3.0 License Agreement".
-# Please see < https://github.com/Altriux/Altruix/blob/main/LICENSE >
+# Please see <https://github.com/Altriux/Altruix/blob/main/LICENSE>
 #
 # All rights reserved.
 
-
 import asyncio
 import logging
+import os
 import contextlib
 from Main import Altruix
 from pyrogram import Client, filters
 from Main.core.decorators import log_errors
 from pyrogram.types import (
     Message, ForceReply, CallbackQuery, KeyboardButton, ReplyKeyboardMarkup,
-    ReplyKeyboardRemove)
+    ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, LinkPreviewOptions
+)
 from pyrogram.errors import (
     FloodWait, ApiIdInvalid, UsernameInvalid, PhoneCodeExpired,
     PhoneCodeInvalid, UsernameOccupied, PhoneNumberInvalid,
-    UsernameNotModified, SessionPasswordNeeded)
+    UsernameNotModified, SessionPasswordNeeded, UserIsBlocked, PeerIdInvalid
+)
 
 
 async def client_session(api_id, api_hash):
-    return Client(
-        "new_session", api_id=int(api_id), api_hash=str(api_hash), in_memory=True
-    )
+    """Buat klien sementara untuk generate session string."""
+    return Client("new_session", api_id=int(api_id), api_hash=str(api_hash), in_memory=True)
 
 
-@Altruix.bot.on_callback_query(filters.regex("^session_no"))
+# ─── UTIL: Kirim log ke grup (dengan fallback ke OWNER_ID) ─────────────
+async def log_to_group(text: str):
+    """Kirim notifikasi ke LOG_CHAT_ID atau OWNER_ID jika gagal."""
+    log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
+    try:
+        await Altruix.bot.send_message(
+            log_chat_id,
+            text,
+            link_preview_options=LinkPreviewOptions(is_disabled=True)
+        )
+    except Exception:
+        pass  # Gagal log? abaikan
+
+
+# ─── HANDLER UTAMA: Tekan "No" di menu /add ─────────────────────────────
+@Altruix.bot.on_callback_query(filters.regex("^session_no$"))
 @log_errors
 async def add_session_cb_handler(_, cb: CallbackQuery):
-    with contextlib.suppress(Exception):
-        await cb.message.delete()
-    await cb.message.reply(
-        "Alright... Please share your contact with me for fetching your phone number.\n<i>This instance of Altruix solely belongs to you so you don't have to worry over your data.</i>\n\nUse /cancel to cancel the current operation.",
-        reply_markup=ReplyKeyboardMarkup(
-            [[KeyboardButton("Share Contact", request_contact=True)]],
-            resize_keyboard=True,
-            one_time_keyboard=True,
-        ),
-    )
-    while True:
-        response: Message = await cb.from_user.listen(timeout=60)
-        if response.contact:
-            phone_number = response.contact.phone_number
-            Altruix.log(f"{phone_number=}", level=logging.DEBUG)
-            break
-        elif response.text == "/cancel":
-            await cb.message.reply(
-                "Current process was canceled.", reply_markup=ReplyKeyboardRemove()
-            )
-            return
-        await response.reply("invalid message type. Please try again.", quote=True)
-    process_msg = await response.reply(
-        "<i>Please wait till I make a session for this account!</i>"
-    )
+    user = cb.from_user
+    user_id = user.id
 
-    try:
-        app = await client_session(
-            api_id=Altruix.config.API_ID, api_hash=Altruix.config.API_HASH
+    # ✅ PERIKSA IZIN: hanya auth_users yang boleh akses
+    if user_id not in Altruix.auth_users:
+        return await cb.answer("⛔ Anda tidak diizinkan menambah session.", show_alert=True)
+
+    # ✅ PERBAIKAN UTAMA: JANGAN GUNAKAN ReplyKeyboardMarkup DI GRUP!
+    if cb.message.chat.type in ["group", "supergroup"]:
+        await cb.answer()
+        # Beri tahu di grup untuk lanjut di PM
+        await cb.message.reply(
+            "🔐 Proses pembuatan session hanya bisa di **chat pribadi** dengan bot.\n"
+            "Silakan kirim /start ke bot, lalu tekan **Add Session** di sana.",
+            quote=True
         )
-    except Exception as err:
-        await process_msg.reply(f"Something went wrong!\n{err}")
-        await process_msg.delete()
+        # Kirim tombol ke PM user
+        try:
+            await Altruix.bot.send_message(
+                user_id,
+                "Anda memulai proses dari grup.\nKlik tombol di bawah untuk memulai:",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("✅ Mulai Buat Session", callback_data="make_session_start")
+                ]])
+            )
+            await cb.message.reply("💬 Pesan dikirim ke chat pribadi Anda.", quote=True)
+        except (UserIsBlocked, PeerIdInvalid):
+            await cb.message.reply(
+                f"❌ Gagal kirim ke PM. Pastikan Anda sudah chat dengan bot (@{Altruix.bot.me.username}).",
+                quote=True
+            )
+        return  # ← PENTING: JANGAN LANJUTKAN DI GRUP!
+
+    # Jika di PM, langsung mulai proses
+    await _start_add_session_process(cb)
+
+
+# ─── HANDLER DI PM: Mulai proses setelah redirect dari grup ────────────
+@Altruix.bot.on_callback_query(filters.regex("^make_session_start$"))
+@log_errors
+async def make_session_start_handler(_, cb: CallbackQuery):
+    if cb.from_user.id not in Altruix.auth_users:
+        return await cb.answer("⛔ Tidak diizinkan.", show_alert=True)
+    await cb.answer()
+    await _start_add_session_process(cb)
+
+
+# ─── FUNGSI UTAMA: Alur pembuatan session ──────────────────────────────
+async def _start_add_session_process(cb: CallbackQuery):
+    user = cb.from_user
+    user_id = user.id
+    is_sudo = user_id != Altruix.config.OWNER_ID
+
+    # ✅ Log ke grup jika sudo user memulai proses
+    if is_sudo:
+        await log_to_group(
+            f"👮‍♂️ <b>Sudo User Memulai Generate Session</b>\n"
+            f"• Nama: {user.first_name} {user.last_name or ''}\n"
+            f"• ID: <code>{user_id}</code>"
+        )
+
+    # ✅ KIRIM PESAN DENGAN ReplyKeyboardMarkup (AMAN DI PM!)
+    try:
+        temp_msg = await cb.from_user.send_message(
+            "📲 Kirim kontak Anda untuk ambil nomor telepon.\n"
+            "<i>Data tidak disimpan — hanya untuk buat session.</i>\n\n"
+            "Ketik /cancel untuk batalkan.",
+            reply_markup=ReplyKeyboardMarkup(
+                [[KeyboardButton("Share Contact", request_contact=True)]],
+                resize_keyboard=True,
+                one_time_keyboard=True,
+            ),
+        )
+    except Exception as e:
+        Altruix.log(f"Gagal kirim pesan ke {user_id}: {e}", level=logging.ERROR)
+        await cb.message.edit("❌ Gagal memulai proses.")
         return
+
+    phone_number = None
     try:
-        await app.connect()
-    except ConnectionError:
-        await app.disconnect()
-        await app.connect()
+        while True:
+            response: Message = await cb.from_user.listen(timeout=120)
+            if response.contact:
+                phone_number = response.contact.phone_number
+                break
+            elif response.text and response.text.strip().lower() == "/cancel":
+                await temp_msg.delete()
+                await cb.from_user.send_message("❌ Dibatalkan.", reply_markup=ReplyKeyboardRemove())
+                return
+            else:
+                await cb.from_user.send_message("❌ Kirim kontak atau /cancel.")
+    except asyncio.TimeoutError:
+        await temp_msg.delete()
+        await cb.from_user.send_message("⏰ Waktu habis.", reply_markup=ReplyKeyboardRemove())
+        return
+    except Exception as e:
+        Altruix.log(f"Error tunggu input: {e}", level=logging.ERROR)
+        await cb.from_user.send_message("❌ Kesalahan internal.")
+        return
+
+    await cb.from_user.send_message("📞 Nomor diterima. Membuat session...", reply_markup=ReplyKeyboardRemove())
+    process_msg = await cb.from_user.send_message("<i>Mohon tunggu...</i>")
+
+    # Buat klien sementara
     try:
+        app = await client_session(Altruix.config.API_ID, Altruix.config.API_HASH)
+        await app.connect()
         sent_code = await app.send_code(phone_number)
     except FloodWait as e:
-        await process_msg.reply(
-            f"Couldn't create a session!.\nYou have a floodwait of <code>{e.value} seconds</code>."
-        )
-        await process_msg.delete()
+        await process_msg.edit(f"⏳ FloodWait! Tunggu {e.value} detik.")
+        await app.disconnect()
         return
     except PhoneNumberInvalid:
-        await process_msg.reply(
-            "Telegram says that the phone number that you've given in invalid.\nhmm... strange"
-        )
-        await process_msg.delete()
+        await process_msg.edit("❌ Nomor telepon tidak valid.")
+        await app.disconnect()
         return
     except ApiIdInvalid:
-        await process_msg.reply(
-            "Telegram says that the API ID that you've given in invalid.\nhmm... strange"
-        )
-        await process_msg.delete()
+        await process_msg.edit("❌ API ID/Hash tidak valid.")
+        await app.disconnect()
         return
-    ans = await cb.from_user.ask(
-        "Now, Send me your code in the format <code>1-2-3-4-5</code> and not <code>12345</code>",
-        reply_markup=ForceReply(selective=True),
-    )
-    await process_msg.delete()
-    if ans.text == "/cancel":
-        await process_msg.reply("Cancelled the current action!", quote=True)
+    except Exception as e:
+        await process_msg.edit("❌ Gagal kirim kode OTP.")
+        Altruix.log(f"Kirim kode error: {e}", level=logging.ERROR)
+        await app.disconnect()
         return
+
+    # Minta kode OTP
     try:
-        await app.sign_in(phone_number, sent_code.phone_code_hash, ans.text)
-    except SessionPasswordNeeded:
-        await asyncio.sleep(3)
         ans = await cb.from_user.ask(
-            "The entered Telegram Number is protected with 2FA. Please enter your second factor authentication code.\n<i>This message will only be used for generating your string session, and will never be used for any other purposes than for which it is asked.</i>",
+            "🔑 Kirim kode OTP format <code>1-2-3-4-5</code>",
             reply_markup=ForceReply(selective=True),
-            filters=filters.text,
+            timeout=300
         )
-        if ans.text == "/cancel":
-            await process_msg.reply("Cancelled the current action!", quote=True)
+        if ans.text and ans.text.strip().lower() == "/cancel":
+            await process_msg.edit("❌ Dibatalkan oleh user.")
+            await app.disconnect()
             return
+        code = ans.text.replace("-", "").replace(" ", "")
+        await app.sign_in(phone_number, sent_code.phone_code_hash, code)
+    except SessionPasswordNeeded:
         try:
-            await app.check_password(ans.text)
-        except Exception as err:
-            await ans.reply(f"Something went wrong!\n{err}")
+            ans2 = await cb.from_user.ask(
+                "🔐 Masukkan password 2FA:",
+                reply_markup=ForceReply(selective=True),
+                timeout=300
+            )
+            if ans2.text.strip().lower() == "/cancel":
+                await process_msg.edit("❌ Dibatalkan.")
+                await app.disconnect()
+                return
+            await app.check_password(ans2.text)
+        except Exception as e:
+            await process_msg.edit("❌ Password salah atau error.")
+            Altruix.log(f"2FA error: {e}", level=logging.ERROR)
+            await app.disconnect()
             return
-    except PhoneCodeInvalid:
-        await ans.reply("The code you sent seems Invalid, Try again.")
+    except (PhoneCodeInvalid, PhoneCodeExpired):
+        await process_msg.edit("❌ Kode OTP salah/kadaluarsa.")
+        await app.disconnect()
         return
-    except PhoneCodeExpired:
-        await ans.reply("The Code you sent seems Expired. Try again.")
+    except Exception as e:
+        await process_msg.edit("❌ Gagal login.")
+        Altruix.log(f"Sign-in error: {e}", level=logging.ERROR)
+        await app.disconnect()
         return
-    if (await app.get_me()).username is None:
-        ask_name = await cb.from_user.ask(
-            "Perfect! now send me a username for this account without '@'\nYou can also /skip this step",
-            reply_markup=ForceReply(selective=True),
-        )
-        while True:
-            try:
-                if ask_name.text.lower == "/skip":
-                    break
-                username = ask_name.text.replace(" ", "_")[:32].lstrip("@")
-                if len(username) < 5:
-                    await cb.from_user.ask("This username too short.. send again")
-                else:
-                    await app.set_username(username=username)
-                    break
-            except UsernameOccupied:
-                ask_name = await cb.from_user.ask(
-                    "This username is occupied.. send again"
-                )
-            except UsernameInvalid:
-                ask_name = await cb.from_user.ask(
-                    "This username is invalid.. send again"
-                )
-            except UsernameNotModified:
-                break
+
+    # Ekspor dan simpan session
     try:
         app_session = await app.export_session_string()
-    except Exception:
-        Altruix.log(level=40)
-        await ans.reply("Something went wrong!")
+        await app.send_message("me", f"✅ **Session Berhasil!**\n\n`{app_session}`\n\n⚠️ **JANGAN DIBAGIKAN!**")
+        await app.disconnect()
+        await Altruix.add_session(app_session, process_msg)
+    except Exception as e:
+        await process_msg.edit("❌ Gagal tambahkan session ke bot.")
+        Altruix.log(f"Add session error: {e}", level=logging.ERROR)
         return
-    await app.send_message(
-        "me",
-        f"<b>The session for this account.</b>\n<code>{app_session}</code>\n\n<b>Note:</b> Do not share this session with anyone. With this, they can easily login to your account.\n(c) @AltruixUB",
-    )
-    status_msg = await process_msg.reply("<code>Processing..</code>")
-    try:
-        await Altruix.add_session(app_session, status_msg)
-    except Exception:
-        Altruix.log(level=40)
-        await status_msg.edit("Something went wrong!")
