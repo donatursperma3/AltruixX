@@ -15,7 +15,8 @@ from ..core.decorators import check_perm
 from Main.core.types.message import Message
 from pyrogram.errors import UserAdminInvalid
 from Main.plugins.userbot.channel_utils import digit_wrap
-from pyrogram.types import ChatPrivileges, ChatPermissions
+# from pyrogram.types import ChatPrivileges, ChatPermissions
+from pyrogram.types import ChatAdministratorRights, ChatPermissions
 
 
 @Altruix.register_on_cmd(
@@ -261,7 +262,7 @@ async def promote(c: Client, m: Message, my_perms: ChatPermissions):
                 can_manage_video_chats = True
             if arg.key.lower() == "anon":
                 is_anonymous = True
-    permissions = ChatPrivileges(
+    permissions = ChatAdministratorRights(
         can_change_info=can_change_info,
         can_delete_messages=can_delete_messages,
         can_invite_users=can_invite_users,
@@ -306,7 +307,7 @@ async def promote(c: Client, m: Message):
         await c.promote_chat_member(
             m.chat.id,
             digit_wrap(user_),
-            ChatPrivileges(
+            ChatAdministratorRights(
                 is_anonymous=False,
                 can_change_info=False,
                 can_edit_messages=False,
