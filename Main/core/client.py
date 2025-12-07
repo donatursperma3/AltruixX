@@ -557,7 +557,7 @@ class AltruixClient:
             )
             await self.bot.start()
             self.bot_info = await self.bot.get_me()
-            self.bot.info = self.bot_info
+            self.bot.myself = self.bot_info
             self.log(f"Assistant : Logged in as @{self.bot_info.username}")
         except Exception as e:
             self.log(f"CRITICAL: Failed to start bot assistant: {e}", level=50)
