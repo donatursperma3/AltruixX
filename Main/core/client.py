@@ -5,7 +5,6 @@
 # Please see < https://github.com/Altriux/Altruix/blob/main/LICENSE >
 #
 # All rights reserved.
-
 import os
 import sys
 import subprocess  
@@ -55,7 +54,43 @@ import asyncio
 from pyrogram.types import LinkPreviewOptions
 from pyrogram.errors import FloodWait
 
+# ✅ PERUBAHAN 1: Tambahkan fungsi deteksi branch yang andal
+def get_current_git_branch() -> str:
+    """Deteksi branch Git secara akurat, termasuk di Heroku/detached HEAD."""
+    try:
+        # Coba cara utama
+        result = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0 and result.stdout.strip() != "HEAD":
+            return result.stdout.strip()
+        
+        # Coba alternatif
+        result = subprocess.run(
+            ["git", "branch", "--show-current"],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+        
+        # Baca dari .git/HEAD jika ada
+        try:
+            with open(".git/HEAD", "r") as f:
+                head = f.read().strip()
+                if head.startswith("ref: refs/heads/"):
+                    return head.replace("ref: refs/heads/", "")
+                elif len(head) == 40:  # detached HEAD (commit hash)
+                    return head[:7]
+        except (FileNotFoundError, OSError):
+            pass
+        
+        return "HEAD"
+    except (FileNotFoundError, subprocess.SubprocessError, OSError, subprocess.TimeoutExpired):
+        return "unknown"
+
 class AltruixClient:
+    # ... (kode __init__, properti, dan metode lainnya tetap sama)
     def __init__(self, *args, **kwargs) -> None:
         self.ourselves: List[Dict[Any, Any]] = []
         self.bot_info = None
@@ -544,7 +579,6 @@ class AltruixClient:
             quit(1)
 
     async def initialize_telegram_sessions(self, *args, **kwargs) -> None:
-        #
         try:
             self.bot = Client(
                 name="Altruix[bot]",
@@ -562,8 +596,8 @@ class AltruixClient:
         except Exception as e:
             self.log(f"CRITICAL: Failed to start bot assistant: {e}", level=50)
             raise
-        try:
 
+        try:
             if string_sessions := self.config.SESSIONS:
                 self.log("User session was found locally, syncing in progress...")
                 await self.config.sync_env_to_db("SESSIONS", string_sessions)
@@ -591,6 +625,10 @@ class AltruixClient:
                     )
             else:
                 self.log("User Session found, using it!")
+                # ✅ PERUBAHAN 2: Simpan total awal di luar loop
+                total_sessions = len(string_sessions)
+                unloaded_sessions = []  # Simpan session gagal untuk dihapus nanti
+
                 for count, each in enumerate(string_sessions):
                     try:
                         client = await Client(
@@ -600,10 +638,8 @@ class AltruixClient:
                             session_string=each,
                             workdir="cache",
                         ).start()
-                
                         me = await client.get_me()
                         client.myself = me
-                
                         # Bangun nama lengkap
                         OWNER_ID = BaseConfig.OWNER_ID
                         first = (me.first_name or "").strip()
@@ -612,96 +648,84 @@ class AltruixClient:
                         username = f" @{me.username}" if me.username else ""
                         is_owner = " [OWNER]" if me.id == OWNER_ID else ""
                         user_id = me.id
-                
-                        # Log yang super jelas & cantik
+                        # ✅ PERUBAHAN 3: Gunakan total_sessions yang tetap
                         self.log(
-                            f"[{count + 1}/{len(string_sessions)}] Session Loaded → "
+                            f"[{count + 1}/{total_sessions}] Session Loaded → "
                             f"ID: {user_id} | {full_name} {username} {is_owner}"
                         )
-                
                         self.clients.append(client)
                         if me.id != self.config.OWNER_ID:
                             self.ourselves.append(me)
-                
                     except Exception as err:
-                        self.log(f"[{count + 1}/{len(string_sessions)}] Session Unloaded: {err}", level=50)
+                        self.log(f"[{count + 1}/{total_sessions}] Session Unloaded: {err}", level=50)
                         self.log("became unusable, please re-add the session using the assistant bot.")
-                        await self.config.pop_element_from_list("SESSIONS", each)
+                        unloaded_sessions.append(each)  # Simpan untuk dihapus nanti
+
+                # ✅ PERUBAHAN 4: Hapus session gagal SETELAH loop selesai
+                for bad_session in unloaded_sessions:
+                    await self.config.pop_element_from_list("SESSIONS", bad_session)
+
                 if not self.clients:
                     await self.config.del_env_from_db("SESSIONS")
                     self.training_wheels_protocol = True
-
 
             # =============================================
             # SEMUA CLIENT (BOT + USER SESSION) KIRIM PESAN STARTUP KE LOG_CHAT_ID
             # =============================================
             if BaseConfig.LOG_CHAT_ID:
                 from datetime import datetime
-
                 log_chat_id = int(BaseConfig.LOG_CHAT_ID)
                 startup_time = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
-
-                all_clients = [self.bot] + self.clients  # bot dulu, lalu user session
+                all_clients = [self.bot] + self.clients
                 success_count = 0
                 failed_clients = []
-
                 self.log(f"Mencoba kirim startup log dari {len(all_clients)} client ke LOG_CHAT_ID...")
 
                 for client in all_clients:
                     try:
-                        # Ambil info user (bot atau user session)
                         me = client.myself if hasattr(client, "myself") else await client.get_me()
                         name = f"{me.first_name or ''} {me.last_name or ''}".strip() or "Unknown"
                         username = f" @{me.username}" if me.username else ""
                         user_id = me.id
                         client_type = "🤖 Bot Assistant" if client == self.bot else "🦸🏼 User Session"
-
                         mention_user = f'<a href="tg://user?id={user_id}">{name}</a>'
-
-                        # Teks dasar yang akan dikirim setiap client
-                        base_template = (
-                            f"<b>✅ Altruix Userbot [{count + 1}/{len(string_sessions)}] aktif!</b>\n"
+                        
+                        # ✅ PERUBAHAN 5: Gunakan total_sessions yang benar (hanya untuk userbot)
+                        total_user_sessions = len(self.clients)
+                        session_index = all_clients.index(client)
+                        if client == self.bot:
+                            # Bot tidak termasuk dalam [X/Y] user session
+                            base_text = f"<b>✅ Altruix Bot Assistant aktif!</b>"
+                        else:
+                            # User session: [1/7], [2/7], dll.
+                            user_index = self.clients.index(client) + 1
+                            base_text = f"<b>✅ Altruix Userbot [{user_index}/{total_user_sessions}] aktif!</b>"
+                        
+                        personal_message = (
+                            f"{base_text}\n"
                             f"• <b>{mention_user}</b> | {username} \n"
                             f"• Type: {client_type} | ID: <code>{user_id}</code>\n"
                         )
 
-                        # Buat pesan khusus untuk client ini
-                        personal_message = base_template.format(
-                            name=name,
-                            username=username,
-                            type=client_type,
-                            user_id=user_id
-                        )
-
-                        # LANGSUNG KIRIM (INI YANG PALING PENTING!)
-                        # JANGAN PAKAI get_chat() dulu → malah error
                         await client.send_message(
                             chat_id=log_chat_id,
                             text=personal_message,
-                            # disable_web_page_preview=True,
                             link_preview_options=LinkPreviewOptions(is_disabled=True)
                         )
                         await asyncio.sleep(3)
-
-                        # Jika berhasil → catat
                         success_count += 1
                         self.log(f"BERHASIL: {name}{username} ({client_type}) mengirim startup log")
                     except FloodWait as e:
                         self.log(f"FloodWait terdeteksi. Menunggu {e.value} detik...")
                         await asyncio.sleep(e.value + 6)
-
                     except Exception as e:
-                        # Tangkap semua error (PeerIdInvalid, ChatWriteForbidden, dll)
                         error_type = type(e).__name__
                         error_msg = str(e)
-
                         me = client.myself if hasattr(client, "myself") else None
                         name = me.first_name if me else "Unknown"
                         username = f" @{me.username}" if me and me.username else ""
                         client_type = "Bot" if client == self.bot else "User"
-
                         failed_clients.append(f"• <b>{name}{username}</b> → {error_type}")
-
                         self.log(f"GAGAL: {name}{username} ({client_type}) → {error_type}: {error_msg}")
 
                 # === RINGKASAN AKHIR DI CONSOLE ===
@@ -714,49 +738,29 @@ class AltruixClient:
                 else:
                     self.log("SEMUA client berhasil mengirim pesan ke LOG_CHAT_ID!")
 
-                # === PESAN AKHIR (opsional): kirim ringkasan dari bot jika ada yang berhasil ===
+                # === PESAN AKHIR: kirim ringkasan dari bot ===
                 if success_count > 0:
                     try:
-                        # ✅ Ambil branch Git aktif (dengan error handling lengkap)
-                        branch = "unknown"
-                        try:
-                            # Jalankan perintah git untuk ambil branch saat ini
-                            result = subprocess.run(
-                                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-                                capture_output=True,
-                                text=True,
-                                timeout=5  # batas waktu eksekusi
-                            )
-                            if result.returncode == 0:
-                                branch = result.stdout.strip() or "unknown"
-                        except (FileNotFoundError, subprocess.TimeoutExpired, subprocess.SubprocessError, OSError) as e:
-                            # Jika git tidak ditemukan, timeout, atau error lain → fallback ke "unknown"
-                            self.log(f"Failed to get Git branch: {e}", level=logging.WARNING)
-                            branch = "unknown"
-
-                        # ✅ Ambil versi Altruix (selalu tersedia)
+                        # ✅ PERUBAHAN 6: Gunakan fungsi deteksi branch yang diperbaiki
+                        branch = get_current_git_branch()
                         altruix_version = getattr(self, "__version__", "unknown")
-
-                        # ✅ Buat pesan ringkasan dengan Branch + Versi
                         summary = (
                             "Semua client selesai mengirim startup log!\n"
                             f"Total Session: <code>{len(self.clients)}</code> user + 1 bot\n"
                             f"Berhasil: <code>{success_count}</code> client\n"
                             f"Gagal: <code>{len(failed_clients)}</code> client\n"
                             f"Owner ID: <code>{BaseConfig.OWNER_ID}</code>\n"
-                            f"Branch: <code>{branch}</code>\n"          # ← Tambahkan branch
-                            f"Versi: <code>{altruix_version}</code>\n"  # ← Tambahkan versi
+                            f"Branch: <code>{branch}</code>\n"
+                            f"Versi: <code>{altruix_version}</code>\n"
                             f"Waktu: <code>{startup_time}</code>"
                         )
                         await self.bot.send_message(log_chat_id, summary)
                         self.log(f"Ringkasan akhir berhasil dikirim. Branch: {branch}, Versi: {altruix_version}")
                     except Exception as e:
                         self.log(f"Gagal kirim ringkasan startup log: {e}", level=logging.ERROR)
-
         except Exception as e:
             self.log(f"CRITICAL: Session initialization failed: {e}", level=50)
             raise
-
 
     async def add_session(self, session: str, status: Message = None) -> Client:
         await self.config.add_element_to_list("SESSIONS", session)
