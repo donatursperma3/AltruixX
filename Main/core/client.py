@@ -660,7 +660,7 @@ class AltruixClient:
 
                         # Teks dasar yang akan dikirim setiap client
                         base_template = (
-                            f"<b>✅ Userbot Altruix aktif!</b>\n"
+                            f"<b>✅ Altruix Userbot [{count + 1}/{len(string_sessions)}] aktif!</b>\n"
                             f"• <b>{mention_user}</b> | {username} \n"
                             f"• Type: {client_type} | ID: <code>{user_id}</code>\n"
                         )
