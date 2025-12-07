@@ -18,7 +18,7 @@ from pyrogram.utils import zero_datetime
 from pyrogram.errors import MessageTooLong
 from Main.utils.essentials import Essentials
 from ...utils.startup_helpers import monkeypatch
-from pyrogram.types import Message as RawMessage
+from pyrogram.types import Message as RawMessage, ReplyParameters  # ✅ Import ReplyParameters
 from Main.utils.file_helpers import make_file_from_text
 
 
@@ -53,7 +53,7 @@ class Message:
         file_path: str,
         thumb=None,
         quote=None,
-        reply_to_message_id=None,
+        reply_to_message_id=None,  # 🔄 Parameter lama (untuk kompatibilitas)
         send_msg_if_file_invalid=False,
         *args,
         **kwargs,
@@ -63,27 +63,53 @@ class Message:
 
         if reply_to_message_id is None and quote:
             reply_to_message_id = self.id
+
+        # ✅ KONVERSI reply_to_message_id KE reply_parameters UNTUK KOMPATIBILITAS PYROGRAM V2+
+        reply_params = None
+        if reply_to_message_id:
+            try:
+                # Coba gunakan ReplyParameters (Pyrogram v2+)
+                reply_params = ReplyParameters(message_id=reply_to_message_id)
+            except TypeError:
+                # Fallback ke reply_to_message_id (Pyrogram < v2.0.106)
+                kwargs['reply_to_message_id'] = reply_to_message_id
+
         if send_msg_if_file_invalid and (kwargs.get("caption")):
             try:
+                # ✅ GUNAKAN reply_params JIKA TERSEDIA
+                send_kwargs = {}
+                if reply_params:
+                    send_kwargs['reply_parameters'] = reply_params
+                else:
+                    send_kwargs['reply_to_message_id'] = reply_to_message_id
+
                 return await self._client.send_file(
                     self.chat.id,
                     file_path,
                     thumb=thumb,
-                    reply_to_message_id=reply_to_message_id,
                     *args,
                     **kwargs,
+                    **send_kwargs
                 )
             except Exception:
                 Altruix.log()
                 return await self.reply(kwargs.get("caption"))
-        return await self._client.send_file(
-            self.chat.id,
-            file_path,
-            thumb=thumb,
-            reply_to_message_id=reply_to_message_id,
-            *args,
-            **kwargs,
-        )
+        else:
+            # ✅ GUNAKAN reply_params JIKA TERSEDIA
+            send_kwargs = {}
+            if reply_params:
+                send_kwargs['reply_parameters'] = reply_params
+            else:
+                send_kwargs['reply_to_message_id'] = reply_to_message_id
+
+            return await self._client.send_file(
+                self.chat.id,
+                file_path,
+                thumb=thumb,
+                *args,
+                **kwargs,
+                **send_kwargs
+            )
 
     @property
     def command_(self):
@@ -91,7 +117,7 @@ class Message:
             self.text.split()[0][
                 1:
             ].strip() if self.text and " " in self.text else self.text[1:].strip()
-        except (IndexError or AttributeError):
+        except (IndexError, AttributeError):  # ✅ Perbaikan typo: "or" → ","
             return None
 
     @property
@@ -117,13 +143,23 @@ class Message:
         text,
         force_paste=False,
         force_file=None,
-        reply_to_message_id=None,
+        reply_to_message_id=None,  # 🔄 Parameter lama (untuk kompatibilitas)
         ttwp=None,
         del_in=None,
         **args,
     ):
         headers = ttwp or "<b>OUTPUT</b>"
         reply_to_message_id = reply_to_message_id or self.id
+        
+        # ✅ KONVERSI reply_to_message_id KE reply_parameters
+        reply_params = None
+        if reply_to_message_id:
+            try:
+                reply_params = ReplyParameters(message_id=reply_to_message_id)
+            except TypeError:
+                # Fallback ke reply_to_message_id
+                args['reply_to_message_id'] = reply_to_message_id
+
         if txt := Altruix.get_string(text):
             if "string_args" in args:
                 s_args = args.get("string_args")
@@ -135,7 +171,13 @@ class Message:
             text = Essentials.md_to_text(text)
             service, paste_link = await Paste(text).paste()
             _p = f"{headers.format(service.title())} : <b><a href='{paste_link}'>PREVIEW</a></b>"
-            return await self.edit(_p, disable_web_page_preview=True, **args)
+            # ✅ GUNAKAN reply_params JIKA TERSEDIA
+            edit_kwargs = {}
+            if reply_params:
+                edit_kwargs['reply_parameters'] = reply_params
+            else:
+                edit_kwargs['reply_to_message_id'] = reply_to_message_id
+            return await self.edit(_p, disable_web_page_preview=True, **args, **edit_kwargs)
         if force_file:
             if ";" in force_file:
                 force_file, caption = force_file.split(";", 1)
@@ -144,23 +186,45 @@ class Message:
             file_ = await make_file_from_text(
                 text, file_name=force_file, file_suffix=file_suffix
             )
-            return await asyncio.gather(
-                self.delete(),
-                self._client.send_document(
-                    self.chat.id,
-                    file_,
-                    reply_to_message_id=reply_to_message_id,
-                    caption=caption,
-                    **args,
-                ),
-            )
+            # ✅ GUNAKAN reply_params JIKA TERSEDIA
+            doc_kwargs = {}
+            if reply_params:
+                doc_kwargs['reply_parameters'] = reply_params
+            else:
+                doc_kwargs['reply_to_message_id'] = reply_to_message_id
+
+            try:
+                await asyncio.gather(
+                    self.delete(),
+                    self._client.send_document(
+                        self.chat.id,
+                        file_,
+                        caption=caption,
+                        **args,
+                        **doc_kwargs
+                    ),
+                )
+            except Exception as e:
+                Altruix.log(f"Failed to send document: {e}", level=40)
+                # Fallback: kirim sebagai teks
+                return await self.reply(text, **args)
         try:
             msg_ = await self.edit(text, **args)
         except MessageTooLong:
             text = Essentials.md_to_text(text)
             service, paste_link = await Paste(text).paste()
             _p = f"{headers.format(service.title())} : <b><a href='{paste_link}'>PREVIEW</a></b>"
-            msg_ = await self.edit(_p, disable_web_page_preview=True, **args)
+            # ✅ GUNAKAN reply_params JIKA TERSEDIA
+            edit_kwargs = {}
+            if reply_params:
+                edit_kwargs['reply_parameters'] = reply_params
+            else:
+                edit_kwargs['reply_to_message_id'] = reply_to_message_id
+            msg_ = await self.edit(_p, disable_web_page_preview=True, **args, **edit_kwargs)
+        except Exception as e:
+            Altruix.log(f"Failed to edit message: {e}", level=40)
+            # Fallback: kirim sebagai reply
+            return await self.reply(text, **args)
         if del_in and isinstance(del_in, int):
             await asyncio.sleep(del_in)
             await msg_.delete()
@@ -192,9 +256,14 @@ class Message:
             text = Essentials.md_to_text(text)
             service, paste_link = await Paste(text).paste()
             _p = f"{headers.format(service.title())} : <b><a href='{paste_link}'>PREVIEW</a></b>"
-            return await self.reply(
-                _p, quote=True, disable_web_page_preview=True, **args
-            )
+            # ✅ GUNAKAN quote=True (bawaan reply)
+            try:
+                return await self.reply(
+                    _p, quote=True, disable_web_page_preview=True, **args
+                )
+            except Exception as e:
+                Altruix.log(f"Failed to reply with paste: {e}", level=40)
+                return await self.reply(text, quote=True, **args)
         if force_file:
             if ";" in force_file:
                 force_file, caption = force_file.split(";", 1)
@@ -203,14 +272,25 @@ class Message:
             file_ = await make_file_from_text(
                 text, file_name=force_file, file_suffix=file_suffix
             )
-            return await self.reply_document(file_, quote=True, caption=caption, **args)
+            try:
+                return await self.reply_document(file_, quote=True, caption=caption, **args)
+            except Exception as e:
+                Altruix.log(f"Failed to reply with document: {e}", level=40)
+                return await self.reply(text, quote=True, **args)
         try:
             msg_ = await self.reply(text, quote=True, **args)
         except MessageTooLong:
             text = Essentials.md_to_text(text)
             service, paste_link = await Paste(text).paste()
             _p = f"{headers.format(service.title())} : <b><a href='{paste_link}'>PREVIEW</a></b>"
-            msg_ = await self.reply(_p, disable_web_page_preview=True, **args)
+            try:
+                msg_ = await self.reply(_p, disable_web_page_preview=True, **args)
+            except Exception as e:
+                Altruix.log(f"Failed to reply with long text: {e}", level=40)
+                msg_ = await self.reply("Text too long to display.", **args)
+        except Exception as e:
+            Altruix.log(f"Unexpected error in reply_msg: {e}", level=40)
+            msg_ = await self.reply("Failed to send message.", **args)
         if del_in and isinstance(del_in, int):
             await asyncio.sleep(del_in)
             await msg_.delete()
@@ -250,14 +330,20 @@ class Message:
 
     async def delete_if_self(self, **kwargs):
         if self.from_user and self.from_user.is_self or self.outgoing:
-            return await self.delete(**kwargs)
+            try:
+                return await self.delete(**kwargs)
+            except Exception as e:
+                Altruix.log(f"Failed to delete own message: {e}", level=40)
 
     async def delete_if_sudo(self, **kwargs):
         sudo_ = Altruix.config.SUDO_USERS
         if self.from_user and self.from_user.is_self:
             return
         if self.from_user and self.from_user.id in sudo_:
-            return await self.delete(**kwargs)
+            try:
+                return await self.delete(**kwargs)
+            except Exception as e:
+                Altruix.log(f"Failed to delete sudo message: {e}", level=40)
 
     @property
     def user_input(self):
@@ -297,9 +383,16 @@ class Message:
             return msg[msg.find(" ") + 1 :]
 
     async def edit_and_del(self, text, del_in=5, **args):
-        _m_ = await self.edit(text, **args)
+        try:
+            _m_ = await self.edit(text, **args)
+        except Exception as e:
+            Altruix.log(f"Failed to edit message in edit_and_del: {e}", level=40)
+            _m_ = await self.reply(text, **args)
         await asyncio.sleep(del_in)
-        await _m_.delete()
+        try:
+            await _m_.delete()
+        except Exception as e:
+            Altruix.log(f"Failed to delete message in edit_and_del: {e}", level=40)
 
     @property
     def get_user(self) -> Union[Tuple[Union[int, str]], None]:
