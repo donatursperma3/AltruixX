@@ -108,12 +108,13 @@ async def _start_add_session_process(cb: CallbackQuery):
             f"• ID: <code>{user_id}</code>"
         )
 
-    # ✅ KIRIM PESAN DENGAN ReplyKeyboardMarkup (AMAN DI PM!)
+    # ✅ KIRIM PESAN VIA BOT (BUKAN VIA USER) — AMAN DI PM!
     try:
-        temp_msg = await cb.from_user.send_message(
-            "📲 Kirim kontak Anda untuk ambil nomor telepon.\n"
-            "<i>Data tidak disimpan — hanya untuk buat session.</i>\n\n"
-            "Ketik /cancel untuk batalkan.",
+        temp_msg = await Altruix.bot.send_message(
+            chat_id=user_id,
+            text="📲 Kirim kontak Anda untuk ambil nomor telepon.\n"
+                 "<i>Data tidak disimpan — hanya untuk buat session.</i>\n\n"
+                 "Ketik /cancel untuk batalkan.",
             reply_markup=ReplyKeyboardMarkup(
                 [[KeyboardButton("Share Contact", request_contact=True)]],
                 resize_keyboard=True,
@@ -127,28 +128,29 @@ async def _start_add_session_process(cb: CallbackQuery):
 
     phone_number = None
     try:
+        # ✅ DENGARKAN RESPON VIA BOT (BUKAN VIA USER)
         while True:
-            response: Message = await cb.from_user.listen(timeout=120)
+            response: Message = await Altruix.bot.listen(user_id, filters=filters.user(user_id), timeout=120)
             if response.contact:
                 phone_number = response.contact.phone_number
                 break
             elif response.text and response.text.strip().lower() == "/cancel":
                 await temp_msg.delete()
-                await cb.from_user.send_message("❌ Dibatalkan.", reply_markup=ReplyKeyboardRemove())
+                await Altruix.bot.send_message(user_id, "❌ Dibatalkan.", reply_markup=ReplyKeyboardRemove())
                 return
             else:
-                await cb.from_user.send_message("❌ Kirim kontak atau /cancel.")
+                await Altruix.bot.send_message(user_id, "❌ Kirim kontak atau /cancel.")
     except asyncio.TimeoutError:
         await temp_msg.delete()
-        await cb.from_user.send_message("⏰ Waktu habis.", reply_markup=ReplyKeyboardRemove())
+        await Altruix.bot.send_message(user_id, "⏰ Waktu habis.", reply_markup=ReplyKeyboardRemove())
         return
     except Exception as e:
         Altruix.log(f"Error tunggu input: {e}", level=logging.ERROR)
-        await cb.from_user.send_message("❌ Kesalahan internal.")
+        await Altruix.bot.send_message(user_id, "❌ Kesalahan internal.")
         return
 
-    await cb.from_user.send_message("📞 Nomor diterima. Membuat session...", reply_markup=ReplyKeyboardRemove())
-    process_msg = await cb.from_user.send_message("<i>Mohon tunggu...</i>")
+    await Altruix.bot.send_message(user_id, "📞 Nomor diterima. Membuat session...", reply_markup=ReplyKeyboardRemove())
+    process_msg = await Altruix.bot.send_message(user_id, "<i>Mohon tunggu...</i>")
 
     # Buat klien sementara
     try:
@@ -175,10 +177,13 @@ async def _start_add_session_process(cb: CallbackQuery):
 
     # Minta kode OTP
     try:
-        ans = await cb.from_user.ask(
+        # ✅ TANYA KODE VIA BOT
+        ans = await Altruix.bot.ask(
+            user_id,
             "🔑 Kirim kode OTP format <code>1-2-3-4-5</code>",
             reply_markup=ForceReply(selective=True),
-            timeout=300
+            timeout=300,
+            filters=filters.user(user_id)
         )
         if ans.text and ans.text.strip().lower() == "/cancel":
             await process_msg.edit("❌ Dibatalkan oleh user.")
@@ -188,10 +193,12 @@ async def _start_add_session_process(cb: CallbackQuery):
         await app.sign_in(phone_number, sent_code.phone_code_hash, code)
     except SessionPasswordNeeded:
         try:
-            ans2 = await cb.from_user.ask(
+            ans2 = await Altruix.bot.ask(
+                user_id,
                 "🔐 Masukkan password 2FA:",
                 reply_markup=ForceReply(selective=True),
-                timeout=300
+                timeout=300,
+                filters=filters.user(user_id)
             )
             if ans2.text.strip().lower() == "/cancel":
                 await process_msg.edit("❌ Dibatalkan.")
