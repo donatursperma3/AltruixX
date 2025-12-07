@@ -1,3 +1,4 @@
+# Copyright (C) 2021-present by Altruix@Github, < https://github.com/Altruix/Altruix >
 #
 # This file is part of < https://github.com/Altruix/Altruix > project,
 # and is released under the "GNU v3.0 License Agreement".
@@ -15,6 +16,8 @@ from pyrogram.types import (
     InlineKeyboardButton, InlineKeyboardMarkup,
 )
 
+import os
+from datetime import datetime
 
 settings_menu_buttons = [
     [
@@ -72,8 +75,17 @@ def get_sessions_buttons(page=1) -> Tuple[List[InlineKeyboardButton], bool, int]
 )
 @log_errors
 async def settings_command_handler(c: Client, m: Message):
+    # ✅ Hitung total session userbot (tidak termasuk bot assistant)
+    total_sessions = len(Altruix.clients)
+    
+    # ✅ Buat teks dengan info jumlah session
+    settings_text = (
+        Altruix.get_string("SETTINGS_TEXT") or "<b>🛠️ Settings</b>"
+    )
+    full_text = f"{settings_text}\n\n<b>Total Sessions:</b> <code>{total_sessions}</code>"
+    
     await m.reply(
-        Altruix.get_string("SETTINGS_TEXT") or "<b>Settings</b>",
+        full_text,
         reply_markup=InlineKeyboardMarkup(settings_menu_buttons),
         quote=True,
     )
@@ -116,24 +128,42 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery):
         return
 
     session_info = Altruix.clients[index].myself
-    txt = "<b>Session info</b>\n\n<b>First name:</b> {}\n<b>Last name:</b> {}\n<b>DC ID:</b> <code>{}</code>\n<b>Username:</b> @{}\n<b>Is SCAM:</b> <code>{}</code>".format(
+    
+    # ✅ Ambil is_scam dengan aman — kompatibel lama & baru
+    is_scam = getattr(
+        getattr(session_info, 'verification_status', session_info),
+        'is_scam',
+        False  # fallback jika tidak ada di kedua tempat
+    )
+
+    # ✅ PERUBAHAN UTAMA: Tambahkan User ID ke teks info session
+    txt = (
+        "<b>Session info</b>\n\n"
+        "<b>First name:</b> {}\n"
+        "<b>Last name:</b> {}\n"
+        "<b>DC ID:</b> <code>{}</code>\n"
+        "<b>Username:</b> @{}\n"
+        "<b>User ID:</b> <code>{}</code>\n"  # ← BARIS BARU: Tampilkan User ID
+        "<b>Is SCAM:</b> <code>{}</code>"
+    ).format(
         session_info.first_name or "None",
         session_info.last_name or "None",
         session_info.dc_id or "Unknown",
         session_info.username or "None",
-        "Yes" if session_info.is_scam else "No",
+        session_info.id,  # ← Tambahkan session_info.id
+        "Yes" if is_scam else "No",
     )
+    
     await cb.message.edit(
         text=txt,
         reply_markup=InlineKeyboardMarkup(
             [
                 [
-                    InlineKeyboardButton(
-                        "🔄 Refresh data", f"refresh_session_info_{index}"
-                    ),
-                    InlineKeyboardButton(
-                        "🔗 Unlink (Remove)", f"unlink_session_{index}"
-                    ),
+                    InlineKeyboardButton("🔄 Refresh data", f"refresh_session_info_{index}"),
+                    InlineKeyboardButton("🔗 Unlink (Remove)", f"unlink_session_{index}"),
+                ],
+                [
+                    InlineKeyboardButton("📤 Export Session", f"export_session_{index}"),  # ← Tambahkan ini
                 ],
                 [
                     InlineKeyboardButton("🔙 Back", f"sessions_list_{callback_page}"),
@@ -190,3 +220,50 @@ async def unlink_session_cb_handler(c: Client, cb: CallbackQuery):
     # Reset ke halaman pertama setelah hapus
     cb.data = "sessions_list_1"
     await sessions_menu_cb_handler(c, cb)
+
+
+# ─── EXPORT SESSION HANDLER ───────────────────────────────────────────
+@Altruix.bot.on_callback_query(filters.regex("export_session_(\\d+)$"))
+@log_errors
+async def export_session_cb_handler(c: Client, cb: CallbackQuery):
+    user = cb.from_user
+    index = int(cb.matches[0].group(1))
+
+    # ✅ Validasi index
+    if index >= len(Altruix.clients):
+        return await cb.answer("Session tidak ditemukan.", show_alert=True)
+
+    # ✅ Cek izin: hanya auth_users yang boleh ekspor
+    if user.id not in Altruix.auth_users:
+        return await cb.answer("⛔ Tidak diizinkan mengekspor session.", show_alert=True)
+
+    await cb.answer("📤 Mengekspor session...", show_alert=False)
+
+    try:
+        # Ekspor session string
+        session_string = await Altruix.clients[index].export_session_string()
+        
+        # Kirim ke user (PM)
+        await cb.from_user.send_message(
+            f"🔒 **Session String untuk akun `{Altruix.clients[index].myself.first_name}`:**\n\n"
+            f"`{session_string}`\n\n"
+            "⚠️ **JANGAN DIBAGIKAN!**"
+        )
+        
+        # Kirim notifikasi ke grup log
+        log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
+        session_user = Altruix.clients[index].myself
+        log_msg = (
+            "📤 <b>SESSION DIEKSPOR</b>\n\n"
+            f"• <b>User:</b> <a href='tg://user?id={user.id}'>{user.first_name}</a> (<code>{user.id}</code>)\n"
+            f"• <b>Akun:</b> {session_user.first_name or 'Unknown'} "
+            f"(@{session_user.username if session_user.username else 'None'}) | <code>{session_user.id}</code>\n"
+            f"• <b>Waktu:</b> <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>"
+        )
+        await Altruix.bot.send_message(log_chat_id, log_msg)
+
+        await cb.message.edit("✅ Session dikirim ke pesan pribadi Anda.")
+        
+    except Exception as e:
+        Altruix.log(f"Error mengekspor session: {e}", level=logging.ERROR)
+        await cb.message.edit("❌ Gagal mengekspor session.")
