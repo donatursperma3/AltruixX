@@ -216,19 +216,37 @@ class Message:
             await msg_.delete()
         return msg_
 
+    # 
     async def handle_message(self, text_, **kwargs):
-        sudo_users = Altruix.config.SUDO_USERS
-        if self._client.myself.id == Altruix.bot_info.id:
-            return await self.reply_msg(text_, **kwargs)
-        if not self:
+        """
+        ✅ PERBAIKAN: Gunakan getattr() + fallback ke .me untuk hindari AttributeError.
+        Juga tambahkan try-except untuk keamanan ekstra.
+        """
+        try:
+            sudo_users = Altruix.config.SUDO_USERS
+            
+            # ✅ AMBIL ID CLIENT DENGAN AMAN
+            # Coba .myself dulu (cache Altruix), jika tidak ada, gunakan .me (bawaan Pyrogram)
+            client_id = (getattr(self._client, 'myself', None) or self._client.me).id
+
+            if client_id == Altruix.bot_info.id:
+                return await self.reply_msg(text_, **kwargs)
+            if not self:
+                return await self.edit_msg(text_, **kwargs)
+            if not self.from_user or not self.from_user.id:
+                return await self.edit_msg(text_, **kwargs)
+            if int(self.from_user.id) in sudo_users:
+                if self.reply_to_message:
+                    return await self.reply_to_message.reply_msg(text_, **kwargs)
+                return await self.reply_msg(text_, **kwargs)
             return await self.edit_msg(text_, **kwargs)
-        if not self.from_user or not self.from_user.id:
-            return await self.edit_msg(text_, **kwargs)
-        if int(self.from_user.id) in sudo_users:
-            if self.reply_to_message:
-                return await self.reply_to_message.reply_msg(text_, **kwargs)
-            return await self.reply_msg(text_, **kwargs)
-        return await self.edit_msg(text_, **kwargs)
+        except AttributeError as e:
+            # ✅ TANGANI ERROR JIKA .myself dan .me TIDAK ADA (seharusnya tidak terjadi)
+            Altruix.log(f"AttributeError in handle_message: {e}", level=40)
+            return await self.reply("❌ Terjadi kesalahan internal. Silakan coba lagi.", **kwargs)
+        except Exception as e:
+            Altruix.log(f"Unexpected error in handle_message: {e}", level=40)
+            return await self.reply("❌ Gagal menangani pesan.", **kwargs)
 
     async def delete_if_self(self, **kwargs):
         if self.from_user and self.from_user.is_self or self.outgoing:
