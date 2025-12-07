@@ -2,7 +2,8 @@ aiofiles
 bs4
 certifi
 dnspython
-pyrogram
+# pyrogram
+kurigram
 httpx
 markdown
 motor
