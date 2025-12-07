@@ -716,18 +716,42 @@ class AltruixClient:
                 # === PESAN AKHIR (opsional): kirim ringkasan dari bot jika ada yang berhasil ===
                 if success_count > 0:
                     try:
+                        # ✅ Ambil branch Git aktif (dengan error handling lengkap)
+                        branch = "unknown"
+                        try:
+                            # Jalankan perintah git untuk ambil branch saat ini
+                            result = subprocess.run(
+                                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                                capture_output=True,
+                                text=True,
+                                timeout=5  # batas waktu eksekusi
+                            )
+                            if result.returncode == 0:
+                                branch = result.stdout.strip() or "unknown"
+                        except (FileNotFoundError, subprocess.TimeoutExpired, subprocess.SubprocessError, OSError) as e:
+                            # Jika git tidak ditemukan, timeout, atau error lain → fallback ke "unknown"
+                            self.log(f"Failed to get Git branch: {e}", level=logging.WARNING)
+                            branch = "unknown"
+
+                        # ✅ Ambil versi Altruix (selalu tersedia)
+                        altruix_version = getattr(self, "__version__", "unknown")
+
+                        # ✅ Buat pesan ringkasan dengan Branch + Versi
                         summary = (
-                            "Semua client selesai mengirim startup log!\n\n"
+                            "Semua client selesai mengirim startup log!\n"
                             f"Total Session: <code>{len(self.clients)}</code> user + 1 bot\n"
                             f"Berhasil: <code>{success_count}</code> client\n"
                             f"Gagal: <code>{len(failed_clients)}</code> client\n"
                             f"Owner ID: <code>{BaseConfig.OWNER_ID}</code>\n"
+                            f"Branch: <code>{branch}</code>\n"          # ← Tambahkan branch
+                            f"Versi: <code>{altruix_version}</code>\n"  # ← Tambahkan versi
                             f"Waktu: <code>{startup_time}</code>"
                         )
                         await self.bot.send_message(log_chat_id, summary)
-                        self.log("Ringkasan akhir berhasil dikirim ke grup log.")
-                    except:
-                        pass
+                        self.log(f"Ringkasan akhir berhasil dikirim. Branch: {branch}, Versi: {altruix_version}")
+                    except Exception as e:
+                        self.log(f"Gagal kirim ringkasan startup log: {e}", level=logging.ERROR)
+
         except Exception as e:
             self.log(f"CRITICAL: Session initialization failed: {e}", level=50)
             raise
