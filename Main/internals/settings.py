@@ -18,6 +18,7 @@ from pyrogram.types import (
 
 import os
 from datetime import datetime
+import logging
 
 settings_menu_buttons = [
     [
@@ -82,7 +83,7 @@ async def settings_command_handler(c: Client, m: Message):
     settings_text = (
         Altruix.get_string("SETTINGS_TEXT") or "<b>🛠️ Settings</b>"
     )
-    full_text = f"{settings_text}\n\n<b>Total Sessions:</b> <code>{total_sessions}</code>"
+    full_text = f"{settings_text}\n\n<b>Total Sessions:</b> <code>{total_sessions}</code> pyrogram"
     
     await m.reply(
         full_text,
@@ -243,11 +244,12 @@ async def export_session_cb_handler(c: Client, cb: CallbackQuery):
         # Ekspor session string
         session_string = await Altruix.clients[index].export_session_string()
         
-        # Kirim ke user (PM)
-        await cb.from_user.send_message(
-            f"🔒 **Session String untuk akun `{Altruix.clients[index].myself.first_name}`:**\n\n"
-            f"`{session_string}`\n\n"
-            "⚠️ **JANGAN DIBAGIKAN!**"
+        # ✅ PERBAIKAN 1: Gunakan client bot (c) untuk kirim pesan, BUKAN cb.from_user
+        await c.send_message(
+            chat_id=user.id,
+            text=f"🔒 **Session String untuk akun `{Altruix.clients[index].myself.first_name}`:**\n\n"
+                 f"`{session_string}`\n\n"
+                 "⚠️ **JANGAN DIBAGIKAN!**"
         )
         
         # Kirim notifikasi ke grup log
@@ -265,5 +267,6 @@ async def export_session_cb_handler(c: Client, cb: CallbackQuery):
         await cb.message.edit("✅ Session dikirim ke pesan pribadi Anda.")
         
     except Exception as e:
-        Altruix.log(f"Error mengekspor session: {e}", level=logging.ERROR)
+        # ✅ PERBAIKAN 2: Gunakan level=40 (logging.ERROR) atau impor logging
+        Altruix.log(f"Error mengekspor session: {e}", level=40)  # 40 = logging.ERROR
         await cb.message.edit("❌ Gagal mengekspor session.")
