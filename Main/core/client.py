@@ -50,7 +50,9 @@ from pyrogram import (
 from pyrogram.errors.exceptions.bad_request_400 import (
     MessageEmpty, PeerIdInvalid, MessageTooLong, MessageIdInvalid,
     MessageNotModified, UserNotParticipant)
-
+import asyncio
+from pyrogram.types import LinkPreviewOptions
+from pyrogram.errors import FloodWait
 
 class AltruixClient:
     def __init__(self, *args, **kwargs) -> None:
@@ -59,7 +61,7 @@ class AltruixClient:
         self.clients: List[Client] = []
         self.cmd_list = {}
         self.all_lang_strings = {}
-        self.__version__ = "0.0.2"
+        self.__version__ = "0.0.3"
         self.selected_lang = "english"
         self.local_lang_file = "./Main/localization"
         self.cmd_list = {}
@@ -483,22 +485,39 @@ class AltruixClient:
             await self.initialize_telegram_sessions(*args, **kwargs)
         await self.update_cache()
 
+    #
     async def _run(self):
-        await self.load_all_modules()
-        print(self.banner)
-        self.log(
-            f"Altruix v{self.__version__} has been successfully deployed with pyrogram version v{pyrogram_version}!"
-        )
-        if self.training_wheels_protocol:
+        try:
+            await self.load_all_modules()
+            print(self.banner)
             self.log(
-                "Altruix is in [TWP], all the userbot features will be disabled!",
-                level=30,
+                f"Altruix v{self.__version__} has been successfully deployed with pyrogram version v{pyrogram_version}!"
             )
-            self.log("Start the bot to learn how to disable it.", level=30)
-        await idle()
+            if self.training_wheels_protocol:
+                self.log(
+                    "Altruix is in [TWP], all the userbot features will be disabled!",
+                    level=30,
+                )
+                self.log("Start the bot to learn how to disable it.", level=30)
+            await idle()
+        except KeyboardInterrupt:
+            self.log("Received keyboard interrupt. Shutting down...")
+        except Exception as e:
+            error_msg = f"CRITICAL: _run crashed: {traceback.format_exc()}"
+            self.log(error_msg, level=50)
+            try:
+                log_chat = int(os.getenv("LOG_CHAT_ID", self.config.OWNER_ID))
+                await self.bot.send_message(
+                    log_chat,
+                    f"💥 <b>Altruix Runtime Crash</b>\n<code>{str(e)}</code>",
+                    link_preview_options=LinkPreviewOptions(is_disabled=True)
+                )
+            except Exception:
+                pass
+            raise
 
     async def _test(self):
-        dev_chat_id = -1001575127028
+        dev_chat_id = -1002653859864
         try:
             await self.load_all_modules()
             mess = None
@@ -524,75 +543,195 @@ class AltruixClient:
             quit(1)
 
     async def initialize_telegram_sessions(self, *args, **kwargs) -> None:
-        self.bot = Client(
-            name="Altruix[bot]",
-            api_id=self.config.API_ID,
-            api_hash=self.config.API_HASH,
-            bot_token=self.config.BOT_TOKEN,
-            workdir="cache",
-            *args,
-            **kwargs,
-        )
-        await self.bot.start()
-        self.bot_info = await self.bot.get_me()
-        self.bot.info = self.bot_info
-        self.log(f"Assistant : Logged in as @{self.bot_info.username}")
-        if string_sessions := self.config.SESSIONS:
-            self.log("User session was found locally, syncing in progress...")
-            await self.config.sync_env_to_db("SESSIONS", string_sessions)
-        else:
-            self.log("Searching in DB for a user session...")
-            string_sessions = await self.config.get_env_from_db("SESSIONS")
-        if not string_sessions:
-            self.training_wheels_protocol = True
-            self.log(
-                "No User Session found, all the userbot features will be disabled!",
-                level=30,
+        #
+        try:
+            self.bot = Client(
+                name="Altruix[bot]",
+                api_id=self.config.API_ID,
+                api_hash=self.config.API_HASH,
+                bot_token=self.config.BOT_TOKEN,
+                workdir="cache",
+                *args,
+                **kwargs,
             )
-            try:
-                self.ourselves.append(await self.bot.get_users(self.config.OWNER_ID))
-            except PeerIdInvalid:
-                self.log(
-                    "Please start the bot with the account where it's ID is where you've added in the OWNER_ID field.",
-                    level=40,
-                )
-                quit()
-            except Exception as e:
-                self.log(
-                    f"[{e}] - Please add another session using your assistant bot [@{self.bot_info.username}]",
-                    level=logging.CRITICAL,
-                )
-        else:
-            self.log("User Session found, using it!")
-            for count, each in enumerate(string_sessions):
-                try:
-                    client = await Client(
-                        f"{count}_instance_Altruix",
-                        api_id=self.config.API_ID,
-                        api_hash=self.config.API_HASH,
-                        session_string=each,
-                        workdir="cache",
-                    ).start()
-                    client.myself = await client.get_me()
-                    self.clients.append(client)
-                    if not client.myself.id == self.config.OWNER_ID:
-                        self.ourselves.append(client.myself)
-                    self.log(f"[{count + 1}/{len(string_sessions)}] Sessions Loaded.")
-                except Exception as err:
-                    self.log(
-                        err,
-                        level=50,
-                    )
-                    self.log(
-                        f"Session {count + 1} became unusable, please re-add the session using the assistant bot."
-                    )
-                    self.config.pop_session(count)
-                    # if not popped:
-                    #   popped = self.config.SESSIONS[count]
-                    await self.config.pop_element_from_list("SESSIONS", each)
-            if not self.clients:
-                await self.config.del_env_from_db("SESSIONS")
+            await self.bot.start()
+            self.bot_info = await self.bot.get_me()
+            self.bot.info = self.bot_info
+            self.log(f"Assistant : Logged in as @{self.bot_info.username}")
+        except Exception as e:
+            self.log(f"CRITICAL: Failed to start bot assistant: {e}", level=50)
+            raise
+        try:
+
+            if string_sessions := self.config.SESSIONS:
+                self.log("User session was found locally, syncing in progress...")
+                await self.config.sync_env_to_db("SESSIONS", string_sessions)
+            else:
+                self.log("Searching in DB for a user session...")
+                string_sessions = await self.config.get_env_from_db("SESSIONS")
+            if not string_sessions:
                 self.training_wheels_protocol = True
+                self.log(
+                    "No User Session found, all the userbot features will be disabled!",
+                    level=30,
+                )
+                try:
+                    self.ourselves.append(await self.bot.get_users(self.config.OWNER_ID))
+                except PeerIdInvalid:
+                    self.log(
+                        "Please start the bot with the account where it's ID is where you've added in the OWNER_ID field.",
+                        level=40,
+                    )
+                    quit()
+                except Exception as e:
+                    self.log(
+                        f"[{e}] - Please add another session using your assistant bot [@{self.bot_info.username}]",
+                        level=logging.CRITICAL,
+                    )
+            else:
+                self.log("User Session found, using it!")
+                for count, each in enumerate(string_sessions):
+                    try:
+                        client = await Client(
+                            f"{count}_instance_Altruix",
+                            api_id=self.config.API_ID,
+                            api_hash=self.config.API_HASH,
+                            session_string=each,
+                            workdir="cache",
+                        ).start()
+                
+                        me = await client.get_me()
+                        client.myself = me
+                
+                        # Bangun nama lengkap
+                        OWNER_ID = BaseConfig.OWNER_ID
+                        first = (me.first_name or "").strip()
+                        last = (me.last_name or "").strip()
+                        full_name = f"{first} {last}".strip() or "(No Name)"
+                        username = f" @{me.username}" if me.username else ""
+                        is_owner = " [OWNER]" if me.id == OWNER_ID else ""
+                        user_id = me.id
+                
+                        # Log yang super jelas & cantik
+                        self.log(
+                            f"[{count + 1}/{len(string_sessions)}] Session Loaded → "
+                            f"ID: {user_id} | {full_name} {username} {is_owner}"
+                        )
+                
+                        self.clients.append(client)
+                        if me.id != self.config.OWNER_ID:
+                            self.ourselves.append(me)
+                
+                    except Exception as err:
+                        self.log(f"[{count + 1}/{len(string_sessions)}] Session Unloaded: {err}", level=50)
+                        self.log("became unusable, please re-add the session using the assistant bot.")
+                        await self.config.pop_element_from_list("SESSIONS", each)
+                if not self.clients:
+                    await self.config.del_env_from_db("SESSIONS")
+                    self.training_wheels_protocol = True
+
+
+            # =============================================
+            # SEMUA CLIENT (BOT + USER SESSION) KIRIM PESAN STARTUP KE LOG_CHAT_ID
+            # =============================================
+            if BaseConfig.LOG_CHAT_ID:
+                from datetime import datetime
+
+                log_chat_id = int(BaseConfig.LOG_CHAT_ID)
+                startup_time = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+
+                all_clients = [self.bot] + self.clients  # bot dulu, lalu user session
+                success_count = 0
+                failed_clients = []
+
+                self.log(f"Mencoba kirim startup log dari {len(all_clients)} client ke LOG_CHAT_ID...")
+
+                for client in all_clients:
+                    try:
+                        # Ambil info user (bot atau user session)
+                        me = client.myself if hasattr(client, "myself") else await client.get_me()
+                        name = f"{me.first_name or ''} {me.last_name or ''}".strip() or "Unknown"
+                        username = f" @{me.username}" if me.username else ""
+                        user_id = me.id
+                        client_type = "🤖 Bot Assistant" if client == self.bot else "🦸🏼 User Session"
+
+                        mention_user = f'<a href="tg://user?id={user_id}">{name}</a>'
+
+                        # Teks dasar yang akan dikirim setiap client
+                        base_template = (
+                            f"<b>✅ Userbot Altruix aktif!</b>\n"
+                            f"• <b>{mention_user}</b> | {username} \n"
+                            f"• Type: {client_type} | ID: <code>{user_id}</code>\n"
+                        )
+
+                        # Buat pesan khusus untuk client ini
+                        personal_message = base_template.format(
+                            name=name,
+                            username=username,
+                            type=client_type,
+                            user_id=user_id
+                        )
+
+                        # LANGSUNG KIRIM (INI YANG PALING PENTING!)
+                        # JANGAN PAKAI get_chat() dulu → malah error
+                        await client.send_message(
+                            chat_id=log_chat_id,
+                            text=personal_message,
+                            # disable_web_page_preview=True,
+                            link_preview_options=LinkPreviewOptions(is_disabled=True)
+                        )
+                        await asyncio.sleep(3)
+
+                        # Jika berhasil → catat
+                        success_count += 1
+                        self.log(f"BERHASIL: {name}{username} ({client_type}) mengirim startup log")
+                    except FloodWait as e:
+                        self.log(f"FloodWait terdeteksi. Menunggu {e.value} detik...")
+                        await asyncio.sleep(e.value + 6)
+
+                    except Exception as e:
+                        # Tangkap semua error (PeerIdInvalid, ChatWriteForbidden, dll)
+                        error_type = type(e).__name__
+                        error_msg = str(e)
+
+                        me = client.myself if hasattr(client, "myself") else None
+                        name = me.first_name if me else "Unknown"
+                        username = f" @{me.username}" if me and me.username else ""
+                        client_type = "Bot" if client == self.bot else "User"
+
+                        failed_clients.append(f"• <b>{name}{username}</b> → {error_type}")
+
+                        self.log(f"GAGAL: {name}{username} ({client_type}) → {error_type}: {error_msg}")
+
+                # === RINGKASAN AKHIR DI CONSOLE ===
+                self.log("=== RINGKASAN PENGIRIMAN STARTUP LOG ===")
+                self.log(f"Berhasil kirim: {success_count}/{len(all_clients)} client")
+                if failed_clients:
+                    self.log("Client yang gagal:")
+                    for fail in failed_clients:
+                        self.log(f"   {fail}")
+                else:
+                    self.log("SEMUA client berhasil mengirim pesan ke LOG_CHAT_ID!")
+
+                # === PESAN AKHIR (opsional): kirim ringkasan dari bot jika ada yang berhasil ===
+                if success_count > 0:
+                    try:
+                        summary = (
+                            "Semua client selesai mengirim startup log!\n\n"
+                            f"Total Session: <code>{len(self.clients)}</code> user + 1 bot\n"
+                            f"Berhasil: <code>{success_count}</code> client\n"
+                            f"Gagal: <code>{len(failed_clients)}</code> client\n"
+                            f"Owner ID: <code>{BaseConfig.OWNER_ID}</code>\n"
+                            f"Waktu: <code>{startup_time}</code>"
+                        )
+                        await self.bot.send_message(log_chat_id, summary)
+                        self.log("Ringkasan akhir berhasil dikirim ke grup log.")
+                    except:
+                        pass
+        except Exception as e:
+            self.log(f"CRITICAL: Session initialization failed: {e}", level=50)
+            raise
+
 
     async def add_session(self, session: str, status: Message = None) -> Client:
         await self.config.add_element_to_list("SESSIONS", session)
@@ -715,52 +854,68 @@ class AltruixClient:
         loaded_pc = 0
         for name in helper_scripts:
             loaded_pc += 1
-            start_time = time.time()
-            with open(name) as a:
-                path_ = Path(a.name)
-                plugin_name = path_.stem.replace(".py", "")
-                plugins_dir = Path(path.replace("*", plugin_name))
-                import_path = path.replace("/", ".")[:-4] + plugin_name
-                import_type = import_path.split(".")[-2]
-                spec = importlib.util.spec_from_file_location(import_path, plugins_dir)
-                load = importlib.util.module_from_spec(spec)
-                load.Altruix = self
-                load.bot = self.bot
-                load.asyncio = asyncio
-                if import_type == "userbot":
-                    import_type = "U"
-                elif import_type == "bot":
-                    import_type = "A"
-                else:
-                    import_type = "M"
-                try:
-                    spec.loader.exec_module(load)
-                    sys.modules[import_path + plugin_name] = load
-                    end_time = round(time.time() - start_time, 2)
-                    if log:
-                        string_load = (
-                            f"[{import_type}] - ["
-                            + concatenate(str(loaded_pc), "99", "0", False)
-                            + "/"
-                            + concatenate(plugin_count, "99", "0", False)
-                            + "] Loaded "
-                            + concatenate(plugin_name, " " * 30, " ")
-                            + "["
-                            + concatenate(str(end_time), "    ", "0")
-                            + "s]"
-                        )
-                        if msg:
-                            string_load = f"[{import_type}] - Loaded {plugin_name} in <i>{end_time}s</i>"
+            start_time = time.time()  # ✅ PINDAHKAN KE SINI — di awal loop
+            try:
+                # 🔹 PENINGKATAN 1: Tangani error saat baca file
+                with open(name, encoding="utf-8") as a:
+                    path_ = Path(a.name)
+                    # 🔹 PENINGKATAN 2: Gunakan stem saja (sudah hapus .py)
+                    plugin_name = path_.stem
+                    plugins_dir = Path(path.replace("*", plugin_name))
+                    import_path = path.replace("/", ".")[:-4] + plugin_name
+                    import_type = import_path.split(".")[-2]
+                    spec = importlib.util.spec_from_file_location(import_path, plugins_dir)
+                    load = importlib.util.module_from_spec(spec)
+                    load.Altruix = self
+                    load.bot = self.bot
+                    load.asyncio = asyncio
+                    if import_type == "userbot":
+                        import_type = "U"
+                    elif import_type == "bot":
+                        import_type = "A"
+                    else:
+                        import_type = "M"
+                    try:
+                        spec.loader.exec_module(load)
+                        sys.modules[import_path + plugin_name] = load
+                        end_time = round(time.time() - start_time, 2)
+                        if log:
+                            string_load = (
+                                f"[{import_type}] - ["
+                                + concatenate(str(loaded_pc), "99", "0", False)
+                                + "/"
+                                + concatenate(plugin_count, "99", "0", False)
+                                + "] Loaded "
+                                + concatenate(plugin_name, " " * 30, " ")
+                                + "["
+                                + concatenate(str(end_time), "    ", "0")
+                                + "s]"
+                            )
+                            if msg:
+                                string_load = f"[{import_type}] - Loaded {plugin_name} in <i>{end_time}s</i>"
+                            await self.custom_log(
+                                string_load,
+                                p_msg=msg,
+                            )
+                    except Exception as err:
+                        # 🔥 TANGKAP FULL TRACEBACK (sudah ada, bagus!)
+                        import traceback
+                        full_trace = traceback.format_exc()
+                        error_summary = f"[{import_type}] CRITICAL << Failed To Load Plugin: {plugin_name}"
+                        full_error_log = f"{error_summary}\n{'─' * 50}\n{full_trace}\n{'─' * 50}"
                         await self.custom_log(
-                            string_load,
+                            full_error_log,
+                            level=50,
                             p_msg=msg,
                         )
-                except Exception as err:
-                    await self.custom_log(
-                        f"[{import_type}] Failed To Load : {plugin_name} ({err})",
-                        level=50,
-                        p_msg=msg,
-                    )
+                        print(f"\n{full_error_log}\n", flush=True)
+                        continue  # Lanjut ke plugin berikutnya
+            except (OSError, UnicodeDecodeError) as e:
+                # 🔹 PENANGANAN ERROR SAAT BACA FILE
+                error_msg = f"Failed to read plugin file '{name}': {e}"
+                await self.custom_log(error_msg, level=50, p_msg=msg)
+                print(f"\n❌ {error_msg}\n", flush=True)
+                continue
 
     async def run_cmd_async(self, cmd):
         _cmd_args = shlex.split(cmd)
@@ -776,28 +931,44 @@ class AltruixClient:
         )
 
     async def load_all_modules(self):
-        await self.load_from_directory("Main/utils/*.py", log=False)
-        await self.load_from_directory("Main/internals/*.py", log=False)
-        self.log("All internal modules have been loaded.")
-        self.log("Preparing to load all plugins.\n")
-        await self.load_from_directory("Main/plugins/bot/*.py", log=True)
-        if self.training_wheels_protocol:
-            self.log("Userbot Plugins will be disabled due to [TWP]!")
-            if self.bot_mode:
-                await self.load_from_directory("Main/plugins/userbot/*.py", log=False)
-                self.log("BOT_MODE: ON - Loaded all possible Modules as BOT.")
-                self.loaded_bot_cmds = True
-        else:
-            await self.load_from_directory("Main/plugins/userbot/*.py", log=True)
-            if self.bot_mode:
-                self.log("BOT_MODE: ON - Loaded all possible Modules as BOT.")
-                self.loaded_bot_cmds = True
-            await self.install_all_apm_packages()
-            if os.path.lexists("Main/plugins/external"):
-                await self.load_from_directory("Main/plugins/externals/*.py", log=True)
-            self.log("All plugins have been loaded.")
-            self.prepare_help()
-        print("\n")
+        self.log("Starting to load all modules...", level=logging.INFO)
+        try:
+            await self.load_from_directory("Main/utils/*.py", log=False)
+            await self.load_from_directory("Main/internals/*.py", log=False)
+            self.log("All internal modules have been loaded.")
+            self.log("Preparing to load all plugins.\n")
+            await self.load_from_directory("Main/plugins/bot/*.py", log=True)
+            if self.training_wheels_protocol:
+                self.log("Userbot Plugins will be disabled due to [TWP]!")
+                if self.bot_mode:
+                    await self.load_from_directory("Main/plugins/userbot/*.py", log=False)
+                    self.log("BOT_MODE: ON - Loaded all possible Modules as BOT.")
+                    self.loaded_bot_cmds = True
+            else:
+                await self.load_from_directory("Main/plugins/userbot/*.py", log=True)
+                if self.bot_mode:
+                    self.log("BOT_MODE: ON - Loaded all possible Modules as BOT.")
+                    self.loaded_bot_cmds = True
+                await self.install_all_apm_packages()
+                if os.path.lexists("Main/plugins/external"):
+                    await self.load_from_directory("Main/plugins/externals/*.py", log=True)
+                self.log("All plugins have been loaded.")
+                self.prepare_help()
+            print("\n")
+        except Exception as e:
+            error_msg = f"CRITICAL: load_all_modules crashed: {traceback.format_exc()}"
+            self.log(error_msg, level=50)
+            # Kirim ke log grup
+            try:
+                log_chat = int(os.getenv("LOG_CHAT_ID", self.config.OWNER_ID))
+                await self.bot.send_message(
+                    log_chat,
+                    f"🚨 <b>BOT CRASHED ON STARTUP</b>\n<code>{str(e)}</code>",
+                    link_preview_options=LinkPreviewOptions(is_disabled=True)
+                )
+            except Exception:
+                pass
+            raise  # biarkan crash agar terlihat di console
 
     def run(self):
         self.loop.run_until_complete(self._run())
@@ -808,38 +979,72 @@ class AltruixClient:
     def prepare_help(self):
         self._command_help_message_data.clear()
         for plugin_name, commands_data in self.cmd_list.items():
-            plugin_name = plugin_name.lower()
-            self._command_help_message_data[plugin_name] = ""
-            for each_command_data in commands_data:
-                commands_: List[str] = each_command_data.get("commands", ["???"])
-                help_text = each_command_data.get("help")
-                example_text = each_command_data.get("example")
-                user_args = each_command_data.get("user_args")
-                self._command_help_message_data[plugin_name] += "\n<b>Command :</b>"
-                for _cmd_str in commands_:
-                    self._command_help_message_data[
-                        plugin_name
-                    ] += f"<code>{self.user_command_handler}{_cmd_str}</code>/"
-                self._command_help_message_data[plugin_name] = (
-                    self._command_help_message_data[plugin_name][:-1] + "\n"
-                )
-                self._command_help_message_data[
-                    plugin_name
-                ] += f"<b>Help :</b> <i>{help_text}</i>\n"
-                self._command_help_message_data[
-                    plugin_name
-                ] += f"<b>Example :</b> <code>{self.user_command_handler}{example_text}</code>\n"
-                if user_args:
-                    self._command_help_message_data[
-                        plugin_name
-                    ] += "<b>Arguments:</b>\n"
-                    for arg_data in user_args:
-                        arg_name = arg_data.get("arg")
-                        # arg_help = html.escape(arg_data.get("help"))
-                        help_text = arg_data.get("help")
-                        arg_help = html.escape(help_text if help_text is not None else "")
-                        arg_requires_input = arg_data.get("requires_input")
+            try:
+                plugin_name = plugin_name.lower()
+                self._command_help_message_data[plugin_name] = ""
+                for each_command_data in commands_data:
+                    commands_: List[str] = each_command_data.get("commands", ["???"])
+                    help_text = each_command_data.get("help")
+                    example_text = each_command_data.get("example")
+                    user_args = each_command_data.get("user_args")
+
+                    self._command_help_message_data[plugin_name] += "\n<b>Command :</b>"
+                    for _cmd_str in commands_:
                         self._command_help_message_data[
                             plugin_name
-                        ] += f"   <code>-{arg_name}</code> - {arg_help}{' [need input]' if arg_requires_input else ''}\n"
-                # self._command_help_message_data[plugin_name] += f" \n"
+                        ] += f"<code>{self.user_command_handler}{_cmd_str}</code>/"
+                    self._command_help_message_data[plugin_name] = (
+                        self._command_help_message_data[plugin_name][:-1] + "\n"
+                    )
+                    self._command_help_message_data[
+                        plugin_name
+                    ] += f"<b>Help :</b> <i>{help_text}</i>\n"
+                    self._command_help_message_data[
+                        plugin_name
+                    ] += f"<b>Example :</b> <code>{self.user_command_handler}{example_text}</code>\n"
+
+                    # ✅ PENANGANAN CERDAS: DUKUNG DICT LAMA & LIST BARU
+                    if user_args:
+                        self._command_help_message_data[plugin_name] += "<b>Arguments:</b>\n"
+
+                        if isinstance(user_args, list):
+                            # Format baru: [{"arg": "...", "help": "..."}]
+                            for arg_data in user_args:
+                                if isinstance(arg_data, dict):
+                                    arg_name = arg_data.get("arg", "")
+                                    help_txt = arg_data.get("help", "")
+                                    requires_input = arg_data.get("requires_input", False)
+                                    self._command_help_message_data[
+                                        plugin_name
+                                    ] += f"   <code>-{arg_name}</code> - {help_txt}{' [need input]' if requires_input else ''}\n"
+                                else:
+                                    # Item bukan dict? tampilkan mentah
+                                    self._command_help_message_data[
+                                        plugin_name
+                                    ] += f"   <code>{arg_data}</code>\n"
+
+                        elif isinstance(user_args, dict):
+                            # ✅ Format lama: {"-f <nama>": "Ganti nama depan"}
+                            for arg_flag, arg_help in user_args.items():
+                                self._command_help_message_data[
+                                    plugin_name
+                                ] += f"   <code>{arg_flag}</code> - {arg_help}\n"
+
+                        else:
+                            # Tipe tidak dikenal: tampilkan sebagai string
+                            self._command_help_message_data[
+                                plugin_name
+                            ] += f"   <i>{str(user_args)}</i>\n"
+
+            except Exception as e:
+                # 🛡️ SAFETY NET: Jangan biarkan satu plugin rusak seluruh help system
+                import logging
+                self.log(
+                    f"Failed to prepare help for plugin '{plugin_name}': {e}",
+                    level=logging.ERROR
+                )
+                # Tetap tampilkan pesan fallback agar tidak error di /help
+                self._command_help_message_data[plugin_name] = (
+                    f"<b>⚠️ Error loading help for '{plugin_name}'</b>\n"
+                    f"<code>{str(e)}</code>"
+                )
