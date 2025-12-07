@@ -174,6 +174,7 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery):
 @log_errors
 async def export_phone_cb_handler(c: Client, cb: CallbackQuery):
     user = cb.from_user
+    user_id = user.id
     index = int(cb.matches[0].group(1))
 
     # Validasi index
@@ -181,7 +182,7 @@ async def export_phone_cb_handler(c: Client, cb: CallbackQuery):
         return await cb.answer("Session tidak ditemukan.", show_alert=True)
 
     # Cek izin
-    if user.id not in Altruix.auth_users:
+    if user_id not in Altruix.auth_users:
         return await cb.answer("⛔ Tidak diizinkan mengekspor nomor.", show_alert=True)
 
     await cb.answer("📞 Mengambil nomor telepon...", show_alert=False)
@@ -195,9 +196,9 @@ async def export_phone_cb_handler(c: Client, cb: CallbackQuery):
             await cb.message.edit("❌ Akun ini tidak memiliki nomor telepon yang terdaftar.")
             return
 
-        # ✅ KIRIM KE USER VIA BOT (BUKAN VIA USER)
+        # ✅ KIRIM KE USER VIA BOT (BENAR!)
         await c.send_message(
-            chat_id=user.id,
+            chat_id=user_id,
             text=f"📞 **Nomor telepon untuk akun `{user_info.first_name}`:**\n\n`+{user_info.phone_number}`"
         )
 
@@ -205,7 +206,7 @@ async def export_phone_cb_handler(c: Client, cb: CallbackQuery):
         log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
         log_msg = (
             "📞 <b>NOMOR TELEPON DIEKSPOR</b>\n\n"
-            f"• <b>User:</b> <a href='tg://user?id={user.id}'>{user.first_name}</a> (<code>{user.id}</code>)\n"
+            f"• <b>User:</b> <a href='tg://user?id={user_id}'>{user.first_name}</a> (<code>{user_id}</code>)\n"
             f"• <b>Akun:</b> {user_info.first_name} | <code>+{user_info.phone_number}</code>\n"
             f"• <b>Waktu:</b> <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>"
         )
@@ -215,11 +216,12 @@ async def export_phone_cb_handler(c: Client, cb: CallbackQuery):
         
     except Exception as e:
         # ✅ KIRIM ERROR KE GRUP LOG
-        error_text = f"⚠️ <b>ERROR SAAT EKSPOR NOMOR TELEPON</b>\n\n" \
-                     f"• User ID: <code>{user.id}</code>\n" \
-                     f"• Session Index: <code>{index}</code>\n" \
-                     f"• Error: <code>{str(e)}</code>"
-        
+        error_text = (
+            "⚠️ <b>ERROR SAAT EKSPOR NOMOR TELEPON</b>\n\n"
+            f"• User ID: <code>{user_id}</code>\n"
+            f"• Session Index: <code>{index}</code>\n"
+            f"• Error: <code>{str(e)}</code>"
+        )
         log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
         try:
             await Altruix.bot.send_message(log_chat_id, error_text)
@@ -229,7 +231,6 @@ async def export_phone_cb_handler(c: Client, cb: CallbackQuery):
         # Beri feedback ke user
         await cb.message.edit("❌ Gagal mengekspor nomor telepon. Owner telah diberi tahu.")
         Altruix.log(f"Error mengekspor nomor telepon: {e}", level=logging.ERROR)
-
 # ─── EXPORT SESSION HANDLER (DISEDIAKAN UNTUK KELANGKAPAN) ─────────────
 @Altruix.bot.on_callback_query(filters.regex("export_session_(\\d+)$"))
 @log_errors
