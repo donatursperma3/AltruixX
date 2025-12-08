@@ -35,6 +35,7 @@ from pyrogram.errors import (
 from Main import Altruix
 from Main.core.decorators import log_errors
 from Main.core.types.message import Message as AltruixMessage
+from pyrogram import Client
 
 # ─── LOGGER KHUSUS PLUGIN ───────────────────────────────────────────────
 plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
