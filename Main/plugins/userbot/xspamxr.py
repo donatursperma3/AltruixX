@@ -1,4 +1,3 @@
-# for altruix
 # Copyright (C) 2025-present by @AlphaXproject team
 # Ported from Ultroid (xspamxr.txt) for Altruix UserBot
 # GNU v3.0 License Agreement
@@ -8,23 +7,36 @@ import html
 import re
 import os
 import logging
+import random
 import ast
 import shlex
 from datetime import datetime
 from pyrogram import filters
-from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions
+from pyrogram.types import (
+    InlineKeyboardButton, 
+    InlineKeyboardMarkup, 
+    LinkPreviewOptions,
+    CallbackQuery,
+    Message
+)
 from pyrogram.errors import (
-    FloodWait, PeerIdInvalid, ChatWriteForbidden, MessageIdInvalid,
-    MessageNotModified, MessageEmpty, SlowmodeWait, UserIdInvalid, 
-    UserNotParticipant, MessageTooLong, ReactionInvalid
+    FloodWait, 
+    PeerIdInvalid, 
+    ChatWriteForbidden, 
+    MessageIdInvalid,
+    MessageNotModified, 
+    MessageEmpty, 
+    SlowmodeWait, 
+    UserIdInvalid, 
+    UserNotParticipant, 
+    MessageTooLong, 
+    ReactionInvalid
 )
 from Main import Altruix
 from Main.core.decorators import log_errors
-from Main.core.types.message import Message
+from Main.core.types.message import Message as AltruixMessage
 
-# =============================================================================
-# LOGGER KHUSUS PLUGIN
-# =============================================================================
+# ─── LOGGER KHUSUS PLUGIN ───────────────────────────────────────────────
 plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xspamxr"
 PLUGIN_VERSION = "v0.1.11.7.34.3:"
@@ -38,20 +50,6 @@ if not logger.handlers:
     handler.setFormatter(formatter)
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
-
-
-# ─── LOGGER KHUSUS PLUGIN ───────────────────────────────────────────────
-logger = logging.getLogger("xspam")
-if not logger.handlers:
-    handler = logging.StreamHandler()
-    formatter = logging.Formatter(
-        "%(asctime)s - [XSPAM] - %(levelname)s - %(message)s"
-    )
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-    logger.setLevel(logging.INFO)
-
-logger.info("XSpam Plugin loaded successfully.")
 
 
 # ─── GLOBAL STATE ───────────────────────────────────────────────────────
@@ -97,7 +95,7 @@ async def bulk_delete_messages(client, chat_id: int, message_ids: list):
         logger.warning(f"Failed to delete messages: {e}")
 
 
-async def update_purge_button(notif_msg: Message, chat_id: int, purge_enabled: bool):
+async def update_purge_button(notif_msg: AltruixMessage, chat_id: int, purge_enabled: bool):
     """Update tombol purge di notifikasi."""
     try:
         clean_id = str(chat_id).replace("-100", "") if str(chat_id).startswith("-100") else str(chat_id)
@@ -142,12 +140,12 @@ async def spam_loop(client, target_chat, chat_id, msg_list, delays_possible, cou
             del_suk, del_ggl = 0, 0
             if old_purge_val > 0:
                 try:
-                    messages = await client.get_messages(target_chat, limit=old_purge_val * 2)
+                    messages = await client.get_messages(target_chat.id, limit=old_purge_val * 2)
                     if messages:
                         my_messages = [msg for msg in messages if msg.from_user and msg.from_user.id == client.me.id][:old_purge_val]
                         message_ids = [msg.id for msg in my_messages]
                         if message_ids:
-                            await client.delete_messages(target_chat, message_ids)
+                            await client.delete_messages(target_chat.id, message_ids)
                             del_suk = len(message_ids)
                             await asyncio.sleep(3)
                         else:
@@ -174,7 +172,7 @@ async def spam_loop(client, target_chat, chat_id, msg_list, delays_possible, cou
                         random_delay = random.choice(delays_possible)
                         while True:
                             try:
-                                sent_msg = await client.send_message(target_chat, msg)
+                                sent_msg = await client.send_message(target_chat.id, msg)
                                 sent_count += 1
                                 react_status = "tidak ada"
                                 
@@ -235,7 +233,7 @@ async def spam_loop(client, target_chat, chat_id, msg_list, delays_possible, cou
                 random_delay = random.choice(delays_possible)
                 while True:
                     try:
-                        sent_msg = await client.send_message(target_chat, msg)
+                        sent_msg = await client.send_message(target_chat.id, msg)
                         sent_count += 1
                         react_status = "tidak ada"
                         
@@ -440,15 +438,15 @@ async def start_relayspam(client, destination, start_delay, stop_delay, step, co
 # ─── HANDLER CALLBACK ───────────────────────────────────────────────────
 @Altruix.bot.on_callback_query(filters.regex(r"^(stop|pause|resume|cek|recurring|delete_latest|delete_oldest|edit_last|edit_msglist|cancel_edit|cancel_editlast)_(-?\d+)"))
 @log_errors
-async def handle_task_control(c: Client, cb: CallbackQuery):
+async def handle_task_control(client: Client, cb: CallbackQuery):
     action = cb.matches[0].group(1)
     chat_id = cb.matches[0].group(2)
     
     try:
         if int(chat_id) > 0:
-            target_chat = await c.get_users(int(chat_id))
+            target_chat = await client.get_users(int(chat_id))
         else:
-            target_chat = await c.get_chat(int(chat_id))
+            target_chat = await client.get_chat(int(chat_id))
         chat_title = f"{target_chat.first_name or target_chat.title} (ID: {chat_id})" if hasattr(target_chat, 'first_name') or hasattr(target_chat, 'title') else "Unknown Chat"
     except (ValueError, TypeError, UserIdInvalid, PeerIdInvalid) as err:
         chat_title = f"Unknown Chat (ID: {chat_id})"
@@ -504,7 +502,7 @@ async def handle_task_control(c: Client, cb: CallbackQuery):
                 return
                 
             success = await start_relayspam(
-                c,  # Menggunakan client bot untuk operasi
+                client,
                 config["destination"],
                 config["start_delay"],
                 config["stop_delay"],
@@ -524,11 +522,11 @@ async def handle_task_control(c: Client, cb: CallbackQuery):
                 
         elif action == "delete_latest":
             try:
-                messages = await c.get_messages(target_chat.id if hasattr(target_chat, 'id') else int(chat_id), limit=30, reverse=False)
+                messages = await client.get_messages(target_chat.id if hasattr(target_chat, 'id') else int(chat_id), limit=30, reverse=False)
                 if messages:
-                    message_ids = [msg.id for msg in messages if msg.from_user and msg.from_user.id == c.me.id]
+                    message_ids = [msg.id for msg in messages if msg.from_user and msg.from_user.id == client.me.id]
                     if message_ids:
-                        await c.delete_messages(target_chat.id if hasattr(target_chat, 'id') else int(chat_id), message_ids)
+                        await client.delete_messages(target_chat.id if hasattr(target_chat, 'id') else int(chat_id), message_ids)
                         del_suk = len(message_ids)
                         await asyncio.sleep(3)
                         await cb.answer(f"🗑️ Berhasil hapus {del_suk} pesan terbaru di {chat_title}.", show_alert=True)
@@ -546,11 +544,11 @@ async def handle_task_control(c: Client, cb: CallbackQuery):
                 
         elif action == "delete_oldest":
             try:
-                messages = await c.get_messages(target_chat.id if hasattr(target_chat, 'id') else int(chat_id), limit=30, reverse=True)
+                messages = await client.get_messages(target_chat.id if hasattr(target_chat, 'id') else int(chat_id), limit=30, reverse=True)
                 if messages:
-                    message_ids = [msg.id for msg in messages if msg.from_user and msg.from_user.id == c.me.id]
+                    message_ids = [msg.id for msg in messages if msg.from_user and msg.from_user.id == client.me.id]
                     if message_ids:
-                        await c.delete_messages(target_chat.id if hasattr(target_chat, 'id') else int(chat_id), message_ids)
+                        await client.delete_messages(target_chat.id if hasattr(target_chat, 'id') else int(chat_id), message_ids)
                         del_suk = len(message_ids)
                         await asyncio.sleep(3)
                         await cb.answer(f"🗑️ Berhasil hapus {del_suk} pesan terlama di {chat_title}.", show_alert=True)
@@ -568,8 +566,8 @@ async def handle_task_control(c: Client, cb: CallbackQuery):
                 
         elif action == "edit_last":
             try:
-                messages = await c.get_messages(target_chat.id if hasattr(target_chat, 'id') else int(chat_id), limit=1, reverse=False)
-                if messages and messages[0].from_user and messages[0].from_user.id == c.me.id:
+                messages = await client.get_messages(target_chat.id if hasattr(target_chat, 'id') else int(chat_id), limit=1, reverse=False)
+                if messages and messages[0].from_user and messages[0].from_user.id == client.me.id:
                     last_msg_id = messages[0].id
                     old_text = messages[0].text
                     
@@ -674,7 +672,7 @@ async def handle_task_control(c: Client, cb: CallbackQuery):
                 
                 if was_running:
                     success = await start_relayspam(
-                        c,  # Menggunakan client bot
+                        client,
                         config["destination"],
                         config["start_delay"],
                         config["stop_delay"],
@@ -737,7 +735,7 @@ async def handle_task_control(c: Client, cb: CallbackQuery):
 
 @Altruix.bot.on_callback_query(filters.regex(r"^(cekall|stopall|recurringall|pauseall|resumeall)"))
 @log_errors
-async def handle_global_controls(c: Client, cb: CallbackQuery):
+async def handle_global_controls(client: Client, cb: CallbackQuery):
     data = cb.data
     
     if data == "cekall":
@@ -750,9 +748,9 @@ async def handle_global_controls(c: Client, cb: CallbackQuery):
         for chat_id, status in RELAY_SPAM_TASKS.items():
             try:
                 if int(chat_id) > 0:
-                    target_chat = await c.get_users(int(chat_id))
+                    target_chat = await client.get_users(int(chat_id))
                 else:
-                    target_chat = await c.get_chat(int(chat_id))
+                    target_chat = await client.get_chat(int(chat_id))
                 chat_title = f"{target_chat.first_name or target_chat.title} (ID: {chat_id})" if hasattr(target_chat, 'first_name') or hasattr(target_chat, 'title') else "Unknown Chat"
                 
                 if status["running"]:
@@ -800,7 +798,7 @@ async def handle_global_controls(c: Client, cb: CallbackQuery):
                 continue
                 
             success = await start_relayspam(
-                c,  # Menggunakan client bot
+                client,
                 config["destination"],
                 config["start_delay"],
                 config["stop_delay"],
@@ -829,9 +827,9 @@ async def handle_global_controls(c: Client, cb: CallbackQuery):
             if RELAY_SPAM_TASKS[chat_id]["running"] and RELAY_SPAM_TASKS[chat_id]["pause_event"].is_set():
                 try:
                     if int(chat_id) > 0:
-                        target_chat = await c.get_users(int(chat_id))
+                        target_chat = await client.get_users(int(chat_id))
                     else:
-                        target_chat = await c.get_chat(int(chat_id))
+                        target_chat = await client.get_chat(int(chat_id))
                     chat_title = f"{target_chat.first_name or target_chat.title} (ID: {chat_id})" if hasattr(target_chat, 'first_name') or hasattr(target_chat, 'title') else "Unknown Chat"
                     
                     RELAY_SPAM_TASKS[chat_id]["pause_event"].clear()
@@ -863,9 +861,9 @@ async def handle_global_controls(c: Client, cb: CallbackQuery):
             if RELAY_SPAM_TASKS[chat_id]["running"] and not RELAY_SPAM_TASKS[chat_id]["pause_event"].is_set():
                 try:
                     if int(chat_id) > 0:
-                        target_chat = await c.get_users(int(chat_id))
+                        target_chat = await client.get_users(int(chat_id))
                     else:
-                        target_chat = await c.get_chat(int(chat_id))
+                        target_chat = await client.get_chat(int(chat_id))
                     chat_title = f"{target_chat.first_name or target_chat.title} (ID: {chat_id})" if hasattr(target_chat, 'first_name') or hasattr(target_chat, 'title') else "Unknown Chat"
                     
                     RELAY_SPAM_TASKS[chat_id]["pause_event"].set()
@@ -889,7 +887,7 @@ async def handle_global_controls(c: Client, cb: CallbackQuery):
 # ─── HANDLER REPLY ──────────────────────────────────────────────────────
 @Altruix.bot.on_message(filters.reply & filters.user(Altruix.auth_users) & filters.chat(LOG_CHAT_ID))
 @log_errors
-async def handle_msg_list_input(c: Client, m: Message):
+async def handle_msg_list_input(client: Client, m: Message):
     if not m.reply_to_message:
         return
         
@@ -906,9 +904,9 @@ async def handle_msg_list_input(c: Client, m: Message):
         # Resolusi chat_title
         try:
             if int(chat_id) > 0:
-                target_chat = await c.get_users(int(chat_id))
+                target_chat = await client.get_users(int(chat_id))
             else:
-                target_chat = await c.get_chat(int(chat_id))
+                target_chat = await client.get_chat(int(chat_id))
             chat_title = f"{target_chat.first_name or target_chat.title} (ID: {chat_id})" if hasattr(target_chat, 'first_name') or hasattr(target_chat, 'title') else "Unknown Chat"
         except (ValueError, TypeError, UserIdInvalid, PeerIdInvalid) as err:
             chat_title = f"Unknown Chat (ID: {chat_id})"
@@ -939,7 +937,7 @@ async def handle_msg_list_input(c: Client, m: Message):
             COMPLETED_TASKS[chat_id] = config
             
             success = await start_relayspam(
-                c,  # Menggunakan client bot
+                client,
                 config["destination"],
                 config["start_delay"],
                 config["stop_delay"],
@@ -994,7 +992,7 @@ async def handle_msg_list_input(c: Client, m: Message):
             if not new_text:
                 raise ValueError("Teks baru tidak boleh kosong.")
                 
-            await c.edit_message_text(target_chat.id if hasattr(target_chat, 'id') else int(chat_id), last_msg_id, new_text)
+            await client.edit_message_text(target_chat.id if hasattr(target_chat, 'id') else int(chat_id), last_msg_id, new_text)
             await asyncio.sleep(1)
             
             response_msg = (
@@ -1017,7 +1015,7 @@ async def handle_msg_list_input(c: Client, m: Message):
 
 # ─── HANDLER COMMAND ────────────────────────────────────────────────────
 @Altruix.register_on_cmd(
-    ["relayspam", "xspam"],
+    ["relayspam"],
     cmd_help={
         "help": "Relay spam messages to a chat with delay control.",
         "example": ".relayspam -1001234567890 1 5 1 10 5 👋 [\"Hello\", \"World\"]",
@@ -1034,7 +1032,7 @@ async def handle_msg_list_input(c: Client, m: Message):
     },
 )
 @log_errors
-async def relayspam_handler(c: Client, m: Message):
+async def relayspam_handler(c: Client, m: AltruixMessage):
     raw_input = m.raw_user_input
     
     if not raw_input:
@@ -1150,14 +1148,14 @@ async def relayspam_handler(c: Client, m: Message):
 
 
 @Altruix.register_on_cmd(
-    ["cancelrelayspam", "xspamcancel"],
+    ["cancelrelayspam"],
     cmd_help={
         "help": "Cancel an ongoing relay spam task.",
         "example": ".cancelrelayspam",
     },
 )
 @log_errors
-async def cancel_relayspam_handler(c: Client, m: Message):
+async def cancel_relayspam_handler(c: Client, m: AltruixMessage):
     found = False
     for chat_id in list(RELAY_SPAM_TASKS.keys()):
         if RELAY_SPAM_TASKS[chat_id].get("config", {}).get("user_id") == m.from_user.id:
@@ -1177,14 +1175,14 @@ async def cancel_relayspam_handler(c: Client, m: Message):
 
 
 @Altruix.register_on_cmd(
-    ["relaystatus", "xspamstatus"],
+    ["relaystatus"],
     cmd_help={
         "help": "Check status of ongoing relay spam tasks.",
         "example": ".relaystatus",
     },
 )
 @log_errors
-async def relaystatus_handler(c: Client, m: Message):
+async def relaystatus_handler(c: Client, m: AltruixMessage):
     if not RELAY_SPAM_TASKS:
         return await m.handle_message("🟢 Tidak ada task aktif.")
         
@@ -1209,5 +1207,6 @@ async def relaystatus_handler(c: Client, m: Message):
         status_lines.append(f"• {status} di <b>{title}</b>")
         
     await m.handle_message("\n".join(status_lines))
+
 
 logger.info(f"[DEBUG] Loaded → {__plugin_name__} v{PLUGIN_VERSION}")
