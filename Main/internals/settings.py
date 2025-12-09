@@ -92,6 +92,7 @@ async def settings_command_handler(c: Client, m: Message):
     )
 
 
+
 @Altruix.bot.on_callback_query(filters.regex("sessions_list_(\\d+)$"))
 @log_errors
 async def sessions_menu_cb_handler(c: Client, cb: CallbackQuery):
@@ -102,21 +103,27 @@ async def sessions_menu_cb_handler(c: Client, cb: CallbackQuery):
         page = 1
 
     buttons, has_next, total_pages = get_sessions_buttons(page)
-    buttons = arrange_buttons(buttons, 3)
-    last_col = []
+    
+    # ✅ Tambahkan baris khusus untuk tombol global
+    action_buttons = [
+        InlineKeyboardButton("🏓 Test Ping All", "test_ping_all_confirmation"),
+        InlineKeyboardButton("📲 Export All Phones", "export_all_phones")
+    ]
+    
+    # ✅ Tambahkan tombol navigasi
+    nav_buttons = []
     if not page == 1:
-        last_col.append(InlineKeyboardButton("Previous", f"sessions_list_{page - 1}"))
-    last_col.append(
-        InlineKeyboardButton(f"🔙 [{page}/{total_pages or 1}]", "settings_menu")
-    )
+        nav_buttons.append(InlineKeyboardButton("Previous", f"sessions_list_{page - 1}"))
+    nav_buttons.append(InlineKeyboardButton(f"🔙 [{page}/{total_pages or 1}]", "settings_menu"))
     if has_next:
-        last_col.append(InlineKeyboardButton("Next", f"sessions_list_{page + 1}"))
+        nav_buttons.append(InlineKeyboardButton("Next", f"sessions_list_{page + 1}"))
     
-    # ✅ Tambahkan tombol Export All Phone Numbers
-    last_col.append(InlineKeyboardButton("📲 Export All Phones", "export_all_phones"))
+    # ✅ Susun layout akhir: session_buttons + action_buttons + nav_buttons
+    final_markup = buttons + [action_buttons] + [nav_buttons]
     
+    total_sessions = len(Altruix.clients)
     await cb.message.edit(
-        text="Sessions", reply_markup=InlineKeyboardMarkup(buttons + [last_col])
+        text=f"<b>Total Sessions:</b> <code>{total_sessions}</code>", reply_markup=InlineKeyboardMarkup(final_markup)
     )
 
 
