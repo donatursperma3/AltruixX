@@ -16,12 +16,15 @@ from pyrogram.types import (
     InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions
 )
 from pyrogram.errors import (
-    PeerIdInvalid, UserIsBlocked, ChatWriteForbidden, FloodWait, MessageIdInvalid
+    PeerIdInvalid, UserIsBlocked, ChatWriteForbidden, FloodWait, MessageIdInvalid,
+    SlowmodeWait
 )
 import os
 import logging
 import asyncio
+import html
 from datetime import datetime
+import io
 
 
 settings_menu_buttons = [
@@ -108,8 +111,214 @@ async def sessions_menu_cb_handler(c: Client, cb: CallbackQuery):
     )
     if has_next:
         last_col.append(InlineKeyboardButton("Next", f"sessions_list_{page + 1}"))
+    
+    # ✅ Tambahkan tombol Export All Phone Numbers
+    last_col.append(InlineKeyboardButton("📲 Export All Phones", "export_all_phones"))
+    
     await cb.message.edit(
         text="Sessions", reply_markup=InlineKeyboardMarkup(buttons + [last_col])
+    )
+
+
+# ─── EXPORT ALL PHONE NUMBERS HANDLER ───────────────────────────────────
+@Altruix.bot.on_callback_query(filters.regex("export_all_phones"))
+@log_errors
+async def export_all_phones_handler(c: Client, cb: CallbackQuery):
+    """Ekspor semua nomor telepon ke file teks."""
+    user = cb.from_user
+    user_id = user.id
+    log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
+
+    if user_id not in Altruix.auth_users:
+        return await cb.answer("⛔ Anda tidak diizinkan mengakses fitur ini.", show_alert=True)
+
+    if not Altruix.clients:
+        return await cb.answer("❌ Tidak ada session yang tersedia.", show_alert=True)
+
+    await cb.answer("📲 Sedang menyiapkan file nomor...", show_alert=False)
+    
+    try:
+        # ✅ Kumpulkan data semua session
+        phone_data = []
+        for client in Altruix.clients:
+            try:
+                user_info = await client.get_me()
+                first_name = user_info.first_name or "None"
+                last_name = user_info.last_name or "None"
+                full_name = f"{first_name} {last_name}".strip()
+                username = f"@{user_info.username}" if user_info.username else "None"
+                phone = user_info.phone_number or "Not Available"
+                user_id = user_info.id
+                
+                phone_data.append(
+                    f"Nama: {full_name}\n"
+                    f"Nomor: +{phone}\n"
+                    f"ID: {user_id}\n"
+                    f"Username: {username}\n"
+                    f"{'-' * 40}"
+                )
+            except Exception as e:
+                Altruix.log(f"Error mengambil info session: {e}", level=logging.ERROR)
+                phone_data.append(f"Error: {str(e)}\n{'-' * 40}")
+
+        # ✅ Buat file teks
+        file_content = "\n".join(phone_data)
+        file_stream = io.BytesIO(file_content.encode())
+        file_stream.name = "all_phone_numbers.txt"
+
+        # ✅ Kirim file ke user
+        await user.send_document(
+            document=file_stream,
+            caption="📲 **All Phone Numbers Exported**\nFile ini berisi data semua session Anda."
+        )
+
+        # ✅ Kirim notifikasi ke log
+        await Altruix.bot.send_message(
+            log_chat_id,
+            f"📲 <b>EXPORT ALL PHONES</b>\n"
+            f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a>\n"
+            f"• Jumlah Session: <code>{len(Altruix.clients)}</code>\n"
+            f"• Waktu: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>",
+            parse_mode="html",
+            link_preview_options=LinkPreviewOptions(is_disabled=True)
+        )
+
+        await cb.message.edit("✅ File nomor telepon berhasil dikirim ke pesan pribadi Anda.")
+
+    except FloodWait as e:
+        await asyncio.sleep(e.value)
+        await cb.message.edit(f"⏳ FloodWait terdeteksi. Tunggu {e.value} detik.")
+        Altruix.log(f"FloodWait saat export all phones: {e.value}s")
+
+    except (PeerIdInvalid, UserIsBlocked, ChatWriteForbidden) as e:
+        error_msg = "❌ Gagal mengirim file: User tidak dapat dihubungi."
+        await cb.message.edit(error_msg)
+        Altruix.log(f"Error izin saat export all phones: {e}")
+
+        # ✅ Kirim error ke log
+        await Altruix.bot.send_message(
+            log_chat_id,
+            f"⚠️ <b>ERROR EXPORT ALL PHONES</b>\n"
+            f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a>\n"
+            f"• Error: <code>{type(e).__name__}</code>\n"
+            f"• Solusi: Pastikan Anda memulai chat dengan bot assistant.",
+            parse_mode="html"
+        )
+
+    except Exception as e:
+        await cb.message.edit("❌ Gagal mengekspor nomor. Owner telah diberi tahu.")
+        Altruix.log(f"Error umum saat export all phones: {e}")
+
+        # ✅ Kirim error detail ke log
+        await Altruix.bot.send_message(
+            log_chat_id,
+            f"⚠️ <b>ERROR EXPORT ALL PHONES (CRITICAL)</b>\n"
+            f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a>\n"
+            f"• Error: <code>{str(e)}</code>\n"
+            f"• Waktu: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>",
+            parse_mode="html"
+        )
+
+
+# ─── TEST PING ALL CONFIRMATION ─────────────────────────────────────────
+@Altruix.bot.on_callback_query(filters.regex("test_ping_all_confirmation"))
+@log_errors
+async def test_ping_all_confirmation_handler(c: Client, cb: CallbackQuery):
+    await cb.answer()
+    confirmation_buttons = [
+        [
+            InlineKeyboardButton("✅ Yes", callback_data="test_ping_all_confirm_yes"),
+            InlineKeyboardButton("❌ No", callback_data="test_ping_all_confirm_no")
+        ]
+    ]
+    await cb.message.edit(
+        text="❓ Are you sure you want to test ping all sessions?",
+        reply_markup=InlineKeyboardMarkup(confirmation_buttons)
+    )
+
+
+# ─── CANCEL TEST PING ALL ───────────────────────────────────────────────
+@Altruix.bot.on_callback_query(filters.regex("test_ping_all_confirm_no"))
+@log_errors
+async def test_ping_all_cancel_handler(c: Client, cb: CallbackQuery):
+    await cb.answer("Operation cancelled.")
+    await sessions_menu_cb_handler(c, cb)
+
+
+# ─── EXECUTE TEST PING ALL ──────────────────────────────────────────────
+@Altruix.bot.on_callback_query(filters.regex("test_ping_all_confirm_yes"))
+@log_errors
+async def test_ping_all_execute_handler(c: Client, cb: CallbackQuery):
+    await cb.answer("🏓 Testing ping for all sessions...", show_alert=False)
+    log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
+    user = cb.from_user
+    
+    success_count = 0
+    failed_count = 0
+    total_sessions = len(Altruix.clients)
+    
+    if total_sessions == 0:
+        await cb.message.edit("❌ No sessions available to ping.")
+        return
+
+    await cb.message.edit(f"✅ Starting ping test for <b>{total_sessions}</b> sessions...")
+    
+    for index, client in enumerate(Altruix.clients):
+        session_user = client.myself
+        try:
+            await client.send_message(
+                chat_id=log_chat_id,
+                text=f"🏓 <b>Pong!</b>\nDari akun: <a href='tg://user?id={session_user.id}'>{html.escape(session_user.first_name or 'Unknown')}</a> | ID: <code>{session_user.id}</code>",
+                parse_mode="html",
+                link_preview_options=LinkPreviewOptions(is_disabled=True)
+            )
+            success_count += 1
+            
+        except FloodWait as e:
+            await asyncio.sleep(e.value)
+            try:
+                await client.send_message(
+                    chat_id=log_chat_id,
+                    text=f"🏓 <b>Pong!</b>\nDari akun: <a href='tg://user?id={session_user.id}'>{html.escape(session_user.first_name or 'Unknown')}</a> | ID: <code>{session_user.id}</code>",
+                    parse_mode="html",
+                    link_preview_options=LinkPreviewOptions(is_disabled=True)
+                )
+                success_count += 1
+            except Exception:
+                failed_count += 1
+                
+        except (PeerIdInvalid, UserIsBlocked, ChatWriteForbidden, SlowmodeWait, MessageIdInvalid):
+            failed_count += 1
+            
+        except Exception:
+            failed_count += 1
+
+        await cb.message.edit(
+            f"✅ Ping test in progress...\n"
+            f"• Berhasil: <code>{success_count}</code>\n"
+            f"• Gagal: <code>{failed_count}</code>\n"
+            f"• Total: <code>{total_sessions}</code>"
+        )
+        await asyncio.sleep(1)
+
+    final_status = "✅ SEMUA BERHASIL" if failed_count == 0 else "⚠️ ADA YANG GAGAL"
+    await Altruix.bot.send_message(
+        log_chat_id,
+        f"🏓 <b>TEST PING ALL SELESAI</b>\n"
+        f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a>\n"
+        f"• Status: <b>{final_status}</b>\n"
+        f"• Berhasil: <code>{success_count}</code> akun\n"
+        f"• Gagal: <code>{failed_count}</code> akun\n"
+        f"• Waktu: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>",
+        parse_mode="html",
+        link_preview_options=LinkPreviewOptions(is_disabled=True)
+    )
+    
+    await cb.message.edit(
+        f"✅ Ping all test completed!\n"
+        f"• Berhasil: <code>{success_count}</code>\n"
+        f"• Gagal: <code>{failed_count}</code>\n"
+        f"Lihat detail di grup log."
     )
 
 
@@ -126,14 +335,12 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery):
 
     session_info = Altruix.clients[index].myself
 
-    # ✅ Ambil is_scam dengan aman — kompatibel lama & baru
     is_scam = getattr(
         getattr(session_info, 'verification_status', session_info),
         'is_scam',
         False
     )
 
-    # ✅ Tambahkan User ID ke teks
     txt = (
         "<b>Session info</b>\n\n"
         "<b>First name:</b> {}\n"
@@ -166,7 +373,7 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery):
                     InlineKeyboardButton("📞 Export Phone Number", f"export_phone_{index}"),
                 ],
                 [
-                    InlineKeyboardButton("🏓 Test Ping", f"test_ping_{index}"),  # ✅ TOMBOL TEST PING BARU
+                    InlineKeyboardButton("🏓 Test Ping", f"test_ping_{index}"),
                 ],
                 [
                     InlineKeyboardButton("🔙 Back", f"sessions_list_{callback_page}"),
@@ -180,10 +387,6 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery):
 @Altruix.bot.on_callback_query(filters.regex("test_ping_(\\d+)$"))
 @log_errors
 async def test_ping_cb_handler(c: Client, cb: CallbackQuery):
-    """
-    ✅ Handler untuk tombol 'Test Ping'
-    Mengirim pesan '🏓 Pong!' dari userbot yang dipilih ke LOG_CHAT_ID.
-    """
     user = cb.from_user
     user_id = user.id
     index = int(cb.matches[0].group(1))
@@ -200,36 +403,42 @@ async def test_ping_cb_handler(c: Client, cb: CallbackQuery):
     session_user = session_client.myself
 
     try:
-        # ✅ KIRIM PESAN PING DARI USERBOT KE LOG_CHAT_ID
-        ping_msg = await session_client.send_message(
+        await session_client.send_message(
             chat_id=log_chat_id,
-            text=f"🏓 **Pong!**\nDari akun: `{session_user.first_name}` | ID: `{session_user.id}`"
+            text=(
+                f"🏓 <b>Pong!</b>\n"
+                f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a> melakukan test ping pada akun: "
+                f"<a href='tg://user?id={session_user.id}'>{html.escape(session_user.first_name or '')} {html.escape(session_user.last_name or '')}</a>\n"
+                f"• Tanggal: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>"
+            ),
+            parse_mode="html",
+            link_preview_options=LinkPreviewOptions(is_disabled=True)
         )
         
-        # ✅ KIRIM NOTIFIKASI KE USER
-        await cb.message.edit("✅ Ping berhasil! Pesan dikirim ke grup log.")
+        await cb.message.edit(
+            f"✅ Ping berhasil! Pesan dikirim ke grup log.\n"
+            f"Akun: <a href='tg://user?id={session_user.id}'>{html.escape(session_user.first_name or '')} {html.escape(session_user.last_name or '')}</a>",
+            parse_mode="html"
+        )
         
-        # ✅ LOG SUKSES KE KONSOL
         Altruix.log(f"Test ping sukses untuk session {index} ({session_user.id})")
 
     except FloodWait as e:
-        # ✅ PENANGANAN FLOODWAIT
         await asyncio.sleep(e.value)
         await cb.message.edit(f"⏳ FloodWait terdeteksi. Tunggu {e.value} detik.")
         Altruix.log(f"FloodWait saat test ping session {index}: {e.value}s")
 
     except (PeerIdInvalid, UserIsBlocked, ChatWriteForbidden) as e:
-        # ✅ PENANGANAN ERROR IZIN/CHAT
         error_msg = "❌ Gagal mengirim ping: Bot tidak bisa mengirim pesan ke grup log."
         await cb.message.edit(error_msg)
         Altruix.log(f"Error izin saat test ping session {index}: {e}")
 
-        # ✅ KIRIM ERROR KE LOG_CHAT_ID
         try:
             await Altruix.bot.send_message(
                 log_chat_id,
                 f"⚠️ <b>ERROR TEST PING</b>\n"
-                f"• Session: <b>{session_user.first_name}</b> (<code>{session_user.id}</code>)\n"
+                f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a>\n"
+                f"• Session: <a href='tg://user?id={session_user.id}'>{html.escape(session_user.first_name or '')} {html.escape(session_user.last_name or '')}</a> (<code>{session_user.id}</code>)\n"
                 f"• Error: <code>{type(e).__name__}</code>\n"
                 f"• Solusi: Pastikan bot assistant dan userbot berada di group dan bisa mengirim pesan ke grup log.",
                 parse_mode="html"
@@ -237,35 +446,32 @@ async def test_ping_cb_handler(c: Client, cb: CallbackQuery):
         except Exception as log_err:
             Altruix.log(f"Gagal kirim log error test ping: {log_err}")
 
-    except (SlowmodeWait, MessageIdInvalid) as e:
-        # ✅ PENANGANAN ERROR SPESIFIK
-        error_msg = f"❌ Error: {type(e).__name__}. Coba lagi nanti."
+    except SlowmodeWait as e:
+        error_msg = f"❌ Slowmode aktif. Tunggu {e.value} detik."
         await cb.message.edit(error_msg)
-        Altruix.log(f"Error spesifik saat test ping session {index}: {e}")
-        # ✅ KIRIM ERROR KE LOG_CHAT_ID
+        Altruix.log(f"SlowmodeWait saat test ping session {index}: {e.value}s")
         try:
             await Altruix.bot.send_message(
                 log_chat_id,
-                f"⚠️ <b>ERROR TEST PING (SlowmodeWait, MessageIdInvalid)</b>\n"
-                f"• Session: <b>{session_user.first_name}</b> (<code>{session_user.id}</code>)\n"
-                f"• Error: <code>{type(e).__name__}</code>\n"
-                f"• Solusi: Coba lagi nanti.",
+                f"⚠️ <b>ERROR TEST PING (SlowmodeWait)</b>\n"
+                f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a>\n"
+                f"• Session: <a href='tg://user?id={session_user.id}'>{html.escape(session_user.first_name or '')} {html.escape(session_user.last_name or '')}</a>\n"
+                f"• Error: <code>SlowmodeWait({e.value}s)</code>",
                 parse_mode="html"
             )
         except Exception as log_err:
-            Altruix.log(f"Gagal kirim log error test ping: {log_err}")
+            Altruix.log(f"Gagal kirim log error Slowmode: {log_err}")
 
     except Exception as e:
-        # ✅ PENANGANAN ERROR UMUM
         await cb.message.edit("❌ Gagal menguji ping. Owner telah diberi tahu.")
         Altruix.log(f"Error umum saat test ping session {index}: {e}")
 
-        # ✅ KIRIM ERROR DETAIL KE LOG_CHAT_ID
         try:
             await Altruix.bot.send_message(
                 log_chat_id,
                 f"⚠️ <b>ERROR TEST PING (CRITICAL)</b>\n"
-                f"• Session: <b>{session_user.first_name}</b> (<code>{session_user.id}</code>)\n"
+                f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a>\n"
+                f"• Session: <a href='tg://user?id={session_user.id}'>{html.escape(session_user.first_name or '')} {html.escape(session_user.last_name or '')}</a> (<code>{session_user.id}</code>)\n"
                 f"• Error: <code>{str(e)}</code>\n"
                 f"• Waktu: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>",
                 parse_mode="html"
@@ -298,7 +504,6 @@ async def export_phone_cb_handler(c: Client, cb: CallbackQuery):
             await cb.message.edit("❌ Akun ini tidak memiliki nomor telepon yang terdaftar.")
             return
 
-        # ✅ KIRIM VIA CLIENT BOT (BUKAN VIA USER)
         await c.send_message(
             chat_id=user_id,
             text=f"📞 **Nomor telepon untuk akun `{user_info.first_name}`:**\n\n`+{user_info.phone_number}`"
@@ -307,11 +512,11 @@ async def export_phone_cb_handler(c: Client, cb: CallbackQuery):
         log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
         log_msg = (
             "📞 <b>NOMOR TELEPON DIEKSPOR</b>\n\n"
-            f"• <b>User:</b> <a href='tg://user?id={user_id}'>{user.first_name}</a> (<code>{user_id}</code>)\n"
-            f"• <b>Akun:</b> {user_info.first_name} | <code>+{user_info.phone_number}</code>\n"
+            f"• <b>User:</b> <a href='tg://user?id={user_id}'>{html.escape(user.first_name)}</a> (<code>{user_id}</code>)\n"
+            f"• <b>Akun:</b> <a href='tg://user?id={user_info.id}'>{html.escape(user_info.first_name)}</a> | <code>+{user_info.phone_number}</code>\n"
             f"• <b>Waktu:</b> <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>"
         )
-        await Altruix.bot.send_message(log_chat_id, log_msg)
+        await Altruix.bot.send_message(log_chat_id, log_msg, parse_mode="html")
         await cb.message.edit("✅ Nomor telepon dikirim ke pesan pribadi Anda.")
         
     except Exception as e:
@@ -323,7 +528,7 @@ async def export_phone_cb_handler(c: Client, cb: CallbackQuery):
         )
         log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
         try:
-            await Altruix.bot.send_message(log_chat_id, error_text)
+            await Altruix.bot.send_message(log_chat_id, error_text, parse_mode="html")
         except Exception:
             pass
 
@@ -360,12 +565,12 @@ async def export_session_cb_handler(c: Client, cb: CallbackQuery):
         session_user = Altruix.clients[index].myself
         log_msg = (
             "📤 <b>SESSION DIEKSPOR</b>\n\n"
-            f"• <b>User:</b> <a href='tg://user?id={user_id}'>{user.first_name}</a> (<code>{user_id}</code>)\n"
-            f"• <b>Akun:</b> {session_user.first_name or 'Unknown'} "
+            f"• <b>User:</b> <a href='tg://user?id={user_id}'>{html.escape(user.first_name)}</a> (<code>{user_id}</code>)\n"
+            f"• <b>Akun:</b> <a href='tg://user?id={session_user.id}'>{html.escape(session_user.first_name or 'Unknown')}</a> "
             f"(@{session_user.username if session_user.username else 'None'}) | <code>{session_user.id}</code>\n"
             f"• <b>Waktu:</b> <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>"
         )
-        await Altruix.bot.send_message(log_chat_id, log_msg)
+        await Altruix.bot.send_message(log_chat_id, log_msg, parse_mode="html")
         await cb.message.edit("✅ Session dikirim ke pesan pribadi Anda.")
         
     except Exception as e:
@@ -377,7 +582,7 @@ async def export_session_cb_handler(c: Client, cb: CallbackQuery):
         )
         log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
         try:
-            await Altruix.bot.send_message(log_chat_id, error_text)
+            await Altruix.bot.send_message(log_chat_id, error_text, parse_mode="html")
         except Exception:
             pass
 
