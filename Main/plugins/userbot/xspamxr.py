@@ -32,7 +32,7 @@ import logging
 
 plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xspamxr"
-PLUGIN_VERSION = "v0.1.11.12:"
+PLUGIN_VERSION = "0.1.11.13:"
 
 logger = logging.getLogger(f"{__plugin_name__}")
 if not logger.handlers:
@@ -48,17 +48,17 @@ if not logger.handlers:
 f"""
 ✘ Commands Available -
 
-• `{i}relayspam <chat/destination> <start_delay> <stop_delay> <step> <count> <delete/purge> <emot_react/optional> ["msg_1", "msg_2", ...]` 
+• `.relayspam <chat/destination> <start_delay> <stop_delay> <step> <count> <delete/purge> <emot_react/optional> ["msg_1", "msg_2", ...]` 
    Atau `[("msg_1", batch_count1), ("msg_2", batch_count2), ...]`
    Spam ke chat tujuan dengan delay acak berinterval dan pesan acak dari list.
 
-• `{i}srelayspam <chat/destination>` - Stop task
-• `{i}prelayspam <chat/destination>` - Pause task  
-• `{i}rrelayspam <chat/destination>` - Resume task
-• `{i}relayspamcek <chat/destination>` - Check status
-• `{i}relayspamcekall` - Check all tasks
+• `.srelayspam <chat/destination>` - Stop task
+• `.prelayspam <chat/destination>` - Pause task  
+• `.rrelayspam <chat/destination>` - Resume task
+• `.relayspamcek <chat/destination>` - Check status
+• `.relayspamcekall` - Check all tasks
 
-**CHANGELOG {PLUGIN_VERSION}:**
+**CHANGELOG v{PLUGIN_VERSION}:**
 - ADDED: Tombol toggle untuk enable/disable purge old message secara real-time.
 - ADDED: Update konfigurasi old_purge tanpa restart task.
 - ADDED: Log perubahan status purge.
@@ -1402,5 +1402,7 @@ async def handle_msg_list_input(c: Client, m: Message):
                 await m.reply(f"⚠️ **Error:** {err}")
 
 # Log sukses loading
-Altruix.log(f"[DEBUG] Loaded → {__plugin_name__} v{PLUGIN_VERSION}", level=20)
-logger.info(f"[DEBUG] Loaded → {__plugin_name__} v{PLUGIN_VERSION}")
+try:
+    Altruix.log(f"[DEBUG] Loaded → {__plugin_name__} v{PLUGIN_VERSION}", level=20)
+except Exception as e:
+    logger.info(f"[DEBUG] Loaded → {__plugin_name__} v{PLUGIN_VERSION}")
