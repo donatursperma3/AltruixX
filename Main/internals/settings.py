@@ -166,8 +166,9 @@ async def export_all_phones_handler(c: Client, cb: CallbackQuery):
         file_stream = io.BytesIO(file_content.encode())
         file_stream.name = "all_phone_numbers.txt"
 
-        # ✅ Kirim file ke user
-        await user.send_document(
+        # ✅ Kirim file ke user via bot
+        await Altruix.bot.send_document(
+            chat_id=user.id,
             document=file_stream,
             caption="📲 **All Phone Numbers Exported**\nFile ini berisi data semua session Anda."
         )
