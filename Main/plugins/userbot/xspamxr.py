@@ -6,27 +6,6 @@
 #
 # All rights reserved.
 
-"""
-✘ Commands Available -
-
-• `{i}relayspam <chat/destination> <start_delay> <stop_delay> <step> <count> <delete/purge> <emot_react/optional> ["msg_1", "msg_2", ...]` 
-   Atau `[("msg_1", batch_count1), ("msg_2", batch_count2), ...]`
-   Spam ke chat tujuan dengan delay acak berinterval dan pesan acak dari list.
-
-• `{i}srelayspam <chat/destination>` - Stop task
-• `{i}prelayspam <chat/destination>` - Pause task  
-• `{i}rrelayspam <chat/destination>` - Resume task
-• `{i}relayspamcek <chat/destination>` - Check status
-• `{i}relayspamcekall` - Check all tasks
-
-**CHANGELOG:**
-- ADDED: Tombol toggle untuk enable/disable purge old message secara real-time.
-- ADDED: Update konfigurasi old_purge tanpa restart task.
-- ADDED: Log perubahan status purge.
-- FIXED: Purge kini menggunakan config real-time dari memory.
-- ADDED: Opsi input pesan baru untuk Edit Last Msg dan Edit Msg List.
-"""
-
 import re
 import os
 import asyncio
@@ -48,13 +27,12 @@ from Main.core.decorators import inline_check
 from pyrogram.errors import RPCError
 from Main.core.decorators import log_errors
 
-
 # ─── LOGGER KHUSUS PLUGIN ───────────────────────────────────────────────
 import logging 
 
 plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xspamxr"
-PLUGIN_VERSION = "v0.1.11.11:"
+PLUGIN_VERSION = "v0.1.11.12:"
 
 logger = logging.getLogger(f"{__plugin_name__}")
 if not logger.handlers:
@@ -66,6 +44,27 @@ if not logger.handlers:
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
 
+
+f"""
+✘ Commands Available -
+
+• `{i}relayspam <chat/destination> <start_delay> <stop_delay> <step> <count> <delete/purge> <emot_react/optional> ["msg_1", "msg_2", ...]` 
+   Atau `[("msg_1", batch_count1), ("msg_2", batch_count2), ...]`
+   Spam ke chat tujuan dengan delay acak berinterval dan pesan acak dari list.
+
+• `{i}srelayspam <chat/destination>` - Stop task
+• `{i}prelayspam <chat/destination>` - Pause task  
+• `{i}rrelayspam <chat/destination>` - Resume task
+• `{i}relayspamcek <chat/destination>` - Check status
+• `{i}relayspamcekall` - Check all tasks
+
+**CHANGELOG {PLUGIN_VERSION}:**
+- ADDED: Tombol toggle untuk enable/disable purge old message secara real-time.
+- ADDED: Update konfigurasi old_purge tanpa restart task.
+- ADDED: Log perubahan status purge.
+- FIXED: Purge kini menggunakan config real-time dari memory.
+- ADDED: Opsi input pesan baru untuk Edit Last Msg dan Edit Msg List.
+"""
 
 # Dictionary global untuk menyimpan status task relayspam per chat
 TELAYSPAM_TASKS = {}
@@ -554,9 +553,7 @@ async def telayspammer_cmd(c: Client, m: Message):
         
         if not args_str:
             await m.handle_message(
-                "INVALID_ARG_COUNT",
-                string_args=(f"{HANDLER}relayspam <destination> <start_delay> <stop_delay> <step> <count> <purge> <emot_react/optional> [\"msg1\", \"msg2\"]\n"
-                           f"Atau: {HANDLER}relayspam <destination> <start_delay> <stop_delay> <step> <count> <purge> <emot_react/optional> [(\"msg1\", 100), (\"msg2\", 100)]")
+                "INVALID_ARG_COUNT"
             )
             return
         
@@ -582,9 +579,7 @@ async def telayspammer_cmd(c: Client, m: Message):
         
         if len(args) not in [6, 7]:
             await m.handle_message(
-                "INVALID_ARG_COUNT",
-                string_args=(f"{HANDLER}relayspam <destination> <start_delay> <stop_delay> <step> <count> <purge> <emot_react/optional> [\"msg1\", \"msg2\"]\n"
-                           f"Contoh: {HANDLER}relayspam -1001234567890 6 16 2 5 0 👍 [\"Hello\", \"World\"]")
+                "INVALID_ARG_COUNT"
             )
             return
 
@@ -625,14 +620,12 @@ async def telayspammer_cmd(c: Client, m: Message):
             return
 
     except (ValueError, IndexError, SyntaxError) as err:
-        await m.handle_message(
-            "PARSING_ERROR",
-            string_args=(str(err), f"{HANDLER}relayspam <destination> <start_delay> <stop_delay> <step> <count> <purge> <emot_react> [\"msg1\", \"msg2\"]")
-        )
+        Altruix.log(f"Error parsing command: {err}", level=40)
+        await m.handle_message("PARSING_ERROR")
         return
     except Exception as e:
         Altruix.log(f"Error parsing command: {e}", level=40)
-        await m.handle_message("ERROR_OCCURRED", string_args=(str(e),))
+        await m.handle_message("ERROR_OCCURRED")
         return
 
     await m.handle_message("PROCESSING_TASK")
@@ -640,7 +633,9 @@ async def telayspammer_cmd(c: Client, m: Message):
 
     success = await start_relayspam(c, destination, start_delay, stop_delay, step, count, old_purge, emot_react, msg_list, is_batch)
     if success:
-        await m.handle_message("TASK_STARTED_SUCCESS", string_args=(destination,))
+        # ============= PERBAIKAN: Tidak menggunakan string_args =============
+        # Mengirim pesan sukses langsung tanpa string_args
+        await m.handle_message("TASK_STARTED_SUCCESS")
     else:
         await m.handle_message("TASK_START_FAILED")
 
@@ -667,15 +662,17 @@ async def stop_telayspam_cmd(c: Client, m: Message):
         target_chat = await c.get_chat(int(destination) if destination.replace("-", "").isdigit() else destination)
         chat_id = str(target_chat.id)
         if chat_id not in TELAYSPAM_TASKS:
-            await m.handle_message("NO_TASK_RUNNING", string_args=(target_chat.title,))
+            await m.handle_message("NO_TASK_RUNNING")
             return
         TELAYSPAM_TASKS[chat_id]["running"] = False
         TELAYSPAM_TASKS[chat_id]["pause_event"].set()
         if "task" in TELAYSPAM_TASKS[chat_id]:
             TELAYSPAM_TASKS[chat_id]["task"].cancel()
-        await m.handle_message("TASK_STOPPED", string_args=(target_chat.title,))
+        # ============= PERBAIKAN: Tidak menggunakan string_args =============
+        await m.handle_message("TASK_STOPPED")
     except Exception as err:
-        await m.handle_message("STOP_TASK_ERROR", string_args=(str(err),))
+        Altruix.log(f"Error stopping task: {err}", level=40)
+        await m.handle_message("STOP_TASK_ERROR")
 
 @Altruix.register_on_cmd(
     ["prelayspam"],
@@ -700,12 +697,14 @@ async def pause_telayspam_cmd(c: Client, m: Message):
         target_chat = await c.get_chat(int(destination) if destination.replace("-", "").isdigit() else destination)
         chat_id = str(target_chat.id)
         if chat_id not in TELAYSPAM_TASKS:
-            await m.handle_message("NO_TASK_RUNNING", string_args=(target_chat.title,))
+            await m.handle_message("NO_TASK_RUNNING")
             return
         TELAYSPAM_TASKS[chat_id]["pause_event"].clear()
-        await m.handle_message("TASK_PAUSED", string_args=(target_chat.title,))
+        # ============= PERBAIKAN: Tidak menggunakan string_args =============
+        await m.handle_message("TASK_PAUSED")
     except Exception as err:
-        await m.handle_message("PAUSE_TASK_ERROR", string_args=(str(err),))
+        Altruix.log(f"Error pausing task: {err}", level=40)
+        await m.handle_message("PAUSE_TASK_ERROR")
 
 @Altruix.register_on_cmd(
     ["rrelayspam"],
@@ -730,12 +729,14 @@ async def resume_telayspam_cmd(c: Client, m: Message):
         target_chat = await c.get_chat(int(destination) if destination.replace("-", "").isdigit() else destination)
         chat_id = str(target_chat.id)
         if chat_id not in TELAYSPAM_TASKS:
-            await m.handle_message("NO_TASK_RUNNING", string_args=(target_chat.title,))
+            await m.handle_message("NO_TASK_RUNNING")
             return
         TELAYSPAM_TASKS[chat_id]["pause_event"].set()
-        await m.handle_message("TASK_RESUMED", string_args=(target_chat.title,))
+        # ============= PERBAIKAN: Tidak menggunakan string_args =============
+        await m.handle_message("TASK_RESUMED")
     except Exception as err:
-        await m.handle_message("RESUME_TASK_ERROR", string_args=(str(err),))
+        Altruix.log(f"Error resuming task: {err}", level=40)
+        await m.handle_message("RESUME_TASK_ERROR")
 
 @Altruix.register_on_cmd(
     ["relayspamcek"],
@@ -756,25 +757,24 @@ async def check_relayspam_cmd(c: Client, m: Message):
                 destination = "-100" + destination
             target_chat = await c.get_chat(int(destination) if destination.replace("-", "").isdigit() else destination)
             chat_id = str(target_chat.id)
-            chat_title = target_chat.title
+            if chat_id in TELAYSPAM_TASKS:
+                status = TELAYSPAM_TASKS[chat_id]
+                if status["running"]:
+                    if status["pause_event"].is_set():
+                        # ============= PERBAIKAN: Tidak menggunakan string_args =============
+                        await m.handle_message("TASK_STATUS_RUNNING")
+                    else:
+                        await m.handle_message("TASK_STATUS_PAUSED")
+                else:
+                    await m.handle_message("TASK_STATUS_STOPPED")
+            else:
+                await m.handle_message("NO_TASK_FOR_CHAT")
         else:
             await m.handle_message("MISSING_DESTINATION_ARG")
             return
     except Exception as err:
-        await m.handle_message("CHAT_RESOLUTION_ERROR", string_args=(str(err),))
-        return
-
-    if chat_id in TELAYSPAM_TASKS:
-        status = TELAYSPAM_TASKS[chat_id]
-        if status["running"]:
-            if status["pause_event"].is_set():
-                await m.handle_message("TASK_STATUS_RUNNING", string_args=(chat_title,))
-            else:
-                await m.handle_message("TASK_STATUS_PAUSED", string_args=(chat_title,))
-        else:
-            await m.handle_message("TASK_STATUS_STOPPED", string_args=(chat_title,))
-    else:
-        await m.handle_message("NO_TASK_FOR_CHAT", string_args=(chat_title,))
+        Altruix.log(f"Error checking status: {err}", level=40)
+        await m.handle_message("CHAT_RESOLUTION_ERROR")
 
 @Altruix.register_on_cmd(
     ["relayspamcekall"],
