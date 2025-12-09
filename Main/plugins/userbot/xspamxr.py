@@ -40,7 +40,7 @@ from pyrogram import Client
 from pyrogram.raw.functions import Ping
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from pyrogram import errors
-from pyrogram.errors import FloodWait, SlowModeWait, ChatWriteForbidden
+from pyrogram.errors import FloodWait, ChatWriteForbidden
 
 from Main.core.types.message import Message
 from Main.utils.essentials import Essentials
@@ -204,7 +204,7 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
                             await asyncio.sleep(random_delay)
                             break
 
-                        except SlowModeWait as swe:
+                        except errors.exceptions.flood_420.SlowmodeWait as swe:
                             Altruix.log(f"SlowModeWaitError: Waiting for {swe.value} seconds", level=30)
                             await USER_CLIENT.send_message(
                                 Altruix.config.LOG_CHAT_ID, 
@@ -331,7 +331,7 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
                         await asyncio.sleep(random_delay)
                         break
 
-                    except SlowModeWait as swe:
+                    except errors.exceptions.flood_420.SlowmodeWait as swe:
                         Altruix.log(f"SlowModeWaitError: Waiting for {swe.value} seconds", level=30)
                         await USER_CLIENT.send_message(
                             Altruix.config.LOG_CHAT_ID, 
