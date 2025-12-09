@@ -2,7 +2,7 @@
 #
 # This file is part of < https://github.com/Altruix/Altruix > project,
 # and is released under the "GNU v3.0 License Agreement".
-# Please see < https://github.com/Altruix/Altruix/blob/main/LICENSE >
+# Please see < https://github.com/Altriux/Altruix/blob/main/LICENSE >
 #
 # All rights reserved.
 
@@ -34,7 +34,6 @@ import random
 import shlex
 import ast
 import time
-import logging
 
 from Main import Altruix
 from pyrogram import Client, filters
@@ -46,14 +45,17 @@ from pyrogram.errors import FloodWait, ChatWriteForbidden
 from Main.core.types.message import Message
 from Main.utils.essentials import Essentials
 from Main.core.decorators import inline_check
-from pyrogram.errors import RPCError # new
+from pyrogram.errors import RPCError
 from Main.core.decorators import log_errors
-from Main.core.types.message import Message as AltruixMessage
+
+
 
 # ─── LOGGER KHUSUS PLUGIN ───────────────────────────────────────────────
+import logging 
+
 plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xspamxr"
-PLUGIN_VERSION = "v0.1.11.9:"
+PLUGIN_VERSION = "v0.1.11.10:"
 
 logger = logging.getLogger(f"{__plugin_name__}")
 if not logger.handlers:
@@ -65,9 +67,6 @@ if not logger.handlers:
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
 
-
-LOG_CHAT = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
-LOG_CHAT_ID = LOG_CHAT if LOG_CHAT else Altruix.config.LOG_CHAT_ID
 
 # Dictionary global untuk menyimpan status task relayspam per chat
 TELAYSPAM_TASKS = {}
@@ -81,8 +80,7 @@ EDIT_MSGLIST_WAITING = {}
 # Dictionary untuk menyimpan status edit last msg yang sedang menunggu input pengguna
 EDIT_LASTMSG_WAITING = {}
 
-# Referensi ke client utama Altruix - PERBAIKAN: Gunakan Altruix.userbot
-# PERHATIAN: Altruix mungkin punya struktur berbeda, sesuaikan jika perlu
+# Referensi ke client utama Altruix
 try:
     USER_CLIENT = Altruix.userbot
 except AttributeError:
@@ -90,6 +88,15 @@ except AttributeError:
         USER_CLIENT = Altruix.bot
     except AttributeError:
         USER_CLIENT = Altruix
+
+# ============= PERBAIKAN: Handler diambil dari config =============
+# Menggunakan handler dari config client alih-alih mencoba akses atribut yang tidak ada
+try:
+    HANDLER = Altruix.config.HANDLERS
+    if isinstance(HANDLER, list):
+        HANDLER = HANDLER[0]
+except AttributeError:
+    HANDLER = "."
 
 # --- Fungsi untuk update tombol purge secara dinamis ---
 async def update_purge_button(message: Message, chat_id: str, purge_enabled: bool):
@@ -132,9 +139,9 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
             for msg, b_count in msg_list:
                 for _ in range(b_count):
                     if not TELAYSPAM_TASKS.get(chat_id, {}).get("running", False):
-                        Altruix.log(f"Task dihentikan untuk chat {chat_id}")
+                        Altruix.log(f"Task dihentikan untuk chat {chat_id}", level=30)
                         await USER_CLIENT.send_message(
-                            LOG_CHAT_ID, 
+                            Altruix.config.LOG_CHAT_ID, 
                             f"__Task dihentikan untuk chat {chat_id}__"
                         )
                         break
@@ -165,7 +172,7 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
                                 total_del_ggl += del_ggl
                                 
                                 await USER_CLIENT.send_message(
-                                    LOG_CHAT_ID,
+                                    Altruix.config.LOG_CHAT_ID,
                                     f"[HAPUS]: Berhasil hapus <code>{del_suk}</code> pesan lama, gagal <code>{del_ggl}</code> pesan.",
                                     reply_to_message_id=x_msg.id,
                                     parse_mode="html"
@@ -173,7 +180,7 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
                         except Exception as del_err:
                             Altruix.log(f"Error saat menghapus pesan: {del_err}", level=40)
                             await USER_CLIENT.send_message(
-                                LOG_CHAT_ID, 
+                                Altruix.config.LOG_CHAT_ID, 
                                 f"Error hapus pesan: {del_err}", 
                                 reply_to_message_id=x_msg.id
                             )
@@ -202,7 +209,7 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
                             clean_chat_id = str(target_chat.id).replace("-100", "")
                             
                             await USER_CLIENT.send_message(
-                                LOG_CHAT_ID,
+                                Altruix.config.LOG_CHAT_ID,
                                 f"<b>Pesan terkirim</b>\n"
                                 f"Mode     : <code>{'Batch' if is_batch else 'Acak'}</code>\n"
                                 f"Delay    : <code>{random_delay:.2f}</code> detik\n"
@@ -221,7 +228,7 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
                         except errors.exceptions.flood_420.SlowmodeWait as swe:
                             Altruix.log(f"SlowModeWaitError: Waiting for {swe.value} seconds", level=30)
                             await USER_CLIENT.send_message(
-                                LOG_CHAT_ID, 
+                                Altruix.config.LOG_CHAT_ID, 
                                 f"** [ #ERROR ]** __SlowModeWaitError: Waiting for {swe.value} seconds__", 
                                 reply_to_message_id=x_msg.id
                             )
@@ -230,7 +237,7 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
                         except FloodWait as fwe:
                             Altruix.log(f"FloodWaitError: Waiting for {fwe.value} seconds", level=30)
                             await USER_CLIENT.send_message(
-                                LOG_CHAT_ID, 
+                                Altruix.config.LOG_CHAT_ID, 
                                 f"** [ #ERROR ]** __FloodWaitError: Waiting for {fwe.value} seconds__", 
                                 reply_to_message_id=x_msg.id
                             )
@@ -239,7 +246,7 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
                         except ChatWriteForbidden as cwe:
                             Altruix.log(f"Bot muted in chat {chat_id}: Pausing task automatically.", level=30)
                             await USER_CLIENT.send_message(
-                                LOG_CHAT_ID, 
+                                Altruix.config.LOG_CHAT_ID, 
                                 f"** [ #ERROR ]** __UserBot muted in chat {target_chat.title}: Task paused automatically.__", 
                                 reply_to_message_id=x_msg.id
                             )
@@ -249,7 +256,7 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
                         except Exception as send_err:
                             Altruix.log(f"Error saat mengirim pesan: {send_err}", level=40)
                             await USER_CLIENT.send_message(
-                                LOG_CHAT_ID, 
+                                Altruix.config.LOG_CHAT_ID, 
                                 f"** [ #ERROR ]** __Error saat mengirim pesan: {send_err}__", 
                                 reply_to_message_id=x_msg.id
                             )
@@ -258,9 +265,9 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
         else:  # Mode acak
             for _ in range(count):
                 if not TELAYSPAM_TASKS.get(chat_id, {}).get("running", False):
-                    Altruix.log(f"Task dihentikan untuk chat {chat_id}")
+                    Altruix.log(f"Task dihentikan untuk chat {chat_id}", level=30)
                     await USER_CLIENT.send_message(
-                        LOG_CHAT_ID, 
+                        Altruix.config.LOG_CHAT_ID, 
                         f"__Task dihentikan untuk chat {chat_id}__"
                     )
                     break
@@ -291,7 +298,7 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
                             total_del_ggl += del_ggl
                             
                             await USER_CLIENT.send_message(
-                                LOG_CHAT_ID,
+                                Altruix.config.LOG_CHAT_ID,
                                 f"[HAPUS]: Berhasil hapus <code>{del_suk}</code> pesan lama, gagal <code>{del_ggl}</code> pesan.",
                                 reply_to_message_id=x_msg.id,
                                 parse_mode="html"
@@ -299,7 +306,7 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
                     except Exception as del_err:
                         Altruix.log(f"Error saat menghapus pesan: {del_err}", level=40)
                         await USER_CLIENT.send_message(
-                            LOG_CHAT_ID, 
+                            Altruix.config.LOG_CHAT_ID, 
                             f"Error hapus pesan: {del_err}", 
                             reply_to_message_id=x_msg.id
                         )
@@ -329,7 +336,7 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
                         clean_chat_id = str(target_chat.id).replace("-100", "")
                         
                         await USER_CLIENT.send_message(
-                            LOG_CHAT_ID,
+                            Altruix.config.LOG_CHAT_ID,
                             f"<b>Pesan terkirim</b>\n"
                             f"Mode     : <code>{'Batch' if is_batch else 'Acak'}</code>\n"
                             f"Delay    : <code>{random_delay:.2f}</code> detik\n"
@@ -348,7 +355,7 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
                     except errors.exceptions.flood_420.SlowmodeWait as swe:
                         Altruix.log(f"SlowModeWaitError: Waiting for {swe.value} seconds", level=30)
                         await USER_CLIENT.send_message(
-                            LOG_CHAT_ID, 
+                            Altruix.config.LOG_CHAT_ID, 
                             f"** [ #ERROR ]** __SlowModeWaitError: Waiting for {swe.value} seconds__", 
                             reply_to_message_id=x_msg.id
                         )
@@ -357,7 +364,7 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
                     except FloodWait as fwe:
                         Altruix.log(f"FloodWaitError: Waiting for {fwe.value} seconds", level=30)
                         await USER_CLIENT.send_message(
-                            LOG_CHAT_ID, 
+                            Altruix.config.LOG_CHAT_ID, 
                             f"** [ #ERROR ]** __FloodWaitError: Waiting for {fwe.value} seconds__", 
                             reply_to_message_id=x_msg.id
                         )
@@ -366,7 +373,7 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
                     except ChatWriteForbidden as cwe:
                         Altruix.log(f"Bot muted in chat {chat_id}: Pausing task automatically.", level=30)
                         await USER_CLIENT.send_message(
-                            LOG_CHAT_ID, 
+                            Altruix.config.LOG_CHAT_ID, 
                             f"** [ #ERROR ]** __UserBot muted in chat {target_chat.title}: Task paused automatically.__", 
                             reply_to_message_id=x_msg.id
                         )
@@ -376,7 +383,7 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
                     except Exception as send_err:
                         Altruix.log(f"Error saat mengirim pesan: {send_err}", level=40)
                         await USER_CLIENT.send_message(
-                            LOG_CHAT_ID, 
+                            Altruix.config.LOG_CHAT_ID, 
                             f"** [ #ERROR ]** __Error saat mengirim pesan: {send_err}__", 
                             reply_to_message_id=x_msg.id
                         )
@@ -384,7 +391,7 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
 
         if TELAYSPAM_TASKS.get(chat_id, {}).get("running", False):
             await USER_CLIENT.send_message(
-                LOG_CHAT_ID,
+                Altruix.config.LOG_CHAT_ID,
                 f"<b>[SELESAI]</b>: \n"
                 f"Spam di <b>{target_chat.title}</b> telah selesai!\n"
                 f"Terkirim <code>{sent_count}</code> pesan ({'batch' if is_batch else 'acak'}), delay acak [{start_delay}-{stop_delay}] dengan interval {step} detik,\n"
@@ -395,7 +402,7 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
 
     except Exception as u:
         Altruix.log(f"Error in spam_loop: {u}", level=40)
-        await USER_CLIENT.send_message(LOG_CHAT_ID, f"__Error in spam_loop: {u}__")
+        await USER_CLIENT.send_message(Altruix.config.LOG_CHAT_ID, f"__Error in spam_loop: {u}__")
     finally:
         if chat_id in TELAYSPAM_TASKS:
             config = TELAYSPAM_TASKS[chat_id].pop('config', None)
@@ -419,7 +426,7 @@ async def start_relayspam(client: Client, destination: str, start_delay: float, 
 
         if chat_id in TELAYSPAM_TASKS:
             await USER_CLIENT.send_message(
-                LOG_CHAT_ID, 
+                Altruix.config.LOG_CHAT_ID, 
                 f"**Error:** Task relayspam sudah berjalan di {target_chat.title}."
             )
             return False
@@ -450,7 +457,7 @@ async def start_relayspam(client: Client, destination: str, start_delay: float, 
             f"<blockquote>\n"
             f"Tujuan     : <b><a href=\"https://t.me/c/{clean_id}/99999\">{target_chat.title}</a></b>\n"
             f"Chat_ID    : <code>-100{clean_id}</code>\n"
-            f"Perintah   : <code>{Altruix.handler}relayspam</code>\n"
+            f"Perintah   : <code>{HANDLER}relayspam</code>\n"
             f"Mode       : <code>{'Batch' if is_batch else 'Acak'}</code>\n"
             f"Delay      : <code>{start_delay}</code> - <code>{stop_delay}</code>/step <code>{step}</code> detik\n"
             f"Jumlah     : <code>{count}</code> pesan\n"
@@ -481,7 +488,7 @@ async def start_relayspam(client: Client, destination: str, start_delay: float, 
         ]
 
         x_msg = await USER_CLIENT.send_message(
-            LOG_CHAT_ID,
+            Altruix.config.LOG_CHAT_ID,
             f"{notif_msg}",
             reply_markup=InlineKeyboardMarkup(tombol_baris),
             parse_mode="html"
@@ -512,7 +519,7 @@ async def start_relayspam(client: Client, destination: str, start_delay: float, 
 
     except Exception as u:
         Altruix.log(f"Error in start_relayspam: {u}", level=40)
-        await USER_CLIENT.send_message(LOG_CHAT_ID, f"__Error in start_relayspam: {u}__")
+        await USER_CLIENT.send_message(Altruix.config.LOG_CHAT_ID, f"__Error in start_relayspam: {u}__")
         TELAYSPAM_TASKS.pop(chat_id, None)
         return False
 
@@ -532,8 +539,14 @@ async def telayspammer_cmd(c: Client, m: Message):
     Handler command: relayspam
     """
     try:
+        # PERBAIKAN UTAMA: Menggunakan m.user_input alih-alih Altruix.handler
         text = m.text.strip()
-        args_str = text[len(f"{Altruix.handler}relayspam "):]
+        
+        # Menghapus prefix dan command untuk mendapatkan argumen
+        # Pattern untuk menghapus command dan prefix
+        cmd_pattern = re.escape(HANDLER) + r'relayspam\s+'
+        args_str = re.sub(cmd_pattern, '', text, count=1)
+        
         msg_list_match = re.search(r'\[.*\]$', args_str, re.DOTALL)
         if not msg_list_match:
             await m.handle_message("INVALID_MSG_LIST_FORMAT")
@@ -546,8 +559,8 @@ async def telayspammer_cmd(c: Client, m: Message):
         if len(args) not in [6, 7]:
             await m.handle_message(
                 "INVALID_ARG_COUNT",
-                string_args=(f"{Altruix.handler}relayspam <destination> <start_delay> <stop_delay> <step> <count> <purge> <emot_react/optional> [\"msg1\", \"msg2\"]\n"
-                           f"Atau: {Altruix.handler}relayspam <destination> <start_delay> <stop_delay> <step> <count> <purge> <emot_react/optional> [(\"msg1\", 100), (\"msg2\", 100)]")
+                string_args=(f"{HANDLER}relayspam <destination> <start_delay> <stop_delay> <step> <count> <purge> <emot_react/optional> [\"msg1\", \"msg2\"]\n"
+                           f"Atau: {HANDLER}relayspam <destination> <start_delay> <stop_delay> <step> <count> <purge> <emot_react/optional> [(\"msg1\", 100), (\"msg2\", 100)]")
             )
             return
 
@@ -581,7 +594,7 @@ async def telayspammer_cmd(c: Client, m: Message):
     except (ValueError, IndexError, SyntaxError) as err:
         await m.handle_message(
             "PARSING_ERROR",
-            string_args=(str(err), f"{Altruix.handler}relayspam <destination> <start_delay> <stop_delay> <step> <count> <purge> <emot_react> [\"msg1\", \"msg2\"]")
+            string_args=(str(err), f"{HANDLER}relayspam <destination> <start_delay> <stop_delay> <step> <count> <purge> <emot_react> [\"msg1\", \"msg2\"]")
         )
         return
 
@@ -748,10 +761,6 @@ async def check_all_relayspam_cmd(c: Client, m: Message):
 
 # ==================== CALLBACK QUERY HANDLERS ====================
 
-# PERBAIKAN: Altruix tidak memiliki atribut 'on_callback'
-# Gunakan USER_CLIENT.on_callback_query() langsung dari client Pyrogram
-# USER_CLIENT adalah instance Client Pyrogram yang sudah kita dapatkan
-
 @USER_CLIENT.on_callback_query(filters.regex(r"toggle_purge_(-?\d+)"))
 @log_errors
 async def toggle_purge_handler(c: Client, cb):
@@ -772,7 +781,7 @@ async def toggle_purge_handler(c: Client, cb):
     await cb.answer(f"Purge old message: {status}", show_alert=True)
     
     await USER_CLIENT.send_message(
-        LOG_CHAT_ID,
+        Altruix.config.LOG_CHAT_ID,
         f"<b>PURGE TOGGLED</b>\n"
         f"Chat: <code>{config['destination']}</code>\n"
         f"Status: <b>{status}</b>\n"
@@ -807,7 +816,7 @@ async def handle_task_control(c: Client, cb):
         if action in ["stop", "pause", "resume", "cek"]:
             if chat_id not in TELAYSPAM_TASKS:
                 await cb.answer("⚫️ Task tidak aktif di chat ini.", show_alert=True)
-                await USER_CLIENT.send_message(LOG_CHAT_ID, f"⚫️ Task tidak aktif di chat ini.")
+                await USER_CLIENT.send_message(Altruix.config.LOG_CHAT_ID, f"⚫️ Task tidak aktif di chat ini.")
                 return
 
         if action == "stop":
@@ -816,17 +825,17 @@ async def handle_task_control(c: Client, cb):
             if "task" in TELAYSPAM_TASKS[chat_id]:
                 TELAYSPAM_TASKS[chat_id]["task"].cancel()
             await cb.answer(f"🔴 Task distop di {chat_title}.", show_alert=True)
-            await USER_CLIENT.send_message(LOG_CHAT_ID, f"🔴 Task distop di {chat_title}.")
+            await USER_CLIENT.send_message(Altruix.config.LOG_CHAT_ID, f"🔴 Task distop di {chat_title}.")
         
         elif action == "pause":
             TELAYSPAM_TASKS[chat_id]["pause_event"].clear()
             await cb.answer(f"🟡 Task dipause di {chat_title}.", show_alert=True)
-            await USER_CLIENT.send_message(LOG_CHAT_ID, f"🟡 Task dipause di {chat_title}.")
+            await USER_CLIENT.send_message(Altruix.config.LOG_CHAT_ID, f"🟡 Task dipause di {chat_title}.")
         
         elif action == "resume":
             TELAYSPAM_TASKS[chat_id]["pause_event"].set()
             await cb.answer(f"🟢 Task diresume di {chat_title}.", show_alert=True)
-            await USER_CLIENT.send_message(LOG_CHAT_ID, f"🟢 Task diresume di {chat_title}.")
+            await USER_CLIENT.send_message(Altruix.config.LOG_CHAT_ID, f"🟢 Task diresume di {chat_title}.")
         
         elif action == "cek":
             status = TELAYSPAM_TASKS[chat_id]
@@ -838,18 +847,18 @@ async def handle_task_control(c: Client, cb):
             else:
                 status_text = f"🔴 Task distop di {chat_title} (stopped)."
             await cb.answer(status_text, show_alert=True)
-            await USER_CLIENT.send_message(LOG_CHAT_ID, f"{status_text}.")
+            await USER_CLIENT.send_message(Altruix.config.LOG_CHAT_ID, f"{status_text}.")
         
         elif action == "recurring":
             if chat_id in TELAYSPAM_TASKS:
                 await cb.answer("⚠️ Task masih berjalan, hentikan dulu sebelum recurring.", show_alert=True)
-                await USER_CLIENT.send_message(LOG_CHAT_ID, f"⚠️ Task masih berjalan di {chat_title}, hentikan dulu.")
+                await USER_CLIENT.send_message(Altruix.config.LOG_CHAT_ID, f"⚠️ Task masih berjalan di {chat_title}, hentikan dulu.")
                 return
             
             config = COMPLETED_TASKS.get(chat_id)
             if not config:
                 await cb.answer("⚫️ Tidak ada task selesai untuk diulang di chat ini.", show_alert=True)
-                await USER_CLIENT.send_message(LOG_CHAT_ID, f"⚫️ Tidak ada task selesai untuk diulang di {chat_title}.")
+                await USER_CLIENT.send_message(Altruix.config.LOG_CHAT_ID, f"⚫️ Tidak ada task selesai untuk diulang di {chat_title}.")
                 return
             
             success = await start_relayspam(
@@ -867,10 +876,10 @@ async def handle_task_control(c: Client, cb):
             
             if success:
                 await cb.answer(f"🔁 Task recurring dimulai ulang di {chat_title}.", show_alert=True)
-                await USER_CLIENT.send_message(LOG_CHAT_ID, f"🔁 Task recurring dimulai ulang di {chat_title}.")
+                await USER_CLIENT.send_message(Altruix.config.LOG_CHAT_ID, f"🔁 Task recurring dimulai ulang di {chat_title}.")
             else:
                 await cb.answer(f"❌ Gagal memulai recurring di {chat_title}.", show_alert=True)
-                await USER_CLIENT.send_message(LOG_CHAT_ID, f"❌ Gagal memulai recurring di {chat_title}.")
+                await USER_CLIENT.send_message(Altruix.config.LOG_CHAT_ID, f"❌ Gagal memulai recurring di {chat_title}.")
         
         elif action == "delete_latest":
             try:
@@ -885,17 +894,17 @@ async def handle_task_control(c: Client, cb):
                         del_suk = len(message_ids)
                         await asyncio.sleep(3)
                         await cb.answer(f"🗑️ Berhasil hapus {del_suk} pesan terbaru di {chat_title}.", show_alert=True)
-                        await USER_CLIENT.send_message(LOG_CHAT_ID, f"🗑️ Berhasil hapus {del_suk} pesan terbaru di {chat_title}.")
+                        await USER_CLIENT.send_message(Altruix.config.LOG_CHAT_ID, f"🗑️ Berhasil hapus {del_suk} pesan terbaru di {chat_title}.")
                     except Exception as del_err:
                         Altruix.log(f"Error saat menghapus pesan terbaru: {del_err}", level=40)
                         await cb.answer(f"❌ Gagal hapus pesan terbaru: {del_err}", show_alert=True)
-                        await USER_CLIENT.send_message(LOG_CHAT_ID, f"❌ Gagal hapus pesan terbaru di {chat_title}: {del_err}")
+                        await USER_CLIENT.send_message(Altruix.config.LOG_CHAT_ID, f"❌ Gagal hapus pesan terbaru di {chat_title}: {del_err}")
                 else:
                     await cb.answer("⚫️ Tidak ada pesan untuk dihapus.", show_alert=True)
-                    await USER_CLIENT.send_message(LOG_CHAT_ID, f"⚫️ Tidak ada pesan untuk dihapus di {chat_title}.")
+                    await USER_CLIENT.send_message(Altruix.config.LOG_CHAT_ID, f"⚫️ Tidak ada pesan untuk dihapus di {chat_title}.")
             except Exception as err:
                 await cb.answer(f"Error: {err}", show_alert=True)
-                await USER_CLIENT.send_message(LOG_CHAT_ID, f"⚠️ **Error :** {err}")
+                await USER_CLIENT.send_message(Altruix.config.LOG_CHAT_ID, f"⚠️ **Error :** {err}")
         
         elif action == "delete_oldest":
             try:
@@ -914,17 +923,17 @@ async def handle_task_control(c: Client, cb):
                         del_suk = len(message_ids)
                         await asyncio.sleep(3)
                         await cb.answer(f"🗑️ Berhasil hapus {del_suk} pesan terlama di {chat_title}.", show_alert=True)
-                        await USER_CLIENT.send_message(LOG_CHAT_ID, f"🗑️ Berhasil hapus {del_suk} pesan terlama di {chat_title}.")
+                        await USER_CLIENT.send_message(Altruix.config.LOG_CHAT_ID, f"🗑️ Berhasil hapus {del_suk} pesan terlama di {chat_title}.")
                     except Exception as del_err:
                         Altruix.log(f"Error saat menghapus pesan terlama: {del_err}", level=40)
                         await cb.answer(f"❌ Gagal hapus pesan terlama: {del_err}", show_alert=True)
-                        await USER_CLIENT.send_message(LOG_CHAT_ID, f"❌ Gagal hapus pesan terlama di {chat_title}: {del_err}")
+                        await USER_CLIENT.send_message(Altruix.config.LOG_CHAT_ID, f"❌ Gagal hapus pesan terlama di {chat_title}: {del_err}")
                 else:
                     await cb.answer("⚫️ Tidak ada pesan untuk dihapus.", show_alert=True)
-                    await USER_CLIENT.send_message(LOG_CHAT_ID, f"⚫️ Tidak ada pesan untuk dihapus di {chat_title}.")
+                    await USER_CLIENT.send_message(Altruix.config.LOG_CHAT_ID, f"⚫️ Tidak ada pesan untuk dihapus di {chat_title}.")
             except Exception as err:
                 await cb.answer(f"Error: {err}", show_alert=True)
-                await USER_CLIENT.send_message(LOG_CHAT_ID, f"⚠️ **Error :** {err}")
+                await USER_CLIENT.send_message(Altruix.config.LOG_CHAT_ID, f"⚠️ **Error :** {err}")
         
         elif action == "edit_last":
             try:
@@ -945,7 +954,7 @@ async def handle_task_control(c: Client, cb):
                     )
                     cancel_button = [[InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_editlast_{chat_id}")]]
                     edit_notif_msg = await USER_CLIENT.send_message(
-                        LOG_CHAT_ID,
+                        Altruix.config.LOG_CHAT_ID,
                         notif_msg,
                         reply_markup=InlineKeyboardMarkup(cancel_button),
                         parse_mode="html"
@@ -959,11 +968,11 @@ async def handle_task_control(c: Client, cb):
                     await cb.answer(f"📝 Silakan masukkan teks baru untuk edit last msg di {chat_title}.", show_alert=True)
                 else:
                     await cb.answer("⚫️ Tidak ada pesan terakhir dari userbot untuk diedit.", show_alert=True)
-                    await USER_CLIENT.send_message(LOG_CHAT_ID, f"⚫️ Tidak ada pesan terakhir untuk diedit di {chat_title}.")
+                    await USER_CLIENT.send_message(Altruix.config.LOG_CHAT_ID, f"⚫️ Tidak ada pesan terakhir untuk diedit di {chat_title}.")
             except Exception as edit_err:
                 Altruix.log(f"Error saat memulai edit last msg: {edit_err}", level=40)
                 await cb.answer(f"❌ Gagal memulai edit: {edit_err}", show_alert=True)
-                await USER_CLIENT.send_message(LOG_CHAT_ID, f"❌ Gagal memulai edit last msg di {chat_title}: {edit_err}")
+                await USER_CLIENT.send_message(Altruix.config.LOG_CHAT_ID, f"❌ Gagal memulai edit last msg di {chat_title}: {edit_err}")
         
         elif action == "edit_msglist":
             config = None
@@ -980,7 +989,7 @@ async def handle_task_control(c: Client, cb):
                 config = COMPLETED_TASKS.get(chat_id)
             else:
                 await cb.answer("⚫️ Tidak ada task aktif atau selesai untuk mengedit msg_list.", show_alert=True)
-                await USER_CLIENT.send_message(LOG_CHAT_ID, f"⚫️ Tidak ada task untuk mengedit msg_list di {chat_title}.")
+                await USER_CLIENT.send_message(Altruix.config.LOG_CHAT_ID, f"⚫️ Tidak ada task untuk mengedit msg_list di {chat_title}.")
                 return
 
             if config:
@@ -997,7 +1006,7 @@ async def handle_task_control(c: Client, cb):
                 )
                 cancel_button = [[InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_edit_{chat_id}")]]
                 edit_notif_msg = await USER_CLIENT.send_message(
-                    LOG_CHAT_ID,
+                    Altruix.config.LOG_CHAT_ID,
                     notif_msg,
                     reply_markup=InlineKeyboardMarkup(cancel_button),
                     parse_mode="html"
@@ -1010,7 +1019,7 @@ async def handle_task_control(c: Client, cb):
                 await cb.answer(f"📝 Silakan masukkan list pesan baru di {chat_title}.", show_alert=True)
             else:
                 await cb.answer("⚫️ Tidak ada config untuk mengedit msg_list.", show_alert=True)
-                await USER_CLIENT.send_message(LOG_CHAT_ID, f"⚫️ Tidak ada config untuk mengedit msg_list di {chat_title}.")
+                await USER_CLIENT.send_message(Altruix.config.LOG_CHAT_ID, f"⚫️ Tidak ada config untuk mengedit msg_list di {chat_title}.")
         
         elif action == "cancel_edit":
             if chat_id in EDIT_MSGLIST_WAITING:
@@ -1020,7 +1029,7 @@ async def handle_task_control(c: Client, cb):
                 EDIT_MSGLIST_WAITING.pop(chat_id, None)
                 await cb.answer(f"❌ Proses edit msg_list dibatalkan di {chat_title}.", show_alert=True)
                 await USER_CLIENT.send_message(
-                    LOG_CHAT_ID,
+                    Altruix.config.LOG_CHAT_ID,
                     f"❌ Proses edit msg_list dibatalkan di {chat_title}.",
                     reply_to_message_id=notif_msg_id,
                     parse_mode="html"
@@ -1040,19 +1049,19 @@ async def handle_task_control(c: Client, cb):
                     )
                     if success:
                         await USER_CLIENT.send_message(
-                            LOG_CHAT_ID,
+                            Altruix.config.LOG_CHAT_ID,
                             f"✅ Task dikembalikan ke config default dan dimulai ulang di {chat_title}.",
                             parse_mode="html"
                         )
                     else:
                         await USER_CLIENT.send_message(
-                            LOG_CHAT_ID,
+                            Altruix.config.LOG_CHAT_ID,
                             f"❌ Gagal memulai ulang task di {chat_title}.",
                             parse_mode="html"
                         )
             else:
                 await cb.answer("⚫️ Tidak ada proses edit msg_list untuk dibatalkan.", show_alert=True)
-                await USER_CLIENT.send_message(LOG_CHAT_ID, f"⚫️ Tidak ada proses edit msg_list untuk dibatalkan di {chat_title}.")
+                await USER_CLIENT.send_message(Altruix.config.LOG_CHAT_ID, f"⚫️ Tidak ada proses edit msg_list untuk dibatalkan di {chat_title}.")
         
         elif action == "cancel_editlast":
             if chat_id in EDIT_LASTMSG_WAITING:
@@ -1060,27 +1069,27 @@ async def handle_task_control(c: Client, cb):
                 EDIT_LASTMSG_WAITING.pop(chat_id, None)
                 await cb.answer(f"❌ Proses edit last msg dibatalkan di {chat_title}.", show_alert=True)
                 await USER_CLIENT.send_message(
-                    LOG_CHAT_ID,
+                    Altruix.config.LOG_CHAT_ID,
                     f"❌ Proses edit last msg dibatalkan di {chat_title}.",
                     reply_to_message_id=notif_msg_id,
                     parse_mode="html"
                 )
             else:
                 await cb.answer("⚫️ Tidak ada proses edit last msg untuk dibatalkan.", show_alert=True)
-                await USER_CLIENT.send_message(LOG_CHAT_ID, f"⚫️ Tidak ada proses edit last msg untuk dibatalkan di {chat_title}.")
+                await USER_CLIENT.send_message(Altruix.config.LOG_CHAT_ID, f"⚫️ Tidak ada proses edit last msg untuk dibatalkan di {chat_title}.")
     
     except FloodWait as fwe:
         Altruix.log(f"FloodWaitError saat menangani aksi {action} untuk chat {chat_id}: Waiting for {fwe.value} seconds", level=30)
         await cb.answer(f"⚠️ Terlalu banyak permintaan. Tunggu {fwe.value} detik.", show_alert=True)
-        await USER_CLIENT.send_message(LOG_CHAT_ID, f"⚠️ **FloodWaitError:** Tunggu {fwe.value} detik untuk aksi {action} di {chat_title}.")
+        await USER_CLIENT.send_message(Altruix.config.LOG_CHAT_ID, f"⚠️ **FloodWaitError:** Tunggu {fwe.value} detik untuk aksi {action} di {chat_title}.")
     except ChatWriteForbidden as cwe:
         Altruix.log(f"ChatWriteForbiddenError saat menangani aksi {action} untuk chat {chat_id}: Bot tidak memiliki izin", level=30)
         await cb.answer(f"❌ Bot tidak memiliki izin untuk melakukan aksi ini di {chat_title}.", show_alert=True)
-        await USER_CLIENT.send_message(LOG_CHAT_ID, f"❌ **ChatWriteForbiddenError:** Bot tidak memiliki izin untuk aksi {action} di {chat_title}.")
+        await USER_CLIENT.send_message(Altruix.config.LOG_CHAT_ID, f"❌ **ChatWriteForbiddenError:** Bot tidak memiliki izin untuk aksi {action} di {chat_title}.")
     except Exception as err:
         Altruix.log(f"Error saat menangani aksi {action} untuk chat {chat_id}: {err}", level=40)
         await cb.answer(f"Error: {err}", show_alert=True)
-        await USER_CLIENT.send_message(LOG_CHAT_ID, f"⚠️ **Error :** {err}")
+        await USER_CLIENT.send_message(Altruix.config.LOG_CHAT_ID, f"⚠️ **Error :** {err}")
 
 @USER_CLIENT.on_callback_query(filters.regex(r"(cekall|stopall|recurringall|pauseall|resumeall)"))
 @log_errors
@@ -1091,7 +1100,7 @@ async def handle_global_controls(c: Client, cb):
     if data == "cekall":
         if not TELAYSPAM_TASKS:
             await cb.answer("⚫️ Tidak ada task relayspam yang aktif.", show_alert=True)
-            await USER_CLIENT.send_message(LOG_CHAT_ID, f"⚫️ Tidak ada task relayspam yang aktif.")
+            await USER_CLIENT.send_message(Altruix.config.LOG_CHAT_ID, f"⚫️ Tidak ada task relayspam yang aktif.")
             return
 
         status_list = []
@@ -1109,16 +1118,16 @@ async def handle_global_controls(c: Client, cb):
                 status_list.append(status_text)
             except Exception as err:
                 status_list.append(f"❓ Unknown chat (ID: {chat_id})")
-                await USER_CLIENT.send_message(LOG_CHAT_ID, f"Error: {err}")
+                await USER_CLIENT.send_message(Altruix.config.LOG_CHAT_ID, f"Error: {err}")
 
         output = "**Status Semua Task:**\n\n" + "\n".join(status_list)
         await cb.answer(output, show_alert=True)
-        await USER_CLIENT.send_message(LOG_CHAT_ID, f"{output}")
+        await USER_CLIENT.send_message(Altruix.config.LOG_CHAT_ID, f"{output}")
     
     elif data == "stopall":
         if not TELAYSPAM_TASKS:
             await cb.answer("⚫️ Tidak ada task aktif untuk dihentikan.", show_alert=True)
-            await USER_CLIENT.send_message(LOG_CHAT_ID, "⚫️ Tidak ada task aktif untuk dihentikan.")
+            await USER_CLIENT.send_message(Altruix.config.LOG_CHAT_ID, "⚫️ Tidak ada task aktif untuk dihentikan.")
             return
         
         stopped_count = 0
@@ -1130,12 +1139,12 @@ async def handle_global_controls(c: Client, cb):
             stopped_count += 1
         
         await cb.answer(f"🔴 Semua {stopped_count} task dihentikan.", show_alert=True)
-        await USER_CLIENT.send_message(LOG_CHAT_ID, f"🔴 Semua {stopped_count} task dihentikan.")
+        await USER_CLIENT.send_message(Altruix.config.LOG_CHAT_ID, f"🔴 Semua {stopped_count} task dihentikan.")
     
     elif data == "recurringall":
         if not COMPLETED_TASKS:
             await cb.answer("⚫️ Tidak ada task selesai untuk diulang.", show_alert=True)
-            await USER_CLIENT.send_message(LOG_CHAT_ID, "⚫️ Tidak ada task selesai untuk diulang.")
+            await USER_CLIENT.send_message(Altruix.config.LOG_CHAT_ID, "⚫️ Tidak ada task selesai untuk diulang.")
             return
         
         restarted_count = 0
@@ -1159,12 +1168,12 @@ async def handle_global_controls(c: Client, cb):
                 restarted_count += 1
         
         await cb.answer(f"🔁 {restarted_count} task recurring dimulai ulang.", show_alert=True)
-        await USER_CLIENT.send_message(LOG_CHAT_ID, f"🔁 {restarted_count} task recurring dimulai ulang.")
+        await USER_CLIENT.send_message(Altruix.config.LOG_CHAT_ID, f"🔁 {restarted_count} task recurring dimulai ulang.")
     
     elif data == "pauseall":
         if not TELAYSPAM_TASKS:
             await cb.answer("⚫️ Tidak ada task aktif untuk dipause.", show_alert=True)
-            await USER_CLIENT.send_message(LOG_CHAT_ID, "⚫️ Tidak ada task aktif untuk dipause.")
+            await USER_CLIENT.send_message(Altruix.config.LOG_CHAT_ID, "⚫️ Tidak ada task aktif untuk dipause.")
             return
         
         paused_chats = []
@@ -1185,16 +1194,16 @@ async def handle_global_controls(c: Client, cb):
         
         if paused_count == 0:
             await cb.answer("⚫️ Tidak ada task aktif yang sedang running untuk dipause.", show_alert=True)
-            await USER_CLIENT.send_message(LOG_CHAT_ID, "⚫️ Tidak ada task aktif yang sedang running untuk dipause.")
+            await USER_CLIENT.send_message(Altruix.config.LOG_CHAT_ID, "⚫️ Tidak ada task aktif yang sedang running untuk dipause.")
         else:
             output = f"🟡 Semua {paused_count} task dipause:\n\n" + "\n".join(paused_chats)
             await cb.answer(f"🟡 Semua {paused_count} task dipause.", show_alert=True)
-            await USER_CLIENT.send_message(LOG_CHAT_ID, output, parse_mode="html")
+            await USER_CLIENT.send_message(Altruix.config.LOG_CHAT_ID, output, parse_mode="html")
     
     elif data == "resumeall":
         if not TELAYSPAM_TASKS:
             await cb.answer("⚫️ Tidak ada task untuk diresume.", show_alert=True)
-            await USER_CLIENT.send_message(LOG_CHAT_ID, "⚫️ Tidak ada task untuk diresume.")
+            await USER_CLIENT.send_message(Altruix.config.LOG_CHAT_ID, "⚫️ Tidak ada task untuk diresume.")
             return
         
         resumed_chats = []
@@ -1215,17 +1224,15 @@ async def handle_global_controls(c: Client, cb):
         
         if resumed_count == 0:
             await cb.answer("⚫️ Tidak ada task yang dipause untuk diresume.", show_alert=True)
-            await USER_CLIENT.send_message(LOG_CHAT_ID, "⚫️ Tidak ada task yang dipause untuk diresume.")
+            await USER_CLIENT.send_message(Altruix.config.LOG_CHAT_ID, "⚫️ Tidak ada task yang dipause untuk diresume.")
         else:
             output = f"🟢 Semua {resumed_count} task diresume:\n\n" + "\n".join(resumed_chats)
             await cb.answer(f"🟢 Semua {resumed_count} task diresume.", show_alert=True)
-            await USER_CLIENT.send_message(LOG_CHAT_ID, output, parse_mode="html")
+            await USER_CLIENT.send_message(Altruix.config.LOG_CHAT_ID, output, parse_mode="html")
 
 # ==================== MESSAGE HANDLER UNTUK EDIT MSG LIST & LAST MSG ====================
 
-# PERBAIKAN: Untuk handler message non-command, gunakan USER_CLIENT.on_message()
-# Filter untuk hanya menangani pesan di LOG_CHANNEL yang merupakan reply
-@USER_CLIENT.on_message(filters.chat(int(LOG_CHAT_ID)) & filters.incoming & filters.reply)
+@USER_CLIENT.on_message(filters.chat(int(Altruix.config.LOG_CHAT_ID)) & filters.incoming & filters.reply)
 @log_errors
 async def handle_msg_list_input(c: Client, m: Message):
     """
