@@ -17,6 +17,7 @@ from pyrogram.types import LinkPreviewOptions
 
 from Main import Altruix
 from Main.core.types.message import Message
+from Main.core.decorators import log_errors
 
 # =============================================================================
 # LOGGER KHUSUS PLUGIN
@@ -83,6 +84,7 @@ async def safe_edit_or_reply(msg: Message, text: str, **kwargs) -> Message:
         },
     },
 )
+@log_errors
 async def advanced_set_command(c: Client, m: Message):
     # ─── PARSE ARGUMEN SECARA MANUAL ─────────────────────────────────────
     raw_text = (m.text or m.caption or "").strip()
