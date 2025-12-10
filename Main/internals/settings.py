@@ -1,8 +1,8 @@
-# Copyright (C) 2021-present by Altruix@Github, < https://github.com/Altruix/Altruix >
+# Copyright (C) 2021-present by Altruix@Github, < https://github.com/Altruix/Altruix   >
 #
-# This file is part of < https://github.com/Altruix/Altruix > project,
+# This file is part of < https://github.com/Altruix/Altruix   > project,
 # and is released under the "GNU v3.0 License Agreement".
-# Please see < https://github.com/Altriux/Altruix/blob/main/LICENSE >
+# Please see < https://github.com/Altriux/Altruix/blob/main/LICENSE   >
 #
 # All rights reserved.
 
@@ -19,6 +19,8 @@ from pyrogram.errors import (
     PeerIdInvalid, UserIsBlocked, ChatWriteForbidden, FloodWait, MessageIdInvalid,
     SlowmodeWait
 )
+# PERBAIKAN 1: Import ParseMode untuk mendukung versi Pyrogram/Kurigram terbaru
+from pyrogram.enums import ParseMode
 import os
 import logging
 import asyncio
@@ -120,8 +122,21 @@ async def sessions_menu_cb_handler(c: Client, cb: CallbackQuery):
     if has_next:
         nav_buttons.append(InlineKeyboardButton("Next", f"sessions_list_{page + 1}"))
     
-    # ✅ Pastikan SEMUA elemen adalah LIST OF LISTS
-    final_markup = buttons + [action_buttons] + [nav_buttons]
+    # PERBAIKAN 2: Pastikan struktur keyboard yang konsisten
+    # buttons dari get_sessions_buttons() adalah list of InlineKeyboardButton (bukan list of lists)
+    # Kita perlu membungkusnya dalam list jika tidak kosong
+    final_markup = []
+    
+    # Tambahkan session buttons jika ada (dalam format list of lists)
+    if buttons:
+        final_markup.append(buttons)
+    
+    # Tambahkan action buttons (sudah dalam format list)
+    final_markup.append(action_buttons)
+    
+    # Tambahkan navigation buttons (sudah dalam format list)
+    final_markup.append(nav_buttons)
+    
     total_sessions = len(Altruix.clients)
     
     try:
@@ -130,12 +145,13 @@ async def sessions_menu_cb_handler(c: Client, cb: CallbackQuery):
             reply_markup=InlineKeyboardMarkup(final_markup)
         )
     except Exception as e:
+        # PERBAIKAN 3: Gunakan ParseMode.HTML alih-alih string "html"
         # ✅ Gunakan LOG_CHAT_ID yang sudah didefinisikan
         await Altruix.bot.send_message(
             LOG_CHAT_ID,
             f"⚠️ <b>SESSION MENU ERROR</b>\n"
             f"• Error: <code>{str(e)}</code>",
-            parse_mode="html"
+            parse_mode=ParseMode.HTML  # Diperbaiki: "html" -> ParseMode.HTML
         )
         await cb.message.edit("❌ Gagal memuat menu. Owner telah diberi tahu.")
 
@@ -200,7 +216,7 @@ async def export_all_phones_handler(c: Client, cb: CallbackQuery):
             f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a>\n"
             f"• Jumlah Session: <code>{len(Altruix.clients)}</code>\n"
             f"• Waktu: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>",
-            parse_mode="html",
+            parse_mode=ParseMode.HTML,  # Diperbaiki: "html" -> ParseMode.HTML
             link_preview_options=LinkPreviewOptions(is_disabled=True)
         )
 
@@ -223,7 +239,7 @@ async def export_all_phones_handler(c: Client, cb: CallbackQuery):
             f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a>\n"
             f"• Error: <code>{type(e).__name__}</code>\n"
             f"• Solusi: Pastikan Anda memulai chat dengan bot assistant.",
-            parse_mode="html"
+            parse_mode=ParseMode.HTML  # Diperbaiki: "html" -> ParseMode.HTML
         )
 
     except Exception as e:
@@ -237,7 +253,7 @@ async def export_all_phones_handler(c: Client, cb: CallbackQuery):
             f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a>\n"
             f"• Error: <code>{str(e)}</code>\n"
             f"• Waktu: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>",
-            parse_mode="html"
+            parse_mode=ParseMode.HTML  # Diperbaiki: "html" -> ParseMode.HTML
         )
 
 
@@ -290,7 +306,7 @@ async def test_ping_all_execute_handler(c: Client, cb: CallbackQuery):
             await client.send_message(
                 chat_id=log_chat_id,
                 text=f"🏓 <b>Pong!</b>\nDari akun: <a href='tg://user?id={session_user.id}'>{html.escape(session_user.first_name or 'Unknown')}</a> | ID: <code>{session_user.id}</code>",
-                parse_mode="html",
+                parse_mode=ParseMode.HTML,  # Diperbaiki: "html" -> ParseMode.HTML
                 link_preview_options=LinkPreviewOptions(is_disabled=True)
             )
             success_count += 1
@@ -301,7 +317,7 @@ async def test_ping_all_execute_handler(c: Client, cb: CallbackQuery):
                 await client.send_message(
                     chat_id=log_chat_id,
                     text=f"🏓 <b>Pong!</b>\nDari akun: <a href='tg://user?id={session_user.id}'>{html.escape(session_user.first_name or 'Unknown')}</a> | ID: <code>{session_user.id}</code>",
-                    parse_mode="html",
+                    parse_mode=ParseMode.HTML,  # Diperbaiki: "html" -> ParseMode.HTML
                     link_preview_options=LinkPreviewOptions(is_disabled=True)
                 )
                 success_count += 1
@@ -331,7 +347,7 @@ async def test_ping_all_execute_handler(c: Client, cb: CallbackQuery):
         f"• Berhasil: <code>{success_count}</code> akun\n"
         f"• Gagal: <code>{failed_count}</code> akun\n"
         f"• Waktu: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>",
-        parse_mode="html",
+        parse_mode=ParseMode.HTML,  # Diperbaiki: "html" -> ParseMode.HTML
         link_preview_options=LinkPreviewOptions(is_disabled=True)
     )
     
@@ -432,14 +448,14 @@ async def test_ping_cb_handler(c: Client, cb: CallbackQuery):
                 f"<a href='tg://user?id={session_user.id}'>{html.escape(session_user.first_name or '')} {html.escape(session_user.last_name or '')}</a>\n"
                 f"• Tanggal: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>"
             ),
-            parse_mode="html",
+            parse_mode=ParseMode.HTML,  # Diperbaiki: "html" -> ParseMode.HTML
             link_preview_options=LinkPreviewOptions(is_disabled=True)
         )
         
         await cb.message.edit(
             f"✅ Ping berhasil! Pesan dikirim ke grup log.\n"
             f"Akun: <a href='tg://user?id={session_user.id}'>{html.escape(session_user.first_name or '')} {html.escape(session_user.last_name or '')}</a>",
-            parse_mode="html"
+            parse_mode=ParseMode.HTML  # Diperbaiki: "html" -> ParseMode.HTML
         )
         
         Altruix.log(f"Test ping sukses untuk session {index} ({session_user.id})")
@@ -462,7 +478,7 @@ async def test_ping_cb_handler(c: Client, cb: CallbackQuery):
                 f"• Session: <a href='tg://user?id={session_user.id}'>{html.escape(session_user.first_name or '')} {html.escape(session_user.last_name or '')}</a> (<code>{session_user.id}</code>)\n"
                 f"• Error: <code>{type(e).__name__}</code>\n"
                 f"• Solusi: Pastikan bot assistant dan userbot berada di group dan bisa mengirim pesan ke grup log.",
-                parse_mode="html"
+                parse_mode=ParseMode.HTML  # Diperbaiki: "html" -> ParseMode.HTML
             )
         except Exception as log_err:
             Altruix.log(f"Gagal kirim log error test ping: {log_err}")
@@ -478,7 +494,7 @@ async def test_ping_cb_handler(c: Client, cb: CallbackQuery):
                 f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a>\n"
                 f"• Session: <a href='tg://user?id={session_user.id}'>{html.escape(session_user.first_name or '')} {html.escape(session_user.last_name or '')}</a>\n"
                 f"• Error: <code>SlowmodeWait({e.value}s)</code>",
-                parse_mode="html"
+                parse_mode=ParseMode.HTML  # Diperbaiki: "html" -> ParseMode.HTML
             )
         except Exception as log_err:
             Altruix.log(f"Gagal kirim log error Slowmode: {log_err}")
@@ -495,7 +511,7 @@ async def test_ping_cb_handler(c: Client, cb: CallbackQuery):
                 f"• Session: <a href='tg://user?id={session_user.id}'>{html.escape(session_user.first_name or '')} {html.escape(session_user.last_name or '')}</a> (<code>{session_user.id}</code>)\n"
                 f"• Error: <code>{str(e)}</code>\n"
                 f"• Waktu: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>",
-                parse_mode="html"
+                parse_mode=ParseMode.HTML  # Diperbaiki: "html" -> ParseMode.HTML
             )
         except Exception as log_err:
             Altruix.log(f"Gagal kirim log error kritis test ping: {log_err}")
@@ -537,7 +553,7 @@ async def export_phone_cb_handler(c: Client, cb: CallbackQuery):
             f"• <b>Akun:</b> <a href='tg://user?id={user_info.id}'>{html.escape(user_info.first_name)}</a> | <code>+{user_info.phone_number}</code>\n"
             f"• <b>Waktu:</b> <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>"
         )
-        await Altruix.bot.send_message(log_chat_id, log_msg, parse_mode="html")
+        await Altruix.bot.send_message(log_chat_id, log_msg, parse_mode=ParseMode.HTML)  # Diperbaiki
         await cb.message.edit("✅ Nomor telepon dikirim ke pesan pribadi Anda.")
         
     except Exception as e:
@@ -549,7 +565,7 @@ async def export_phone_cb_handler(c: Client, cb: CallbackQuery):
         )
         log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
         try:
-            await Altruix.bot.send_message(log_chat_id, error_text, parse_mode="html")
+            await Altruix.bot.send_message(log_chat_id, error_text, parse_mode=ParseMode.HTML)  # Diperbaiki
         except Exception:
             pass
 
@@ -591,7 +607,7 @@ async def export_session_cb_handler(c: Client, cb: CallbackQuery):
             f"(@{session_user.username if session_user.username else 'None'}) | <code>{session_user.id}</code>\n"
             f"• <b>Waktu:</b> <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>"
         )
-        await Altruix.bot.send_message(log_chat_id, log_msg, parse_mode="html")
+        await Altruix.bot.send_message(log_chat_id, log_msg, parse_mode=ParseMode.HTML)  # Diperbaiki
         await cb.message.edit("✅ Session dikirim ke pesan pribadi Anda.")
         
     except Exception as e:
@@ -603,7 +619,7 @@ async def export_session_cb_handler(c: Client, cb: CallbackQuery):
         )
         log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
         try:
-            await Altruix.bot.send_message(log_chat_id, error_text, parse_mode="html")
+            await Altruix.bot.send_message(log_chat_id, error_text, parse_mode=ParseMode.HTML)  # Diperbaiki
         except Exception:
             pass
 
