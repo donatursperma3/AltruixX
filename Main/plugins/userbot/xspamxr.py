@@ -32,7 +32,7 @@ import logging
 
 plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xspamxr"
-PLUGIN_VERSION = "0.3.0.1:"
+PLUGIN_VERSION = "0.3.0.0:"
 
 logger = logging.getLogger(f"{__plugin_name__}")
 if not logger.handlers:
