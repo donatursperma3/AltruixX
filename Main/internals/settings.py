@@ -55,7 +55,7 @@ async def settings_menu_cb_handler(c: Client, cb: CallbackQuery):
     )
 
 
-def arrange_buttons(array: list, no=3) -> List:  # PERUBAHAN: Ubah dari 5 menjadi 3 untuk layout baru
+def arrange_buttons(array: list, no=3) -> List:
     """Mengatur tombol dalam baris dengan jumlah tertentu per baris"""
     n = int(no)
     return [array[i * n : (i + 1) * n] for i in range((len(array) + n - 1) // n)]
@@ -64,21 +64,46 @@ def arrange_buttons(array: list, no=3) -> List:  # PERUBAHAN: Ubah dari 5 menjad
 def get_sessions_buttons(page=1) -> Tuple[List[InlineKeyboardButton], bool, int]:
     """Mendapatkan tombol session dengan layout 3 tombol per baris"""
     per_page = 3  # PERUBAHAN: Ubah dari 9 menjadi 3 untuk layout baru [akun1][akun2][akun3]
-    buttons = [
-        InlineKeyboardButton(str(i.myself.first_name), f"session_info_{index}_{page}")
-        for index, i in enumerate(Altruix.clients)
-    ] + [InlineKeyboardButton("\u2795 Add a session", "add_session")]
-    len_buttons = len(buttons)
-    buttons = arrange_buttons(buttons, per_page)
     
-    total_pages = len(buttons)
+    # PERBAIKAN 1: Pastikan Altruix.clients tersedia dan memiliki properti myself
+    if not hasattr(Altruix, 'clients') or not Altruix.clients:
+        return [], False, 1
+    
+    buttons = []
+    for index, client in enumerate(Altruix.clients):
+        try:
+            # PERBAIKAN 2: Akses first_name dengan aman
+            first_name = getattr(getattr(client, 'myself', None), 'first_name', 'Unknown')
+            if not first_name or first_name == 'Unknown':
+                first_name = f"Session {index + 1}"
+            buttons.append(
+                InlineKeyboardButton(str(first_name), f"session_info_{index}_{page}")
+            )
+        except AttributeError:
+            buttons.append(
+                InlineKeyboardButton(f"Session {index + 1}", f"session_info_{index}_{page}")
+            )
+    
+    # Tambah tombol add session
+    buttons.append(InlineKeyboardButton("\u2795 Add a session", "add_session"))
+    
+    # PERBAIKAN 3: Pastikan arrange_buttons menerima list yang valid
+    if not buttons:
+        return [], False, 1
+    
+    # Atur tombol dalam baris
+    arranged_buttons = arrange_buttons(buttons, per_page)
+    
+    total_pages = len(arranged_buttons)
     if page < 1:
         page = 1
     elif page > total_pages:
         page = total_pages if total_pages > 0 else 1
 
-    current_buttons = buttons[page - 1] if total_pages > 0 else []
+    current_buttons = arranged_buttons[page - 1] if total_pages > 0 else []
     has_next = page < total_pages
+    
+    # PERBAIKAN 4: Kembalikan current_buttons sebagai list of InlineKeyboardButton (bukan list of lists)
     return current_buttons, has_next, total_pages
 
 
@@ -87,7 +112,7 @@ def get_sessions_buttons(page=1) -> Tuple[List[InlineKeyboardButton], bool, int]
 )
 @log_errors
 async def settings_command_handler(c: Client, m: Message):
-    total_sessions = len(Altruix.clients)
+    total_sessions = len(Altruix.clients) if hasattr(Altruix, 'clients') else 0
     settings_text = Altruix.get_string("SETTINGS_TEXT") or "<b>🛠️ Settings</b>"
     full_text = f"{settings_text}\n\n<b>Total Sessions:</b> <code>{total_sessions}</code>"
     
@@ -114,12 +139,12 @@ async def sessions_menu_cb_handler(c: Client, cb: CallbackQuery):
     LOG_CHAT_ID = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
 
     # PERUBAHAN: Susunan tombol sesuai permintaan
-    # Baris 1: Tombol session (sudah dalam format list of lists dari get_sessions_buttons)
+    # Baris 1: Tombol session (sudah dalam format list of InlineKeyboardButton dari get_sessions_buttons)
     # Baris 2: Tombol aksi [test ping all][export all sessions][export all phones]
     action_buttons = [
         InlineKeyboardButton("🏓 Test Ping All", "test_ping_all_confirmation"),
-        InlineKeyboardButton("📤 Export All Sessions", "export_all_sessions_confirmation"),  # TAMBAHAN: Tombol baru
-        InlineKeyboardButton("📲 Export All Phones", "export_all_phones_confirmation")  # PERUBAHAN: Menjadi konfirmasi
+        InlineKeyboardButton("📤 Export All Sessions", "export_all_sessions_confirmation"),
+        InlineKeyboardButton("📲 Export All Phones", "export_all_phones_confirmation")
     ]
     
     # Baris 3: Tombol navigasi [previous][back][next]
@@ -130,20 +155,22 @@ async def sessions_menu_cb_handler(c: Client, cb: CallbackQuery):
     if has_next:
         nav_buttons.append(InlineKeyboardButton("Next ➡️", f"sessions_list_{page + 1}"))
     
-    # Susun final markup dengan layout baru
+    # PERBAIKAN 5: Susun final markup dengan struktur yang benar
+    # buttons dari get_sessions_buttons adalah list of InlineKeyboardButton (satu baris)
+    # Kita perlu membungkusnya dalam list agar menjadi baris pertama
     final_markup = []
     
-    # Tambahkan session buttons jika ada
+    # Tambahkan session buttons sebagai baris pertama (jika ada)
     if buttons:
-        final_markup.extend(buttons)
+        final_markup.append(buttons)  # buttons sudah list of InlineKeyboardButton
     
-    # Tambahkan action buttons
-    final_markup.append(action_buttons)
+    # Tambahkan action buttons sebagai baris kedua
+    final_markup.append(action_buttons)  # action_buttons adalah list of InlineKeyboardButton
     
-    # Tambahkan navigation buttons
-    final_markup.append(nav_buttons)
+    # Tambahkan navigation buttons sebagai baris ketiga
+    final_markup.append(nav_buttons)  # nav_buttons adalah list of InlineKeyboardButton
     
-    total_sessions = len(Altruix.clients)
+    total_sessions = len(Altruix.clients) if hasattr(Altruix, 'clients') else 0
     
     try:
         await cb.message.edit(
@@ -155,7 +182,10 @@ async def sessions_menu_cb_handler(c: Client, cb: CallbackQuery):
         await Altruix.bot.send_message(
             LOG_CHAT_ID,
             f"⚠️ <b>SESSION MENU ERROR</b>\n"
-            f"• Error: <code>{str(e)}</code>",
+            f"• Error: <code>{html.escape(str(e))}</code>\n"
+            f"• Page: {page}\n"
+            f"• Total Sessions: {total_sessions}\n"
+            f"• Time: {datetime.now().strftime('%d-%m-%Y %H:%M:%S')}",
             parse_mode=ParseMode.HTML
         )
         await cb.message.edit("❌ Failed to load menu. Owner has been notified.")
@@ -286,7 +316,7 @@ async def execute_export_all_sessions(c: Client, m: Message):
         await m.reply("⛔ You are not authorized to use this feature.")
         return
     
-    if not Altruix.clients:
+    if not hasattr(Altruix, 'clients') or not Altruix.clients:
         await m.reply("❌ No sessions available to export.")
         return
     
@@ -297,26 +327,44 @@ async def execute_export_all_sessions(c: Client, m: Message):
         session_data = []
         for index, client in enumerate(Altruix.clients):
             try:
-                user_info = client.myself
-                first_name = user_info.first_name or "None"
-                last_name = user_info.last_name or "None"
-                full_name = f"{first_name} {last_name}".strip()
-                username = f"@{user_info.username}" if user_info.username else "None"
-                phone = user_info.phone_number or "Not Available"
+                # PERBAIKAN: Gunakan try-except untuk menghindari error
+                user_info = getattr(client, 'myself', None)
+                if not user_info:
+                    # Coba ambil info dengan get_me
+                    try:
+                        user_info = await client.get_me()
+                    except:
+                        user_info = None
                 
-                # Export session string
-                session_string = await client.export_session_string()
-                
-                session_data.append(
-                    f"=== SESSION {index + 1} ===\n"
-                    f"Name: {full_name}\n"
-                    f"Phone: +{phone}\n"
-                    f"ID: {user_info.id}\n"
-                    f"Username: {username}\n"
-                    f"DC ID: {user_info.dc_id or 'Unknown'}\n"
-                    f"Session String:\n{session_string}\n"
-                    f"{'=' * 40}\n"
-                )
+                if user_info:
+                    first_name = getattr(user_info, 'first_name', 'None')
+                    last_name = getattr(user_info, 'last_name', 'None')
+                    full_name = f"{first_name} {last_name}".strip()
+                    username = f"@{user_info.username}" if hasattr(user_info, 'username') and user_info.username else "None"
+                    phone = getattr(user_info, 'phone_number', 'Not Available')
+                    
+                    # Export session string
+                    try:
+                        session_string = await client.export_session_string()
+                    except Exception as e:
+                        session_string = f"Error exporting session: {str(e)}"
+                    
+                    session_data.append(
+                        f"=== SESSION {index + 1} ===\n"
+                        f"Name: {full_name}\n"
+                        f"Phone: +{phone}\n"
+                        f"ID: {getattr(user_info, 'id', 'Unknown')}\n"
+                        f"Username: {username}\n"
+                        f"DC ID: {getattr(user_info, 'dc_id', 'Unknown')}\n"
+                        f"Session String:\n{session_string}\n"
+                        f"{'=' * 40}\n"
+                    )
+                else:
+                    session_data.append(
+                        f"=== SESSION {index + 1} ERROR ===\n"
+                        f"Error: Cannot get user info\n"
+                        f"{'=' * 40}\n"
+                    )
             except Exception as e:
                 Altruix.log(f"Error exporting session {index}: {e}", level=logging.ERROR)
                 session_data.append(
@@ -399,7 +447,7 @@ async def execute_export_all_sessions(c: Client, m: Message):
             log_chat_id,
             f"⚠️ <b>EXPORT ALL SESSIONS CRITICAL ERROR</b>\n"
             f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a>\n"
-            f"• Error: <code>{str(e)}</code>\n"
+            f"• Error: <code>{html.escape(str(e))}</code>\n"
             f"• Time: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>",
             parse_mode=ParseMode.HTML
         )
@@ -499,7 +547,7 @@ async def execute_export_all_phones(c: Client, m: Message):
         await m.reply("⛔ You are not authorized to use this feature.")
         return
     
-    if not Altruix.clients:
+    if not hasattr(Altruix, 'clients') or not Altruix.clients:
         await m.reply("❌ No sessions available to export.")
         return
     
@@ -510,26 +558,37 @@ async def execute_export_all_phones(c: Client, m: Message):
         phone_data = []
         for index, client in enumerate(Altruix.clients):
             try:
-                user_info = client.myself
-                first_name = user_info.first_name or "None"
-                last_name = user_info.last_name or "None"
-                full_name = f"{first_name} {last_name}".strip()
-                username = f"@{user_info.username}" if user_info.username else "None"
-                phone = user_info.phone_number or "Not Available"
-                user_id_info = user_info.id
+                # PERBAIKAN: Gunakan getattr untuk menghindari error
+                user_info = getattr(client, 'myself', None)
+                if not user_info:
+                    # Coba ambil info dengan get_me
+                    try:
+                        user_info = await client.get_me()
+                    except:
+                        user_info = None
                 
-                phone_data.append(
-                    f"=== ACCOUNT {index + 1} ===\n"
-                    f"Name: {full_name}\n"
-                    f"Phone: +{phone}\n"
-                    f"ID: {user_id_info}\n"
-                    f"Username: {username}\n"
-                    f"DC ID: {user_info.dc_id or 'Unknown'}\n"
-                    f"{'=' * 40}\n"
-                )
+                if user_info:
+                    first_name = getattr(user_info, 'first_name', 'None')
+                    last_name = getattr(user_info, 'last_name', 'None')
+                    full_name = f"{first_name} {last_name}".strip()
+                    username = f"@{user_info.username}" if hasattr(user_info, 'username') and user_info.username else "None"
+                    phone = getattr(user_info, 'phone_number', 'Not Available')
+                    user_id_info = getattr(user_info, 'id', 'Unknown')
+                    
+                    phone_data.append(
+                        f"=== ACCOUNT {index + 1} ===\n"
+                        f"Name: {full_name}\n"
+                        f"Phone: +{phone}\n"
+                        f"ID: {user_id_info}\n"
+                        f"Username: {username}\n"
+                        f"DC ID: {getattr(user_info, 'dc_id', 'Unknown')}\n"
+                        f"{'=' * 40}\n"
+                    )
+                else:
+                    phone_data.append(f"=== ACCOUNT {index + 1} ERROR ===\nCannot get user info\n{'=' * 40}\n")
             except Exception as e:
                 Altruix.log(f"Error getting session info {index}: {e}", level=logging.ERROR)
-                phone_data.append(f"Error: {str(e)}\n{'=' * 40}\n")
+                phone_data.append(f"=== ACCOUNT {index + 1} ERROR ===\nError: {str(e)}\n{'=' * 40}\n")
         
         # Buat file teks
         file_content = "⚠️ Phone numbers are sensitive information. Keep secure!\n"
@@ -600,7 +659,7 @@ async def execute_export_all_phones(c: Client, m: Message):
             log_chat_id,
             f"⚠️ <b>EXPORT ALL PHONES CRITICAL ERROR</b>\n"
             f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a>\n"
-            f"• Error: <code>{str(e)}</code>\n"
+            f"• Error: <code>{html.escape(str(e))}</code>\n"
             f"• Time: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>",
             parse_mode=ParseMode.HTML
         )
@@ -674,7 +733,7 @@ async def test_ping_all_execute_handler(c: Client, cb: CallbackQuery):
     
     success_count = 0
     failed_count = 0
-    total_sessions = len(Altruix.clients)
+    total_sessions = len(Altruix.clients) if hasattr(Altruix, 'clients') else 0
     
     if total_sessions == 0:
         await cb.message.edit("❌ No sessions available to ping.")
@@ -683,26 +742,42 @@ async def test_ping_all_execute_handler(c: Client, cb: CallbackQuery):
     await cb.message.edit(f"✅ Starting ping test for <b>{total_sessions}</b> sessions...")
     
     for index, client in enumerate(Altruix.clients):
-        session_user = client.myself
         try:
-            await client.send_message(
-                chat_id=log_chat_id,
-                text=f"🏓 <b>Pong!</b>\nDari akun: <a href='tg://user?id={session_user.id}'>{html.escape(session_user.first_name or 'Unknown')}</a> | ID: <code>{session_user.id}</code>",
-                parse_mode=ParseMode.HTML,
-                link_preview_options=LinkPreviewOptions(is_disabled=True)
-            )
-            success_count += 1
+            session_user = getattr(client, 'myself', None)
+            if not session_user:
+                # Coba ambil info dengan get_me
+                try:
+                    session_user = await client.get_me()
+                except:
+                    session_user = None
             
-        except FloodWait as e:
-            await asyncio.sleep(e.value)
-            try:
+            if session_user:
+                first_name = getattr(session_user, 'first_name', 'Unknown')
+                user_id = getattr(session_user, 'id', 'Unknown')
+                
                 await client.send_message(
                     chat_id=log_chat_id,
-                    text=f"🏓 <b>Pong!</b>\nDari akun: <a href='tg://user?id={session_user.id}'>{html.escape(session_user.first_name or 'Unknown')}</a> | ID: <code>{session_user.id}</code>",
+                    text=f"🏓 <b>Pong!</b>\nDari akun: <a href='tg://user?id={user_id}'>{html.escape(first_name)}</a> | ID: <code>{user_id}</code>",
                     parse_mode=ParseMode.HTML,
                     link_preview_options=LinkPreviewOptions(is_disabled=True)
                 )
                 success_count += 1
+            else:
+                failed_count += 1
+                
+        except FloodWait as e:
+            await asyncio.sleep(e.value)
+            try:
+                if session_user:
+                    await client.send_message(
+                        chat_id=log_chat_id,
+                        text=f"🏓 <b>Pong!</b>\nDari akun: <a href='tg://user?id={session_user.id}'>{html.escape(session_user.first_name or 'Unknown')}</a> | ID: <code>{session_user.id}</code>",
+                        parse_mode=ParseMode.HTML,
+                        link_preview_options=LinkPreviewOptions(is_disabled=True)
+                    )
+                    success_count += 1
+                else:
+                    failed_count += 1
             except Exception:
                 failed_count += 1
                 
@@ -752,13 +827,29 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery):
         await cb.message.edit("Session not found.")
         return
 
-    session_info = Altruix.clients[index].myself
+    # PERBAIKAN: Gunakan getattr untuk menghindari error
+    session_client = Altruix.clients[index]
+    session_info = getattr(session_client, 'myself', None)
+    
+    if not session_info:
+        # Coba ambil info dengan get_me
+        try:
+            session_info = await session_client.get_me()
+        except Exception as e:
+            await cb.message.edit(f"Error getting session info: {str(e)}")
+            return
 
     is_scam = getattr(
         getattr(session_info, 'verification_status', session_info),
         'is_scam',
         False
     )
+
+    first_name = getattr(session_info, 'first_name', 'None')
+    last_name = getattr(session_info, 'last_name', 'None')
+    dc_id = getattr(session_info, 'dc_id', 'Unknown')
+    username = getattr(session_info, 'username', 'None')
+    user_id = getattr(session_info, 'id', 'Unknown')
 
     txt = (
         "<b>Session info</b>\n\n"
@@ -769,11 +860,11 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery):
         "<b>User ID:</b> <code>{}</code>\n"
         "<b>Is SCAM:</b> <code>{}</code>"
     ).format(
-        session_info.first_name or "None",
-        session_info.last_name or "None",
-        session_info.dc_id or "Unknown",
-        session_info.username or "None",
-        session_info.id,
+        first_name or "None",
+        last_name or "None",
+        dc_id or "Unknown",
+        username or "None",
+        user_id,
         "Yes" if is_scam else "No",
     )
     
@@ -819,7 +910,15 @@ async def test_ping_cb_handler(c: Client, cb: CallbackQuery):
     await cb.answer("🏓 Mengirim ping...", show_alert=False)
     log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
     session_client = Altruix.clients[index]
-    session_user = session_client.myself
+    session_user = getattr(session_client, 'myself', None)
+    
+    if not session_user:
+        # Coba ambil info dengan get_me
+        try:
+            session_user = await session_client.get_me()
+        except Exception as e:
+            await cb.answer(f"Error getting session info: {str(e)}", show_alert=True)
+            return
 
     try:
         await session_client.send_message(
@@ -840,7 +939,7 @@ async def test_ping_cb_handler(c: Client, cb: CallbackQuery):
             parse_mode=ParseMode.HTML
         )
         
-        Altruix.log(f"Test ping sukses untuk session {index} ({session_user.id})")
+        Altruix.log(f"Test ping sukses untuk session {index} ({getattr(session_user, 'id', 'Unknown')})")
 
     except FloodWait as e:
         await asyncio.sleep(e.value)
@@ -857,7 +956,7 @@ async def test_ping_cb_handler(c: Client, cb: CallbackQuery):
                 log_chat_id,
                 f"⚠️ <b>ERROR TEST PING</b>\n"
                 f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a>\n"
-                f"• Session: <a href='tg://user?id={session_user.id}'>{html.escape(session_user.first_name or '')} {html.escape(session_user.last_name or '')}</a> (<code>{session_user.id}</code>)\n"
+                f"• Session: <a href='tg://user?id={session_user.id}'>{html.escape(session_user.first_name or '')} {html.escape(session_user.last_name or '')}</a> (<code>{getattr(session_user, 'id', 'Unknown')}</code>)\n"
                 f"• Error: <code>{type(e).__name__}</code>\n"
                 f"• Solusi: Pastikan bot assistant dan userbot berada di group dan bisa mengirim pesan ke grup log.",
                 parse_mode=ParseMode.HTML
@@ -890,8 +989,8 @@ async def test_ping_cb_handler(c: Client, cb: CallbackQuery):
                 log_chat_id,
                 f"⚠️ <b>ERROR TEST PING (CRITICAL)</b>\n"
                 f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a>\n"
-                f"• Session: <a href='tg://user?id={session_user.id}'>{html.escape(session_user.first_name or '')} {html.escape(session_user.last_name or '')}</a> (<code>{session_user.id}</code>)\n"
-                f"• Error: <code>{str(e)}</code>\n"
+                f"• Session: <a href='tg://user?id={session_user.id}'>{html.escape(session_user.first_name or '')} {html.escape(session_user.last_name or '')}</a> (<code>{getattr(session_user, 'id', 'Unknown')}</code>)\n"
+                f"• Error: <code>{html.escape(str(e))}</code>\n"
                 f"• Waktu: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>",
                 parse_mode=ParseMode.HTML
             )
@@ -943,7 +1042,7 @@ async def export_phone_cb_handler(c: Client, cb: CallbackQuery):
             "⚠️ <b>ERROR SAAT EKSPOR NOMOR TELEPON</b>\n\n"
             f"• User ID: <code>{user_id}</code>\n"
             f"• Session Index: <code>{index}</code>\n"
-            f"• Error: <code>{str(e)}</code>"
+            f"• Error: <code>{html.escape(str(e))}</code>"
         )
         log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
         try:
@@ -997,7 +1096,7 @@ async def export_session_cb_handler(c: Client, cb: CallbackQuery):
             "⚠️ <b>ERROR SAAT EKSPOR SESSION</b>\n\n"
             f"• User ID: <code>{user_id}</code>\n"
             f"• Session Index: <code>{index}</code>\n"
-            f"• Error: <code>{str(e)}</code>"
+            f"• Error: <code>{html.escape(str(e))}</code>"
         )
         log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
         try:
@@ -1014,12 +1113,20 @@ async def export_session_cb_handler(c: Client, cb: CallbackQuery):
 async def refresh_session_info_cb_handler(c: Client, cb: CallbackQuery):
     index = int(cb.matches[0].group(1))
     
+    # PERBAIKAN: Pastikan Altruix.ourselves ada dan cukup panjang
+    if not hasattr(Altruix, 'ourselves'):
+        Altruix.ourselves = []
+    
     while len(Altruix.ourselves) <= index:
         Altruix.ourselves.append(None)
 
-    user = await Altruix.clients[index].get_me()
-    Altruix.ourselves[index] = user
-    Altruix.clients[index].myself = user
+    try:
+        user = await Altruix.clients[index].get_me()
+        Altruix.ourselves[index] = user
+        Altruix.clients[index].myself = user
+    except Exception as e:
+        await cb.answer(f"Error refreshing data: {str(e)}", show_alert=True)
+        return
 
     await cb.answer("Data refreshed!")
     await sessions_info_cb_handler(c, cb)
