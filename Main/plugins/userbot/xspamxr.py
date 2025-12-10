@@ -32,7 +32,7 @@ import logging
 
 plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xspamxr"
-PLUGIN_VERSION = "0.3.0.0:"
+PLUGIN_VERSION = "0.3.0.1:"
 
 logger = logging.getLogger(f"{__plugin_name__}")
 if not logger.handlers:
@@ -100,7 +100,6 @@ VALID_EMOJIS = [
 ]
 
 # Referensi ke client utama Altruix
-# PERBAIKAN: Pastikan selalu menggunakan userbot untuk mengirim spam dan menghapus pesan
 try:
     USER_CLIENT = Altruix.userbot
     BOT_CLIENT = Altruix.bot if hasattr(Altruix, 'bot') else None
@@ -902,7 +901,7 @@ async def check_all_relayspam_cmd(c: Client, m: Message):
 
 # ==================== CALLBACK QUERY HANDLERS ====================
 
-@Altruix.on_callback_query(filters.regex(r"toggle_purge_(-?\d+)"))
+@USER_CLIENT.on_callback_query(filters.regex(r"toggle_purge_(-?\d+)"))
 @log_errors
 async def toggle_purge_handler(c: Client, cb):
     """Handler untuk toggle purge old messages"""
@@ -945,7 +944,155 @@ async def toggle_purge_handler(c: Client, cb):
     except Exception as e:
         Altruix.log(f"Gagal update tombol purge: {e}", level=40)
 
-@Altruix.on_callback_query(filters.regex(r"adjust_purge_(-?\d+)"))
+@USER_CLIENT.on_callback_query(filters.regex(r"toggle_react_(-?\d+)"))
+@log_errors
+async def toggle_reaction_handler(c: Client, cb):
+    """Handler untuk toggle reaction"""
+    data = cb.data
+    chat_id = data.split("_")[-1]
+
+    if chat_id not in TELAYSPAM_TASKS:
+        await cb.answer("Task tidak aktif.", show_alert=True)
+        return
+
+    config = TELAYSPAM_TASKS[chat_id]["config"]
+    current_enabled = config.get("react_enabled", True)
+    new_enabled = not current_enabled
+    config["react_enabled"] = new_enabled
+
+    status = "AKTIF" if new_enabled else "NONAKTIF"
+    emoji = config["emot_react"] if config["emot_react"] and config["emot_react"].lower() != "none" else "None"
+    
+    await cb.answer(f"Reaction: {status} ({emoji})", show_alert=True)
+    
+    if USER_CLIENT:
+        await USER_CLIENT.send_message(
+            LOG_CHAT_ID,
+            f"REACTION TOGGLED\n"
+            f"Chat: {config['destination']}\n"
+            f"Status: {status}\n"
+            f"Emoji: {emoji}"
+        )
+
+    # Update tombol di notif utama
+    try:
+        notif_msg = TELAYSPAM_TASKS[chat_id].get("notif_msg")
+        if notif_msg:
+            await update_reaction_button(notif_msg, chat_id, new_enabled, emoji if new_enabled else None)
+    except Exception as e:
+        Altruix.log(f"Gagal update tombol reaction: {e}", level=40)
+
+@USER_CLIENT.on_callback_query(filters.regex(r"select_emoji_(-?\d+)"))
+@log_errors
+async def select_emoji_handler(c: Client, cb):
+    """Handler untuk memilih emoji reaction"""
+    data = cb.data
+    chat_id = data.split("_")[-1]
+
+    if chat_id not in TELAYSPAM_TASKS:
+        await cb.answer("Task tidak aktif.", show_alert=True)
+        return
+
+    # Buat keyboard dengan emoji yang valid
+    keyboard = []
+    row = []
+    
+    # Tampilkan 8 emoji per baris
+    for i, emoji in enumerate(VALID_EMOJIS):
+        row.append(InlineKeyboardButton(emoji, callback_data=f"set_emoji_{chat_id}_{emoji}"))
+        if (i + 1) % 8 == 0:
+            keyboard.append(row)
+            row = []
+    
+    if row:
+        keyboard.append(row)
+    
+    # Tambah tombol cancel
+    keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_emoji_{chat_id}")])
+    
+    # Simpan status pemilihan emoji
+    EMOJI_SELECTION_WAITING[chat_id] = True
+    
+    if USER_CLIENT:
+        await USER_CLIENT.send_message(
+            LOG_CHAT_ID,
+            f"Pilih emoji reaction untuk task di chat {chat_id}:\n\n"
+            f"Klik emoji di bawah untuk memilih, atau klik Cancel untuk membatalkan.",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    
+    await cb.answer("Pilih emoji dari daftar...", show_alert=False)
+
+@USER_CLIENT.on_callback_query(filters.regex(r"set_emoji_(-?\d+)_(.+)"))
+@log_errors
+async def set_emoji_handler(c: Client, cb):
+    """Handler untuk menyetel emoji yang dipilih"""
+    data = cb.data
+    parts = data.split("_")
+    chat_id = parts[2]
+    emoji = parts[3]
+
+    if chat_id not in TELAYSPAM_TASKS:
+        await cb.answer("Task tidak aktif.", show_alert=True)
+        return
+
+    # Validasi emoji
+    if emoji not in VALID_EMOJIS:
+        await cb.answer("Emoji tidak valid!", show_alert=True)
+        return
+
+    config = TELAYSPAM_TASKS[chat_id]["config"]
+    old_emoji = config["emot_react"]
+    config["emot_react"] = emoji
+    config["react_enabled"] = True  # Otomatis enable reaction saat pilih emoji
+
+    await cb.answer(f"Emoji reaction disetel ke: {emoji}", show_alert=True)
+    
+    if USER_CLIENT:
+        await USER_CLIENT.send_message(
+            LOG_CHAT_ID,
+            f"EMOJI UPDATED\n"
+            f"Chat: {config['destination']}\n"
+            f"Emoji sebelumnya: {old_emoji if old_emoji else 'None'}\n"
+            f"Emoji baru: {emoji}\n"
+            f"Status: AKTIF"
+        )
+
+    # Update tombol di notif utama
+    try:
+        notif_msg = TELAYSPAM_TASKS[chat_id].get("notif_msg")
+        if notif_msg:
+            await update_reaction_button(notif_msg, chat_id, True, emoji)
+    except Exception as e:
+        Altruix.log(f"Gagal update tombol reaction: {e}", level=40)
+    
+    # Hapus status pemilihan emoji
+    EMOJI_SELECTION_WAITING.pop(chat_id, None)
+    
+    # Hapus pesan pemilihan emoji
+    try:
+        await cb.message.delete()
+    except:
+        pass
+
+@USER_CLIENT.on_callback_query(filters.regex(r"cancel_emoji_(-?\d+)"))
+@log_errors
+async def cancel_emoji_handler(c: Client, cb):
+    """Handler untuk cancel pemilihan emoji"""
+    data = cb.data
+    chat_id = data.split("_")[-1]
+    
+    EMOJI_SELECTION_WAITING.pop(chat_id, None)
+    
+    await cb.answer("Pemilihan emoji dibatalkan", show_alert=True)
+    
+    # Hapus pesan pemilihan emoji
+    try:
+        await cb.message.delete()
+    except:
+        pass
+
+@USER_CLIENT.on_callback_query(filters.regex(r"adjust_purge_(-?\d+)"))
 @log_errors
 async def adjust_purge_handler(c: Client, cb):
     """Handler untuk menampilkan menu adjust purge"""
@@ -1002,7 +1149,7 @@ async def adjust_purge_handler(c: Client, cb):
     
     await cb.answer("Menu adjust purge ditampilkan", show_alert=False)
 
-@Altruix.on_callback_query(filters.regex(r"inc_purge_(-?\d+)_(\d+)"))
+@USER_CLIENT.on_callback_query(filters.regex(r"inc_purge_(-?\d+)_(\d+)"))
 @log_errors
 async def increase_purge_handler(c: Client, cb):
     """Handler untuk menambah jumlah purge"""
@@ -1056,7 +1203,7 @@ async def increase_purge_handler(c: Client, cb):
     # Hapus status waiting
     ADJUST_PURGE_WAITING.pop(chat_id, None)
 
-@Altruix.on_callback_query(filters.regex(r"dec_purge_(-?\d+)_(\d+)"))
+@USER_CLIENT.on_callback_query(filters.regex(r"dec_purge_(-?\d+)_(\d+)"))
 @log_errors
 async def decrease_purge_handler(c: Client, cb):
     """Handler untuk mengurangi jumlah purge"""
@@ -1111,7 +1258,7 @@ async def decrease_purge_handler(c: Client, cb):
     # Hapus status waiting
     ADJUST_PURGE_WAITING.pop(chat_id, None)
 
-@Altruix.on_callback_query(filters.regex(r"back_purge_(-?\d+)"))
+@USER_CLIENT.on_callback_query(filters.regex(r"back_purge_(-?\d+)"))
 @log_errors
 async def back_purge_handler(c: Client, cb):
     """Handler untuk kembali dari menu adjust purge"""
@@ -1131,7 +1278,7 @@ async def back_purge_handler(c: Client, cb):
     
     await cb.answer("Kembali ke menu utama", show_alert=False)
 
-@Altruix.on_callback_query(filters.regex(r"cancel_adjust_purge_(-?\d+)"))
+@USER_CLIENT.on_callback_query(filters.regex(r"cancel_adjust_purge_(-?\d+)"))
 @log_errors
 async def cancel_adjust_purge_handler(c: Client, cb):
     """Handler untuk cancel adjust purge"""
@@ -1151,155 +1298,7 @@ async def cancel_adjust_purge_handler(c: Client, cb):
     
     await cb.answer("Adjust purge dibatalkan", show_alert=True)
 
-@Altruix.on_callback_query(filters.regex(r"toggle_react_(-?\d+)"))
-@log_errors
-async def toggle_reaction_handler(c: Client, cb):
-    """Handler untuk toggle reaction"""
-    data = cb.data
-    chat_id = data.split("_")[-1]
-
-    if chat_id not in TELAYSPAM_TASKS:
-        await cb.answer("Task tidak aktif.", show_alert=True)
-        return
-
-    config = TELAYSPAM_TASKS[chat_id]["config"]
-    current_enabled = config.get("react_enabled", True)
-    new_enabled = not current_enabled
-    config["react_enabled"] = new_enabled
-
-    status = "AKTIF" if new_enabled else "NONAKTIF"
-    emoji = config["emot_react"] if config["emot_react"] and config["emot_react"].lower() != "none" else "None"
-    
-    await cb.answer(f"Reaction: {status} ({emoji})", show_alert=True)
-    
-    if USER_CLIENT:
-        await USER_CLIENT.send_message(
-            LOG_CHAT_ID,
-            f"REACTION TOGGLED\n"
-            f"Chat: {config['destination']}\n"
-            f"Status: {status}\n"
-            f"Emoji: {emoji}"
-        )
-
-    # Update tombol di notif utama
-    try:
-        notif_msg = TELAYSPAM_TASKS[chat_id].get("notif_msg")
-        if notif_msg:
-            await update_reaction_button(notif_msg, chat_id, new_enabled, emoji if new_enabled else None)
-    except Exception as e:
-        Altruix.log(f"Gagal update tombol reaction: {e}", level=40)
-
-@Altruix.on_callback_query(filters.regex(r"select_emoji_(-?\d+)"))
-@log_errors
-async def select_emoji_handler(c: Client, cb):
-    """Handler untuk memilih emoji reaction"""
-    data = cb.data
-    chat_id = data.split("_")[-1]
-
-    if chat_id not in TELAYSPAM_TASKS:
-        await cb.answer("Task tidak aktif.", show_alert=True)
-        return
-
-    # Buat keyboard dengan emoji yang valid
-    keyboard = []
-    row = []
-    
-    # Tampilkan 8 emoji per baris
-    for i, emoji in enumerate(VALID_EMOJIS):
-        row.append(InlineKeyboardButton(emoji, callback_data=f"set_emoji_{chat_id}_{emoji}"))
-        if (i + 1) % 8 == 0:
-            keyboard.append(row)
-            row = []
-    
-    if row:
-        keyboard.append(row)
-    
-    # Tambah tombol cancel
-    keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_emoji_{chat_id}")])
-    
-    # Simpan status pemilihan emoji
-    EMOJI_SELECTION_WAITING[chat_id] = True
-    
-    if USER_CLIENT:
-        await USER_CLIENT.send_message(
-            LOG_CHAT_ID,
-            f"Pilih emoji reaction untuk task di chat {chat_id}:\n\n"
-            f"Klik emoji di bawah untuk memilih, atau klik Cancel untuk membatalkan.",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-    
-    await cb.answer("Pilih emoji dari daftar...", show_alert=False)
-
-@Altruix.on_callback_query(filters.regex(r"set_emoji_(-?\d+)_(.+)"))
-@log_errors
-async def set_emoji_handler(c: Client, cb):
-    """Handler untuk menyetel emoji yang dipilih"""
-    data = cb.data
-    parts = data.split("_")
-    chat_id = parts[2]
-    emoji = parts[3]
-
-    if chat_id not in TELAYSPAM_TASKS:
-        await cb.answer("Task tidak aktif.", show_alert=True)
-        return
-
-    # Validasi emoji
-    if emoji not in VALID_EMOJIS:
-        await cb.answer("Emoji tidak valid!", show_alert=True)
-        return
-
-    config = TELAYSPAM_TASKS[chat_id]["config"]
-    old_emoji = config["emot_react"]
-    config["emot_react"] = emoji
-    config["react_enabled"] = True  # Otomatis enable reaction saat pilih emoji
-
-    await cb.answer(f"Emoji reaction disetel ke: {emoji}", show_alert=True)
-    
-    if USER_CLIENT:
-        await USER_CLIENT.send_message(
-            LOG_CHAT_ID,
-            f"EMOJI UPDATED\n"
-            f"Chat: {config['destination']}\n"
-            f"Emoji sebelumnya: {old_emoji if old_emoji else 'None'}\n"
-            f"Emoji baru: {emoji}\n"
-            f"Status: AKTIF"
-        )
-
-    # Update tombol di notif utama
-    try:
-        notif_msg = TELAYSPAM_TASKS[chat_id].get("notif_msg")
-        if notif_msg:
-            await update_reaction_button(notif_msg, chat_id, True, emoji)
-    except Exception as e:
-        Altruix.log(f"Gagal update tombol reaction: {e}", level=40)
-    
-    # Hapus status pemilihan emoji
-    EMOJI_SELECTION_WAITING.pop(chat_id, None)
-    
-    # Hapus pesan pemilihan emoji
-    try:
-        await cb.message.delete()
-    except:
-        pass
-
-@Altruix.on_callback_query(filters.regex(r"cancel_emoji_(-?\d+)"))
-@log_errors
-async def cancel_emoji_handler(c: Client, cb):
-    """Handler untuk cancel pemilihan emoji"""
-    data = cb.data
-    chat_id = data.split("_")[-1]
-    
-    EMOJI_SELECTION_WAITING.pop(chat_id, None)
-    
-    await cb.answer("Pemilihan emoji dibatalkan", show_alert=True)
-    
-    # Hapus pesan pemilihan emoji
-    try:
-        await cb.message.delete()
-    except:
-        pass
-
-@Altruix.on_callback_query(filters.regex(r"(stop|pause|resume|cek|recurring|delete_latest|delete_oldest|edit_last|edit_msglist|cancel_edit|cancel_editlast)_(-?\d+)"))
+@USER_CLIENT.on_callback_query(filters.regex(r"(stop|pause|resume|cek|recurring|delete_latest|delete_oldest|edit_last|edit_msglist|cancel_edit|cancel_editlast)_(-?\d+)"))
 @log_errors
 async def handle_task_control(c: Client, cb):
     """Handler untuk kontrol task via callback"""
@@ -1657,7 +1656,7 @@ async def handle_task_control(c: Client, cb):
         if USER_CLIENT:
             await USER_CLIENT.send_message(LOG_CHAT_ID, f"⚠️ **Error :** {err}")
 
-@Altruix.on_callback_query(filters.regex(r"(cekall|stopall|recurringall|pauseall|resumeall)"))
+@USER_CLIENT.on_callback_query(filters.regex(r"(cekall|stopall|recurringall|pauseall|resumeall)"))
 @log_errors
 async def handle_global_controls(c: Client, cb):
     """Handler untuk kontrol global semua task"""
@@ -1815,7 +1814,7 @@ async def handle_global_controls(c: Client, cb):
 
 # ==================== MESSAGE HANDLER UNTUK EDIT MSG LIST & LAST MSG ====================
 
-@Altruix.on_message(filters.chat(LOG_CHAT_ID) & filters.incoming & filters.reply)
+@USER_CLIENT.on_message(filters.chat(LOG_CHAT_ID) & filters.incoming & filters.reply)
 @log_errors
 async def handle_msg_list_input(c: Client, m: Message):
     """
