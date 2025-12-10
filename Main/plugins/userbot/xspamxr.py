@@ -32,7 +32,7 @@ import logging
 
 plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xspamxr"
-PLUGIN_VERSION = "0.3.0.0:"
+PLUGIN_VERSION = "0.3.0.2:"
 
 logger = logging.getLogger(f"{__plugin_name__}")
 if not logger.handlers:
@@ -900,8 +900,11 @@ async def check_all_relayspam_cmd(c: Client, m: Message):
     await m.edit(output)
 
 # ==================== CALLBACK QUERY HANDLERS ====================
+# PERBAIKAN UTAMA: Semua callback query handler harus didaftarkan ke bot (Altruix.bot), bukan USER_CLIENT
+# karena USER_CLIENT (Altruix.userbot) tidak memiliki method on_callback_query di ekosistem Altruix
 
-@USER_CLIENT.on_callback_query(filters.regex(r"toggle_purge_(-?\d+)"))
+# PERBAIKAN: Ganti semua @USER_CLIENT.on_callback_query menjadi @Altruix.bot.on_callback_query
+@Altruix.bot.on_callback_query(filters.regex(r"toggle_purge_(-?\d+)"))
 @log_errors
 async def toggle_purge_handler(c: Client, cb):
     """Handler untuk toggle purge old messages"""
@@ -944,7 +947,8 @@ async def toggle_purge_handler(c: Client, cb):
     except Exception as e:
         Altruix.log(f"Gagal update tombol purge: {e}", level=40)
 
-@USER_CLIENT.on_callback_query(filters.regex(r"toggle_react_(-?\d+)"))
+# PERBAIKAN: Ganti @USER_CLIENT.on_callback_query menjadi @Altruix.bot.on_callback_query
+@Altruix.bot.on_callback_query(filters.regex(r"toggle_react_(-?\d+)"))
 @log_errors
 async def toggle_reaction_handler(c: Client, cb):
     """Handler untuk toggle reaction"""
@@ -982,7 +986,8 @@ async def toggle_reaction_handler(c: Client, cb):
     except Exception as e:
         Altruix.log(f"Gagal update tombol reaction: {e}", level=40)
 
-@USER_CLIENT.on_callback_query(filters.regex(r"select_emoji_(-?\d+)"))
+# PERBAIKAN: Ganti @USER_CLIENT.on_callback_query menjadi @Altruix.bot.on_callback_query
+@Altruix.bot.on_callback_query(filters.regex(r"select_emoji_(-?\d+)"))
 @log_errors
 async def select_emoji_handler(c: Client, cb):
     """Handler untuk memilih emoji reaction"""
@@ -1023,7 +1028,8 @@ async def select_emoji_handler(c: Client, cb):
     
     await cb.answer("Pilih emoji dari daftar...", show_alert=False)
 
-@USER_CLIENT.on_callback_query(filters.regex(r"set_emoji_(-?\d+)_(.+)"))
+# PERBAIKAN: Ganti @USER_CLIENT.on_callback_query menjadi @Altruix.bot.on_callback_query
+@Altruix.bot.on_callback_query(filters.regex(r"set_emoji_(-?\d+)_(.+)"))
 @log_errors
 async def set_emoji_handler(c: Client, cb):
     """Handler untuk menyetel emoji yang dipilih"""
@@ -1075,7 +1081,8 @@ async def set_emoji_handler(c: Client, cb):
     except:
         pass
 
-@USER_CLIENT.on_callback_query(filters.regex(r"cancel_emoji_(-?\d+)"))
+# PERBAIKAN: Ganti @USER_CLIENT.on_callback_query menjadi @Altruix.bot.on_callback_query
+@Altruix.bot.on_callback_query(filters.regex(r"cancel_emoji_(-?\d+)"))
 @log_errors
 async def cancel_emoji_handler(c: Client, cb):
     """Handler untuk cancel pemilihan emoji"""
@@ -1092,7 +1099,8 @@ async def cancel_emoji_handler(c: Client, cb):
     except:
         pass
 
-@USER_CLIENT.on_callback_query(filters.regex(r"adjust_purge_(-?\d+)"))
+# PERBAIKAN: Ganti @USER_CLIENT.on_callback_query menjadi @Altruix.bot.on_callback_query
+@Altruix.bot.on_callback_query(filters.regex(r"adjust_purge_(-?\d+)"))
 @log_errors
 async def adjust_purge_handler(c: Client, cb):
     """Handler untuk menampilkan menu adjust purge"""
@@ -1149,7 +1157,8 @@ async def adjust_purge_handler(c: Client, cb):
     
     await cb.answer("Menu adjust purge ditampilkan", show_alert=False)
 
-@USER_CLIENT.on_callback_query(filters.regex(r"inc_purge_(-?\d+)_(\d+)"))
+# PERBAIKAN: Ganti @USER_CLIENT.on_callback_query menjadi @Altruix.bot.on_callback_query
+@Altruix.bot.on_callback_query(filters.regex(r"inc_purge_(-?\d+)_(\d+)"))
 @log_errors
 async def increase_purge_handler(c: Client, cb):
     """Handler untuk menambah jumlah purge"""
@@ -1203,7 +1212,8 @@ async def increase_purge_handler(c: Client, cb):
     # Hapus status waiting
     ADJUST_PURGE_WAITING.pop(chat_id, None)
 
-@USER_CLIENT.on_callback_query(filters.regex(r"dec_purge_(-?\d+)_(\d+)"))
+# PERBAIKAN: Ganti @USER_CLIENT.on_callback_query menjadi @Altruix.bot.on_callback_query
+@Altruix.bot.on_callback_query(filters.regex(r"dec_purge_(-?\d+)_(\d+)"))
 @log_errors
 async def decrease_purge_handler(c: Client, cb):
     """Handler untuk mengurangi jumlah purge"""
@@ -1258,7 +1268,8 @@ async def decrease_purge_handler(c: Client, cb):
     # Hapus status waiting
     ADJUST_PURGE_WAITING.pop(chat_id, None)
 
-@USER_CLIENT.on_callback_query(filters.regex(r"back_purge_(-?\d+)"))
+# PERBAIKAN: Ganti @USER_CLIENT.on_callback_query menjadi @Altruix.bot.on_callback_query
+@Altruix.bot.on_callback_query(filters.regex(r"back_purge_(-?\d+)"))
 @log_errors
 async def back_purge_handler(c: Client, cb):
     """Handler untuk kembali dari menu adjust purge"""
@@ -1278,7 +1289,8 @@ async def back_purge_handler(c: Client, cb):
     
     await cb.answer("Kembali ke menu utama", show_alert=False)
 
-@USER_CLIENT.on_callback_query(filters.regex(r"cancel_adjust_purge_(-?\d+)"))
+# PERBAIKAN: Ganti @USER_CLIENT.on_callback_query menjadi @Altruix.bot.on_callback_query
+@Altruix.bot.on_callback_query(filters.regex(r"cancel_adjust_purge_(-?\d+)"))
 @log_errors
 async def cancel_adjust_purge_handler(c: Client, cb):
     """Handler untuk cancel adjust purge"""
@@ -1298,7 +1310,8 @@ async def cancel_adjust_purge_handler(c: Client, cb):
     
     await cb.answer("Adjust purge dibatalkan", show_alert=True)
 
-@USER_CLIENT.on_callback_query(filters.regex(r"(stop|pause|resume|cek|recurring|delete_latest|delete_oldest|edit_last|edit_msglist|cancel_edit|cancel_editlast)_(-?\d+)"))
+# PERBAIKAN: Ganti @USER_CLIENT.on_callback_query menjadi @Altruix.bot.on_callback_query
+@Altruix.bot.on_callback_query(filters.regex(r"(stop|pause|resume|cek|recurring|delete_latest|delete_oldest|edit_last|edit_msglist|cancel_edit|cancel_editlast)_(-?\d+)"))
 @log_errors
 async def handle_task_control(c: Client, cb):
     """Handler untuk kontrol task via callback"""
@@ -1656,7 +1669,8 @@ async def handle_task_control(c: Client, cb):
         if USER_CLIENT:
             await USER_CLIENT.send_message(LOG_CHAT_ID, f"⚠️ **Error :** {err}")
 
-@USER_CLIENT.on_callback_query(filters.regex(r"(cekall|stopall|recurringall|pauseall|resumeall)"))
+# PERBAIKAN: Ganti @USER_CLIENT.on_callback_query menjadi @Altruix.bot.on_callback_query
+@Altruix.bot.on_callback_query(filters.regex(r"(cekall|stopall|recurringall|pauseall|resumeall)"))
 @log_errors
 async def handle_global_controls(c: Client, cb):
     """Handler untuk kontrol global semua task"""
@@ -1813,8 +1827,8 @@ async def handle_global_controls(c: Client, cb):
                 await USER_CLIENT.send_message(LOG_CHAT_ID, output)
 
 # ==================== MESSAGE HANDLER UNTUK EDIT MSG LIST & LAST MSG ====================
-
-@USER_CLIENT.on_message(filters.chat(LOG_CHAT_ID) & filters.incoming & filters.reply)
+# PERBAIKAN: Handler ini harus didaftarkan ke bot (Altruix.bot) karena terjadi di chat LOG_CHAT_ID dengan bot
+@Altruix.bot.on_message(filters.chat(LOG_CHAT_ID) & filters.incoming & filters.reply)
 @log_errors
 async def handle_msg_list_input(c: Client, m: Message):
     """
