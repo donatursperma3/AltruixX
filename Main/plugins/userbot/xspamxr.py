@@ -32,7 +32,7 @@ import logging
 
 plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xspamxr"
-PLUGIN_VERSION = "0.3.0.4"  # Update version untuk perubahan fix
+PLUGIN_VERSION = "0.3.0.5"  # Update version untuk perubahan fix
 
 logger = logging.getLogger(f"{__plugin_name__}")
 if not logger.handlers:
@@ -153,11 +153,11 @@ async def send_log_message(text, reply_to_message_id=None, reply_markup=None, cl
                     reply_markup=reply_markup
                 )
             except AttributeError:
-                # Jika client tidak memiliki send_message, coba USER_CLIENT
+                # Jika client tidak memiliki send_message, coba BOT_CLIENT
                 pass
         
-        # Coba USER_CLIENT
-        if USER_CLIENT:
+        # Coba BOT_CLIENT
+        if BOT_CLIENT:
             try:
                 # Cek apakah USER_CLIENT memiliki method send_message
                 if hasattr(USER_CLIENT, 'send_message') and callable(getattr(USER_CLIENT, 'send_message')):
@@ -168,11 +168,11 @@ async def send_log_message(text, reply_to_message_id=None, reply_markup=None, cl
                         reply_markup=reply_markup
                     )
             except (AttributeError, TypeError):
-                # Jika USER_CLIENT tidak memiliki send_message, coba BOT_CLIENT
+                # Jika USER_CLIENT tidak memiliki send_message, coba USER_CLIENT
                 pass
         
-        # Coba BOT_CLIENT sebagai fallback
-        if BOT_CLIENT:
+        # Coba USER_CLIENT sebagai fallback
+        if USER_CLIENT:
             try:
                 return await BOT_CLIENT.send_message(
                     chat_id=LOG_CHAT_ID,
@@ -2015,6 +2015,6 @@ async def handle_msg_list_input(c: Client, m: Message):
 
 # Log sukses loading
 try:
-    Altruix.log(f"[DEBUG] Loaded → {__plugin_name__} v{PLUGIN_VERSION}", level=20)
+    Altruix.log(f"[DEBUG] Loaded → {__plugin_name__} {PLUGIN_VERSION}", level=20)
 except Exception as e:
-    logger.info(f"[DEBUG] Loaded → {__plugin_name__} v{PLUGIN_VERSION}")
+    logger.info(f"[DEBUG] Loaded → {__plugin_name__} {PLUGIN_VERSION}")
