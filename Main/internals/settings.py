@@ -56,26 +56,22 @@ def arrange_buttons(array: list, no=5) -> List:
     return [array[i * n : (i + 1) * n] for i in range((len(array) + n - 1) // n)]
 
 
-
 def get_sessions_buttons(page=1) -> Tuple[List[InlineKeyboardButton], bool, int]:
     per_page = 9
     buttons = [
         InlineKeyboardButton(str(i.myself.first_name), f"session_info_{index}_{page}")
         for index, i in enumerate(Altruix.clients)
     ] + [InlineKeyboardButton("\u2795 Add a session", "add_session")]
+    len_buttons = len(buttons)
+    buttons = arrange_buttons(buttons, per_page)
     
-    # ✅ Pastikan output adalah LIST OF LISTS (3 tombol per baris)
-    arranged_buttons = []
-    for i in range(0, len(buttons), 3):
-        arranged_buttons.append(buttons[i:i+3])  # ← Ini menghasilkan [[btn,btn,btn], [btn,btn,btn]]
-    
-    total_pages = len(arranged_buttons)
+    total_pages = len(buttons)
     if page < 1:
         page = 1
     elif page > total_pages:
         page = total_pages if total_pages > 0 else 1
 
-    current_buttons = arranged_buttons[page - 1] if total_pages > 0 else []
+    current_buttons = buttons[page - 1] if total_pages > 0 else []
     has_next = page < total_pages
     return current_buttons, has_next, total_pages
 
@@ -96,7 +92,6 @@ async def settings_command_handler(c: Client, m: Message):
     )
 
 
-
 @Altruix.bot.on_callback_query(filters.regex("sessions_list_(\\d+)$"))
 @log_errors
 async def sessions_menu_cb_handler(c: Client, cb: CallbackQuery):
@@ -108,7 +103,10 @@ async def sessions_menu_cb_handler(c: Client, cb: CallbackQuery):
 
     buttons, has_next, total_pages = get_sessions_buttons(page)
     
-    # ✅ Tambahkan tombol aksi sebagai LIST TUNGGAL (bukan flatten)
+    # ✅ Dapatkan LOG_CHAT_ID dengan benar
+    LOG_CHAT_ID = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
+
+    # ✅ Tambahkan tombol aksi sebagai LIST TUNGGAL
     action_buttons = [
         InlineKeyboardButton("🏓 Test Ping All", "test_ping_all_confirmation"),
         InlineKeyboardButton("📲 Export All Phones", "export_all_phones")
@@ -124,22 +122,19 @@ async def sessions_menu_cb_handler(c: Client, cb: CallbackQuery):
     
     # ✅ Pastikan SEMUA elemen adalah LIST OF LISTS
     final_markup = buttons + [action_buttons] + [nav_buttons]
+    total_sessions = len(Altruix.clients)
     
-    # ✅ Tambahkan penanganan error khusus untuk edit pesan
     try:
         await cb.message.edit(
-            text="Sessions", 
+            text=f"<b>Total Sessions:</b> <code>{total_sessions}</code>", 
             reply_markup=InlineKeyboardMarkup(final_markup)
         )
     except Exception as e:
-        # Logging error spesifik untuk UI
-        Altruix.log(f"Error saat memperbarui menu session: {e}", level=logging.ERROR)
+        # ✅ Gunakan LOG_CHAT_ID yang sudah didefinisikan
         await Altruix.bot.send_message(
             LOG_CHAT_ID,
             f"⚠️ <b>SESSION MENU ERROR</b>\n"
-            f"• Pengguna: <a href='tg://user?id={cb.from_user.id}'>{html.escape(cb.from_user.first_name)}</a>\n"
-            f"• Error: <code>{str(e)}</code>\n"
-            f"• Solusi: Pastikan struktur tombol valid (list of lists).",
+            f"• Error: <code>{str(e)}</code>",
             parse_mode="html"
         )
         await cb.message.edit("❌ Gagal memuat menu. Owner telah diberi tahu.")
