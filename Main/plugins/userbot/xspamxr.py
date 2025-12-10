@@ -33,7 +33,7 @@ import logging
 
 plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xspamxr"
-PLUGIN_VERSION = "0.3.0.6"  # Update version untuk perubahan fix
+PLUGIN_VERSION = "0.3.0.7"  # Update version untuk perubahan fix
 
 logger = logging.getLogger(f"{__plugin_name__}")
 if not logger.handlers:
@@ -326,7 +326,7 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
                                     # PERBAIKAN: Gunakan helper untuk log
                                     await send_log_message(
                                         f"[HAPUS]: Berhasil hapus {del_suk} pesan lama, gagal {del_ggl} pesan di {target_chat.title}.",
-                                        reply_parameters=types.ReplyParameters(message_id=x_msg.id if x_msg else None)x_msg.id if x_msg else None,
+                                        reply_to_message_id=x_msg.id if x_msg else None,
                                         client=client
                                     )
 
