@@ -687,7 +687,7 @@ class AltruixClient:
                         name = f"{me.first_name or ''} {me.last_name or ''}".strip() or "Unknown"
                         username = f" @{me.username}" if me.username else ""
                         user_id = me.id
-                        client_type = "🤖 Bot Assistant" if client == self.bot else "🦸🏼 User Session"
+                        client_type = "🤖 Bot" if client == self.bot else "🦸🏼 Ubot"
                         mention_user = f'<a href="tg://user?id={user_id}">{name}</a>'
                         
                         # ✅ PERUBAHAN 5: Gunakan total_sessions yang benar (hanya untuk userbot)
@@ -699,12 +699,11 @@ class AltruixClient:
                         else:
                             # User session: [1/7], [2/7], dll.
                             user_index = self.clients.index(client) + 1
-                            base_text = f"<b>✅ Altruix Userbot [{user_index}/{total_user_sessions}] aktif!</b>"
+                            base_text = f"<b>✅ Altruix Userbot [{user_index}/{total_user_sessions}] alive!</b>"
                         
                         personal_message = (
                             f"{base_text}\n"
-                            f"• <b>{mention_user}</b> | {username} \n"
-                            f"• Type: {client_type} | ID: <code>{user_id}</code>\n"
+                            f"<b>{client_type}: {mention_user}</b> • ID: <code>{user_id}</code>\n"
                         )
 
                         await client.send_message(
@@ -746,7 +745,7 @@ class AltruixClient:
                         altruix_version = getattr(self, "__version__", "unknown")
                         summary = (
                             "Semua client selesai mengirim startup log!\n"
-                            f"Total Session: <code>{len(self.clients)}</code> user + 1 bot\n"
+                            f"Total Session: <code>{len(self.clients)}</code> user + <code> 1</code>  bot\n"
                             f"Berhasil: <code>{success_count}</code> client\n"
                             f"Gagal: <code>{len(failed_clients)}</code> client\n"
                             f"Owner ID: <code>{BaseConfig.OWNER_ID}</code>\n"
