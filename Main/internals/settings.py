@@ -1,7 +1,7 @@
 # Copyright (C) 2021-present by Altruix@Github, < https://github.com/Altruix/Altruix   >
 #
 # This file is part of < https://github.com/Altruix/Altruix   > project,
-# and is released under the "GNU v3.0 License Agreement".
+# and is released under "GNU v3.0 License Agreement".
 # Please see < https://github.com/Altriux/Altruix/blob/main/LICENSE   >
 #
 # All rights reserved.
@@ -19,8 +19,7 @@ from pyrogram.errors import (
     PeerIdInvalid, UserIsBlocked, ChatWriteForbidden, FloodWait, MessageIdInvalid,
     SlowmodeWait
 )
-# PERBAIKAN 1: Import ParseMode untuk mendukung versi Pyrogram/Kurigram terbaru
-from pyrogram.enums import ParseMode
+from pyrogram.enums import ParseMode  # PERBAIKAN: Import ParseMode untuk versi Pyrogram terbaru
 import os
 import logging
 import asyncio
@@ -28,6 +27,9 @@ import html
 from datetime import datetime
 import io
 
+# Dictionary untuk menyimpan state konfirmasi user
+user_confirmation_state = {}
+user_text_confirmation_state = {}
 
 settings_menu_buttons = [
     [
@@ -53,13 +55,15 @@ async def settings_menu_cb_handler(c: Client, cb: CallbackQuery):
     )
 
 
-def arrange_buttons(array: list, no=5) -> List:
+def arrange_buttons(array: list, no=3) -> List:  # PERUBAHAN: Ubah dari 5 menjadi 3 untuk layout baru
+    """Mengatur tombol dalam baris dengan jumlah tertentu per baris"""
     n = int(no)
     return [array[i * n : (i + 1) * n] for i in range((len(array) + n - 1) // n)]
 
 
 def get_sessions_buttons(page=1) -> Tuple[List[InlineKeyboardButton], bool, int]:
-    per_page = 9
+    """Mendapatkan tombol session dengan layout 3 tombol per baris"""
+    per_page = 3  # PERUBAHAN: Ubah dari 9 menjadi 3 untuk layout baru [akun1][akun2][akun3]
     buttons = [
         InlineKeyboardButton(str(i.myself.first_name), f"session_info_{index}_{page}")
         for index, i in enumerate(Altruix.clients)
@@ -97,6 +101,7 @@ async def settings_command_handler(c: Client, m: Message):
 @Altruix.bot.on_callback_query(filters.regex("sessions_list_(\\d+)$"))
 @log_errors
 async def sessions_menu_cb_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk menampilkan menu sessions dengan layout baru"""
     await cb.answer()
     try:
         page = int(cb.data.split("_")[-1])
@@ -105,158 +110,535 @@ async def sessions_menu_cb_handler(c: Client, cb: CallbackQuery):
 
     buttons, has_next, total_pages = get_sessions_buttons(page)
     
-    # ✅ Dapatkan LOG_CHAT_ID dengan benar
+    # Dapatkan LOG_CHAT_ID dengan benar
     LOG_CHAT_ID = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
 
-    # ✅ Tambahkan tombol aksi sebagai LIST TUNGGAL
+    # PERUBAHAN: Susunan tombol sesuai permintaan
+    # Baris 1: Tombol session (sudah dalam format list of lists dari get_sessions_buttons)
+    # Baris 2: Tombol aksi [test ping all][export all sessions][export all phones]
     action_buttons = [
         InlineKeyboardButton("🏓 Test Ping All", "test_ping_all_confirmation"),
-        InlineKeyboardButton("📲 Export All Phones", "export_all_phones")
+        InlineKeyboardButton("📤 Export All Sessions", "export_all_sessions_confirmation"),  # TAMBAHAN: Tombol baru
+        InlineKeyboardButton("📲 Export All Phones", "export_all_phones_confirmation")  # PERUBAHAN: Menjadi konfirmasi
     ]
     
-    # ✅ Tambahkan tombol navigasi sebagai LIST TUNGGAL
+    # Baris 3: Tombol navigasi [previous][back][next]
     nav_buttons = []
-    if not page == 1:
-        nav_buttons.append(InlineKeyboardButton("Previous", f"sessions_list_{page - 1}"))
-    nav_buttons.append(InlineKeyboardButton(f"🔙 [{page}/{total_pages or 1}]", "settings_menu"))
+    if page > 1:
+        nav_buttons.append(InlineKeyboardButton("⬅️ Previous", f"sessions_list_{page - 1}"))
+    nav_buttons.append(InlineKeyboardButton(f"🔙 Back [{page}/{total_pages or 1}]", "settings_menu"))
     if has_next:
-        nav_buttons.append(InlineKeyboardButton("Next", f"sessions_list_{page + 1}"))
+        nav_buttons.append(InlineKeyboardButton("Next ➡️", f"sessions_list_{page + 1}"))
     
-    # PERBAIKAN 2: Pastikan struktur keyboard yang konsisten
-    # buttons dari get_sessions_buttons() adalah list of InlineKeyboardButton (bukan list of lists)
-    # Kita perlu membungkusnya dalam list jika tidak kosong
+    # Susun final markup dengan layout baru
     final_markup = []
     
-    # Tambahkan session buttons jika ada (dalam format list of lists)
+    # Tambahkan session buttons jika ada
     if buttons:
-        final_markup.append(buttons)
+        final_markup.extend(buttons)
     
-    # Tambahkan action buttons (sudah dalam format list)
+    # Tambahkan action buttons
     final_markup.append(action_buttons)
     
-    # Tambahkan navigation buttons (sudah dalam format list)
+    # Tambahkan navigation buttons
     final_markup.append(nav_buttons)
     
     total_sessions = len(Altruix.clients)
     
     try:
         await cb.message.edit(
-            text=f"<b>Total Sessions:</b> <code>{total_sessions}</code>", 
+            text=f"<b>📋 Sessions List</b>\n\n<b>Total Sessions:</b> <code>{total_sessions}</code>\n<b>Page:</b> <code>{page}/{total_pages or 1}</code>", 
             reply_markup=InlineKeyboardMarkup(final_markup)
         )
     except Exception as e:
-        # PERBAIKAN 3: Gunakan ParseMode.HTML alih-alih string "html"
-        # ✅ Gunakan LOG_CHAT_ID yang sudah didefinisikan
+        # Gunakan ParseMode.HTML untuk versi Pyrogram terbaru
         await Altruix.bot.send_message(
             LOG_CHAT_ID,
             f"⚠️ <b>SESSION MENU ERROR</b>\n"
             f"• Error: <code>{str(e)}</code>",
-            parse_mode=ParseMode.HTML  # Diperbaiki: "html" -> ParseMode.HTML
+            parse_mode=ParseMode.HTML
         )
-        await cb.message.edit("❌ Gagal memuat menu. Owner telah diberi tahu.")
+        await cb.message.edit("❌ Failed to load menu. Owner has been notified.")
 
 
-# ─── EXPORT ALL PHONE NUMBERS HANDLER ───────────────────────────────────
-@Altruix.bot.on_callback_query(filters.regex("export_all_phones"))
+# ====================== EXPORT ALL SESSIONS ======================
+# TAMBAHAN: Handler untuk konfirmasi export all sessions
+@Altruix.bot.on_callback_query(filters.regex("export_all_sessions_confirmation"))
 @log_errors
-async def export_all_phones_handler(c: Client, cb: CallbackQuery):
-    """Ekspor semua nomor telepon ke file teks."""
+async def export_all_sessions_confirmation_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk konfirmasi export all sessions"""
+    await cb.answer()
+    
+    # Simpan state untuk user ini
+    user_id = cb.from_user.id
+    user_confirmation_state[user_id] = {
+        'action': 'export_all_sessions',
+        'message_id': cb.message.id,
+        'chat_id': cb.message.chat.id
+    }
+    
+    confirmation_buttons = [
+        [
+            InlineKeyboardButton("✅ Yes", callback_data="export_all_sessions_confirm_yes"),
+            InlineKeyboardButton("❌ No", callback_data="export_all_sessions_confirm_no")
+        ]
+    ]
+    
+    await cb.message.edit(
+        text="❓ <b>Export All Sessions Confirmation</b>\n\n"
+             "Are you sure you want to export ALL session strings?\n\n"
+             "⚠️ <b>WARNING:</b>\n"
+             "• This will export session strings for ALL your accounts\n"
+             "• Session strings can be used to login to your accounts\n"
+             "• Keep them secure and DO NOT share with anyone",
+        reply_markup=InlineKeyboardMarkup(confirmation_buttons),
+        parse_mode=ParseMode.HTML
+    )
+
+
+# TAMBAHAN: Handler untuk membatalkan export all sessions
+@Altruix.bot.on_callback_query(filters.regex("export_all_sessions_confirm_no"))
+@log_errors
+async def export_all_sessions_cancel_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk membatalkan export all sessions"""
+    await cb.answer("Operation cancelled.")
+    
+    # Hapus state user
+    user_id = cb.from_user.id
+    if user_id in user_confirmation_state:
+        del user_confirmation_state[user_id]
+    
+    # Kembali ke menu sessions
+    await sessions_menu_cb_handler(c, cb)
+
+
+# TAMBAHAN: Handler untuk konfirmasi Yes export all sessions
+@Altruix.bot.on_callback_query(filters.regex("export_all_sessions_confirm_yes"))
+@log_errors
+async def export_all_sessions_confirm_yes_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk konfirmasi Yes export all sessions"""
     user = cb.from_user
     user_id = user.id
+    
+    # Update state untuk meminta konfirmasi teks "ok"
+    if user_id in user_confirmation_state:
+        user_confirmation_state[user_id]['step'] = 'waiting_text_confirmation'
+        user_text_confirmation_state[user_id] = {
+            'action': 'export_all_sessions',
+            'message_id': cb.message.id,
+            'chat_id': cb.message.chat.id,
+            'timestamp': datetime.now()
+        }
+    
+    await cb.answer()
+    
+    await cb.message.edit(
+        text="🔐 <b>Security Verification Required</b>\n\n"
+             "Please type <code>ok</code> in this chat to confirm export all sessions.\n\n"
+             "⚠️ This is an additional security step to prevent accidental exports.\n"
+             "⏳ You have 60 seconds to type <code>ok</code>",
+        parse_mode=ParseMode.HTML
+    )
+    
+    # Set timer untuk menghapus state setelah 60 detik
+    asyncio.create_task(clear_user_state_after_timeout(user_id, 60))
+
+
+# TAMBAHAN: Handler untuk menjalankan export all sessions setelah konfirmasi teks
+@Altruix.bot.on_message(filters.text & filters.private & filters.user(Altruix.auth_users))
+@log_errors
+async def text_confirmation_handler(c: Client, m: Message):
+    """Handler untuk konfirmasi teks 'ok' dari user"""
+    user_id = m.from_user.id
+    text = m.text.strip().lower()
+    
+    # Cek apakah user sedang menunggu konfirmasi teks
+    if user_id in user_text_confirmation_state and text == "ok":
+        action_data = user_text_confirmation_state[user_id]
+        action = action_data['action']
+        
+        # Hapus state
+        del user_text_confirmation_state[user_id]
+        if user_id in user_confirmation_state:
+            del user_confirmation_state[user_id]
+        
+        # Jalankan aksi sesuai jenis
+        if action == 'export_all_sessions':
+            await execute_export_all_sessions(c, m)
+        elif action == 'export_all_phones':
+            await execute_export_all_phones(c, m)
+        else:
+            await m.reply("❌ Unknown action. Please try again.")
+    elif user_id in user_text_confirmation_state:
+        # User mengirim teks selain "ok"
+        await m.reply("❌ Invalid confirmation. Please type exactly <code>ok</code> to proceed.", 
+                     parse_mode=ParseMode.HTML)
+
+
+# TAMBAHAN: Fungsi untuk menjalankan export all sessions
+async def execute_export_all_sessions(c: Client, m: Message):
+    """Fungsi untuk mengeksekusi export all sessions"""
+    user = m.from_user
+    user_id = user.id
     log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
-
+    
     if user_id not in Altruix.auth_users:
-        return await cb.answer("⛔ Anda tidak diizinkan mengakses fitur ini.", show_alert=True)
-
+        await m.reply("⛔ You are not authorized to use this feature.")
+        return
+    
     if not Altruix.clients:
-        return await cb.answer("❌ Tidak ada session yang tersedia.", show_alert=True)
-
-    await cb.answer("📲 Sedang menyiapkan file nomor...", show_alert=False)
+        await m.reply("❌ No sessions available to export.")
+        return
+    
+    await m.reply("📤 Preparing to export all sessions...")
     
     try:
-        # ✅ Kumpulkan data semua session
-        phone_data = []
-        for client in Altruix.clients:
+        # Kumpulkan data semua session
+        session_data = []
+        for index, client in enumerate(Altruix.clients):
             try:
-                user_info = await client.get_me()
+                user_info = client.myself
                 first_name = user_info.first_name or "None"
                 last_name = user_info.last_name or "None"
                 full_name = f"{first_name} {last_name}".strip()
                 username = f"@{user_info.username}" if user_info.username else "None"
                 phone = user_info.phone_number or "Not Available"
-                user_id = user_info.id
                 
-                phone_data.append(
-                    f"Nama: {full_name}\n"
-                    f"Nomor: +{phone}\n"
-                    f"ID: {user_id}\n"
+                # Export session string
+                session_string = await client.export_session_string()
+                
+                session_data.append(
+                    f"=== SESSION {index + 1} ===\n"
+                    f"Name: {full_name}\n"
+                    f"Phone: +{phone}\n"
+                    f"ID: {user_info.id}\n"
                     f"Username: {username}\n"
-                    f"{'-' * 40}"
+                    f"DC ID: {user_info.dc_id or 'Unknown'}\n"
+                    f"Session String:\n{session_string}\n"
+                    f"{'=' * 40}\n"
                 )
             except Exception as e:
-                Altruix.log(f"Error mengambil info session: {e}", level=logging.ERROR)
-                phone_data.append(f"Error: {str(e)}\n{'-' * 40}")
-
-        # ✅ Buat file teks
-        file_content = "\n".join(phone_data)
+                Altruix.log(f"Error exporting session {index}: {e}", level=logging.ERROR)
+                session_data.append(
+                    f"=== SESSION {index + 1} ERROR ===\n"
+                    f"Error: {str(e)}\n"
+                    f"{'=' * 40}\n"
+                )
+        
+        # Buat file teks
+        file_content = "⚠️ WARNING: KEEP THIS FILE SECURE! ⚠️\n"
+        file_content += "These session strings can be used to login to your accounts.\n"
+        file_content += "DO NOT share with anyone!\n"
+        file_content += "=" * 50 + "\n\n"
+        file_content += "".join(session_data)
+        
         file_stream = io.BytesIO(file_content.encode())
-        file_stream.name = "all_phone_numbers.txt"
-
-        # ✅ Kirim file ke user via bot
-        await Altruix.bot.send_document(
-            chat_id=user.id,
+        file_stream.name = f"all_sessions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        
+        # Kirim file ke user
+        await c.send_document(
+            chat_id=user_id,
             document=file_stream,
-            caption="📲 **All Phone Numbers Exported**\nFile ini berisi data semua session Anda."
+            caption="📤 **All Sessions Exported**\n\n"
+                   "⚠️ **SECURITY WARNING:**\n"
+                   "• Keep this file secure\n"
+                   "• Do not share with anyone\n"
+                   "• Store in a safe location",
+            parse_mode=ParseMode.HTML
         )
-
-        # ✅ Kirim notifikasi ke log
+        
+        # Kirim notifikasi ke log group
         await Altruix.bot.send_message(
             log_chat_id,
-            f"📲 <b>EXPORT ALL PHONES</b>\n"
+            f"📤 <b>EXPORT ALL SESSIONS COMPLETED</b>\n"
             f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a>\n"
-            f"• Jumlah Session: <code>{len(Altruix.clients)}</code>\n"
-            f"• Waktu: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>",
-            parse_mode=ParseMode.HTML,  # Diperbaiki: "html" -> ParseMode.HTML
+            f"• User ID: <code>{user.id}</code>\n"
+            f"• Total Sessions: <code>{len(Altruix.clients)}</code>\n"
+            f"• Time: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>\n"
+            f"• Status: ✅ Success",
+            parse_mode=ParseMode.HTML,
             link_preview_options=LinkPreviewOptions(is_disabled=True)
         )
-
-        await cb.message.edit("✅ File nomor telepon berhasil dikirim ke pesan pribadi Anda.")
-
+        
+        await m.reply("✅ All session files have been sent to your private messages.")
+        
     except FloodWait as e:
         await asyncio.sleep(e.value)
-        await cb.message.edit(f"⏳ FloodWait terdeteksi. Tunggu {e.value} detik.")
-        Altruix.log(f"FloodWait saat export all phones: {e.value}s")
-
-    except (PeerIdInvalid, UserIsBlocked, ChatWriteForbidden) as e:
-        error_msg = "❌ Gagal mengirim file: User tidak dapat dihubungi."
-        await cb.message.edit(error_msg)
-        Altruix.log(f"Error izin saat export all phones: {e}")
-
-        # ✅ Kirim error ke log
+        await m.reply(f"⏳ FloodWait detected. Please wait {e.value} seconds and try again.")
+        
+        # Log error
         await Altruix.bot.send_message(
             log_chat_id,
-            f"⚠️ <b>ERROR EXPORT ALL PHONES</b>\n"
+            f"⚠️ <b>EXPORT ALL SESSIONS FLOODWAIT</b>\n"
+            f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a>\n"
+            f"• FloodWait: {e.value} seconds\n"
+            f"• Time: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>",
+            parse_mode=ParseMode.HTML
+        )
+        
+    except (PeerIdInvalid, UserIsBlocked, ChatWriteForbidden) as e:
+        error_msg = "❌ Failed to send file: Cannot send message to user."
+        await m.reply(error_msg)
+        
+        # Log error
+        await Altruix.bot.send_message(
+            log_chat_id,
+            f"⚠️ <b>EXPORT ALL SESSIONS PERMISSION ERROR</b>\n"
             f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a>\n"
             f"• Error: <code>{type(e).__name__}</code>\n"
-            f"• Solusi: Pastikan Anda memulai chat dengan bot assistant.",
-            parse_mode=ParseMode.HTML  # Diperbaiki: "html" -> ParseMode.HTML
+            f"• Solution: User must start chat with bot assistant.",
+            parse_mode=ParseMode.HTML
         )
-
+        
     except Exception as e:
-        await cb.message.edit("❌ Gagal mengekspor nomor. Owner telah diberi tahu.")
-        Altruix.log(f"Error umum saat export all phones: {e}")
-
-        # ✅ Kirim error detail ke log
+        await m.reply("❌ Failed to export sessions. Owner has been notified.")
+        Altruix.log(f"General error exporting all sessions: {e}", level=logging.ERROR)
+        
+        # Log detailed error
         await Altruix.bot.send_message(
             log_chat_id,
-            f"⚠️ <b>ERROR EXPORT ALL PHONES (CRITICAL)</b>\n"
+            f"⚠️ <b>EXPORT ALL SESSIONS CRITICAL ERROR</b>\n"
             f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a>\n"
             f"• Error: <code>{str(e)}</code>\n"
-            f"• Waktu: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>",
-            parse_mode=ParseMode.HTML  # Diperbaiki: "html" -> ParseMode.HTML
+            f"• Time: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>",
+            parse_mode=ParseMode.HTML
         )
 
 
+# ====================== EXPORT ALL PHONES (DIPERBARUI) ======================
+# PERUBAHAN: Ubah handler export all phones menjadi konfirmasi
+@Altruix.bot.on_callback_query(filters.regex("export_all_phones_confirmation"))
+@log_errors
+async def export_all_phones_confirmation_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk konfirmasi export all phones"""
+    await cb.answer()
+    
+    # Simpan state untuk user ini
+    user_id = cb.from_user.id
+    user_confirmation_state[user_id] = {
+        'action': 'export_all_phones',
+        'message_id': cb.message.id,
+        'chat_id': cb.message.chat.id
+    }
+    
+    confirmation_buttons = [
+        [
+            InlineKeyboardButton("✅ Yes", callback_data="export_all_phones_confirm_yes"),
+            InlineKeyboardButton("❌ No", callback_data="export_all_phones_confirm_no")
+        ]
+    ]
+    
+    await cb.message.edit(
+        text="❓ <b>Export All Phone Numbers Confirmation</b>\n\n"
+             "Are you sure you want to export ALL phone numbers?\n\n"
+             "⚠️ <b>NOTE:</b>\n"
+             "• This will export phone numbers for ALL your accounts\n"
+             "• Phone numbers are sensitive information\n"
+             "• Keep them secure and share only with trusted parties",
+        reply_markup=InlineKeyboardMarkup(confirmation_buttons),
+        parse_mode=ParseMode.HTML
+    )
+
+
+# PERUBAHAN: Handler untuk membatalkan export all phones
+@Altruix.bot.on_callback_query(filters.regex("export_all_phones_confirm_no"))
+@log_errors
+async def export_all_phones_cancel_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk membatalkan export all phones"""
+    await cb.answer("Operation cancelled.")
+    
+    # Hapus state user
+    user_id = cb.from_user.id
+    if user_id in user_confirmation_state:
+        del user_confirmation_state[user_id]
+    
+    # Kembali ke menu sessions
+    await sessions_menu_cb_handler(c, cb)
+
+
+# PERUBAHAN: Handler untuk konfirmasi Yes export all phones
+@Altruix.bot.on_callback_query(filters.regex("export_all_phones_confirm_yes"))
+@log_errors
+async def export_all_phones_confirm_yes_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk konfirmasi Yes export all phones"""
+    user = cb.from_user
+    user_id = user.id
+    
+    # Update state untuk meminta konfirmasi teks "ok"
+    if user_id in user_confirmation_state:
+        user_confirmation_state[user_id]['step'] = 'waiting_text_confirmation'
+        user_text_confirmation_state[user_id] = {
+            'action': 'export_all_phones',
+            'message_id': cb.message.id,
+            'chat_id': cb.message.chat.id,
+            'timestamp': datetime.now()
+        }
+    
+    await cb.answer()
+    
+    await cb.message.edit(
+        text="🔐 <b>Security Verification Required</b>\n\n"
+             "Please type <code>ok</code> in this chat to confirm export all phone numbers.\n\n"
+             "⚠️ This is an additional security step to prevent accidental exports.\n"
+             "⏳ You have 60 seconds to type <code>ok</code>",
+        parse_mode=ParseMode.HTML
+    )
+    
+    # Set timer untuk menghapus state setelah 60 detik
+    asyncio.create_task(clear_user_state_after_timeout(user_id, 60))
+
+
+# PERUBAHAN: Fungsi untuk menjalankan export all phones
+async def execute_export_all_phones(c: Client, m: Message):
+    """Fungsi untuk mengeksekusi export all phones"""
+    user = m.from_user
+    user_id = user.id
+    log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
+    
+    if user_id not in Altruix.auth_users:
+        await m.reply("⛔ You are not authorized to use this feature.")
+        return
+    
+    if not Altruix.clients:
+        await m.reply("❌ No sessions available to export.")
+        return
+    
+    await m.reply("📲 Preparing to export all phone numbers...")
+    
+    try:
+        # Kumpulkan data semua session
+        phone_data = []
+        for index, client in enumerate(Altruix.clients):
+            try:
+                user_info = client.myself
+                first_name = user_info.first_name or "None"
+                last_name = user_info.last_name or "None"
+                full_name = f"{first_name} {last_name}".strip()
+                username = f"@{user_info.username}" if user_info.username else "None"
+                phone = user_info.phone_number or "Not Available"
+                user_id_info = user_info.id
+                
+                phone_data.append(
+                    f"=== ACCOUNT {index + 1} ===\n"
+                    f"Name: {full_name}\n"
+                    f"Phone: +{phone}\n"
+                    f"ID: {user_id_info}\n"
+                    f"Username: {username}\n"
+                    f"DC ID: {user_info.dc_id or 'Unknown'}\n"
+                    f"{'=' * 40}\n"
+                )
+            except Exception as e:
+                Altruix.log(f"Error getting session info {index}: {e}", level=logging.ERROR)
+                phone_data.append(f"Error: {str(e)}\n{'=' * 40}\n")
+        
+        # Buat file teks
+        file_content = "⚠️ Phone numbers are sensitive information. Keep secure!\n"
+        file_content += "=" * 50 + "\n\n"
+        file_content += "".join(phone_data)
+        
+        file_stream = io.BytesIO(file_content.encode())
+        file_stream.name = f"all_phone_numbers_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        
+        # Kirim file ke user
+        await c.send_document(
+            chat_id=user_id,
+            document=file_stream,
+            caption="📲 **All Phone Numbers Exported**\n\n"
+                   "⚠️ Keep this information secure.",
+            parse_mode=ParseMode.HTML
+        )
+        
+        # Kirim notifikasi ke log group
+        await Altruix.bot.send_message(
+            log_chat_id,
+            f"📲 <b>EXPORT ALL PHONES COMPLETED</b>\n"
+            f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a>\n"
+            f"• User ID: <code>{user.id}</code>\n"
+            f"• Total Sessions: <code>{len(Altruix.clients)}</code>\n"
+            f"• Time: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>\n"
+            f"• Status: ✅ Success",
+            parse_mode=ParseMode.HTML,
+            link_preview_options=LinkPreviewOptions(is_disabled=True)
+        )
+        
+        await m.reply("✅ All phone number files have been sent to your private messages.")
+        
+    except FloodWait as e:
+        await asyncio.sleep(e.value)
+        await m.reply(f"⏳ FloodWait detected. Please wait {e.value} seconds and try again.")
+        
+        # Log error
+        await Altruix.bot.send_message(
+            log_chat_id,
+            f"⚠️ <b>EXPORT ALL PHONES FLOODWAIT</b>\n"
+            f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a>\n"
+            f"• FloodWait: {e.value} seconds\n"
+            f"• Time: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>",
+            parse_mode=ParseMode.HTML
+        )
+        
+    except (PeerIdInvalid, UserIsBlocked, ChatWriteForbidden) as e:
+        error_msg = "❌ Failed to send file: Cannot send message to user."
+        await m.reply(error_msg)
+        
+        # Log error
+        await Altruix.bot.send_message(
+            log_chat_id,
+            f"⚠️ <b>EXPORT ALL PHONES PERMISSION ERROR</b>\n"
+            f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a>\n"
+            f"• Error: <code>{type(e).__name__}</code>\n"
+            f"• Solution: User must start chat with bot assistant.",
+            parse_mode=ParseMode.HTML
+        )
+        
+    except Exception as e:
+        await m.reply("❌ Failed to export phone numbers. Owner has been notified.")
+        Altruix.log(f"General error exporting all phones: {e}", level=logging.ERROR)
+        
+        # Log detailed error
+        await Altruix.bot.send_message(
+            log_chat_id,
+            f"⚠️ <b>EXPORT ALL PHONES CRITICAL ERROR</b>\n"
+            f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a>\n"
+            f"• Error: <code>{str(e)}</code>\n"
+            f"• Time: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>",
+            parse_mode=ParseMode.HTML
+        )
+
+
+# ====================== FUNGSI BANTUAN ======================
+async def clear_user_state_after_timeout(user_id: int, timeout: int):
+    """Menghapus state user setelah timeout"""
+    await asyncio.sleep(timeout)
+    
+    if user_id in user_text_confirmation_state:
+        # Cek jika sudah lewat timeout
+        state_data = user_text_confirmation_state[user_id]
+        time_elapsed = (datetime.now() - state_data['timestamp']).total_seconds()
+        
+        if time_elapsed >= timeout:
+            del user_text_confirmation_state[user_id]
+            if user_id in user_confirmation_state:
+                del user_confirmation_state[user_id]
+            
+            # Coba kirim notifikasi timeout ke user
+            try:
+                chat_id = state_data.get('chat_id')
+                message_id = state_data.get('message_id')
+                
+                if chat_id and message_id:
+                    await Altruix.bot.edit_message_text(
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        text="⏰ <b>Confirmation Timeout</b>\n\n"
+                             "The confirmation period has expired. Please try again if you still want to proceed.",
+                        parse_mode=ParseMode.HTML
+                    )
+            except Exception:
+                pass
+
+
+# ====================== HANDLER YANG SUDAH ADA (DIPERTAHANKAN) ======================
 # ─── TEST PING ALL CONFIRMATION ─────────────────────────────────────────
 @Altruix.bot.on_callback_query(filters.regex("test_ping_all_confirmation"))
 @log_errors
@@ -306,7 +688,7 @@ async def test_ping_all_execute_handler(c: Client, cb: CallbackQuery):
             await client.send_message(
                 chat_id=log_chat_id,
                 text=f"🏓 <b>Pong!</b>\nDari akun: <a href='tg://user?id={session_user.id}'>{html.escape(session_user.first_name or 'Unknown')}</a> | ID: <code>{session_user.id}</code>",
-                parse_mode=ParseMode.HTML,  # Diperbaiki: "html" -> ParseMode.HTML
+                parse_mode=ParseMode.HTML,
                 link_preview_options=LinkPreviewOptions(is_disabled=True)
             )
             success_count += 1
@@ -317,7 +699,7 @@ async def test_ping_all_execute_handler(c: Client, cb: CallbackQuery):
                 await client.send_message(
                     chat_id=log_chat_id,
                     text=f"🏓 <b>Pong!</b>\nDari akun: <a href='tg://user?id={session_user.id}'>{html.escape(session_user.first_name or 'Unknown')}</a> | ID: <code>{session_user.id}</code>",
-                    parse_mode=ParseMode.HTML,  # Diperbaiki: "html" -> ParseMode.HTML
+                    parse_mode=ParseMode.HTML,
                     link_preview_options=LinkPreviewOptions(is_disabled=True)
                 )
                 success_count += 1
@@ -347,7 +729,7 @@ async def test_ping_all_execute_handler(c: Client, cb: CallbackQuery):
         f"• Berhasil: <code>{success_count}</code> akun\n"
         f"• Gagal: <code>{failed_count}</code> akun\n"
         f"• Waktu: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>",
-        parse_mode=ParseMode.HTML,  # Diperbaiki: "html" -> ParseMode.HTML
+        parse_mode=ParseMode.HTML,
         link_preview_options=LinkPreviewOptions(is_disabled=True)
     )
     
@@ -448,14 +830,14 @@ async def test_ping_cb_handler(c: Client, cb: CallbackQuery):
                 f"<a href='tg://user?id={session_user.id}'>{html.escape(session_user.first_name or '')} {html.escape(session_user.last_name or '')}</a>\n"
                 f"• Tanggal: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>"
             ),
-            parse_mode=ParseMode.HTML,  # Diperbaiki: "html" -> ParseMode.HTML
+            parse_mode=ParseMode.HTML,
             link_preview_options=LinkPreviewOptions(is_disabled=True)
         )
         
         await cb.message.edit(
             f"✅ Ping berhasil! Pesan dikirim ke grup log.\n"
             f"Akun: <a href='tg://user?id={session_user.id}'>{html.escape(session_user.first_name or '')} {html.escape(session_user.last_name or '')}</a>",
-            parse_mode=ParseMode.HTML  # Diperbaiki: "html" -> ParseMode.HTML
+            parse_mode=ParseMode.HTML
         )
         
         Altruix.log(f"Test ping sukses untuk session {index} ({session_user.id})")
@@ -478,7 +860,7 @@ async def test_ping_cb_handler(c: Client, cb: CallbackQuery):
                 f"• Session: <a href='tg://user?id={session_user.id}'>{html.escape(session_user.first_name or '')} {html.escape(session_user.last_name or '')}</a> (<code>{session_user.id}</code>)\n"
                 f"• Error: <code>{type(e).__name__}</code>\n"
                 f"• Solusi: Pastikan bot assistant dan userbot berada di group dan bisa mengirim pesan ke grup log.",
-                parse_mode=ParseMode.HTML  # Diperbaiki: "html" -> ParseMode.HTML
+                parse_mode=ParseMode.HTML
             )
         except Exception as log_err:
             Altruix.log(f"Gagal kirim log error test ping: {log_err}")
@@ -494,7 +876,7 @@ async def test_ping_cb_handler(c: Client, cb: CallbackQuery):
                 f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a>\n"
                 f"• Session: <a href='tg://user?id={session_user.id}'>{html.escape(session_user.first_name or '')} {html.escape(session_user.last_name or '')}</a>\n"
                 f"• Error: <code>SlowmodeWait({e.value}s)</code>",
-                parse_mode=ParseMode.HTML  # Diperbaiki: "html" -> ParseMode.HTML
+                parse_mode=ParseMode.HTML
             )
         except Exception as log_err:
             Altruix.log(f"Gagal kirim log error Slowmode: {log_err}")
@@ -511,7 +893,7 @@ async def test_ping_cb_handler(c: Client, cb: CallbackQuery):
                 f"• Session: <a href='tg://user?id={session_user.id}'>{html.escape(session_user.first_name or '')} {html.escape(session_user.last_name or '')}</a> (<code>{session_user.id}</code>)\n"
                 f"• Error: <code>{str(e)}</code>\n"
                 f"• Waktu: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>",
-                parse_mode=ParseMode.HTML  # Diperbaiki: "html" -> ParseMode.HTML
+                parse_mode=ParseMode.HTML
             )
         except Exception as log_err:
             Altruix.log(f"Gagal kirim log error kritis test ping: {log_err}")
@@ -553,7 +935,7 @@ async def export_phone_cb_handler(c: Client, cb: CallbackQuery):
             f"• <b>Akun:</b> <a href='tg://user?id={user_info.id}'>{html.escape(user_info.first_name)}</a> | <code>+{user_info.phone_number}</code>\n"
             f"• <b>Waktu:</b> <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>"
         )
-        await Altruix.bot.send_message(log_chat_id, log_msg, parse_mode=ParseMode.HTML)  # Diperbaiki
+        await Altruix.bot.send_message(log_chat_id, log_msg, parse_mode=ParseMode.HTML)
         await cb.message.edit("✅ Nomor telepon dikirim ke pesan pribadi Anda.")
         
     except Exception as e:
@@ -565,7 +947,7 @@ async def export_phone_cb_handler(c: Client, cb: CallbackQuery):
         )
         log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
         try:
-            await Altruix.bot.send_message(log_chat_id, error_text, parse_mode=ParseMode.HTML)  # Diperbaiki
+            await Altruix.bot.send_message(log_chat_id, error_text, parse_mode=ParseMode.HTML)
         except Exception:
             pass
 
@@ -607,7 +989,7 @@ async def export_session_cb_handler(c: Client, cb: CallbackQuery):
             f"(@{session_user.username if session_user.username else 'None'}) | <code>{session_user.id}</code>\n"
             f"• <b>Waktu:</b> <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>"
         )
-        await Altruix.bot.send_message(log_chat_id, log_msg, parse_mode=ParseMode.HTML)  # Diperbaiki
+        await Altruix.bot.send_message(log_chat_id, log_msg, parse_mode=ParseMode.HTML)
         await cb.message.edit("✅ Session dikirim ke pesan pribadi Anda.")
         
     except Exception as e:
@@ -619,7 +1001,7 @@ async def export_session_cb_handler(c: Client, cb: CallbackQuery):
         )
         log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
         try:
-            await Altruix.bot.send_message(log_chat_id, error_text, parse_mode=ParseMode.HTML)  # Diperbaiki
+            await Altruix.bot.send_message(log_chat_id, error_text, parse_mode=ParseMode.HTML)
         except Exception:
             pass
 
