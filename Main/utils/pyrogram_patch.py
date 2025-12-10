@@ -1,12 +1,13 @@
 """
 Monkey-patch untuk Pyrogram agar kompatibel dengan reply_to_message_id dan reply_parameters.
-Hanya perlu diimport sekali di Main/__init__.py
+Dengan proteksi FloodWait yang lebih baik.
 """
 import inspect
 import functools
+import asyncio
 from typing import Dict, Any, Optional
-from pyrogram import Client
 from pyrogram.types import ReplyParameters
+from pyrogram.errors import FloodWait
 
 # Cache untuk mengecek dukungan
 _SUPPORTS_REPLY_PARAMETERS = None
@@ -15,6 +16,7 @@ def _check_reply_parameters_support():
     """Cek apakah Pyrogram mendukung reply_parameters."""
     global _SUPPORTS_REPLY_PARAMETERS
     if _SUPPORTS_REPLY_PARAMETERS is None:
+        from pyrogram import Client
         sig = inspect.signature(Client.send_message)
         _SUPPORTS_REPLY_PARAMETERS = 'reply_parameters' in sig.parameters
     return _SUPPORTS_REPLY_PARAMETERS
@@ -74,10 +76,10 @@ _METHODS_TO_PATCH = [
 ]
 
 def _create_patched_method(original_method):
-    """Buat method yang sudah di-patch dengan handling reply parameters."""
+    """Buat method yang sudah di-patch dengan handling reply parameters DAN FloodWait."""
     @functools.wraps(original_method)
     async def patched_method(self, *args, **kwargs):
-        # Ekstrak chat_id dari args/kwargs
+        # EKSTRAK chat_id dari args/kwargs
         chat_id = kwargs.get('chat_id')
         if not chat_id and len(args) > 0:
             chat_id = args[0]
@@ -97,14 +99,36 @@ def _create_patched_method(original_method):
         # Gabungkan semua parameter
         all_kwargs = {**kwargs, **reply_params}
         
-        # Panggil method asli dengan parameter yang sudah dinormalisasi
-        return await original_method(self, *args, **all_kwargs)
+        # **TAMBAHAN: Proteksi FloodWait untuk method tertentu**
+        # Hanya untuk method yang berpotensi menyebabkan FloodWait
+        if original_method.__name__ in [
+            'send_message', 'send_photo', 'send_video', 'send_document',
+            'send_audio', 'forward_messages', 'copy_message'
+        ]:
+            try:
+                return await original_method(self, *args, **all_kwargs)
+            except FloodWait as e:
+                # Log FloodWait dan tunggu sesuai yang diminta Telegram
+                if hasattr(self, 'log'):
+                    self.log(f"FloodWait: Menunggu {e.value} detik", level=30)
+                await asyncio.sleep(e.value)
+                # Coba lagi setelah menunggu
+                return await original_method(self, *args, **all_kwargs)
+        else:
+            # Untuk method lain, langsung panggil tanpa proteksi khusus
+            return await original_method(self, *args, **all_kwargs)
     
     return patched_method
 
-def patch_pyrogram_client(client: Client) -> Client:
+def patch_pyrogram_client(client):
     """
     Patch sebuah instance Client Pyrogram untuk otomatis handle reply parameters.
+    
+    Args:
+        client: Instance Pyrogram Client yang akan di-patch
+    
+    Returns:
+        Client yang sudah di-patch
     """
     for method_name in _METHODS_TO_PATCH:
         if hasattr(client, method_name):
@@ -114,29 +138,16 @@ def patch_pyrogram_client(client: Client) -> Client:
     
     return client
 
-def patch_all_clients():
+def patch_client_class():
     """
-    Patch semua client Pyrogram yang digunakan oleh Altruix.
-    Ini hanya perlu dipanggil sekali saat startup.
+    Patch class Client Pyrogram secara langsung (lebih agresif).
+    **WARNING**: Hanya gunakan jika Anda yakin!
     """
-    from Main import Altruix
+    from pyrogram import Client
+    for method_name in _METHODS_TO_PATCH:
+        if hasattr(Client, method_name):
+            original_method = getattr(Client, method_name)
+            patched_method = _create_patched_method(original_method)
+            setattr(Client, method_name, patched_method)
     
-    # Patch userbot client
-    if hasattr(Altruix, 'userbot') and Altruix.userbot:
-        patch_pyrogram_client(Altruix.userbot)
-    
-    # Patch bot client
-    if hasattr(Altruix, 'bot') and Altruix.bot:
-        patch_pyrogram_client(Altruix.bot)
-    
-    # Patch main client jika ada
-    if hasattr(Altruix, 'client') and Altruix.client:
-        patch_pyrogram_client(Altruix.client)
-    
-    print("[Pyrogram Patch] Semua client telah di-patch untuk kompatibilitas reply parameters")
-
-# Auto-patch saat module di-import
-try:
-    patch_all_clients()
-except Exception as e:
-    print(f"[Pyrogram Patch Error] {e}")
+    return Client
