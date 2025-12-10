@@ -97,7 +97,7 @@ class AltruixClient:
         self.clients: List[Client] = []
         self.cmd_list = {}
         self.all_lang_strings = {}
-        self.__version__ = "0.0.3"
+        self.__version__ = "0.0.4"
         self.selected_lang = "english"
         self.local_lang_file = "./Main/localization"
         self.cmd_list = {}
@@ -713,7 +713,7 @@ class AltruixClient:
                         )
                         await asyncio.sleep(3)
                         success_count += 1
-                        self.log(f"BERHASIL: {name}{username} ({client_type}) mengirim startup log")
+                        self.log(f"BERHASIL: [{client_type}] {name}{username} mengirim startup log")
                     except FloodWait as e:
                         self.log(f"FloodWait terdeteksi. Menunggu {e.value} detik...")
                         await asyncio.sleep(e.value + 6)
@@ -725,7 +725,7 @@ class AltruixClient:
                         username = f" @{me.username}" if me and me.username else ""
                         client_type = "Bot" if client == self.bot else "User"
                         failed_clients.append(f"• <b>{name}{username}</b> → {error_type}")
-                        self.log(f"GAGAL: {name}{username} ({client_type}) → {error_type}: {error_msg}")
+                        self.log(f"GAGAL: [{client_type}] {name}{username} → {error_type}: {error_msg}")
 
                 # === RINGKASAN AKHIR DI CONSOLE ===
                 self.log("=== RINGKASAN PENGIRIMAN STARTUP LOG ===")
