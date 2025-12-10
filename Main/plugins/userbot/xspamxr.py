@@ -26,13 +26,14 @@ from Main.utils.essentials import Essentials
 from Main.core.decorators import inline_check
 from pyrogram.errors import RPCError
 from Main.core.decorators import log_errors
+from Main.utils.compatibility import smart_send
 
 # ─── LOGGER KHUSUS PLUGIN ───────────────────────────────────────────────
 import logging 
 
 plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xspamxr"
-PLUGIN_VERSION = "0.3.0.5"  # Update version untuk perubahan fix
+PLUGIN_VERSION = "0.3.0.6"  # Update version untuk perubahan fix
 
 logger = logging.getLogger(f"{__plugin_name__}")
 if not logger.handlers:
@@ -146,12 +147,20 @@ async def send_log_message(text, reply_to_message_id=None, reply_markup=None, cl
         if client:
             try:
                 # PERBAIKAN: Gunakan try-except untuk handle berbagai jenis client
-                return await client.send_message(
+                # return await client.send_message(
+                #     chat_id=LOG_CHAT_ID,
+                #     text=text,
+                #     reply_to_message_id=reply_to_message_id,
+                #     reply_markup=reply_markup
+                # )
+                return await smart_send(
+                    # client=client,
+                    client=BOT_CLIENT,      # <---- paksa gunakan bot untuk mengirim log msg
                     chat_id=LOG_CHAT_ID,
                     text=text,
                     reply_to_message_id=reply_to_message_id,
                     reply_markup=reply_markup
-                )
+                    )
             except AttributeError:
                 # Jika client tidak memiliki send_message, coba BOT_CLIENT
                 pass
@@ -159,27 +168,43 @@ async def send_log_message(text, reply_to_message_id=None, reply_markup=None, cl
         # Coba BOT_CLIENT
         if BOT_CLIENT:
             try:
-                # Cek apakah USER_CLIENT memiliki method send_message
-                if hasattr(USER_CLIENT, 'send_message') and callable(getattr(USER_CLIENT, 'send_message')):
-                    return await USER_CLIENT.send_message(
-                        chat_id=LOG_CHAT_ID,
-                        text=text,
-                        reply_to_message_id=reply_to_message_id,
-                        reply_markup=reply_markup
+                # Cek apakah BOT_CLIENT memiliki method send_message
+                if hasattr(BOT_CLIENT, 'send_message') and callable(getattr(BOT_CLIENT, 'send_message')):
+                    # return await BOT_CLIENT.send_message(
+                    #     chat_id=LOG_CHAT_ID,
+                    #     text=text,
+                    #     reply_to_message_id=reply_to_message_id,
+                    #     reply_markup=reply_markup
+                    # )
+                    return await smart_send(
+                    client=BOT_CLIENT,
+                    chat_id=LOG_CHAT_ID,
+                    text=text,
+                    reply_to_message_id=reply_to_message_id,
+                    reply_markup=reply_markup
                     )
+
             except (AttributeError, TypeError):
-                # Jika USER_CLIENT tidak memiliki send_message, coba USER_CLIENT
+                # Jika BOT_CLIENT tidak memiliki send_message, coba BOT_CLIENT
                 pass
         
         # Coba USER_CLIENT sebagai fallback
         if USER_CLIENT:
             try:
-                return await BOT_CLIENT.send_message(
+                # return await USER_CLIENT.send_message(
+                #     chat_id=LOG_CHAT_ID,
+                #     text=text,
+                #     reply_to_message_id=reply_to_message_id,
+                #     reply_markup=reply_markup
+                # )
+                return await smart_send(
+                    client=USER_CLIENT,
                     chat_id=LOG_CHAT_ID,
                     text=text,
                     reply_to_message_id=reply_to_message_id,
                     reply_markup=reply_markup
-                )
+                    )
+
             except Exception:
                 pass
         
@@ -301,9 +326,10 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
                                     # PERBAIKAN: Gunakan helper untuk log
                                     await send_log_message(
                                         f"[HAPUS]: Berhasil hapus {del_suk} pesan lama, gagal {del_ggl} pesan di {target_chat.title}.",
-                                        reply_to_message_id=x_msg.id if x_msg else None,
+                                        reply_parameters=types.ReplyParameters(message_id=x_msg.id if x_msg else None)x_msg.id if x_msg else None,
                                         client=client
                                     )
+
                         except Exception as del_err:
                             Altruix.log(f"Error saat menghapus pesan: {del_err}", level=40)
                             # PERBAIKAN: Gunakan helper untuk log
@@ -353,7 +379,6 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
                                 reply_to_message_id=x_msg.id if x_msg else None,
                                 client=client
                             )
-
                             await asyncio.sleep(random_delay)
                             break
 
@@ -502,7 +527,8 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
                         # PERBAIKAN: Gunakan helper untuk log
                         await send_log_message(
                             f"** [ #ERROR ]** __SlowModeWaitError: Waiting for {swe.value} seconds__", 
-                            reply_to_message_id=x_msg.id if x_msg else None,
+                            # reply_to_message_id=x_msg.id if x_msg else None,
+                            reply_parameters=types.ReplyParameters(message_id=x_msg.id if x_msg else None),
                             client=client
                         )
                         await asyncio.sleep(swe.value)
@@ -512,7 +538,8 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
                         # PERBAIKAN: Gunakan helper untuk log
                         await send_log_message(
                             f"** [ #ERROR ]** __FloodWaitError: Waiting for {fwe.value} seconds__", 
-                            reply_to_message_id=x_msg.id if x_msg else None,
+                            # reply_to_message_id=x_msg.id if x_msg else None,
+                            reply_parameters=types.ReplyParameters(message_id=x_msg.id if x_msg else None),
                             client=client
                         )
                         await asyncio.sleep(fwe.value)
@@ -522,7 +549,8 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
                         # PERBAIKAN: Gunakan helper untuk log
                         await send_log_message(
                             f"** [ #ERROR ]** __UserBot muted in chat {target_chat.title}: Task paused automatically.__", 
-                            reply_to_message_id=x_msg.id if x_msg else None,
+                            # reply_to_message_id=x_msg.id if x_msg else None,
+                            reply_parameters=types.ReplyParameters(message_id=x_msg.id if x_msg else None),
                             client=client
                         )
                         TELAYSPAM_TASKS[chat_id]["pause_event"].clear()
@@ -781,8 +809,14 @@ async def telayspammer_cmd(c: Client, m: Message):
         await m.handle_message("ERROR_OCCURRED")
         return
 
-    await m.handle_message("PROCESSING_TASK")
-    await asyncio.sleep(2)
+    try:
+        await m.handle_message("PROCESSING_TASK")
+        await asyncio.sleep(2)
+    except Exception as e:
+        Altruix.log(f"Error parsing command: {e}", level=40)
+        await m.handle_message("PROCESSING_TASK")
+        await asyncio.sleep(2)
+
 
     # PERBAIKAN: Default react_enabled = True jika emot_react ada
     react_enabled = emot_react is not None and emot_react.lower() != "none"
