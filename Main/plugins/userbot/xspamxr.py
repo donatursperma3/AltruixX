@@ -1,3 +1,4 @@
+# xspamxr.py
 # Copyright (C) 2021-present by Altruix@Github, < https://github.com/Altruix >.
 #
 # This file is part of < https://github.com/Altruix/Altruix > project,
@@ -33,7 +34,7 @@ import logging
 
 plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xspamxr"
-PLUGIN_VERSION = "0.3.0.7"  # Update version untuk perubahan fix
+PLUGIN_VERSION = "0.3.0.8"  # Update version untuk perubahan fix
 
 logger = logging.getLogger(f"{__plugin_name__}")
 if not logger.handlers:
@@ -156,11 +157,12 @@ async def send_log_message(text, reply_to_message_id=None, reply_markup=None, cl
                 return await smart_send(
                     # client=client,
                     client=BOT_CLIENT,      # <---- paksa gunakan bot untuk mengirim log msg
+                    method_name="send_message",
                     chat_id=LOG_CHAT_ID,
                     text=text,
                     reply_to_message_id=reply_to_message_id,
                     reply_markup=reply_markup
-                    )
+                )
             except AttributeError:
                 # Jika client tidak memiliki send_message, coba BOT_CLIENT
                 pass
@@ -177,11 +179,12 @@ async def send_log_message(text, reply_to_message_id=None, reply_markup=None, cl
                     #     reply_markup=reply_markup
                     # )
                     return await smart_send(
-                    client=BOT_CLIENT,
-                    chat_id=LOG_CHAT_ID,
-                    text=text,
-                    reply_to_message_id=reply_to_message_id,
-                    reply_markup=reply_markup
+                        client=BOT_CLIENT,
+                        method_name="send_message",
+                        chat_id=LOG_CHAT_ID,
+                        text=text,
+                        reply_to_message_id=reply_to_message_id,
+                        reply_markup=reply_markup
                     )
 
             except (AttributeError, TypeError):
@@ -199,11 +202,13 @@ async def send_log_message(text, reply_to_message_id=None, reply_markup=None, cl
                 # )
                 return await smart_send(
                     client=USER_CLIENT,
+                    method_name="send_message",
                     chat_id=LOG_CHAT_ID,
                     text=text,
                     reply_to_message_id=reply_to_message_id,
                     reply_markup=reply_markup
-                    )
+                )
+
 
             except Exception:
                 pass
