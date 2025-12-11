@@ -25,12 +25,14 @@ from Main.core.decorators import inline_check
 from pyrogram.errors import RPCError
 from Main.core.decorators import log_errors
 from Main.utils.compatibility import smart_send
+
 # ─── LOGGER KHUSUS PLUGIN ───────────────────────────────────────────────
 import logging 
 plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xspamxr"
-PLUGIN_VERSION = "0.3.0.11"  # 🔥 Tambah versi karena fitur baru
+PLUGIN_VERSION = "0.3.0.13"  # 🔥 Tambah versi karena fitur baru
 logger = logging.getLogger(f"{__plugin_name__}")
+
 if not logger.handlers:
     handler = logging.StreamHandler()
     formatter = logging.Formatter(
@@ -39,6 +41,7 @@ if not logger.handlers:
     handler.setFormatter(formatter)
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
+
 f"""
 ✘ Commands Available -
 • `.relayspam <chat/destination> <start_delay> <stop_delay> <step> <count> <delete/purge> <emot_react/optional> ["msg_1", "msg_2", ...]` 
@@ -66,6 +69,7 @@ f"""
 - 👁️ NEW: Tombol "See Msg List" untuk preview isi dan panjang pesan
 - 👤 NEW: Info akun aktif dengan hyperlink nama userbot yang dapat diklik
 """
+
 # Dictionary global untuk menyimpan status task relayspam per chat
 TELAYSPAM_TASKS = {}
 # Dictionary untuk konfigurasi task yang telah selesai (untuk recurring)
@@ -80,6 +84,7 @@ EMOJI_SELECTION_WAITING = {}
 ADJUST_PURGE_WAITING = {}
 # 🔥 TAMBAHAN: Dictionary untuk menyimpan konfigurasi sementara sebelum konfirmasi
 PENDING_CONFIRMATIONS = {}
+
 # Daftar emoji reaction yang valid sesuai API Telegram
 # Emoji yang umum digunakan dan didukung oleh Telegram
 VALID_EMOJIS = [
@@ -92,6 +97,7 @@ VALID_EMOJIS = [
     "🆒", "💘", "🙉", "🦄", "😘", "💊", "🙊", "😎", "👾", "🤷‍♂️",
     "🤷", "🤷‍♀️", "😡"
 ]
+
 # ==================== PERBAIKAN UTAMA ====================
 # Perbaikan definisi USER_CLIENT untuk menghindari AttributeError 'send_message'
 # Altruix.userbot adalah instance AltruixClient yang mungkin tidak memiliki metode send_message standar
@@ -105,6 +111,7 @@ try:
 except AttributeError:
     USER_CLIENT = Altruix
     BOT_CLIENT = None
+
 # ============= PERBAIKAN: Handler diambil dari config =============
 try:
     HANDLER = Altruix.config.HANDLERS
@@ -112,6 +119,7 @@ try:
         HANDLER = HANDLER[0]
 except AttributeError:
     HANDLER = "."
+
 # ============= PERBAIKAN: Mengambil LOG_CHAT_ID dengan benar =============
 try:
     LOG_CHAT_ID = Altruix.config.LOG_CHAT_ID
@@ -122,6 +130,7 @@ except AttributeError:
         LOG_CHAT_ID = None
 if not LOG_CHAT_ID:
     LOG_CHAT_ID = "me"  # Kirim ke Saved Messages
+
 # ==================== FUNGSI HELPER BARU ====================
 async def send_log_message(text, reply_to_message_id=None, reply_markup=None, client=None):
     """
@@ -198,6 +207,7 @@ async def send_log_message(text, reply_to_message_id=None, reply_markup=None, cl
     except Exception as e:
         Altruix.log(f"Gagal mengirim pesan log: {e}", level=40)
         return None
+
 # --- Fungsi untuk update tombol purge secara dinamis ---
 async def update_purge_button(message: Message, chat_id: str, purge_value: int):
     """
@@ -219,6 +229,7 @@ async def update_purge_button(message: Message, chat_id: str, purge_value: int):
         await message.edit_reply_markup(InlineKeyboardMarkup(new_keyboard))
     except Exception as e:
         Altruix.log(f"Gagal update tombol purge: {e}", level=40)
+
 # --- Fungsi untuk update tombol reaction secara dinamis ---
 async def update_reaction_button(message: Message, chat_id: str, reaction_enabled: bool, emoji: str = None):
     """
@@ -242,6 +253,7 @@ async def update_reaction_button(message: Message, chat_id: str, reaction_enable
         await message.edit_reply_markup(InlineKeyboardMarkup(new_keyboard))
     except Exception as e:
         Altruix.log(f"Gagal update tombol reaction: {e}", level=40)
+
 # 🔥 BARU: Fungsi untuk menampilkan preview list pesan
 async def show_msg_list_preview(c: Client, m: Message, msg_list: list, is_batch: bool):
     """Menampilkan preview isi dan panjang karakter pesan"""
@@ -270,6 +282,7 @@ async def show_msg_list_preview(c: Client, m: Message, msg_list: list, is_batch:
     except Exception as e:
         Altruix.log(f"Error showing msg list preview: {e}", level=40)
         await m.reply("❌ Gagal menampilkan preview list pesan.")
+
 # 🔥 PERBAIKAN UTAMA: Fungsi start_relayspam — chat_id diinisialisasi di awal
 async def start_relayspam(client: Client, destination: str, start_delay: float, stop_delay: float, 
                           step: float, count: int, old_purge: int, emot_react: str, 
@@ -397,6 +410,7 @@ async def start_relayspam(client: Client, destination: str, start_delay: float, 
         if chat_id in TELAYSPAM_TASKS:
             TELAYSPAM_TASKS.pop(chat_id, None)
         return False
+        
 async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_possible, 
                     count: int, start_delay: float, stop_delay: float, step: float, 
                     x_msg: Message, emot_react: str, is_batch: bool, react_enabled: bool = True):
@@ -677,6 +691,8 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
             if config:
                 COMPLETED_TASKS[chat_id] = config
         TELAYSPAM_TASKS.pop(chat_id, None)
+
+
 # 🔥 BARU: Handler untuk tombol "See Msg List"
 @Altruix.bot.on_callback_query(filters.regex(r"see_msglist_(-?\d+)"))
 @log_errors
@@ -725,6 +741,8 @@ async def see_msglist_handler(c: Client, cb):
     except Exception as e:
         Altruix.log(f"Error in see_msglist_handler: {e}", level=40)
         await cb.answer("❌ Gagal menampilkan preview.", show_alert=True)
+
+
 # 🔥 BARU: Handler untuk konfirmasi sebelum mulai task
 @Altruix.bot.on_callback_query(filters.regex(r"confirm_start_(-?\d+)_(.+)"))
 @log_errors
@@ -768,6 +786,8 @@ async def confirm_start_handler(c: Client, cb):
     except Exception as e:
         Altruix.log(f"Error in confirm_start_handler: {e}", level=40)
         await cb.answer("❌ Error saat memproses konfirmasi.", show_alert=True)
+
+
 # 🔥 PERBAIKAN: Handler command relayspam — tambah konfirmasi
 @Altruix.register_on_cmd(
     ["relayspam"],
@@ -782,6 +802,7 @@ async def telayspammer_cmd(c: Client, m: Message):
     """
     Handler command: relayspam
     🔥 DITAMBAH: Konfirmasi sebelum mulai task
+    🔥 DIPERBAIKI: Konfirmasi dikirim oleh BOT_CLIENT agar tombol inline berfungsi
     """
     try:
         # PERBAIKAN UTAMA: Menggunakan m.user_input alih-alih Altruix.handler
@@ -790,9 +811,7 @@ async def telayspammer_cmd(c: Client, m: Message):
         cmd_pattern = re.escape(HANDLER) + r'relayspam\s+'
         args_str = re.sub(cmd_pattern, '', text, count=1)
         if not args_str:
-            await m.handle_message(
-                "INVALID_ARG_COUNT"
-            )
+            await m.handle_message("INVALID_ARG_COUNT")
             return
         # Cari list di akhir string
         msg_list_match = re.search(r'\[.*\]$', args_str, re.DOTALL)
@@ -809,9 +828,7 @@ async def telayspammer_cmd(c: Client, m: Message):
             args = args_str_without_msg.split()
         # PERBAIKAN: Sesuaikan jumlah argumen untuk perintah spesifik
         if len(args) not in [6, 7]:
-            await m.handle_message(
-                "INVALID_ARG_COUNT"
-            )
+            await m.handle_message("INVALID_ARG_COUNT")
             return
         destination = args[0]
         start_delay = float(args[1])
@@ -852,19 +869,22 @@ async def telayspammer_cmd(c: Client, m: Message):
         Altruix.log(f"Error parsing command: {e}", level=40)
         await m.handle_message("ERROR_OCCURRED")
         return
+
     try:
         await m.handle_message("PROCESSING_TASK")
         await asyncio.sleep(2)
     except Exception as e:
-        Altruix.log(f"Error parsing command: {e}", level=40)
+        Altruix.log(f"Error during processing task: {e}", level=40)
         await m.handle_message("PROCESSING_TASK")
         await asyncio.sleep(2)
+
     # PERBAIKAN: Default react_enabled = True jika emot_react ada
     react_enabled = emot_react is not None and emot_react.lower() != "none"
+
     # 🔥 SIMPAN KONFIGURASI SEMENTARA
     temp_id = f"{m.chat.id}_{m.id}"
     PENDING_CONFIRMATIONS[temp_id] = {
-        "client": c,
+        "client": c,  # Simpan userbot client untuk start task nanti
         "destination": destination,
         "start_delay": start_delay,
         "stop_delay": stop_delay,
@@ -876,7 +896,8 @@ async def telayspammer_cmd(c: Client, m: Message):
         "is_batch": is_batch,
         "react_enabled": react_enabled
     }
-    # 🔥 TAMPILKAN TOMBOL KONFIRMASI
+
+    # 🔥 TAMPILKAN TOMBOL KONFIRMASI — DIPERBAIKI: Kirim via BOT_CLIENT
     confirm_buttons = [
         [InlineKeyboardButton("✅ Confirm Start", callback_data=f"confirm_start_{temp_id}_confirm")],
         [InlineKeyboardButton("❌ Cancel", callback_data=f"confirm_start_{temp_id}_cancel")],
@@ -893,7 +914,34 @@ async def telayspammer_cmd(c: Client, m: Message):
         f"Purge: {old_purge}\n"
         f"React: {'Aktif' if react_enabled else 'Nonaktif'}"
     )
-    await m.reply(confirm_msg, reply_markup=InlineKeyboardMarkup(confirm_buttons))
+
+    # 🔥 PERBAIKAN UTAMA: Kirim konfirmasi via BOT_CLIENT agar tombol inline berfungsi
+    try:
+        # Pastikan BOT_CLIENT tersedia
+        if not BOT_CLIENT:
+            await m.handle_message("BOT_NOT_AVAILABLE")
+            Altruix.log("Bot client tidak tersedia untuk mengirim konfirmasi inline.", level=40)
+            # Bersihkan data sementara
+            PENDING_CONFIRMATIONS.pop(temp_id, None)
+            return
+
+        # Kirim ke LOG_CHAT_ID (sesuai pola plugin ini)
+        await BOT_CLIENT.send_message(
+            chat_id=LOG_CHAT_ID,
+            text=confirm_msg,
+            reply_markup=InlineKeyboardMarkup(confirm_buttons)
+        )
+        # Beri tahu user bahwa konfirmasi telah dikirim ke log
+        await m.handle_message("CONFIRMATION_SENT")
+
+    except Exception as send_err:
+        # 🔥 Tambahkan penanganan error lengkap
+        Altruix.log(f"Gagal mengirim pesan konfirmasi via bot: {send_err}", level=40)
+        await m.edit(f"❌ Gagal mengirim konfirmasi: {send_err}")
+        # Bersihkan data sementara jika gagal
+        PENDING_CONFIRMATIONS.pop(temp_id, None)
+
+
 # 🔥 BARU: Handler untuk preview msg list dari tombol konfirmasi
 @Altruix.bot.on_callback_query(filters.regex(r"preview_msglist_(.+)"))
 @log_errors
@@ -905,6 +953,8 @@ async def preview_msglist_from_confirm(c: Client, cb):
     data = PENDING_CONFIRMATIONS[temp_id]
     await show_msg_list_preview(c, cb.message, data["msg_list"], data["is_batch"])
     await cb.answer("ℹ️ Preview ditampilkan.", show_alert=False)
+
+
 @Altruix.register_on_cmd(
     ["srelayspam"],
     cmd_help={
@@ -937,6 +987,8 @@ async def stop_telayspam_cmd(c: Client, m: Message):
     except Exception as err:
         Altruix.log(f"Error stopping task: {err}", level=40)
         await m.handle_message("STOP_TASK_ERROR")
+
+
 @Altruix.register_on_cmd(
     ["prelayspam"],
     cmd_help={
@@ -966,6 +1018,8 @@ async def pause_telayspam_cmd(c: Client, m: Message):
     except Exception as err:
         Altruix.log(f"Error pausing task: {err}", level=40)
         await m.handle_message("PAUSE_TASK_ERROR")
+
+
 @Altruix.register_on_cmd(
     ["rrelayspam"],
     cmd_help={
@@ -995,6 +1049,8 @@ async def resume_telayspam_cmd(c: Client, m: Message):
     except Exception as err:
         Altruix.log(f"Error resuming task: {err}", level=40)
         await m.handle_message("RESUME_TASK_ERROR")
+
+
 @Altruix.register_on_cmd(
     ["relayspamcek"],
     cmd_help={
@@ -1031,6 +1087,8 @@ async def check_relayspam_cmd(c: Client, m: Message):
     except Exception as err:
         Altruix.log(f"Error checking status: {err}", level=40)
         await m.handle_message("CHAT_RESOLUTION_ERROR")
+
+
 @Altruix.register_on_cmd(
     ["relayspamcekall"],
     cmd_help={
@@ -1063,6 +1121,8 @@ async def check_all_relayspam_cmd(c: Client, m: Message):
             status_list.append(f"❓ Unknown chat (ID: {chat_id}) - Status tidak dapat diresolusi.")
     output = "Status Semua Task Relayspam:\n" + "\n".join(status_list)
     await m.edit(output)
+
+
 # PERBAIKAN UTAMA: Semua callback query handler harus didaftarkan ke bot (Altruix.bot)
 # karena callback berasal dari inline keyboard yang dikirim oleh bot
 # PERBAIKAN: Handler untuk toggle purge old messages
@@ -1102,6 +1162,8 @@ async def toggle_purge_handler(c: Client, cb):
             await update_purge_button(notif_msg, chat_id, new_purge)
     except Exception as e:
         Altruix.log(f"Gagal update tombol purge: {e}", level=40)
+
+
 # PERBAIKAN: Handler untuk toggle reaction
 @Altruix.bot.on_callback_query(filters.regex(r"toggle_react_(-?\d+)"))
 @log_errors
@@ -1135,6 +1197,8 @@ async def toggle_reaction_handler(c: Client, cb):
             await update_reaction_button(notif_msg, chat_id, new_enabled, emoji if new_enabled else None)
     except Exception as e:
         Altruix.log(f"Gagal update tombol reaction: {e}", level=40)
+
+
 # PERBAIKAN: Handler untuk memilih emoji reaction
 @Altruix.bot.on_callback_query(filters.regex(r"select_emoji_(-?\d+)"))
 @log_errors
@@ -1169,6 +1233,8 @@ async def select_emoji_handler(c: Client, cb):
         client=userbot_client
     )
     await cb.answer("Pilih emoji dari daftar...", show_alert=False)
+
+
 # PERBAIKAN: Handler untuk menyetel emoji yang dipilih
 @Altruix.bot.on_callback_query(filters.regex(r"set_emoji_(-?\d+)_(.+)"))
 @log_errors
@@ -1214,6 +1280,8 @@ async def set_emoji_handler(c: Client, cb):
         await cb.message.delete()
     except:
         pass
+
+
 # PERBAIKAN: Handler untuk cancel pemilihan emoji
 @Altruix.bot.on_callback_query(filters.regex(r"cancel_emoji_(-?\d+)"))
 @log_errors
@@ -1228,6 +1296,8 @@ async def cancel_emoji_handler(c: Client, cb):
         await cb.message.delete()
     except:
         pass
+
+
 # PERBAIKAN: Handler untuk menampilkan menu adjust purge
 @Altruix.bot.on_callback_query(filters.regex(r"adjust_purge_(-?\d+)"))
 @log_errors
@@ -1278,6 +1348,8 @@ async def adjust_purge_handler(c: Client, cb):
         # Simpan message adjust untuk dihapus nanti
         ADJUST_PURGE_WAITING[chat_id] = adjust_msg.id
     await cb.answer("Menu adjust purge ditampilkan", show_alert=False)
+
+
 # PERBAIKAN: Handler untuk menambah jumlah purge
 @Altruix.bot.on_callback_query(filters.regex(r"inc_purge_(-?\d+)_(\d+)"))
 @log_errors
@@ -1324,6 +1396,8 @@ async def increase_purge_handler(c: Client, cb):
         pass
     # Hapus status waiting
     ADJUST_PURGE_WAITING.pop(chat_id, None)
+
+
 # PERBAIKAN: Handler untuk mengurangi jumlah purge
 @Altruix.bot.on_callback_query(filters.regex(r"dec_purge_(-?\d+)_(\d+)"))
 @log_errors
@@ -1371,6 +1445,8 @@ async def decrease_purge_handler(c: Client, cb):
         pass
     # Hapus status waiting
     ADJUST_PURGE_WAITING.pop(chat_id, None)
+
+
 # PERBAIKAN: Handler untuk kembali dari menu adjust purge
 @Altruix.bot.on_callback_query(filters.regex(r"back_purge_(-?\d+)"))
 @log_errors
@@ -1390,6 +1466,8 @@ async def back_purge_handler(c: Client, cb):
     # Hapus status waiting
     ADJUST_PURGE_WAITING.pop(chat_id, None)
     await cb.answer("Kembali ke menu utama", show_alert=False)
+
+
 # PERBAIKAN: Handler untuk cancel adjust purge
 @Altruix.bot.on_callback_query(filters.regex(r"cancel_adjust_purge_(-?\d+)"))
 @log_errors
@@ -1409,6 +1487,8 @@ async def cancel_adjust_purge_handler(c: Client, cb):
     # Hapus status waiting
     ADJUST_PURGE_WAITING.pop(chat_id, None)
     await cb.answer("Adjust purge dibatalkan", show_alert=True)
+
+
 # PERBAIKAN: Handler utama untuk kontrol task via callback
 @Altruix.bot.on_callback_query(filters.regex(r"(stop|pause|resume|cek|recurring|delete_latest|delete_oldest|edit_last|edit_msglist|cancel_edit|cancel_editlast)_(-?\d+)"))
 @log_errors
@@ -1729,6 +1809,8 @@ async def handle_task_control(c: Client, cb):
     except Exception as err:
         Altruix.log(f"Error saat menangani aksi {action} untuk chat {chat_id}: {err}", level=40)
         await cb.answer(f"Error: {err}", show_alert=True)
+
+
 # PERBAIKAN: Handler untuk kontrol global semua task
 @Altruix.bot.on_callback_query(filters.regex(r"(cekall|stopall|recurringall|pauseall|resumeall)"))
 @log_errors
@@ -1850,6 +1932,8 @@ async def handle_global_controls(c: Client, cb):
         else:
             output = f"🟢 Semua {resumed_count} task diresume:\n" + "\n".join(resumed_chats)
             await cb.answer(f"🟢 Semua {resumed_count} task diresume.", show_alert=True)
+
+
 # ==================== MESSAGE HANDLER UNTUK EDIT MSG LIST & LAST MSG ====================
 # PERBAIKAN: Handler ini harus didaftarkan ke bot (Altruix.bot) karena terjadi di chat LOG_CHAT_ID dengan bot
 @Altruix.bot.on_message(filters.chat(LOG_CHAT_ID) & filters.incoming & filters.reply)
