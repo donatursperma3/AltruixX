@@ -17,19 +17,22 @@ from pyrogram.types import (
 )
 from pyrogram.errors import (
     PeerIdInvalid, UserIsBlocked, ChatWriteForbidden, FloodWait, MessageIdInvalid,
-    SlowmodeWait
+    SlowmodeWait, InviteHashInvalid, InviteHashExpired, UserAlreadyParticipant,
+    ChatAdminRequired, UsernameNotOccupied, ChannelPrivate, UsernameInvalid
 )
-from pyrogram.enums import ParseMode  # PERBAIKAN: Import ParseMode untuk versi Pyrogram terbaru
+from pyrogram.enums import ParseMode
 import os
 import logging
 import asyncio
 import html
 from datetime import datetime
 import io
+import re
 
 # Dictionary untuk menyimpan state konfirmasi user
 user_confirmation_state = {}
 user_text_confirmation_state = {}
+user_bulk_join_state = {}  # State untuk bulk join
 
 settings_menu_buttons = [
     [
@@ -62,15 +65,14 @@ def arrange_buttons(array: list, no=3) -> List:
 
 
 def get_sessions_buttons(page=1) -> Tuple[List[InlineKeyboardButton], bool, int]:
-    """Mendapatkan tombol session dengan layout 6 tombol per halaman (2 baris x 3 kolom)"""
-    sessions_per_page = 6  # PERUBAHAN: 6 tombol per halaman (2 baris x 3 kolom)
+    """Mendapatkan tombol session dengan layout 9 tombol per halaman (3 baris x 3 kolom)"""
+    sessions_per_page = 9  # PERUBAHAN: 9 tombol per halaman (3 baris x 3 kolom)
     
-    # PERBAIKAN 1: Pastikan Altruix.clients tersedia dan memiliki properti myself
     if not hasattr(Altruix, 'clients') or not Altruix.clients:
         return [], False, 1
     
     total_sessions = len(Altruix.clients)
-    total_pages = (total_sessions + sessions_per_page - 1) // sessions_per_page  # Hitung total halaman
+    total_pages = (total_sessions + sessions_per_page - 1) // sessions_per_page
     
     if page < 1:
         page = 1
@@ -85,19 +87,22 @@ def get_sessions_buttons(page=1) -> Tuple[List[InlineKeyboardButton], bool, int]
     for index in range(start_index, end_index):
         client = Altruix.clients[index]
         try:
-            # PERBAIKAN 2: Akses first_name dengan aman
+            # PERBAIKAN: Akses first_name dengan aman
+            session_num = index + 1  # Nomor session (dimulai dari 1)
             first_name = getattr(getattr(client, 'myself', None), 'first_name', 'Unknown')
             if not first_name or first_name == 'Unknown':
-                first_name = f"Session {index + 1}"
+                first_name = f"Session {session_num}"
+            # PERUBAHAN: Format tombol dengan nomor: [[1] Nama Akun]
+            button_text = f"[[{session_num}] {first_name[:15]}]" if len(first_name) > 15 else f"[[{session_num}] {first_name}]"
             buttons.append(
-                InlineKeyboardButton(str(first_name), f"session_info_{index}_{page}")
+                InlineKeyboardButton(button_text, f"session_info_{index}_{page}")
             )
         except AttributeError:
+            button_text = f"[[{index + 1}] Session {index + 1}]"
             buttons.append(
-                InlineKeyboardButton(f"Session {index + 1}", f"session_info_{index}_{page}")
+                InlineKeyboardButton(button_text, f"session_info_{index}_{page}")
             )
     
-    # PERBAIKAN 3: Pastikan arrange_buttons menerima list yang valid
     if not buttons:
         return [], False, 1
     
@@ -106,7 +111,6 @@ def get_sessions_buttons(page=1) -> Tuple[List[InlineKeyboardButton], bool, int]
     
     has_next = page < total_pages
     
-    # PERBAIKAN 4: Kembalikan arranged_buttons sebagai list of list
     return arranged_buttons, has_next, total_pages
 
 
@@ -136,28 +140,29 @@ async def sessions_menu_cb_handler(c: Client, cb: CallbackQuery):
     except (ValueError, IndexError):
         page = 1
 
-    # Dapatkan tombol session untuk halaman ini (sudah dalam format 2 baris x 3 kolom)
+    # Dapatkan tombol session untuk halaman ini (sudah dalam format 3 baris x 3 kolom)
     session_buttons, has_next, total_pages = get_sessions_buttons(page)
     
     # Dapatkan LOG_CHAT_ID dengan benar
     LOG_CHAT_ID = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
 
-    # PERUBAHAN: Susunan tombol sesuai permintaan
-    # session_buttons sudah dalam format 2 baris untuk 6 tombol session
+    # PERUBAHAN: Susunan tombol sesuai permintaan baru
+    # session_buttons sudah dalam format 3 baris untuk 9 tombol session
     
-    # Baris 3: Tombol aksi [test ping all][add a session]
+    # Baris 4: Tombol aksi [Test Ping All][Bulk Join][Add a Session]
     action_buttons = [
-        InlineKeyboardButton("🏓 Test Ping All", "test_ping_all_confirmation"),
-        InlineKeyboardButton("➕ Add a session", "add_session")
+        InlineKeyboardButton("🏓 Tes Ping All", "test_ping_all_confirmation"),
+        InlineKeyboardButton("👥 Bulk Join", "bulk_join_menu"),
+        InlineKeyboardButton("➕ Add a Session", "add_session")
     ]
     
-    # Baris 4: Tombol export [export sessions][export phones]
+    # Baris 5: Tombol export [Export Sessions][Export Phones]
     export_buttons = [
         InlineKeyboardButton("📤 Export Sessions", "export_all_sessions_confirmation"),
         InlineKeyboardButton("📲 Export Phones", "export_all_phones_confirmation")
     ]
     
-    # Baris 5: Tombol navigasi [previous][back][next]
+    # Baris 6: Tombol navigasi [Previous][Back][Next]
     nav_buttons = []
     if page > 1:
         nav_buttons.append(InlineKeyboardButton("⬅️ Previous", f"sessions_list_{page - 1}"))
@@ -165,26 +170,26 @@ async def sessions_menu_cb_handler(c: Client, cb: CallbackQuery):
     if has_next:
         nav_buttons.append(InlineKeyboardButton("Next ➡️", f"sessions_list_{page + 1}"))
     
-    # PERBAIKAN 5: Susun final markup dengan struktur yang benar
+    # Susun final markup dengan struktur yang benar
     final_markup = []
     
-    # Tambahkan session buttons (2 baris pertama)
+    # Tambahkan session buttons (3 baris pertama)
     for row in session_buttons:
         final_markup.append(row)
     
-    # Tambahkan action buttons sebagai baris ketiga
+    # Tambahkan action buttons sebagai baris keempat
     final_markup.append(action_buttons)
     
-    # Tambahkan export buttons sebagai baris keempat
+    # Tambahkan export buttons sebagai baris kelima
     final_markup.append(export_buttons)
     
-    # Tambahkan navigation buttons sebagai baris kelima
+    # Tambahkan navigation buttons sebagai baris keenam
     final_markup.append(nav_buttons)
     
     total_sessions = len(Altruix.clients) if hasattr(Altruix, 'clients') else 0
     
     # Hitung range session untuk halaman ini
-    sessions_per_page = 6
+    sessions_per_page = 9
     start_session = ((page - 1) * sessions_per_page) + 1
     end_session = min(page * sessions_per_page, total_sessions)
     
@@ -210,15 +215,414 @@ async def sessions_menu_cb_handler(c: Client, cb: CallbackQuery):
         await cb.message.edit("❌ Failed to load menu. Owner has been notified.")
 
 
+# ====================== BULK JOIN FEATURE ======================
+@Altruix.bot.on_callback_query(filters.regex("bulk_join_menu"))
+@log_errors
+async def bulk_join_menu_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk menu bulk join"""
+    await cb.answer()
+    
+    # Tampilkan pilihan delay
+    delay_buttons = [
+        [
+            InlineKeyboardButton("2 detik", callback_data="bulk_join_delay_2"),
+            InlineKeyboardButton("4 detik", callback_data="bulk_join_delay_4"),
+            InlineKeyboardButton("6 detik", callback_data="bulk_join_delay_6"),
+        ],
+        [
+            InlineKeyboardButton("8 detik", callback_data="bulk_join_delay_8"),
+            InlineKeyboardButton("10 detik", callback_data="bulk_join_delay_10"),
+            InlineKeyboardButton("15 detik", callback_data="bulk_join_delay_15"),
+        ],
+        [
+            InlineKeyboardButton("20 detik", callback_data="bulk_join_delay_20"),
+            InlineKeyboardButton("30 detik", callback_data="bulk_join_delay_30"),
+            InlineKeyboardButton("60 detik", callback_data="bulk_join_delay_60"),
+        ],
+        [
+            InlineKeyboardButton("🔙 Back", callback_data="sessions_list_1"),
+        ]
+    ]
+    
+    await cb.message.edit(
+        text="<b>👥 Bulk Join Settings</b>\n\n"
+             "Pilih jeda waktu antara join (untuk menghindari flood wait):\n\n"
+             "⚠️ <b>Note:</b>\n"
+             "• Delay yang lebih besar mengurangi risiko flood wait\n"
+             "• Delay yang lebih kecil lebih cepat tapi berisiko",
+        reply_markup=InlineKeyboardMarkup(delay_buttons)
+    )
+
+
+@Altruix.bot.on_callback_query(filters.regex("bulk_join_delay_(\\d+)"))
+@log_errors
+async def bulk_join_delay_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk memilih delay bulk join"""
+    await cb.answer()
+    
+    try:
+        delay = int(cb.matches[0].group(1))
+    except (ValueError, IndexError):
+        delay = 5
+    
+    user_id = cb.from_user.id
+    user_bulk_join_state[user_id] = {
+        'delay': delay,
+        'link': None,
+        'step': 'waiting_link'
+    }
+    
+    await cb.message.edit(
+        text=f"<b>👥 Bulk Join - Delay {delay} detik</b>\n\n"
+             "Silakan kirim link grup yang akan di-join:\n\n"
+             "🔗 <b>Format Link:</b>\n"
+             "• https://t.me/username (public group/channel)\n"
+             "• https://t.me/+invitehash (private group)\n"
+             "• @username (tanpa https://)\n\n"
+             "❌ <b>Cancel:</b> Ketik /cancel",
+        parse_mode=ParseMode.HTML
+    )
+
+
+@Altruix.bot.on_message(filters.text & filters.private & filters.user(Altruix.auth_users))
+@log_errors
+async def bulk_join_link_handler(c: Client, m: Message):
+    """Handler untuk menerima link grup untuk bulk join"""
+    user_id = m.from_user.id
+    text = m.text.strip()
+    
+    # Cek jika user sedang dalam proses bulk join
+    if user_id in user_bulk_join_state and user_bulk_join_state[user_id]['step'] == 'waiting_link':
+        if text.lower() == "/cancel":
+            del user_bulk_join_state[user_id]
+            await m.reply("❌ Bulk join dibatalkan.")
+            return
+        
+        # Validasi link
+        link = text
+        if not re.match(r'^(https?://t\.me/|@)', link):
+            await m.reply("❌ Format link tidak valid!\n\n"
+                         "Gunakan format:\n"
+                         "• https://t.me/username\n"
+                         "• https://t.me/+invitehash\n"
+                         "• @username")
+            return
+        
+        # Simpan link
+        user_bulk_join_state[user_id]['link'] = link
+        user_bulk_join_state[user_id]['step'] = 'confirmation'
+        
+        delay = user_bulk_join_state[user_id]['delay']
+        total_sessions = len(Altruix.clients) if hasattr(Altruix, 'clients') else 0
+        
+        confirmation_buttons = [
+            [
+                InlineKeyboardButton("✅ Yes, Join All", callback_data="bulk_join_confirm_yes"),
+                InlineKeyboardButton("❌ No, Cancel", callback_data="bulk_join_confirm_no")
+            ]
+        ]
+        
+        await m.reply(
+            text=f"<b>👥 Confirm Bulk Join</b>\n\n"
+                 f"• <b>Delay:</b> <code>{delay} detik</code>\n"
+                 f"• <b>Link:</b> <code>{link}</code>\n"
+                 f"• <b>Total Sessions:</b> <code>{total_sessions}</code>\n\n"
+                 f"⚠️ <b>WARNING:</b>\n"
+                 f"• Ini akan join semua session ke grup tersebut\n"
+                 f"• Proses mungkin memakan waktu lama\n"
+                 f"• Pastikan link valid dan grup dapat di-join",
+            reply_markup=InlineKeyboardMarkup(confirmation_buttons),
+            parse_mode=ParseMode.HTML
+        )
+    
+    # Handler untuk konfirmasi teks 'ok' dari user (untuk export)
+    elif user_id in user_text_confirmation_state and text.lower() == "ok":
+        action_data = user_text_confirmation_state[user_id]
+        action = action_data['action']
+        
+        # Hapus state
+        del user_text_confirmation_state[user_id]
+        if user_id in user_confirmation_state:
+            del user_confirmation_state[user_id]
+        
+        # Jalankan aksi sesuai jenis
+        if action == 'export_all_sessions':
+            await execute_export_all_sessions(c, m)
+        elif action == 'export_all_phones':
+            await execute_export_all_phones(c, m)
+        else:
+            await m.reply("❌ Unknown action. Please try again.")
+
+
+@Altruix.bot.on_callback_query(filters.regex("bulk_join_confirm_(yes|no)"))
+@log_errors
+async def bulk_join_confirm_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk konfirmasi bulk join"""
+    await cb.answer()
+    choice = cb.matches[0].group(1)
+    user_id = cb.from_user.id
+    
+    if choice == "no":
+        # Hapus state user
+        if user_id in user_bulk_join_state:
+            del user_bulk_join_state[user_id]
+        
+        await cb.message.edit(
+            text="❌ Bulk join dibatalkan.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 Back to Sessions", callback_data="sessions_list_1")]
+            ])
+        )
+        return
+    
+    # Proses bulk join
+    if user_id not in user_bulk_join_state:
+        await cb.message.edit("❌ Data tidak ditemukan. Silakan ulangi.")
+        return
+    
+    state = user_bulk_join_state[user_id]
+    delay = state['delay']
+    link = state['link']
+    
+    # Hapus state
+    del user_bulk_join_state[user_id]
+    
+    # Mulai proses bulk join
+    await execute_bulk_join(c, cb, delay, link)
+
+
+async def execute_bulk_join(c: Client, cb: CallbackQuery, delay: int, link: str):
+    """Fungsi untuk mengeksekusi bulk join"""
+    user = cb.from_user
+    user_id = user.id
+    log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
+    
+    total_sessions = len(Altruix.clients) if hasattr(Altruix, 'clients') else 0
+    
+    if total_sessions == 0:
+        await cb.message.edit("❌ No sessions available to join.")
+        return
+    
+    await cb.message.edit(f"🔄 Starting bulk join for <b>{total_sessions}</b> sessions...\n\n"
+                         f"• Delay: <code>{delay}</code> seconds\n"
+                         f"• Link: <code>{link}</code>")
+    
+    success_count = 0
+    failed_count = 0
+    success_list = []
+    failed_list = []
+    
+    # Proses join untuk setiap session
+    for index, client in enumerate(Altruix.clients):
+        try:
+            # Dapatkan info session
+            session_user = getattr(client, 'myself', None)
+            if not session_user:
+                try:
+                    session_user = await client.get_me()
+                except:
+                    session_user = None
+            
+            session_name = f"Session {index+1}"
+            if session_user:
+                first_name = getattr(session_user, 'first_name', 'Unknown')
+                session_name = f"{first_name} (ID: {getattr(session_user, 'id', 'Unknown')})"
+            
+            # Coba join
+            try:
+                await client.join_chat(link)
+                success_count += 1
+                success_list.append(f"{index+1}. {session_name}")
+                
+                # Update status
+                await cb.message.edit(
+                    f"🔄 Bulk join in progress...\n"
+                    f"• Success: <code>{success_count}</code>\n"
+                    f"• Failed: <code>{failed_count}</code>\n"
+                    f"• Total: <code>{total_sessions}</code>\n"
+                    f"• Current: Session {index+1}"
+                )
+                
+            except UserAlreadyParticipant:
+                success_count += 1
+                success_list.append(f"{index+1}. {session_name} (Already in group)")
+                
+            except FloodWait as e:
+                await asyncio.sleep(e.value)
+                try:
+                    await client.join_chat(link)
+                    success_count += 1
+                    success_list.append(f"{index+1}. {session_name}")
+                except Exception as e:
+                    failed_count += 1
+                    failed_list.append(f"{index+1}. {session_name} - {type(e).__name__}: {str(e)}")
+            
+            except (InviteHashInvalid, InviteHashExpired, UsernameNotOccupied, 
+                   UsernameInvalid, ChannelPrivate, ChatAdminRequired) as e:
+                failed_count += 1
+                failed_list.append(f"{index+1}. {session_name} - {type(e).__name__}")
+                # Jika error karena link tidak valid, berhenti
+                if isinstance(e, (InviteHashInvalid, InviteHashExpired, UsernameNotOccupied)):
+                    await cb.message.edit(f"❌ Link invalid/expired. Stopping...")
+                    break
+            
+            except Exception as e:
+                failed_count += 1
+                failed_list.append(f"{index+1}. {session_name} - {type(e).__name__}: {str(e)}")
+            
+            # Delay antara session
+            if index < total_sessions - 1:
+                await asyncio.sleep(delay)
+                
+        except Exception as e:
+            failed_count += 1
+            failed_list.append(f"{index+1}. Session {index+1} - {type(e).__name__}: {str(e)}")
+    
+    # Siapkan laporan
+    report_time = datetime.now().strftime('%d-%m-%Y %H:%M:%S')
+    
+    # Kirim laporan ke log group
+    log_report = (
+        f"👥 <b>BULK JOIN COMPLETED</b>\n"
+        f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a>\n"
+        f"• User ID: <code>{user.id}</code>\n"
+        f"• Link: <code>{link}</code>\n"
+        f"• Delay: <code>{delay}</code> seconds\n"
+        f"• Total Sessions: <code>{total_sessions}</code>\n"
+        f"• Success: <code>{success_count}</code>\n"
+        f"• Failed: <code>{failed_count}</code>\n"
+        f"• Time: <code>{report_time}</code>"
+    )
+    
+    # Tambahkan detail jika ada yang gagal
+    if failed_list:
+        failed_details = "\n".join(failed_list[:10])  # Batasi 10 item
+        if len(failed_list) > 10:
+            failed_details += f"\n... and {len(failed_list) - 10} more"
+        log_report += f"\n\n<b>Failed Details (first 10):</b>\n{failed_details}"
+    
+    try:
+        await Altruix.bot.send_message(
+            log_chat_id,
+            log_report,
+            parse_mode=ParseMode.HTML,
+            link_preview_options=LinkPreviewOptions(is_disabled=True)
+        )
+    except Exception as e:
+        Altruix.log(f"Failed to send bulk join report to log group: {e}", level=logging.ERROR)
+    
+    # Update message dengan hasil
+    result_text = (
+        f"✅ <b>Bulk Join Completed</b>\n\n"
+        f"• Total Sessions: <code>{total_sessions}</code>\n"
+        f"• Success: <code>{success_count}</code>\n"
+        f"• Failed: <code>{failed_count}</code>\n"
+        f"• Delay: <code>{delay}</code> seconds\n\n"
+    )
+    
+    if failed_count > 0:
+        result_text += f"⚠️ Some sessions failed to join. Check log group for details."
+    
+    await cb.message.edit(
+        text=result_text,
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 Back to Sessions", callback_data="sessions_list_1")]
+        ]),
+        parse_mode=ParseMode.HTML
+    )
+
+
+# ====================== JOIN LOG GROUP FEATURE ======================
+@Altruix.bot.on_callback_query(filters.regex("join_log_group_(\\d+)$"))
+@log_errors
+async def join_log_group_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk join log group per session"""
+    await cb.answer()
+    index = int(cb.matches[0].group(1))
+    
+    if index >= len(Altruix.clients):
+        await cb.message.edit("Session not found.")
+        return
+    
+    session_client = Altruix.clients[index]
+    session_info = getattr(session_client, 'myself', None)
+    
+    if not session_info:
+        try:
+            session_info = await session_client.get_me()
+        except Exception as e:
+            await cb.message.edit(f"Error getting session info: {str(e)}")
+            return
+    
+    # Dapatkan LOG_CHAT_ID
+    log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
+    
+    # Coba buat invite link atau dapatkan link yang ada
+    try:
+        # Coba buat invite link baru
+        try:
+            invite_link = await Altruix.bot.create_chat_invite_link(
+                chat_id=log_chat_id,
+                member_limit=1,
+                name=f"Join for {session_info.first_name or 'Session'}"
+            )
+            link = invite_link.invite_link
+        except Exception:
+            # Jika gagal, coba dapatkan link yang ada
+            try:
+                chat = await Altruix.bot.get_chat(log_chat_id)
+                link = chat.invite_link
+                if not link:
+                    raise Exception("No invite link available")
+            except Exception:
+                await cb.message.edit("❌ Cannot get invite link for log group. Make sure bot is admin.")
+                return
+        
+        # Coba join dengan session
+        try:
+            await session_client.join_chat(link)
+            
+            # Kirim notifikasi ke log group
+            await Altruix.bot.send_message(
+                log_chat_id,
+                f"📢 <b>JOIN LOG GROUP SUCCESS</b>\n"
+                f"• Session: <a href='tg://user?id={session_info.id}'>{html.escape(session_info.first_name or '')}</a>\n"
+                f"• User ID: <code>{session_info.id}</code>\n"
+                f"• Time: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>\n"
+                f"• Status: ✅ Successfully joined",
+                parse_mode=ParseMode.HTML,
+                link_preview_options=LinkPreviewOptions(is_disabled=True)
+            )
+            
+            await cb.message.edit("✅ Successfully joined log group!")
+            
+        except UserAlreadyParticipant:
+            await cb.message.edit("ℹ️ This session is already in the log group.")
+            
+        except Exception as e:
+            await cb.message.edit(f"❌ Failed to join log group: {str(e)}")
+            
+            # Log error
+            await Altruix.bot.send_message(
+                log_chat_id,
+                f"⚠️ <b>JOIN LOG GROUP FAILED</b>\n"
+                f"• Session: <a href='tg://user?id={session_info.id}'>{html.escape(session_info.first_name or '')}</a>\n"
+                f"• Error: <code>{html.escape(str(e))}</code>\n"
+                f"• Time: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>",
+                parse_mode=ParseMode.HTML
+            )
+    
+    except Exception as e:
+        await cb.message.edit(f"❌ Error: {str(e)}")
+
+
 # ====================== EXPORT ALL SESSIONS ======================
-# TAMBAHAN: Handler untuk konfirmasi export all sessions
 @Altruix.bot.on_callback_query(filters.regex("export_all_sessions_confirmation"))
 @log_errors
 async def export_all_sessions_confirmation_handler(c: Client, cb: CallbackQuery):
     """Handler untuk konfirmasi export all sessions"""
     await cb.answer()
     
-    # Simpan state untuk user ini
     user_id = cb.from_user.id
     user_confirmation_state[user_id] = {
         'action': 'export_all_sessions',
@@ -245,23 +649,19 @@ async def export_all_sessions_confirmation_handler(c: Client, cb: CallbackQuery)
     )
 
 
-# TAMBAHAN: Handler untuk membatalkan export all sessions
 @Altruix.bot.on_callback_query(filters.regex("export_all_sessions_confirm_no"))
 @log_errors
 async def export_all_sessions_cancel_handler(c: Client, cb: CallbackQuery):
     """Handler untuk membatalkan export all sessions"""
     await cb.answer("Operation cancelled.")
     
-    # Hapus state user
     user_id = cb.from_user.id
     if user_id in user_confirmation_state:
         del user_confirmation_state[user_id]
     
-    # Kembali ke menu sessions
     await sessions_menu_cb_handler(c, cb)
 
 
-# TAMBAHAN: Handler untuk konfirmasi Yes export all sessions
 @Altruix.bot.on_callback_query(filters.regex("export_all_sessions_confirm_yes"))
 @log_errors
 async def export_all_sessions_confirm_yes_handler(c: Client, cb: CallbackQuery):
@@ -269,7 +669,6 @@ async def export_all_sessions_confirm_yes_handler(c: Client, cb: CallbackQuery):
     user = cb.from_user
     user_id = user.id
     
-    # Update state untuk meminta konfirmasi teks "ok"
     if user_id in user_confirmation_state:
         user_confirmation_state[user_id]['step'] = 'waiting_text_confirmation'
         user_text_confirmation_state[user_id] = {
@@ -289,42 +688,84 @@ async def export_all_sessions_confirm_yes_handler(c: Client, cb: CallbackQuery):
         parse_mode=ParseMode.HTML
     )
     
-    # Set timer untuk menghapus state setelah 60 detik
     asyncio.create_task(clear_user_state_after_timeout(user_id, 60))
 
 
-# TAMBAHAN: Handler untuk menjalankan export all sessions setelah konfirmasi teks
-@Altruix.bot.on_message(filters.text & filters.private & filters.user(Altruix.auth_users))
+# ====================== EXPORT ALL PHONES ======================
+@Altruix.bot.on_callback_query(filters.regex("export_all_phones_confirmation"))
 @log_errors
-async def text_confirmation_handler(c: Client, m: Message):
-    """Handler untuk konfirmasi teks 'ok' dari user"""
-    user_id = m.from_user.id
-    text = m.text.strip().lower()
+async def export_all_phones_confirmation_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk konfirmasi export all phones"""
+    await cb.answer()
     
-    # Cek apakah user sedang menunggu konfirmasi teks
-    if user_id in user_text_confirmation_state and text == "ok":
-        action_data = user_text_confirmation_state[user_id]
-        action = action_data['action']
-        
-        # Hapus state
-        del user_text_confirmation_state[user_id]
-        if user_id in user_confirmation_state:
-            del user_confirmation_state[user_id]
-        
-        # Jalankan aksi sesuai jenis
-        if action == 'export_all_sessions':
-            await execute_export_all_sessions(c, m)
-        elif action == 'export_all_phones':
-            await execute_export_all_phones(c, m)
-        else:
-            await m.reply("❌ Unknown action. Please try again.")
-    elif user_id in user_text_confirmation_state:
-        # User mengirim teks selain "ok"
-        await m.reply("❌ Invalid confirmation. Please type exactly <code>ok</code> to proceed.", 
-                     parse_mode=ParseMode.HTML)
+    user_id = cb.from_user.id
+    user_confirmation_state[user_id] = {
+        'action': 'export_all_phones',
+        'message_id': cb.message.id,
+        'chat_id': cb.message.chat.id
+    }
+    
+    confirmation_buttons = [
+        [
+            InlineKeyboardButton("✅ Yes", callback_data="export_all_phones_confirm_yes"),
+            InlineKeyboardButton("❌ No", callback_data="export_all_phones_confirm_no")
+        ]
+    ]
+    
+    await cb.message.edit(
+        text="❓ <b>Export All Phone Numbers Confirmation</b>\n\n"
+             "Are you sure you want to export ALL phone numbers?\n\n"
+             "⚠️ <b>NOTE:</b>\n"
+             "• This will export phone numbers for ALL your accounts\n"
+             "• Phone numbers are sensitive information\n"
+             "• Keep them secure and share only with trusted parties",
+        reply_markup=InlineKeyboardMarkup(confirmation_buttons),
+        parse_mode=ParseMode.HTML
+    )
 
 
-# TAMBAHAN: Fungsi untuk menjalankan export all sessions
+@Altruix.bot.on_callback_query(filters.regex("export_all_phones_confirm_no"))
+@log_errors
+async def export_all_phones_cancel_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk membatalkan export all phones"""
+    await cb.answer("Operation cancelled.")
+    
+    user_id = cb.from_user.id
+    if user_id in user_confirmation_state:
+        del user_confirmation_state[user_id]
+    
+    await sessions_menu_cb_handler(c, cb)
+
+
+@Altruix.bot.on_callback_query(filters.regex("export_all_phones_confirm_yes"))
+@log_errors
+async def export_all_phones_confirm_yes_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk konfirmasi Yes export all phones"""
+    user = cb.from_user
+    user_id = user.id
+    
+    if user_id in user_confirmation_state:
+        user_confirmation_state[user_id]['step'] = 'waiting_text_confirmation'
+        user_text_confirmation_state[user_id] = {
+            'action': 'export_all_phones',
+            'message_id': cb.message.id,
+            'chat_id': cb.message.chat.id,
+            'timestamp': datetime.now()
+        }
+    
+    await cb.answer()
+    
+    await cb.message.edit(
+        text="🔐 <b>Security Verification Required</b>\n\n"
+             "Please type <code>ok</code> in this chat to confirm export all phone numbers.\n\n"
+             "⚠️ This is an additional security step to prevent accidental exports.\n"
+             "⏳ You have 60 seconds to type <code>ok</code>",
+        parse_mode=ParseMode.HTML
+    )
+    
+    asyncio.create_task(clear_user_state_after_timeout(user_id, 60))
+
+
 async def execute_export_all_sessions(c: Client, m: Message):
     """Fungsi untuk mengeksekusi export all sessions"""
     user = m.from_user
@@ -342,14 +783,11 @@ async def execute_export_all_sessions(c: Client, m: Message):
     await m.reply("📤 Preparing to export all sessions...")
     
     try:
-        # Kumpulkan data semua session
         session_data = []
         for index, client in enumerate(Altruix.clients):
             try:
-                # PERBAIKAN: Gunakan try-except untuk menghindari error
                 user_info = getattr(client, 'myself', None)
                 if not user_info:
-                    # Coba ambil info dengan get_me
                     try:
                         user_info = await client.get_me()
                     except:
@@ -362,7 +800,6 @@ async def execute_export_all_sessions(c: Client, m: Message):
                     username = f"@{user_info.username}" if hasattr(user_info, 'username') and user_info.username else "None"
                     phone = getattr(user_info, 'phone_number', 'Not Available')
                     
-                    # Export session string
                     try:
                         session_string = await client.export_session_string()
                     except Exception as e:
@@ -392,7 +829,6 @@ async def execute_export_all_sessions(c: Client, m: Message):
                     f"{'=' * 40}\n"
                 )
         
-        # Buat file teks
         file_content = "⚠️ WARNING: KEEP THIS FILE SECURE! ⚠️\n"
         file_content += "These session strings can be used to login to your accounts.\n"
         file_content += "DO NOT share with anyone!\n"
@@ -402,7 +838,6 @@ async def execute_export_all_sessions(c: Client, m: Message):
         file_stream = io.BytesIO(file_content.encode())
         file_stream.name = f"all_sessions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
         
-        # Kirim file ke user
         await c.send_document(
             chat_id=user_id,
             document=file_stream,
@@ -414,7 +849,6 @@ async def execute_export_all_sessions(c: Client, m: Message):
             parse_mode=ParseMode.HTML
         )
         
-        # Kirim notifikasi ke log group
         await Altruix.bot.send_message(
             log_chat_id,
             f"📤 <b>EXPORT ALL SESSIONS COMPLETED</b>\n"
@@ -433,7 +867,6 @@ async def execute_export_all_sessions(c: Client, m: Message):
         await asyncio.sleep(e.value)
         await m.reply(f"⏳ FloodWait detected. Please wait {e.value} seconds and try again.")
         
-        # Log error
         await Altruix.bot.send_message(
             log_chat_id,
             f"⚠️ <b>EXPORT ALL SESSIONS FLOODWAIT</b>\n"
@@ -447,7 +880,6 @@ async def execute_export_all_sessions(c: Client, m: Message):
         error_msg = "❌ Failed to send file: Cannot send message to user."
         await m.reply(error_msg)
         
-        # Log error
         await Altruix.bot.send_message(
             log_chat_id,
             f"⚠️ <b>EXPORT ALL SESSIONS PERMISSION ERROR</b>\n"
@@ -461,7 +893,6 @@ async def execute_export_all_sessions(c: Client, m: Message):
         await m.reply("❌ Failed to export sessions. Owner has been notified.")
         Altruix.log(f"General error exporting all sessions: {e}", level=logging.ERROR)
         
-        # Log detailed error
         await Altruix.bot.send_message(
             log_chat_id,
             f"⚠️ <b>EXPORT ALL SESSIONS CRITICAL ERROR</b>\n"
@@ -472,90 +903,6 @@ async def execute_export_all_sessions(c: Client, m: Message):
         )
 
 
-# ====================== EXPORT ALL PHONES (DIPERBARUI) ======================
-# PERUBAHAN: Ubah handler export all phones menjadi konfirmasi
-@Altruix.bot.on_callback_query(filters.regex("export_all_phones_confirmation"))
-@log_errors
-async def export_all_phones_confirmation_handler(c: Client, cb: CallbackQuery):
-    """Handler untuk konfirmasi export all phones"""
-    await cb.answer()
-    
-    # Simpan state untuk user ini
-    user_id = cb.from_user.id
-    user_confirmation_state[user_id] = {
-        'action': 'export_all_phones',
-        'message_id': cb.message.id,
-        'chat_id': cb.message.chat.id
-    }
-    
-    confirmation_buttons = [
-        [
-            InlineKeyboardButton("✅ Yes", callback_data="export_all_phones_confirm_yes"),
-            InlineKeyboardButton("❌ No", callback_data="export_all_phones_confirm_no")
-        ]
-    ]
-    
-    await cb.message.edit(
-        text="❓ <b>Export All Phone Numbers Confirmation</b>\n\n"
-             "Are you sure you want to export ALL phone numbers?\n\n"
-             "⚠️ <b>NOTE:</b>\n"
-             "• This will export phone numbers for ALL your accounts\n"
-             "• Phone numbers are sensitive information\n"
-             "• Keep them secure and share only with trusted parties",
-        reply_markup=InlineKeyboardMarkup(confirmation_buttons),
-        parse_mode=ParseMode.HTML
-    )
-
-
-# PERUBAHAN: Handler untuk membatalkan export all phones
-@Altruix.bot.on_callback_query(filters.regex("export_all_phones_confirm_no"))
-@log_errors
-async def export_all_phones_cancel_handler(c: Client, cb: CallbackQuery):
-    """Handler untuk membatalkan export all phones"""
-    await cb.answer("Operation cancelled.")
-    
-    # Hapus state user
-    user_id = cb.from_user.id
-    if user_id in user_confirmation_state:
-        del user_confirmation_state[user_id]
-    
-    # Kembali ke menu sessions
-    await sessions_menu_cb_handler(c, cb)
-
-
-# PERUBAHAN: Handler untuk konfirmasi Yes export all phones
-@Altruix.bot.on_callback_query(filters.regex("export_all_phones_confirm_yes"))
-@log_errors
-async def export_all_phones_confirm_yes_handler(c: Client, cb: CallbackQuery):
-    """Handler untuk konfirmasi Yes export all phones"""
-    user = cb.from_user
-    user_id = user.id
-    
-    # Update state untuk meminta konfirmasi teks "ok"
-    if user_id in user_confirmation_state:
-        user_confirmation_state[user_id]['step'] = 'waiting_text_confirmation'
-        user_text_confirmation_state[user_id] = {
-            'action': 'export_all_phones',
-            'message_id': cb.message.id,
-            'chat_id': cb.message.chat.id,
-            'timestamp': datetime.now()
-        }
-    
-    await cb.answer()
-    
-    await cb.message.edit(
-        text="🔐 <b>Security Verification Required</b>\n\n"
-             "Please type <code>ok</code> in this chat to confirm export all phone numbers.\n\n"
-             "⚠️ This is an additional security step to prevent accidental exports.\n"
-             "⏳ You have 60 seconds to type <code>ok</code>",
-        parse_mode=ParseMode.HTML
-    )
-    
-    # Set timer untuk menghapus state setelah 60 detik
-    asyncio.create_task(clear_user_state_after_timeout(user_id, 60))
-
-
-# PERUBAHAN: Fungsi untuk menjalankan export all phones
 async def execute_export_all_phones(c: Client, m: Message):
     """Fungsi untuk mengeksekusi export all phones"""
     user = m.from_user
@@ -573,14 +920,11 @@ async def execute_export_all_phones(c: Client, m: Message):
     await m.reply("📲 Preparing to export all phone numbers...")
     
     try:
-        # Kumpulkan data semua session
         phone_data = []
         for index, client in enumerate(Altruix.clients):
             try:
-                # PERBAIKAN: Gunakan getattr untuk menghindari error
                 user_info = getattr(client, 'myself', None)
                 if not user_info:
-                    # Coba ambil info dengan get_me
                     try:
                         user_info = await client.get_me()
                     except:
@@ -609,7 +953,6 @@ async def execute_export_all_phones(c: Client, m: Message):
                 Altruix.log(f"Error getting session info {index}: {e}", level=logging.ERROR)
                 phone_data.append(f"=== ACCOUNT {index + 1} ERROR ===\nError: {str(e)}\n{'=' * 40}\n")
         
-        # Buat file teks
         file_content = "⚠️ Phone numbers are sensitive information. Keep secure!\n"
         file_content += "=" * 50 + "\n\n"
         file_content += "".join(phone_data)
@@ -617,7 +960,6 @@ async def execute_export_all_phones(c: Client, m: Message):
         file_stream = io.BytesIO(file_content.encode())
         file_stream.name = f"all_phone_numbers_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
         
-        # Kirim file ke user
         await c.send_document(
             chat_id=user_id,
             document=file_stream,
@@ -626,7 +968,6 @@ async def execute_export_all_phones(c: Client, m: Message):
             parse_mode=ParseMode.HTML
         )
         
-        # Kirim notifikasi ke log group
         await Altruix.bot.send_message(
             log_chat_id,
             f"📲 <b>EXPORT ALL PHONES COMPLETED</b>\n"
@@ -645,7 +986,6 @@ async def execute_export_all_phones(c: Client, m: Message):
         await asyncio.sleep(e.value)
         await m.reply(f"⏳ FloodWait detected. Please wait {e.value} seconds and try again.")
         
-        # Log error
         await Altruix.bot.send_message(
             log_chat_id,
             f"⚠️ <b>EXPORT ALL PHONES FLOODWAIT</b>\n"
@@ -659,7 +999,6 @@ async def execute_export_all_phones(c: Client, m: Message):
         error_msg = "❌ Failed to send file: Cannot send message to user."
         await m.reply(error_msg)
         
-        # Log error
         await Altruix.bot.send_message(
             log_chat_id,
             f"⚠️ <b>EXPORT ALL PHONES PERMISSION ERROR</b>\n"
@@ -673,7 +1012,6 @@ async def execute_export_all_phones(c: Client, m: Message):
         await m.reply("❌ Failed to export phone numbers. Owner has been notified.")
         Altruix.log(f"General error exporting all phones: {e}", level=logging.ERROR)
         
-        # Log detailed error
         await Altruix.bot.send_message(
             log_chat_id,
             f"⚠️ <b>EXPORT ALL PHONES CRITICAL ERROR</b>\n"
@@ -690,7 +1028,6 @@ async def clear_user_state_after_timeout(user_id: int, timeout: int):
     await asyncio.sleep(timeout)
     
     if user_id in user_text_confirmation_state:
-        # Cek jika sudah lewat timeout
         state_data = user_text_confirmation_state[user_id]
         time_elapsed = (datetime.now() - state_data['timestamp']).total_seconds()
         
@@ -699,7 +1036,6 @@ async def clear_user_state_after_timeout(user_id: int, timeout: int):
             if user_id in user_confirmation_state:
                 del user_confirmation_state[user_id]
             
-            # Coba kirim notifikasi timeout ke user
             try:
                 chat_id = state_data.get('chat_id')
                 message_id = state_data.get('message_id')
@@ -716,8 +1052,7 @@ async def clear_user_state_after_timeout(user_id: int, timeout: int):
                 pass
 
 
-# ====================== HANDLER YANG SUDAH ADA (DIPERTAHANKAN) ======================
-# ─── TEST PING ALL CONFIRMATION ─────────────────────────────────────────
+# ====================== HANDLER YANG SUDAH ADA ======================
 @Altruix.bot.on_callback_query(filters.regex("test_ping_all_confirmation"))
 @log_errors
 async def test_ping_all_confirmation_handler(c: Client, cb: CallbackQuery):
@@ -734,7 +1069,6 @@ async def test_ping_all_confirmation_handler(c: Client, cb: CallbackQuery):
     )
 
 
-# ─── CANCEL TEST PING ALL ───────────────────────────────────────────────
 @Altruix.bot.on_callback_query(filters.regex("test_ping_all_confirm_no"))
 @log_errors
 async def test_ping_all_cancel_handler(c: Client, cb: CallbackQuery):
@@ -742,7 +1076,6 @@ async def test_ping_all_cancel_handler(c: Client, cb: CallbackQuery):
     await sessions_menu_cb_handler(c, cb)
 
 
-# ─── EXECUTE TEST PING ALL ──────────────────────────────────────────────
 @Altruix.bot.on_callback_query(filters.regex("test_ping_all_confirm_yes"))
 @log_errors
 async def test_ping_all_execute_handler(c: Client, cb: CallbackQuery):
@@ -764,7 +1097,6 @@ async def test_ping_all_execute_handler(c: Client, cb: CallbackQuery):
         try:
             session_user = getattr(client, 'myself', None)
             if not session_user:
-                # Coba ambil info dengan get_me
                 try:
                     session_user = await client.get_me()
                 except:
@@ -846,12 +1178,10 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery):
         await cb.message.edit("Session not found.")
         return
 
-    # PERBAIKAN: Gunakan getattr untuk menghindari error
     session_client = Altruix.clients[index]
     session_info = getattr(session_client, 'myself', None)
     
     if not session_info:
-        # Coba ambil info dengan get_me
         try:
             session_info = await session_client.get_me()
         except Exception as e:
@@ -887,6 +1217,7 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery):
         "Yes" if is_scam else "No",
     )
     
+    # PERUBAHAN: Tambah tombol "Join Log Group"
     await cb.message.edit(
         text=txt,
         reply_markup=InlineKeyboardMarkup(
@@ -903,6 +1234,7 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery):
                 ],
                 [
                     InlineKeyboardButton("🏓 Test Ping", f"test_ping_{index}"),
+                    InlineKeyboardButton("📢 Join Log Group", f"join_log_group_{index}"),
                 ],
                 [
                     InlineKeyboardButton("🔙 Back", f"sessions_list_{callback_page}"),
@@ -912,7 +1244,6 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery):
     )
 
 
-# ─── TEST PING HANDLER ──────────────────────────────────────────────────
 @Altruix.bot.on_callback_query(filters.regex("test_ping_(\\d+)$"))
 @log_errors
 async def test_ping_cb_handler(c: Client, cb: CallbackQuery):
@@ -932,7 +1263,6 @@ async def test_ping_cb_handler(c: Client, cb: CallbackQuery):
     session_user = getattr(session_client, 'myself', None)
     
     if not session_user:
-        # Coba ambil info dengan get_me
         try:
             session_user = await session_client.get_me()
         except Exception as e:
@@ -1017,7 +1347,6 @@ async def test_ping_cb_handler(c: Client, cb: CallbackQuery):
             Altruix.log(f"Gagal kirim log error kritis test ping: {log_err}")
 
 
-# ─── EXPORT PHONE NUMBER HANDLER ───────────────────────────────────────
 @Altruix.bot.on_callback_query(filters.regex("export_phone_(\\d+)$"))
 @log_errors
 async def export_phone_cb_handler(c: Client, cb: CallbackQuery):
@@ -1073,7 +1402,6 @@ async def export_phone_cb_handler(c: Client, cb: CallbackQuery):
         Altruix.log(f"Error mengekspor nomor telepon: {e}", level=logging.ERROR)
 
 
-# ─── EXPORT SESSION HANDLER ───────────────────────────────────────────
 @Altruix.bot.on_callback_query(filters.regex("export_session_(\\d+)$"))
 @log_errors
 async def export_session_cb_handler(c: Client, cb: CallbackQuery):
@@ -1132,7 +1460,6 @@ async def export_session_cb_handler(c: Client, cb: CallbackQuery):
 async def refresh_session_info_cb_handler(c: Client, cb: CallbackQuery):
     index = int(cb.matches[0].group(1))
     
-    # PERBAIKAN: Pastikan Altruix.ourselves ada dan cukup panjang
     if not hasattr(Altruix, 'ourselves'):
         Altruix.ourselves = []
     
