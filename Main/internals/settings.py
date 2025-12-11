@@ -93,12 +93,12 @@ def get_sessions_buttons(page=1) -> Tuple[List[InlineKeyboardButton], bool, int]
             if not first_name or first_name == 'Unknown':
                 first_name = f"Session {session_num}"
             # PERUBAHAN: Format tombol dengan nomor: [[1] Nama Akun]
-            button_text = f"[[{session_num}] {first_name[:15]}]" if len(first_name) > 15 else f"[[{session_num}] {first_name}]"
+            button_text = f"[{session_num}] {first_name[:15]}" if len(first_name) > 15 else f"[{session_num}] {first_name}"
             buttons.append(
                 InlineKeyboardButton(button_text, f"session_info_{index}_{page}")
             )
         except AttributeError:
-            button_text = f"[[{index + 1}] Session {index + 1}]"
+            button_text = f"[{index + 1}] Session {index + 1}"
             buttons.append(
                 InlineKeyboardButton(button_text, f"session_info_{index}_{page}")
             )
