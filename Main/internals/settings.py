@@ -62,15 +62,28 @@ def arrange_buttons(array: list, no=3) -> List:
 
 
 def get_sessions_buttons(page=1) -> Tuple[List[InlineKeyboardButton], bool, int]:
-    """Mendapatkan tombol session dengan layout 3 tombol per baris"""
-    per_page = 3  # PERUBAHAN: Ubah dari 9 menjadi 3 untuk layout baru [akun1][akun2][akun3]
+    """Mendapatkan tombol session dengan layout 6 tombol per halaman (2 baris x 3 kolom)"""
+    sessions_per_page = 6  # PERUBAHAN: 6 tombol per halaman (2 baris x 3 kolom)
     
     # PERBAIKAN 1: Pastikan Altruix.clients tersedia dan memiliki properti myself
     if not hasattr(Altruix, 'clients') or not Altruix.clients:
         return [], False, 1
     
+    total_sessions = len(Altruix.clients)
+    total_pages = (total_sessions + sessions_per_page - 1) // sessions_per_page  # Hitung total halaman
+    
+    if page < 1:
+        page = 1
+    elif page > total_pages:
+        page = total_pages if total_pages > 0 else 1
+    
+    # Hitung indeks mulai dan akhir untuk halaman ini
+    start_index = (page - 1) * sessions_per_page
+    end_index = min(start_index + sessions_per_page, total_sessions)
+    
     buttons = []
-    for index, client in enumerate(Altruix.clients):
+    for index in range(start_index, end_index):
+        client = Altruix.clients[index]
         try:
             # PERBAIKAN 2: Akses first_name dengan aman
             first_name = getattr(getattr(client, 'myself', None), 'first_name', 'Unknown')
@@ -84,27 +97,17 @@ def get_sessions_buttons(page=1) -> Tuple[List[InlineKeyboardButton], bool, int]
                 InlineKeyboardButton(f"Session {index + 1}", f"session_info_{index}_{page}")
             )
     
-    # Tambah tombol add session
-    buttons.append(InlineKeyboardButton("\u2795 Add a session", "add_session"))
-    
     # PERBAIKAN 3: Pastikan arrange_buttons menerima list yang valid
     if not buttons:
         return [], False, 1
     
-    # Atur tombol dalam baris
-    arranged_buttons = arrange_buttons(buttons, per_page)
+    # Atur tombol dalam baris dengan 3 tombol per baris
+    arranged_buttons = arrange_buttons(buttons, 3)
     
-    total_pages = len(arranged_buttons)
-    if page < 1:
-        page = 1
-    elif page > total_pages:
-        page = total_pages if total_pages > 0 else 1
-
-    current_buttons = arranged_buttons[page - 1] if total_pages > 0 else []
     has_next = page < total_pages
     
-    # PERBAIKAN 4: Kembalikan current_buttons sebagai list of InlineKeyboardButton (bukan list of lists)
-    return current_buttons, has_next, total_pages
+    # PERBAIKAN 4: Kembalikan arranged_buttons sebagai list of list
+    return arranged_buttons, has_next, total_pages
 
 
 @Altruix.bot.on_message(
@@ -133,21 +136,28 @@ async def sessions_menu_cb_handler(c: Client, cb: CallbackQuery):
     except (ValueError, IndexError):
         page = 1
 
-    buttons, has_next, total_pages = get_sessions_buttons(page)
+    # Dapatkan tombol session untuk halaman ini (sudah dalam format 2 baris x 3 kolom)
+    session_buttons, has_next, total_pages = get_sessions_buttons(page)
     
     # Dapatkan LOG_CHAT_ID dengan benar
     LOG_CHAT_ID = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
 
     # PERUBAHAN: Susunan tombol sesuai permintaan
-    # Baris 1: Tombol session (sudah dalam format list of InlineKeyboardButton dari get_sessions_buttons)
-    # Baris 2: Tombol aksi [test ping all][export all sessions][export all phones]
+    # session_buttons sudah dalam format 2 baris untuk 6 tombol session
+    
+    # Baris 3: Tombol aksi [test ping all][add a session]
     action_buttons = [
         InlineKeyboardButton("🏓 Test Ping All", "test_ping_all_confirmation"),
-        InlineKeyboardButton("📤 Export All Sessions", "export_all_sessions_confirmation"),
-        InlineKeyboardButton("📲 Export All Phones", "export_all_phones_confirmation")
+        InlineKeyboardButton("➕ Add a session", "add_session")
     ]
     
-    # Baris 3: Tombol navigasi [previous][back][next]
+    # Baris 4: Tombol export [export sessions][export phones]
+    export_buttons = [
+        InlineKeyboardButton("📤 Export Sessions", "export_all_sessions_confirmation"),
+        InlineKeyboardButton("📲 Export Phones", "export_all_phones_confirmation")
+    ]
+    
+    # Baris 5: Tombol navigasi [previous][back][next]
     nav_buttons = []
     if page > 1:
         nav_buttons.append(InlineKeyboardButton("⬅️ Previous", f"sessions_list_{page - 1}"))
@@ -156,25 +166,34 @@ async def sessions_menu_cb_handler(c: Client, cb: CallbackQuery):
         nav_buttons.append(InlineKeyboardButton("Next ➡️", f"sessions_list_{page + 1}"))
     
     # PERBAIKAN 5: Susun final markup dengan struktur yang benar
-    # buttons dari get_sessions_buttons adalah list of InlineKeyboardButton (satu baris)
-    # Kita perlu membungkusnya dalam list agar menjadi baris pertama
     final_markup = []
     
-    # Tambahkan session buttons sebagai baris pertama (jika ada)
-    if buttons:
-        final_markup.append(buttons)  # buttons sudah list of InlineKeyboardButton
+    # Tambahkan session buttons (2 baris pertama)
+    for row in session_buttons:
+        final_markup.append(row)
     
-    # Tambahkan action buttons sebagai baris kedua
-    final_markup.append(action_buttons)  # action_buttons adalah list of InlineKeyboardButton
+    # Tambahkan action buttons sebagai baris ketiga
+    final_markup.append(action_buttons)
     
-    # Tambahkan navigation buttons sebagai baris ketiga
-    final_markup.append(nav_buttons)  # nav_buttons adalah list of InlineKeyboardButton
+    # Tambahkan export buttons sebagai baris keempat
+    final_markup.append(export_buttons)
+    
+    # Tambahkan navigation buttons sebagai baris kelima
+    final_markup.append(nav_buttons)
     
     total_sessions = len(Altruix.clients) if hasattr(Altruix, 'clients') else 0
     
+    # Hitung range session untuk halaman ini
+    sessions_per_page = 6
+    start_session = ((page - 1) * sessions_per_page) + 1
+    end_session = min(page * sessions_per_page, total_sessions)
+    
     try:
         await cb.message.edit(
-            text=f"<b>📋 Sessions List</b>\n\n<b>Total Sessions:</b> <code>{total_sessions}</code>\n<b>Page:</b> <code>{page}/{total_pages or 1}</code>", 
+            text=f"<b>📋 Sessions List</b>\n\n"
+                 f"<b>Total Sessions:</b> <code>{total_sessions}</code>\n"
+                 f"<b>Showing:</b> <code>{start_session}-{end_session}</code>\n"
+                 f"<b>Page:</b> <code>{page}/{total_pages or 1}</code>", 
             reply_markup=InlineKeyboardMarkup(final_markup)
         )
     except Exception as e:
