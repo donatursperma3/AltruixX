@@ -18,6 +18,8 @@ from pyrogram.types import (
 from datetime import datetime
 from Main.core.decorators import log_errors
 from Main.utils.compatibility import smart_send
+import os
+import logging
 
 plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "mentions"
