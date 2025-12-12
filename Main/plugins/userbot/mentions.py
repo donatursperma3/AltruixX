@@ -15,8 +15,21 @@ from pyrogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
 )
-import time
 from datetime import datetime
+from Main.core.decorators import log_errors
+
+plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
+__plugin_name__ = plugin_name if plugin_name else "mentions"
+PLUGIN_VERSION = "0.1.1.1"  # 🔥 Versi terbaru dengan smart_send dan error handling optimal
+logger = logging.getLogger(f"{__plugin_name__}")
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter(
+        "%(asctime)s - [SET PLUGIN] - %(levelname)s - %(message)s"
+    )
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
 
 # 🔥 TAMBAHAN: Dictionary untuk melacak pesan mention yang sudah dikirim (untuk deteksi edit)
 MENTION_LOG_CACHE = {}
@@ -36,10 +49,9 @@ REPLY_AS_MENTIONED_WAITING = {}
     group_only=False,
     requires_input=True,
 )
+@log_errors
 async def mention_settings_handler(c: Client, m: AltruixMessage):
-    """
-    Handler untuk mengaktifkan/menonaktifkan notifikasi mention global.
-    """
+    """Handler untuk mengaktifkan/menonaktifkan notifikasi mention global."""
     msg = await m.handle_message("PROCESSING")
     value = False
     user_input = m.user_input.lower().strip()
@@ -67,12 +79,9 @@ async def mention_settings_handler(c: Client, m: AltruixMessage):
 @Altruix.on_message(
     filters.mentioned & filters.group & ~filters.user(Altruix.bot_info.id)
 )
+@log_errors
 async def send_mention_log_handler(c: Client, m: RawMessage):
-    """
-    Handler utama untuk menangkap mention dan mengirim notifikasi ke LOG_CHAT.
-    🔥 DIPERBAIKI: Tambah info detail + deteksi edit + error handling
-    🔥 DITAMBAH: Tombol quick reaction + reply otomatis
-    """
+    """Handler utama untuk menangkap mention dan mengirim notifikasi ke LOG_CHAT."""
     try:
         db_res = await Altruix.db.settings_col.find_one(
             {"_id": "MENTION_LOG", "client_id": c.me.id}
@@ -82,9 +91,9 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
 
         mentioner = m.from_user
         if not mentioner:
-            return
+            return  # Abaikan jika mention dari channel anonim
 
-        # Format hyperlink user yang aman dan klikable
+        # Format hyperlink user yang klikable
         mentioner_name = mentioner.first_name or "Unknown"
         mentioner_id = mentioner.id
         mentioner_link = f"tg://user?id={mentioner_id}"
@@ -102,7 +111,7 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
         # Format waktu lokal
         mention_time = datetime.fromtimestamp(m.date).strftime("%Y-%m-%d %H:%M:%S")
 
-        # Buat pesan notifikasi lengkap
+        # Bangun pesan notifikasi lengkap
         log_message = (
             f"🔔 <b>Mention Detected!</b>\n\n"
             f"👤 <b>Mentioned By:</b> {mentioner_hyperlink} (<code>{mentioner_id}</code>)\n"
@@ -121,7 +130,7 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
         reply_button = [InlineKeyboardButton("🗨️ Reply as Mentioned", callback_data=f"reply_as_mentioned_{m.chat.id}_{m.id}")]
         link_button = [InlineKeyboardButton("🔗 Go to Message", url=m.link)]
         
-        # 🔥 KIRIM NOTIFIKASI DENGAN TOMBOL
+        # 🔥 KIRIM ATAU UPDATE NOTIFIKASI
         try:
             sent_log_msg = await Altruix.bot.send_message(
                 Altruix.log_chat,
@@ -145,7 +154,7 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
         except Exception as reply_err:
             Altruix.log(f"[DEBUG] Gagal kirim reply otomatis: {reply_err}", level=30)
 
-        # Simpan ke cache untuk deteksi edit
+        # Simpan ke cache untuk deteksi edit — 🔥 PERBAIKAN UTAMA: format cache
         msg_key = f"{m.chat.id}_{m.id}"
         MENTION_LOG_CACHE[msg_key] = {
             "text": message_text,
@@ -169,6 +178,7 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
 
 # 🔥 BARU: Handler untuk memulai proses reply-as-mentioned
 @Altruix.bot.on_callback_query(filters.regex(r"reply_as_mentioned_(\d+)_(\d+)"))
+@log_errors
 async def start_reply_as_mentioned(c: Client, cb):
     """Memulai proses reply-as-mentioned dengan meminta input pesan."""
     try:
@@ -208,6 +218,7 @@ async def start_reply_as_mentioned(c: Client, cb):
 
 # 🔥 BARU: Handler untuk menerima input balasan
 @Altruix.bot.on_message(filters.chat(Altruix.log_chat) & filters.reply & ~filters.user(Altruix.bot_info.id))
+@log_errors
 async def handle_reply_as_mentioned_input(c: Client, m: RawMessage):
     """Menangani input balasan untuk reply-as-mentioned."""
     if not m.reply_to_message:
@@ -246,6 +257,7 @@ async def handle_reply_as_mentioned_input(c: Client, m: RawMessage):
 
 # 🔥 BARU: Handler konfirmasi kirim
 @Altruix.bot.on_callback_query(filters.regex(r"confirm_reply_(\d+)"))
+@log_errors
 async def confirm_send_reply(c: Client, cb):
     """Mengirim balasan setelah konfirmasi."""
     try:
@@ -286,6 +298,7 @@ async def confirm_send_reply(c: Client, cb):
 
 # 🔥 BARU: Handler pembatalan
 @Altruix.bot.on_callback_query(filters.regex(r"cancel_reply_(\d+)"))
+@log_errors
 async def cancel_send_reply(c: Client, cb):
     """Membatalkan pengiriman balasan."""
     reply_msg_id = int(cb.data.split("_")[2])
@@ -305,6 +318,7 @@ async def cancel_send_reply(c: Client, cb):
 
 # 🔥 BARU: Handler untuk quick reaction
 @Altruix.bot.on_callback_query(filters.regex(r"react_mention_(\d+)_(\d+)_(.+)"))
+@log_errors
 async def quick_reaction_handler(c: Client, cb):
     """Kirim reaksi ke pesan asli di grup menggunakan akun userbot yang disebut."""
     try:
@@ -335,14 +349,16 @@ async def quick_reaction_handler(c: Client, cb):
         await cb.answer("❌ Terjadi kesalahan.", show_alert=True)
 
 
-# 🔥 BARU: Handler untuk deteksi edit pesan mention - CARA BENAR UNTUK ALTRUIX
-@Altruix.on_message(
-    filters.edited & filters.mentioned & filters.group & ~filters.user(Altruix.bot_info.id)
+# 🔥 PERBAIKAN UTAMA: Handler deteksi edit pesan — GUNAKAN DEKORATOR KHUSUS ALTRUIX
+# 🔥 Karena `filters.edited` tidak tersedia di versi Pyrogram ini, gunakan handler terpisah
+@Altruix.on_edited_message(
+    filters.mentioned & filters.group & ~filters.user(Altruix.bot_info.id)
 )
+@log_errors
 async def edited_mention_handler(c: Client, m: RawMessage):
     """
     Handler untuk mendeteksi pesan mention yang diedit.
-    🔥 INI ADALAH CARA YANG BENAR UNTUK EKOSISTEM ALTRUIX (BUKAN on_edited_message)
+    🔥 INI ADALAH CARA YANG BENAR UNTUK EKOSISTEM ALTRUIX
     """
     try:
         db_res = await Altruix.db.settings_col.find_one(
@@ -383,3 +399,9 @@ async def edited_mention_handler(c: Client, m: RawMessage):
 
     except Exception as e:
         Altruix.log(f"[ERROR] Error in edited_mention_handler: {e}", level=40)
+
+    # Log sukses loading
+try:
+    Altruix.log(f"[DEBUG] Loaded → {__plugin_name__} {PLUGIN_VERSION}", level=20)
+except Exception as e:
+    logger.info(f"[DEBUG] Loaded → {__plugin_name__} {PLUGIN_VERSION}")
