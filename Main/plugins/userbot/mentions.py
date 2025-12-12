@@ -14,6 +14,7 @@ from pyrogram.types import (
     Message as RawMessage,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    ReplyParameters
 )
 from datetime import datetime
 from Main.core.decorators import log_errors
@@ -25,7 +26,7 @@ import logging
 
 plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "mentions"
-PLUGIN_VERSION = "0.1.1.4"  # 🔥 PERBAIKAN: Versi diperbarui untuk fix MongoDB method
+PLUGIN_VERSION = "0.1.1.5"  # 🔥 PERBAIKAN: Versi dengan fix database dan datetime error
 logger = logging.getLogger(f"{__plugin_name__}")
 if not logger.handlers:
     handler = logging.StreamHandler()
@@ -74,71 +75,81 @@ async def mention_settings_handler(c: Client, m: AltruixMessage):
         # Format key harus unik per userbot - tambahkan client_id di _id
         setting_key = f"MENTION_LOG_{c.me.id}"
         
-        # 🔥 PERBAIKAN: Cek struktur database Altruix yang sebenarnya
-        # Coba beberapa metode yang mungkin tersedia di Altruix
+        # 🔥 PERBAIKAN UTAMA: Cek struktur database Altruix yang sebenarnya
+        # Berdasarkan log, struktur database Altruix mungkin berbeda
         db_success = False
         
-        # METODE 1: Langsung akses collection (cara paling umum)
+        # 🔥 PERBAIKAN: Debug struktur database Altruix
         try:
-            # Coba akses collection langsung
-            collection_name = "SETTINGS"  # Nama collection di MongoDB
-            result = await Altruix.db[collection_name].update_one(
-                {"_id": setting_key},
-                {"$set": {
-                    "value": value, 
-                    "client_id": c.me.id, 
-                    "client_name": c.me.first_name or c.me.username,
-                    "updated_at": datetime.now(),
-                    "plugin": "mentions"
-                }},
-                upsert=True
-            )
-            db_success = True
-            logger.info(f"[MENTIONS] Setting saved via direct collection access: {setting_key}")
+            # Coba print struktur Altruix.db untuk debugging
+            logger.debug(f"[MENTIONS] Altruix.db type: {type(Altruix.db)}")
+            logger.debug(f"[MENTIONS] Altruix.db dir: {dir(Altruix.db)}")
             
-        except Exception as method1_err:
-            logger.warning(f"[MENTIONS] Method 1 failed: {method1_err}")
-            
-            # METODE 2: Gunakan insert_or_update dari Altruix (jika ada)
-            try:
-                # Cari method database yang ada di Altruix
-                if hasattr(Altruix.db, 'insert_or_update'):
-                    await Altruix.db.insert_or_update(
-                        "SETTINGS",
-                        {"_id": setting_key},
-                        {
-                            "value": value,
-                            "client_id": c.me.id,
-                            "client_name": c.me.first_name or c.me.username,
-                            "updated_at": datetime.now(),
-                            "plugin": "mentions"
-                        }
-                    )
-                    db_success = True
-                    logger.info(f"[MENTIONS] Setting saved via insert_or_update: {setting_key}")
-                else:
-                    raise Exception("Method insert_or_update not found")
-                    
-            except Exception as method2_err:
-                logger.warning(f"[MENTIONS] Method 2 failed: {method2_err}")
+            # Coba cari method yang benar-benar ada di Altruix
+            if hasattr(Altruix.db, 'settings_col'):
+                # Jika ada settings_col, gunakan itu
+                await Altruix.db.settings_col.update_one(
+                    {"_id": setting_key},
+                    {"$set": {
+                        "value": value, 
+                        "client_id": c.me.id, 
+                        "client_name": c.me.first_name or c.me.username,
+                        "updated_at": datetime.now().timestamp(),  # 🔥 PERBAIKAN: Gunakan timestamp, bukan datetime
+                        "plugin": "mentions"
+                    }},
+                    upsert=True
+                )
+                db_success = True
+                logger.info(f"[MENTIONS] Setting saved via settings_col: {setting_key}")
                 
-                # METODE 3: Simpan di config saja jika database error
-                logger.warning(f"[MENTIONS] Using config-only storage due to DB errors")
+            elif hasattr(Altruix.db, 'setdb'):
+                # Jika ada setdb method
+                await Altruix.db.setdb("SETTINGS", setting_key, {
+                    "value": value,
+                    "client_id": c.me.id,
+                    "client_name": c.me.first_name or c.me.username,
+                    "updated_at": datetime.now().timestamp(),
+                    "plugin": "mentions"
+                })
+                db_success = True
+                logger.info(f"[MENTIONS] Setting saved via setdb: {setting_key}")
+                
+            elif hasattr(Altruix.db, 'insert_or_update'):
+                # Coba method insert_or_update jika ada
+                await Altruix.db.insert_or_update(
+                    "SETTINGS",
+                    {"_id": setting_key},
+                    {
+                        "value": value,
+                        "client_id": c.me.id,
+                        "client_name": c.me.first_name or c.me.username,
+                        "updated_at": datetime.now().timestamp(),
+                        "plugin": "mentions"
+                    }
+                )
+                db_success = True
+                logger.info(f"[MENTIONS] Setting saved via insert_or_update: {setting_key}")
+                
+            else:
+                # 🔥 FALLBACK: Simpan ke config saja jika tidak ada method database yang cocok
+                logger.warning(f"[MENTIONS] No valid DB method found, using config-only storage")
                 db_success = False
+                
+        except Exception as db_err:
+            logger.error(f"[MENTIONS] Database error: {db_err}")
+            db_success = False
         
         # 🔥 PERBAIKAN: Selalu simpan di config untuk akses cepat
         if not hasattr(Altruix.config, "mention_settings"):
             Altruix.config.mention_settings = {}
         Altruix.config.mention_settings[c.me.id] = value
         
-        # 🔥 PERBAIKAN: Hapus data lama dengan _id "MENTION_LOG" jika ada
-        # Coba hapus data lama untuk menghindari conflict
+        # 🔥 PERBAIKAN: Coba hapus data lama untuk menghindari conflict
         try:
-            # Coba akses collection untuk delete
-            if hasattr(Altruix.db, 'SETTINGS') or 'SETTINGS' in Altruix.db:
-                old_data = await Altruix.db.SETTINGS.find_one({"_id": "MENTION_LOG"})
+            if hasattr(Altruix.db, 'settings_col'):
+                old_data = await Altruix.db.settings_col.find_one({"_id": "MENTION_LOG"})
                 if old_data:
-                    await Altruix.db.SETTINGS.delete_one({"_id": "MENTION_LOG"})
+                    await Altruix.db.settings_col.delete_one({"_id": "MENTION_LOG"})
                     logger.info(f"[MENTIONS] Deleted old setting: MENTION_LOG")
         except Exception as delete_err:
             logger.debug(f"[MENTIONS] Could not delete old setting: {delete_err}")
@@ -149,7 +160,7 @@ async def mention_settings_handler(c: Client, m: AltruixMessage):
         if db_success:
             success_msg = f"✅ Mention notifications {'ENABLED' if value else 'DISABLED'} for this userbot"
         else:
-            success_msg = f"⚠️ Mention notifications {'ENABLED' if value else 'DISABLED'} (config only - DB error)"
+            success_msg = f"⚠️ Mention notifications {'ENABLED' if value else 'DISABLED'} (config only - DB not available)"
         
         await msg.edit_msg(success_msg)
         
@@ -164,7 +175,7 @@ async def mention_settings_handler(c: Client, m: AltruixMessage):
             Altruix.config.mention_settings[c.me.id] = value
             logger.info(f"[MENTIONS] Saved to config as fallback: {value}")
             
-            error_msg = f"⚠️ Setting saved to config only (DB error: {error_detail[:50]})"
+            error_msg = f"⚠️ Setting saved to config only (DB not accessible)"
         except Exception as fallback_err:
             error_msg = f"❌ Failed to save setting: {error_detail[:100]}"
         
@@ -192,39 +203,44 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
             
             # Coba beberapa metode untuk baca dari database
             try:
-                # METODE 1: Direct collection access
-                try:
-                    db_res = await Altruix.db.SETTINGS.find_one({"_id": setting_key})
+                # Cek di settings_col
+                if hasattr(Altruix.db, 'settings_col'):
+                    db_res = await Altruix.db.settings_col.find_one({"_id": setting_key})
                     if db_res:
                         is_enabled = db_res.get("value", False)
-                        logger.debug(f"[MENTIONS] Found in DB (new key): {is_enabled}")
+                        logger.debug(f"[MENTIONS] Found in settings_col: {is_enabled}")
                     else:
                         # Coba cari data lama
-                        db_res_old = await Altruix.db.SETTINGS.find_one({"_id": "MENTION_LOG"})
+                        db_res_old = await Altruix.db.settings_col.find_one({"_id": "MENTION_LOG"})
                         if db_res_old:
                             is_enabled = db_res_old.get("value", False)
-                            logger.debug(f"[MENTIONS] Found in DB (old key): {is_enabled}")
+                            logger.debug(f"[MENTIONS] Found old setting: {is_enabled}")
                             
                             # Migrasi ke format baru
                             try:
-                                await Altruix.db.SETTINGS.update_one(
+                                await Altruix.db.settings_col.update_one(
                                     {"_id": setting_key},
                                     {"$set": {
                                         "value": is_enabled,
                                         "client_id": c.me.id,
                                         "migrated_from": "MENTION_LOG",
-                                        "updated_at": datetime.now()
+                                        "updated_at": datetime.now().timestamp()
                                     }},
                                     upsert=True
                                 )
                                 logger.info(f"[MENTIONS] Migrated old setting to: {setting_key}")
                             except Exception as migrate_err:
                                 logger.warning(f"[MENTIONS] Migration failed: {migrate_err}")
-                except Exception as db_err:
-                    logger.debug(f"[MENTIONS] DB read error: {db_err}")
                 
-            except Exception as read_err:
-                logger.error(f"[MENTIONS] Database read failed: {read_err}")
+                # 🔥 PERBAIKAN: Coba cek metode database lain jika settings_col tidak ada
+                elif hasattr(Altruix.db, 'getdb'):
+                    db_res = await Altruix.db.getdb("SETTINGS", setting_key)
+                    if db_res:
+                        is_enabled = db_res.get("value", False)
+                        logger.debug(f"[MENTIONS] Found via getdb: {is_enabled}")
+                        
+            except Exception as db_err:
+                logger.debug(f"[MENTIONS] DB read error: {db_err}")
                 is_enabled = False  # Default ke disabled jika error
             
             # Update cache
@@ -338,11 +354,14 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
         # PERBAIKAN: Hanya untuk pesan baru, bukan edit
         if not is_edited_message:
             try:
-                # Kirim reply ke pesan log dari akun userbot yang disebut
+                # 🔥 PERBAIKAN: Gunakan reply_parameters bukan reply_to_message_id
                 await c.send_message(
                     Altruix.log_chat,
                     "💬 Saya yang disebut di atas.",
-                    reply_to_message_id=sent_log_msg.id
+                    reply_parameters=ReplyParameters(
+                        message_id=sent_log_msg.id,
+                        chat_id=Altruix.log_chat
+                    )
                 )
                 logger.debug(f"[MENTIONS] Sent auto-reply for: {msg_key}")
             except Exception as reply_err:
@@ -360,7 +379,7 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
         logger.debug(f"[MENTIONS] Cached mention: {msg_key}")
 
     except Exception as e:
-        Altruix.log(f"[CRITICAL] Error in mention handler: {e}", level=50)
+        Altruix.log(f"[CRITICAL] Error in mention handler: {str(e)}", level=50)
         try:
             await Altruix.bot.send_message(
                 Altruix.log_chat,
@@ -398,11 +417,15 @@ async def start_reply_as_mentioned(c: Client, cb):
             "log_msg_id": cb.message.id
         }
 
+        # 🔥 PERBAIKAN: Gunakan reply_parameters
         await cb.message.reply_text(
             "🗨️ <b>Reply as Mentioned</b>\n\n"
             "Ketik pesan balasan Anda di bawah ini.\n"
             "Pesan ini akan dikirim sebagai akun yang disebut di grup asal.",
-            reply_to_message_id=cb.message.id
+            reply_parameters=ReplyParameters(
+                message_id=cb.message.id,
+                chat_id=cb.message.chat.id
+            )
         )
         await cb.answer("Silakan ketik balasan Anda.", show_alert=False)
 
@@ -439,10 +462,16 @@ async def handle_reply_as_mentioned_input(c: Client, m: RawMessage):
         f"<blockquote>{m.text or m.caption or ''}</blockquote>\n\n"
         f"Apakah Anda yakin?"
     )
+    
+    # 🔥 PERBAIKAN: Gunakan reply_parameters
     await m.reply_text(
         confirm_msg,
         parse_mode=enums.ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup(confirm_buttons)
+        reply_markup=InlineKeyboardMarkup(confirm_buttons),
+        reply_parameters=ReplyParameters(
+            message_id=m.id,
+            chat_id=m.chat.id
+        )
     )
 
     # Simpan teks balasan
