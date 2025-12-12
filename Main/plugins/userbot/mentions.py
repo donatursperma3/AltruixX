@@ -25,7 +25,7 @@ import logging
 
 plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "mentions"
-PLUGIN_VERSION = "0.1.1.1"  # 🔥 Versi terbaru dengan smart_send dan error handling optimal
+PLUGIN_VERSION = "0.1.1.2"  # 🔥 Versi terbaru dengan smart_send dan error handling optimal
 logger = logging.getLogger(f"{__plugin_name__}")
 if not logger.handlers:
     handler = logging.StreamHandler()
@@ -354,20 +354,25 @@ async def quick_reaction_handler(c: Client, cb):
         await cb.answer("❌ Terjadi kesalahan.", show_alert=True)
 
 
-# 🔥 PERBAIKAN UTAMA: Handler deteksi edit pesan — GUNAKAN DEKORATOR KHUSUS ALTRUIX
-# 🔥 Karena `filters.edited` tidak tersedia di versi Pyrogram ini, gunakan handler terpisah
-@Altruix.on_edited_message(
+
+# 🔥 PERBAIKAN UTAMA: Handler deteksi edit pesan — GUNAKAN CLIENT INSTANCE LANGSUNG
+# 🔥 Cara Pyrogram standard yang paling aman dan pasti bekerja
+@c.on_edited_message(
     filters.mentioned & filters.group & ~filters.user(Altruix.bot_info.id)
 )
 @log_errors
-async def edited_mention_handler(c: Client, m: RawMessage):
+async def edited_mention_handler(client_instance: Client, m: RawMessage):
+
     """
     Handler untuk mendeteksi pesan mention yang diedit.
     🔥 INI ADALAH CARA YANG BENAR UNTUK EKOSISTEM ALTRUIX
     """
     try:
+        # db_res = await Altruix.db.settings_col.find_one(
+        #     {"_id": "MENTION_LOG", "client_id": c.me.id}
+        # )
         db_res = await Altruix.db.settings_col.find_one(
-            {"_id": "MENTION_LOG", "client_id": c.me.id}
+            {"_id": "MENTION_LOG", "client_id": client_instance.me.id}
         )
         if not (db_res and db_res.get("value", False)):
             return
