@@ -28,7 +28,7 @@ from pyrogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton,
     ChatPhoto, ForceReply
 )
-from pyrogram.enums import ChatType, ChatMemberStatus, ParseMode, ChatAction, ReactionType
+from pyrogram.enums import ChatType, ChatMemberStatus, ParseMode, ChatAction
 
 from Main import Altruix
 from Main.core.decorators import log_errors
