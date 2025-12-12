@@ -26,7 +26,7 @@ from pyrogram.errors import (
 )
 from pyrogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton,
-    ChatPhoto, ForceReply, ReactionTypeEmoji
+    ChatPhoto, ForceReply
 )
 from pyrogram.enums import ChatType, ChatMemberStatus, ParseMode, ChatAction, ReactionType
 
@@ -35,6 +35,7 @@ from Main.core.decorators import log_errors
 from Main.core.types.message import Message as AltruixMessage
 from Main.utils.helpers import download_media, run_shell_cmd
 from main.utils.helpers import ChatPrivileges
+from pyrogram.types import *
 
 
 plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
