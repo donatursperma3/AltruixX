@@ -34,6 +34,7 @@ from Main import Altruix
 from Main.core.decorators import log_errors
 from Main.core.types.message import Message as AltruixMessage
 from Main.utils.helpers import download_media, run_shell_cmd
+from main.utils.helpers import ChatPrivileges
 
 
 plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
