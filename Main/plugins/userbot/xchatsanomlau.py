@@ -26,7 +26,7 @@ from pyrogram.errors import (
 )
 from pyrogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton,
-    ChatPrivileges, ChatPhoto, ForceReply, ReactionTypeEmoji
+    ChatPhoto, ForceReply, ReactionTypeEmoji
 )
 from pyrogram.enums import ChatType, ChatMemberStatus, ParseMode, ChatAction, ReactionType
 
