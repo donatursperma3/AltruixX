@@ -17,6 +17,11 @@ from pyrogram.types import (
 )
 from datetime import datetime
 from Main.core.decorators import log_errors
+import os
+import re
+import asyncio
+import html
+import logging
 
 plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "mentions"
