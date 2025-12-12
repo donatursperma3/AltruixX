@@ -25,7 +25,7 @@ import logging
 
 plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "mentions"
-PLUGIN_VERSION = "0.1.1.2"  # 🔥 Versi terbaru dengan smart_send dan error handling optimal
+PLUGIN_VERSION = "0.1.1.3"  # 🔥 PERBAIKAN: Versi diperbarui untuk fix duplicate key error
 logger = logging.getLogger(f"{__plugin_name__}")
 if not logger.handlers:
     handler = logging.StreamHandler()
@@ -70,15 +70,59 @@ async def mention_settings_handler(c: Client, m: AltruixMessage):
         return await msg.edit_msg("INVALID_INPUT")
     
     try:
-        # 🔥 SIMPAN SETTING KE DATABASE
-        await Altruix.db.settings_col.update_one(
-            {"_id": "MENTION_LOG", "client_id": c.me.id},
-            {"$set": {"value": value}},
-            upsert=True,
+        # 🔥 PERBAIKAN KRITIS: Gunakan metode yang benar untuk menghindari duplicate key error
+        # Format key harus unik per userbot - tambahkan client_id di _id
+        setting_key = f"MENTION_LOG_{c.me.id}"
+        
+        # 🔥 PERBAIKAN: Pastikan koleksi settings sudah di-set
+        await Altruix.db.set_collection("settings")
+        
+        # 🔥 PERBAIKAN UTAMA: Hapus data lama dengan _id "MENTION_LOG" jika ada
+        # Ini menghindari conflict dengan data lama yang tidak memiliki client_id
+        try:
+            old_data = await Altruix.db.settings.find_one({"_id": "MENTION_LOG"})
+            if old_data:
+                await Altruix.db.settings.delete_one({"_id": "MENTION_LOG"})
+                logger.info(f"[MENTIONS] Deleted old setting with _id: MENTION_LOG")
+        except Exception as delete_err:
+            logger.warning(f"[MENTIONS] Could not delete old setting: {delete_err}")
+        
+        # 🔥 PERBAIKAN: Gunakan update_one dengan upsert untuk key yang unik
+        await Altruix.db.settings.update_one(
+            {"_id": setting_key},
+            {"$set": {
+                "value": value, 
+                "client_id": c.me.id, 
+                "client_name": c.me.first_name or c.me.username,
+                "updated_at": datetime.now(),
+                "plugin": "mentions"
+            }},
+            upsert=True
         )
+        
+        # 🔥 PERBAIKAN: Juga simpan di config untuk akses cepat
+        if not hasattr(Altruix.config, "mention_settings"):
+            Altruix.config.mention_settings = {}
+        Altruix.config.mention_settings[c.me.id] = value
+        
+        logger.info(f"[MENTIONS] Setting saved: {setting_key} = {value}")
+        
+        # 🔥 PERBAIKAN: Kirim pesan sukses yang lebih jelas
+        success_msg = f"✅ Mention notifications {'ENABLED' if value else 'DISABLED'} for this userbot"
+        await msg.edit_msg(success_msg)
+        
     except Exception as e:
-        Altruix.log(f"[ERROR] Gagal menyimpan setting mention: {e}", level=40)
-        await msg.edit_msg("FAILED_TO_SAVE_SETTING")
+        error_detail = str(e)
+        Altruix.log(f"[ERROR] Gagal menyimpan setting mention: {error_detail}", level=40)
+        
+        # 🔥 PERBAIKAN: Pesan error yang lebih spesifik berdasarkan error type
+        if "duplicate key" in error_detail.lower():
+            error_msg = "❌ Database error: Duplicate key detected. Please try again or contact admin."
+        else:
+            error_msg = f"❌ Failed to save setting: {error_detail[:100]}"
+        
+        await msg.edit_msg(error_msg)
+        return
 
 
 @Altruix.on_message(
@@ -88,10 +132,52 @@ async def mention_settings_handler(c: Client, m: AltruixMessage):
 async def send_mention_log_handler(c: Client, m: RawMessage):
     """Handler utama untuk menangkap mention dan mengirim notifikasi ke LOG_CHAT."""
     try:
-        db_res = await Altruix.db.settings_col.find_one(
-            {"_id": "MENTION_LOG", "client_id": c.me.id}
-        )
-        if not (db_res and db_res.get("value", False)):
+        # 🔥 PERBAIKAN: Gunakan format key yang sama dengan handler setting
+        setting_key = f"MENTION_LOG_{c.me.id}"
+        
+        # 🔥 PERBAIKAN: Cek dulu di config cache (lebih cepat)
+        if hasattr(Altruix.config, "mention_settings") and c.me.id in Altruix.config.mention_settings:
+            is_enabled = Altruix.config.mention_settings[c.me.id]
+        else:
+            # 🔥 PERBAIKAN: Jika tidak ada di cache, cek di database dengan format key yang benar
+            try:
+                await Altruix.db.set_collection("settings")
+                db_res = await Altruix.db.settings.find_one({"_id": setting_key})
+                
+                if not db_res:
+                    # 🔥 PERBAIKAN: Fallback ke data lama jika data baru tidak ditemukan
+                    db_res_old = await Altruix.db.settings.find_one({"_id": "MENTION_LOG"})
+                    if db_res_old:
+                        # Migrasi data lama ke format baru
+                        is_enabled = db_res_old.get("value", False)
+                        await Altruix.db.settings.update_one(
+                            {"_id": setting_key},
+                            {"$set": {
+                                "value": is_enabled,
+                                "client_id": c.me.id,
+                                "migrated_from": "MENTION_LOG",
+                                "updated_at": datetime.now()
+                            }},
+                            upsert=True
+                        )
+                        logger.info(f"[MENTIONS] Migrated old setting to new key: {setting_key}")
+                    else:
+                        # Default: disabled jika tidak ada setting
+                        is_enabled = False
+                else:
+                    is_enabled = db_res.get("value", False)
+                
+                # Update cache
+                if not hasattr(Altruix.config, "mention_settings"):
+                    Altruix.config.mention_settings = {}
+                Altruix.config.mention_settings[c.me.id] = is_enabled
+                
+            except Exception as db_err:
+                logger.error(f"[MENTIONS] Database error: {db_err}")
+                is_enabled = False  # Default ke disabled jika error
+        
+        # Jika mention log tidak diaktifkan, return
+        if not is_enabled:
             return
 
         mentioner = m.from_user
@@ -168,6 +254,7 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
                     )
                     # PERBAIKAN: Hanya update cache, jangan kirim pesan baru
                     MENTION_LOG_CACHE[msg_key]["text"] = message_text
+                    MENTION_LOG_CACHE[msg_key]["is_edited"] = True
                     return  # Keluar dari fungsi setelah update
                 except Exception as edit_err:
                     Altruix.log(f"[DEBUG] Gagal edit pesan log: {edit_err}", level=30)
@@ -392,11 +479,6 @@ async def quick_reaction_handler(c: Client, cb):
     except Exception as e:
         Altruix.log(f"[ERROR] Error in quick_reaction_handler: {e}", level=40)
         await cb.answer("❌ Terjadi kesalahan.", show_alert=True)
-
-
-# PERBAIKAN UTAMA: Handler untuk deteksi edit pesan diintegrasikan ke handler utama
-# TIDAK PERLU decorator @Altruix.on_edited_message karena sudah ditangani di handler utama
-# dengan memeriksa atribut edit_date pada pesan
 
 # Log sukses loading
 try:
