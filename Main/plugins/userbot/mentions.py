@@ -135,6 +135,44 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
         reply_button = [InlineKeyboardButton("🗨️ Reply as Mentioned", callback_data=f"reply_as_mentioned_{m.chat.id}_{m.id}")]
         link_button = [InlineKeyboardButton("🔗 Go to Message", url=m.link)]
         
+        # 🔥 PERBAIKAN: Tambahkan logika untuk mendeteksi pesan edit
+        msg_key = f"{m.chat.id}_{m.id}"
+        
+        # PERBAIKAN UTAMA: Deteksi apakah ini pesan edit dengan memeriksa edit_date
+        is_edited_message = hasattr(m, 'edit_date') and m.edit_date is not None
+        
+        if is_edited_message:
+            # Jika ini pesan edit, update log message
+            log_message = (
+                f"✏️ <b>Edited Mention Detected!</b>\n\n"
+                f"👤 <b>Mentioned By:</b> {mentioner_hyperlink} (<code>{mentioner_id}</code>)\n"
+                f"🤖 <b>My Account:</b> {c.me.mention(style=enums.ParseMode.HTML)}\n"
+                f"💬 <b>Group:</b> {m.chat.title} (<code>{m.chat.id}</code>)\n"
+                f"🕒 <b>Original Time:</b> <code>{mention_time}</code>\n"
+                f"🕒 <b>Edited Time:</b> <code>{datetime.fromtimestamp(m.edit_date).strftime('%Y-%m-%d %H:%M:%S')}</code>\n"
+                f"📄 <b>Edited Message:</b>\n<blockquote>{message_text}</blockquote>"
+            )
+            
+            # PERBAIKAN: Cek apakah pesan edit sudah ada di cache untuk update
+            if msg_key in MENTION_LOG_CACHE:
+                old_data = MENTION_LOG_CACHE[msg_key]
+                try:
+                    # Update pesan log yang sudah ada
+                    await Altruix.bot.edit_message_text(
+                        chat_id=Altruix.log_chat,
+                        message_id=old_data["log_msg_id"],
+                        text=log_message,
+                        parse_mode=enums.ParseMode.HTML,
+                        disable_web_page_preview=True,
+                        reply_markup=InlineKeyboardMarkup([reaction_buttons, reply_button, link_button])
+                    )
+                    # PERBAIKAN: Hanya update cache, jangan kirim pesan baru
+                    MENTION_LOG_CACHE[msg_key]["text"] = message_text
+                    return  # Keluar dari fungsi setelah update
+                except Exception as edit_err:
+                    Altruix.log(f"[DEBUG] Gagal edit pesan log: {edit_err}", level=30)
+                    # Jika gagal edit, lanjutkan untuk kirim pesan baru
+        
         # 🔥 KIRIM ATAU UPDATE NOTIFIKASI
         try:
             sent_log_msg = await Altruix.bot.send_message(
@@ -149,24 +187,26 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
             return
 
         # 🔥 BALAS OTOMATIS DARI USERBOT YANG DI-MENTION
-        try:
-            # Kirim reply ke pesan log dari akun userbot yang disebut
-            await c.send_message(
-                Altruix.log_chat,
-                "💬 Saya yang disebut di atas.",
-                reply_to_message_id=sent_log_msg.id
-            )
-        except Exception as reply_err:
-            Altruix.log(f"[DEBUG] Gagal kirim reply otomatis: {reply_err}", level=30)
+        # PERBAIKAN: Hanya untuk pesan baru, bukan edit
+        if not is_edited_message:
+            try:
+                # Kirim reply ke pesan log dari akun userbot yang disebut
+                await c.send_message(
+                    Altruix.log_chat,
+                    "💬 Saya yang disebut di atas.",
+                    reply_to_message_id=sent_log_msg.id
+                )
+            except Exception as reply_err:
+                Altruix.log(f"[DEBUG] Gagal kirim reply otomatis: {reply_err}", level=30)
 
         # Simpan ke cache untuk deteksi edit — 🔥 PERBAIKAN UTAMA: format cache
-        msg_key = f"{m.chat.id}_{m.id}"
         MENTION_LOG_CACHE[msg_key] = {
             "text": message_text,
             "log_msg_id": sent_log_msg.id,
             "mentioned_client": c,
             "chat_id": m.chat.id,
-            "message_id": m.id
+            "message_id": m.id,
+            "is_edited": is_edited_message  # PERBAIKAN: Tambah flag edit
         }
 
     except Exception as e:
@@ -354,63 +394,11 @@ async def quick_reaction_handler(c: Client, cb):
         await cb.answer("❌ Terjadi kesalahan.", show_alert=True)
 
 
+# PERBAIKAN UTAMA: Handler untuk deteksi edit pesan diintegrasikan ke handler utama
+# TIDAK PERLU decorator @Altruix.on_edited_message karena sudah ditangani di handler utama
+# dengan memeriksa atribut edit_date pada pesan
 
-# 🔥 PERBAIKAN UTAMA: Handler deteksi edit pesan — GUNAKAN CLIENT INSTANCE LANGSUNG
-# 🔥 Cara Pyrogram standard yang paling aman dan pasti bekerja
-@c.on_edited_message(
-    filters.mentioned & filters.group & ~filters.user(Altruix.bot_info.id)
-)
-@log_errors
-async def edited_mention_handler(client_instance: Client, m: RawMessage):
-
-    """
-    Handler untuk mendeteksi pesan mention yang diedit.
-    🔥 INI ADALAH CARA YANG BENAR UNTUK EKOSISTEM ALTRUIX
-    """
-    try:
-        # db_res = await Altruix.db.settings_col.find_one(
-        #     {"_id": "MENTION_LOG", "client_id": c.me.id}
-        # )
-        db_res = await Altruix.db.settings_col.find_one(
-            {"_id": "MENTION_LOG", "client_id": client_instance.me.id}
-        )
-        if not (db_res and db_res.get("value", False)):
-            return
-
-        msg_key = f"{m.chat.id}_{m.id}"
-        if msg_key not in MENTION_LOG_CACHE:
-            return  # Tidak ada notifikasi awal → abaikan
-
-        old_data = MENTION_LOG_CACHE[msg_key]
-        old_text = old_data.get("text", "")
-        new_text = (m.text or m.caption or "[No text content]").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-        if old_text == new_text:
-            return  # Tidak ada perubahan isi
-
-        # Buat pesan update
-        edit_message = (
-            f"✏️ <b>Edited Mention!</b>\n"
-            f"<i>Pesan mention asli telah diubah.</i>\n\n"
-            f"📄 <b>New Message:</b>\n<blockquote>{new_text}</blockquote>"
-        )
-
-        try:
-            await Altruix.bot.send_message(
-                Altruix.log_chat,
-                edit_message,
-                parse_mode=enums.ParseMode.HTML,
-                reply_to_message_id=old_data["log_msg_id"]
-            )
-            # Perbarui cache
-            MENTION_LOG_CACHE[msg_key]["text"] = new_text
-        except Exception as send_err:
-            Altruix.log(f"[ERROR] Gagal kirim notifikasi edit mention: {send_err}", level=40)
-
-    except Exception as e:
-        Altruix.log(f"[ERROR] Error in edited_mention_handler: {e}", level=40)
-
-    # Log sukses loading
+# Log sukses loading
 try:
     Altruix.log(f"[DEBUG] Loaded → {__plugin_name__} {PLUGIN_VERSION}", level=20)
 except Exception as e:
