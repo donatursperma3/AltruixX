@@ -1,4 +1,4 @@
-# Main/plugins/userbot/mentions.py
+# mentions.py
 # Copyright (C) 2021-present by Altruix@Github, < https://github.com/Altruix >.
 #
 # This file is part of < https://github.com/Altruix/Altruix > project,
@@ -15,29 +15,13 @@ from pyrogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
 )
+import time
 from datetime import datetime
-from Main.core.decorators import log_errors
-from Main.utils.compatibility import smart_send
-import os
-import logging
 
-plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
-__plugin_name__ = plugin_name if plugin_name else "mentions"
-PLUGIN_VERSION = "0.1.1.1"  # 🔥 Versi terbaru dengan smart_send dan error handling optimal
-logger = logging.getLogger(f"{__plugin_name__}")
-if not logger.handlers:
-    handler = logging.StreamHandler()
-    formatter = logging.Formatter(
-        "%(asctime)s - [SET PLUGIN] - %(levelname)s - %(message)s"
-    )
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-    logger.setLevel(logging.INFO)
-
-# 🔥 TAMBAHAN: Cache untuk lacak pesan mention yang sudah dikirim → update, bukan kirim baru
+# 🔥 TAMBAHAN: Dictionary untuk melacak pesan mention yang sudah dikirim (untuk deteksi edit)
 MENTION_LOG_CACHE = {}
 
-# 🔥 TAMBAHAN: Emoji default untuk quick reaction
+# 🔥 TAMBAHAN: Emoji default untuk quick reaction (5 pilihan)
 DEFAULT_REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😢"]
 
 # 🔥 TAMBAHAN: Dictionary untuk menunggu konfirmasi reply-as-mentioned
@@ -52,9 +36,10 @@ REPLY_AS_MENTIONED_WAITING = {}
     group_only=False,
     requires_input=True,
 )
-@log_errors
 async def mention_settings_handler(c: Client, m: AltruixMessage):
-    """Handler untuk mengaktifkan/menonaktifkan notifikasi mention global."""
+    """
+    Handler untuk mengaktifkan/menonaktifkan notifikasi mention global.
+    """
     msg = await m.handle_message("PROCESSING")
     value = False
     user_input = m.user_input.lower().strip()
@@ -68,6 +53,7 @@ async def mention_settings_handler(c: Client, m: AltruixMessage):
         return await msg.edit_msg("INVALID_INPUT")
     
     try:
+        # 🔥 SIMPAN SETTING KE DATABASE
         await Altruix.db.settings_col.update_one(
             {"_id": "MENTION_LOG", "client_id": c.me.id},
             {"$set": {"value": value}},
@@ -81,9 +67,12 @@ async def mention_settings_handler(c: Client, m: AltruixMessage):
 @Altruix.on_message(
     filters.mentioned & filters.group & ~filters.user(Altruix.bot_info.id)
 )
-@log_errors
 async def send_mention_log_handler(c: Client, m: RawMessage):
-    """Handler utama untuk menangkap mention dan mengirim notifikasi ke LOG_CHAT."""
+    """
+    Handler utama untuk menangkap mention dan mengirim notifikasi ke LOG_CHAT.
+    🔥 DIPERBAIKI: Tambah info detail + deteksi edit + error handling
+    🔥 DITAMBAH: Tombol quick reaction + reply otomatis
+    """
     try:
         db_res = await Altruix.db.settings_col.find_one(
             {"_id": "MENTION_LOG", "client_id": c.me.id}
@@ -93,15 +82,15 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
 
         mentioner = m.from_user
         if not mentioner:
-            return  # Abaikan jika mention dari channel anonim
+            return
 
-        # Format hyperlink user yang klikable di semua platform
+        # Format hyperlink user yang aman dan klikable
         mentioner_name = mentioner.first_name or "Unknown"
         mentioner_id = mentioner.id
         mentioner_link = f"tg://user?id={mentioner_id}"
         mentioner_hyperlink = f'<a href="{mentioner_link}">{mentioner_name}</a>'
         
-        # Ambil dan amankan isi pesan
+        # Ambil isi pesan (dukung teks & caption)
         message_text = m.text or m.caption or "[No text content]"
         message_text = (
             message_text
@@ -113,7 +102,7 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
         # Format waktu lokal
         mention_time = datetime.fromtimestamp(m.date).strftime("%Y-%m-%d %H:%M:%S")
 
-        # Bangun pesan notifikasi
+        # Buat pesan notifikasi lengkap
         log_message = (
             f"🔔 <b>Mention Detected!</b>\n\n"
             f"👤 <b>Mentioned By:</b> {mentioner_hyperlink} (<code>{mentioner_id}</code>)\n"
@@ -123,37 +112,16 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
             f"📄 <b>Message:</b>\n<blockquote>{message_text}</blockquote>"
         )
 
-        # 🔥 TOMBOL: Quick reaction + reply as mentioned + link
+        # 🔥 TOMBOL: Quick Reaction (5 emoji default)
         reaction_buttons = [
             InlineKeyboardButton(emoji, callback_data=f"react_mention_{m.chat.id}_{m.id}_{emoji}")
             for emoji in DEFAULT_REACTION_EMOJIS
         ]
+        # 🔥 TOMBOL: Link ke pesan asli
         reply_button = [InlineKeyboardButton("🗨️ Reply as Mentioned", callback_data=f"reply_as_mentioned_{m.chat.id}_{m.id}")]
         link_button = [InlineKeyboardButton("🔗 Go to Message", url=m.link)]
-
-        # 🔥 KIRIM ATAU UPDATE NOTIFIKASI
-        msg_key = f"{m.chat.id}_{m.id}"
-        if msg_key in MENTION_LOG_CACHE:
-            try:
-                old_log_msg_id = MENTION_LOG_CACHE[msg_key]["log_msg_id"]
-                edited_log = log_message.replace(
-                    "🔔 <b>Mention Detected!</b>",
-                    "✏️ <b>Edited Mention!</b>\n<i>Original mention was modified.</i>"
-                )
-                await Altruix.bot.edit_message_text(
-                    Altruix.log_chat,
-                    old_log_msg_id,
-                    edited_log,
-                    parse_mode=enums.ParseMode.HTML,
-                    reply_markup=InlineKeyboardMarkup([reaction_buttons, reply_button, link_button]),
-                    disable_web_page_preview=True
-                )
-                MENTION_LOG_CACHE[msg_key]["text"] = message_text
-                return
-            except Exception as edit_err:
-                Altruix.log(f"[DEBUG] Gagal edit notifikasi mention: {edit_err}", level=30)
-                pass
-
+        
+        # 🔥 KIRIM NOTIFIKASI DENGAN TOMBOL
         try:
             sent_log_msg = await Altruix.bot.send_message(
                 Altruix.log_chat,
@@ -162,19 +130,13 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
                 disable_web_page_preview=True,
                 reply_markup=InlineKeyboardMarkup([reaction_buttons, reply_button, link_button])
             )
-            MENTION_LOG_CACHE[msg_key] = {
-                "text": message_text,
-                "log_msg_id": sent_log_msg.id,
-                "mentioned_client": c,  # Simpan client yang disebut
-                "chat_id": m.chat.id,
-                "message_id": m.id
-            }
         except Exception as send_err:
             Altruix.log(f"[ERROR] Gagal kirim notifikasi mention: {send_err}", level=40)
             return
 
         # 🔥 BALAS OTOMATIS DARI USERBOT YANG DI-MENTION
         try:
+            # Kirim reply ke pesan log dari akun userbot yang disebut
             await c.send_message(
                 Altruix.log_chat,
                 "💬 Saya yang disebut di atas.",
@@ -182,6 +144,16 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
             )
         except Exception as reply_err:
             Altruix.log(f"[DEBUG] Gagal kirim reply otomatis: {reply_err}", level=30)
+
+        # Simpan ke cache untuk deteksi edit
+        msg_key = f"{m.chat.id}_{m.id}"
+        MENTION_LOG_CACHE[msg_key] = {
+            "text": message_text,
+            "log_msg_id": sent_log_msg.id,
+            "mentioned_client": c,
+            "chat_id": m.chat.id,
+            "message_id": m.id
+        }
 
     except Exception as e:
         Altruix.log(f"[CRITICAL] Error in mention handler: {e}", level=50)
@@ -197,7 +169,6 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
 
 # 🔥 BARU: Handler untuk memulai proses reply-as-mentioned
 @Altruix.bot.on_callback_query(filters.regex(r"reply_as_mentioned_(\d+)_(\d+)"))
-@log_errors
 async def start_reply_as_mentioned(c: Client, cb):
     """Memulai proses reply-as-mentioned dengan meminta input pesan."""
     try:
@@ -237,7 +208,6 @@ async def start_reply_as_mentioned(c: Client, cb):
 
 # 🔥 BARU: Handler untuk menerima input balasan
 @Altruix.bot.on_message(filters.chat(Altruix.log_chat) & filters.reply & ~filters.user(Altruix.bot_info.id))
-@log_errors
 async def handle_reply_as_mentioned_input(c: Client, m: RawMessage):
     """Menangani input balasan untuk reply-as-mentioned."""
     if not m.reply_to_message:
@@ -276,7 +246,6 @@ async def handle_reply_as_mentioned_input(c: Client, m: RawMessage):
 
 # 🔥 BARU: Handler konfirmasi kirim
 @Altruix.bot.on_callback_query(filters.regex(r"confirm_reply_(\d+)"))
-@log_errors
 async def confirm_send_reply(c: Client, cb):
     """Mengirim balasan setelah konfirmasi."""
     try:
@@ -317,7 +286,6 @@ async def confirm_send_reply(c: Client, cb):
 
 # 🔥 BARU: Handler pembatalan
 @Altruix.bot.on_callback_query(filters.regex(r"cancel_reply_(\d+)"))
-@log_errors
 async def cancel_send_reply(c: Client, cb):
     """Membatalkan pengiriman balasan."""
     reply_msg_id = int(cb.data.split("_")[2])
@@ -337,7 +305,6 @@ async def cancel_send_reply(c: Client, cb):
 
 # 🔥 BARU: Handler untuk quick reaction
 @Altruix.bot.on_callback_query(filters.regex(r"react_mention_(\d+)_(\d+)_(.+)"))
-@log_errors
 async def quick_reaction_handler(c: Client, cb):
     """Kirim reaksi ke pesan asli di grup menggunakan akun userbot yang disebut."""
     try:
@@ -368,17 +335,51 @@ async def quick_reaction_handler(c: Client, cb):
         await cb.answer("❌ Terjadi kesalahan.", show_alert=True)
 
 
-# 🔥 BARU: Deteksi edit pesan mention → trigger ulang handler utama
-@Altruix.on_edited_message(
-    filters.mentioned & filters.group & ~filters.user(Altruix.bot_info.id)
+# 🔥 BARU: Handler untuk deteksi edit pesan mention - CARA BENAR UNTUK ALTRUIX
+@Altruix.on_message(
+    filters.edited & filters.mentioned & filters.group & ~filters.user(Altruix.bot_info.id)
 )
-@log_errors
 async def edited_mention_handler(c: Client, m: RawMessage):
-    """Trigger ulang handler utama saat pesan mention diedit."""
-    await send_mention_log_handler(c, m)
+    """
+    Handler untuk mendeteksi pesan mention yang diedit.
+    🔥 INI ADALAH CARA YANG BENAR UNTUK EKOSISTEM ALTRUIX (BUKAN on_edited_message)
+    """
+    try:
+        db_res = await Altruix.db.settings_col.find_one(
+            {"_id": "MENTION_LOG", "client_id": c.me.id}
+        )
+        if not (db_res and db_res.get("value", False)):
+            return
 
-# Log sukses loading
-try:
-    Altruix.log(f"[DEBUG] Loaded → {__plugin_name__} {PLUGIN_VERSION}", level=20)
-except Exception as e:
-    logger.info(f"[DEBUG] Loaded → {__plugin_name__} {PLUGIN_VERSION}")
+        msg_key = f"{m.chat.id}_{m.id}"
+        if msg_key not in MENTION_LOG_CACHE:
+            return  # Tidak ada notifikasi awal → abaikan
+
+        old_data = MENTION_LOG_CACHE[msg_key]
+        old_text = old_data.get("text", "")
+        new_text = (m.text or m.caption or "[No text content]").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+        if old_text == new_text:
+            return  # Tidak ada perubahan isi
+
+        # Buat pesan update
+        edit_message = (
+            f"✏️ <b>Edited Mention!</b>\n"
+            f"<i>Pesan mention asli telah diubah.</i>\n\n"
+            f"📄 <b>New Message:</b>\n<blockquote>{new_text}</blockquote>"
+        )
+
+        try:
+            await Altruix.bot.send_message(
+                Altruix.log_chat,
+                edit_message,
+                parse_mode=enums.ParseMode.HTML,
+                reply_to_message_id=old_data["log_msg_id"]
+            )
+            # Perbarui cache
+            MENTION_LOG_CACHE[msg_key]["text"] = new_text
+        except Exception as send_err:
+            Altruix.log(f"[ERROR] Gagal kirim notifikasi edit mention: {send_err}", level=40)
+
+    except Exception as e:
+        Altruix.log(f"[ERROR] Error in edited_mention_handler: {e}", level=40)
