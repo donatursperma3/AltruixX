@@ -33,7 +33,7 @@ from pyrogram.enums import ChatType, ChatMemberStatus, ParseMode, ChatAction
 from Main import Altruix
 from Main.core.decorators import log_errors
 from Main.core.types.message import Message as AltruixMessage
-from Main.utils.helpers import download_media, run_shell_cmd
+from Main.utils.helpers import run_shell_cmd
 from main.utils.helpers import ChatPrivileges
 from pyrogram.types import *
 
