@@ -16,7 +16,7 @@ import time
 from Main import Altruix
 from pyrogram import Client, filters
 from pyrogram.raw.functions import Ping
-from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
 from pyrogram import errors
 from pyrogram.errors import FloodWait, ChatWriteForbidden, SlowmodeWait
 from Main.core.types.message import Message
