@@ -18,7 +18,7 @@ from pyrogram import Client, filters
 from pyrogram.raw.functions import Ping
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from pyrogram import errors
-from pyrogram.errors import FloodWait, ChatWriteForbidden, SlowmodeWait, TimeoutError
+from pyrogram.errors import FloodWait, ChatWriteForbidden, SlowmodeWait
 from Main.core.types.message import Message
 from Main.utils.essentials import Essentials
 from Main.core.decorators import inline_check
@@ -31,7 +31,7 @@ import logging
 
 plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xspamxr"
-PLUGIN_VERSION = "0.3.0.24"  # 🔥 FIXED: hndlr, QUERY_ID_INVALID, CHANNEL_INVALID, timeout
+PLUGIN_VERSION = "0.3.0.25.1"  # 🔥 FIXED: hndlr, QUERY_ID_INVALID, CHANNEL_INVALID, timeout
 logger = logging.getLogger(f"{__plugin_name__}")
 if not logger.handlers:
     handler = logging.StreamHandler()
@@ -123,8 +123,9 @@ async def get_chat_safe(client: Client, identifier, timeout: int = 10) -> object
     """Mengembalikan objek chat jika valid, atau None jika tidak valid/timeout."""
     try:
         return await asyncio.wait_for(client.get_chat(identifier), timeout=timeout)
-    except asyncio.TimeoutError:
-        Altruix.log(f"[CHAT_ERROR] Timeout saat resolve chat {identifier}", level=40)
+    # except asyncio.TimeoutError:
+    except pyrogram.errors.exceptions.flood_420.FloodWait as fwe:
+        Altruix.log(f"[CHAT_ERROR] FloodWait saat resolve chat {identifier}: {fwe}", level=40)
         return None
     except (errors.ChannelInvalid, errors.ChannelPrivate, errors.PeerIdInvalid, errors.UsernameInvalid, ValueError, TypeError) as e:
         Altruix.log(f"[CHAT_ERROR] Gagal resolve chat {identifier}: {e}", level=40)
@@ -148,8 +149,9 @@ async def validate_chat(client: Client, destination: str, timeout: int = 10) -> 
                     return True, (str(target_chat.id), target_chat)
                 else:
                     return False, f"Tidak dapat mengakses chat publik {destination}"
-            except asyncio.TimeoutError:
-                return False, f"Timeout saat join ke {destination}"
+            # except asyncio.TimeoutError:
+            except pyrogram.errors.exceptions.flood_420.FloodWait as fwe:
+                return False, f"FloodWait saat join ke {destination}: {str(fwe)}"
             except Exception as e:
                 return False, f"Tidak dapat join ke chat {destination}: {str(e)}"
         try:
@@ -167,8 +169,9 @@ async def validate_chat(client: Client, destination: str, timeout: int = 10) -> 
             return True, (str(target_chat.id), target_chat)
         else:
             return False, "Tidak dapat mengakses chat tersebut."
-    except asyncio.TimeoutError:
-        return False, "Timeout saat memvalidasi chat."
+    # except asyncio.TimeoutError:
+    except pyrogram.errors.exceptions.flood_420.FloodWait as fwe:
+        return False, f"FloodWait saat memvalidasi chat. : {str(fwe)}"
     except Exception as e:
         return False, f"Error saat memvalidasi chat {destination}: {str(e)}"
 
