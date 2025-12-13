@@ -54,53 +54,66 @@ import asyncio
 from pyrogram.types import LinkPreviewOptions
 from pyrogram.errors import FloodWait
 
-# ✅ PERUBAHAN 1: Tambahkan fungsi deteksi branch yang andal
-# ✅ PERUBAHAN 1: Perbaiki fungsi deteksi branch agar mengembalikan "branch (commit)" atau "unknown (commit)"
+# ✅ PERUBAHAN 1: Prioritaskan env vars Sevalla untuk deteksi branch/commit yang akurat
+#    - Cek SVL_DEPLOYMENT_BRANCH dan SVL_DEPLOYMENT_COMMIT_SHA terlebih dahulu (spesifik Sevalla).
+#    - Fallback ke deteksi Git manual jika env var tidak ada (untuk kompatibilitas lokal/Heroku/lainnya).
+#    - Selalu ambil short commit (7 char) untuk konsistensi.
+#    - Jika gagal total, tampilkan "unknown (unknown)".
 def get_current_git_branch() -> str:
-    """Deteksi branch Git secara akurat + commit hash pendek, termasuk di Heroku/detached HEAD."""
+    """Deteksi branch Git secara akurat + commit hash pendek, prioritas env vars Sevalla."""
     branch_name = "unknown"
     commit_hash = "unknown"
 
-    try:
-        # Ambil commit hash pendek (selalu tersedia di environment deploy)
-        result = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            capture_output=True, text=True, timeout=5
-        )
-        if result.returncode == 0:
-            commit_hash = result.stdout.strip()[:7]  # Ambil 7 karakter pertama
-       
-        # Coba deteksi nama branch
-        result = subprocess.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            capture_output=True, text=True, timeout=5
-        )
-        if result.returncode == 0 and result.stdout.strip() not in ("HEAD", ""):
-            branch_name = result.stdout.strip()
-        else:
-            # Alternatif: coba branch --show-current
+    # ✅ PRIORITAS 1: Cek env vars Sevalla (runtime deployment info)
+    sevalla_branch = os.getenv("SVL_DEPLOYMENT_BRANCH")
+    sevalla_commit = os.getenv("SVL_DEPLOYMENT_COMMIT_SHA")
+    if sevalla_branch:
+        branch_name = sevalla_branch
+    if sevalla_commit:
+        commit_hash = sevalla_commit[:7]  # Short commit: 7 char
+
+    # ✅ PRIORITAS 2: Jika env vars Sevalla tidak ada, fallback ke deteksi Git
+    if branch_name == "unknown" or commit_hash == "unknown":
+        try:
+            # Ambil short commit dari Git (selalu tersedia)
             result = subprocess.run(
-                ["git", "branch", "--show-current"],
+                ["git", "rev-parse", "--short", "HEAD"],
                 capture_output=True, text=True, timeout=5
             )
-            if result.returncode == 0 and result.stdout.strip():
-                branch_name = result.stdout.strip()
-            else:
-                # Baca .git/HEAD untuk ref branch
-                try:
-                    with open(".git/HEAD", "r") as f:
-                        head_content = f.read().strip()
-                        if head_content.startswith("ref: refs/heads/"):
-                            branch_name = head_content.replace("ref: refs/heads/", "")
-                except (FileNotFoundError, OSError):
-                    pass
-       
-        # Format akhir: branch (commit) — jika branch unknown, tetap tampilkan commit
-        return f"{branch_name} ({commit_hash})"
-       
-    except Exception:
-        return f"unknown ({commit_hash})" if commit_hash != "unknown" else "unknown"
+            if result.returncode == 0:
+                commit_hash = result.stdout.strip()[:7]
 
+            # Deteksi branch name
+            if branch_name == "unknown":
+                result = subprocess.run(
+                    ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                    capture_output=True, text=True, timeout=5
+                )
+                if result.returncode == 0 and result.stdout.strip() not in ("HEAD", ""):
+                    branch_name = result.stdout.strip()
+                else:
+                    # Alternatif: git branch --show-current
+                    result = subprocess.run(
+                        ["git", "branch", "--show-current"],
+                        capture_output=True, text=True, timeout=5
+                    )
+                    if result.returncode == 0 and result.stdout.strip():
+                        branch_name = result.stdout.strip()
+                    else:
+                        # Baca .git/HEAD
+                        try:
+                            with open(".git/HEAD", "r") as f:
+                                head_content = f.read().strip()
+                                if head_content.startswith("ref: refs/heads/"):
+                                    branch_name = head_content.replace("ref: refs/heads/", "")
+                        except (FileNotFoundError, OSError):
+                            pass
+
+        except (FileNotFoundError, subprocess.SubprocessError, OSError, subprocess.TimeoutExpired):
+            pass  # Biarkan tetap "unknown"
+
+    # Format akhir: branch (commit)
+    return f"{branch_name} ({commit_hash})"
 
 class AltruixClient:
     # ... (kode __init__, properti, dan metode lainnya tetap sama)
@@ -1088,4 +1101,4 @@ class AltruixClient:
                 self._command_help_message_data[plugin_name] = (
                     f"<b>⚠️ Error loading help for '{plugin_name}'</b>\n"
                     f"<code>{str(e)}</code>"
-        )
+    )
