@@ -721,15 +721,15 @@ class AltruixClient:
                         session_index = all_clients.index(client)
                         if client == self.bot:
                             # Bot tidak termasuk dalam [X/Y] user session
-                            base_text = f"<b>✅ Altruix Bot Assistant aktif!</b>"
+                            base_text = f"<b>✅ Altruix Bot Assistant is alive!</b>"
                         else:
                             # User session: [1/7], [2/7], dll.
                             user_index = self.clients.index(client) + 1
-                            base_text = f"<b>✅ Altruix Userbot [{user_index}/{total_user_sessions}] alive!</b>"
+                            base_text = f"<b>✅ Altruix Userbot [{user_index}/{total_user_sessions}] is alive!</b>"
                         
                         personal_message = (
                             f"{base_text}\n"
-                            f"<b>{client_type}: {mention_user}</b> • ID: <code>{user_id}</code>\n"
+                            f"<b>{client_type}: {mention_user}</b> [<code>{user_id}</code>]\n"
                         )
 
                         await client.send_message(
@@ -761,7 +761,7 @@ class AltruixClient:
                     for fail in failed_clients:
                         self.log(f"   {fail}")
                 else:
-                    self.log("SEMUA client berhasil mengirim pesan ke LOG_CHAT_ID!")
+                    self.log(f"SEMUA client berhasil mengirim pesan ke LOG_CHAT_ID: {log_chat_id}")
 
                 # === PESAN AKHIR: kirim ringkasan dari bot ===
                 if success_count > 0:
@@ -771,7 +771,7 @@ class AltruixClient:
                         altruix_version = getattr(self, "__version__", "unknown")
                         summary = (
                             "Semua client selesai mengirim startup log!\n"
-                            f"Total Session: <code>{len(self.clients)}</code> user + <code> 1</code>  bot\n"
+                            f"Total Session: <code>{len(self.clients)}</code> user + <code>1</code>  bot\n"
                             f"Berhasil: <code>{success_count}</code> client\n"
                             f"Gagal: <code>{len(failed_clients)}</code> client\n"
                             f"Owner ID: <code>{BaseConfig.OWNER_ID}</code>\n"
@@ -1101,4 +1101,4 @@ class AltruixClient:
                 self._command_help_message_data[plugin_name] = (
                     f"<b>⚠️ Error loading help for '{plugin_name}'</b>\n"
                     f"<code>{str(e)}</code>"
-    )
+        )
