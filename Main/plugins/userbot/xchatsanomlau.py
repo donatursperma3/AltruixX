@@ -40,7 +40,7 @@ from pyrogram.types import *
 
 plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xchatsanomlau"
-PLUGIN_VERSION = "0.1.1.1"  # 🔥 Versi terbaru dengan smart_send dan error handling optimal
+PLUGIN_VERSION = "0.1.1.3"  # 🔥 Versi terbaru dengan smart_send dan error handling optimal
 logger = logging.getLogger(f"{__plugin_name__}")
 if not logger.handlers:
     handler = logging.StreamHandler()
@@ -1018,8 +1018,9 @@ async def send_completion_report(
         )
 
 # ==================== COMMAND HANDLER ====================
+
 @Altruix.bot.on_message(
-    filters.command("laucreate", prefixes=Altruix.hndlr) & 
+    filters.command("laucreate", prefixes=Altruix.CMD_HANDLER) & 
     filters.user(Altruix.auth_users)
 )
 @log_errors
