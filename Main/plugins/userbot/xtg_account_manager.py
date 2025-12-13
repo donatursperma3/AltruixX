@@ -1,24 +1,22 @@
 # Copyright (C) 2025-present by @AlphaXproject
 # Plugin: xtg_account_manager.py (set / modify) — 100% FIXED, NO __file__ DEPENDENCY
-
 import os
 import traceback
 import html
 import logging
-
+import asyncio  # ✅ IMPORT BARU: Untuk sleep saat FloodWait
 from pyrogram import Client
 from pyrogram.enums import ParseMode
 from pyrogram.errors import (
     UsernameInvalid, UsernameOccupied, UsernameNotModified,
-    FloodWait, PhotoCropSizeSmall, BadRequest
+    FloodWait, PhotoCropSizeSmall, BadRequest,
+    PeerIdInvalid, UserIsBlocked  # ✅ IMPORT BARU: Error handling untuk SpamBot
 )
 from pyrogram.raw.functions.account import CheckUsername, GetAuthorizations
 from pyrogram.types import LinkPreviewOptions
-
 from Main import Altruix
 from Main.core.types.message import Message
 from Main.core.decorators import log_errors
-
 # =============================================================================
 # LOGGER KHUSUS PLUGIN
 # =============================================================================
@@ -31,10 +29,8 @@ if not logger.handlers:
     handler.setFormatter(formatter)
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
-
 __plugin_name__ = "xtg_account_manager"
-PLUGIN_VERSION = "1.2.4"
-
+PLUGIN_VERSION = "1.2.5"
 logger.info(f"{__plugin_name__} v{PLUGIN_VERSION} berhasil dimuat")
 print(f"Loaded → {__plugin_name__} v{PLUGIN_VERSION}")
 
@@ -45,9 +41,12 @@ class CustomMsg:
     SUCCESS = "✅ {} berhasil diubah: {}"
     USERNAME_TAKEN = "❌ {} sudah dipakai!"
     PHOTO_UPDATED = "✅ Foto profil berhasil diubah!"
-
+    # ✅ PESAN BARU UNTUK LIMIT CHECK
+    LIMIT_CHECKING = "🔍 Sedang mengecek status limit akun ke @SpamBot..."
+    LIMIT_FREE = "✅ <b>Akun kamu BEBAS!</b>\n\nGood news, no limits are currently applied to your account. You’re free as a bird!"
+    LIMIT_RESTRICTED = "⚠️ <b>Akun kamu TERKENA LIMIT!</b>\n\n{}"
+    LIMIT_ERROR = "❌ Gagal mendapatkan info limit: {}"
 Msg = CustomMsg()
-
 async def safe_edit_or_reply(msg: Message, text: str, **kwargs) -> Message:
     default_kwargs = {
         "link_preview_options": LinkPreviewOptions(is_disabled=True),
@@ -64,7 +63,6 @@ async def safe_edit_or_reply(msg: Message, text: str, **kwargs) -> Message:
             return await msg.reply_text(f"{text}\n\n<i>(Gagal edit pesan)</i>", **default_kwargs)
         except Exception:
             return msg
-
 # =============================================================================
 @Altruix.register_on_cmd(
     ["set", "modify"],
@@ -81,6 +79,7 @@ async def safe_edit_or_reply(msg: Message, text: str, **kwargs) -> Message:
             "-p": "Ganti foto profil (reply ke foto)",
             "-s": "Lihat semua sesi login",
             "-delp": "Hapus semua foto profil",
+            "-limit": "Cek status limit/spam akun (via @SpamBot)",  # ✅ ARG BARU DI HELP
         },
     },
 )
@@ -91,7 +90,6 @@ async def advanced_set_command(c: Client, m: Message):
     if not raw_text:
         proc = await m.handle_message(Msg.PROCESSING)
         return await safe_edit_or_reply(proc, "❌ Tidak ada input.")
-
     parts = raw_text.split()
     if len(parts) < 2:
         proc = await m.handle_message(Msg.PROCESSING)
@@ -103,10 +101,10 @@ async def advanced_set_command(c: Client, m: Message):
             "• <code>-u &lt;username&gt;</code> → Ganti username (tanpa @)\n"
             "• <code>-p</code> → Ganti foto profil (reply ke foto)\n"
             "• <code>-delp</code> → Hapus semua foto profil\n"
-            "• <code>-s</code> → Lihat semua sesi aktif"
+            "• <code>-s</code> → Lihat semua sesi aktif\n"
+            "• <code>-limit</code> → Cek status limit akun (via @SpamBot)"  # ✅ TAMBAHAN DI HELP
         )
         return await safe_edit_or_reply(proc, help_text)
-
     args = []
     text_parts = []
     for part in parts[1:]:
@@ -116,15 +114,46 @@ async def advanced_set_command(c: Client, m: Message):
             text_parts.append(part)
     text = " ".join(text_parts)
     reply = m.reply_to_message
-
     proc = await m.handle_message(Msg.PROCESSING)
-
     try:
+        # ✅ PERUBAHAN BARU: Tambahkan handling -limit
+        if "-limit" in args:
+            await safe_edit_or_reply(proc, Msg.LIMIT_CHECKING)
+            try:
+                # Kirim pesan ke @SpamBot untuk memicu respons otomatis
+                await c.send_message("spambot", "/start")
+                # Tunggu sebentar agar respons masuk
+                await asyncio.sleep(5)
+                # Ambil history chat dengan SpamBot
+                messages = [msg async for msg in c.get_chat_history("spambot", limit=10)]
+                # Cari pesan terbaru dari SpamBot
+                bot_responses = [msg.text for msg in messages if msg.from_user and msg.from_user.is_self == False]
+                if bot_responses:
+                    latest = bot_responses[0].strip()
+                    if "Good news, no limits" in latest or "You’re free as a bird" in latest:
+                        return await safe_edit_or_reply(proc, Msg.LIMIT_FREE)
+                    else:
+                        # Bersihkan respons untuk tampilan
+                        cleaned = html.escape(latest)
+                        return await safe_edit_or_reply(proc, Msg.LIMIT_RESTRICTED.format(cleaned))
+                else:
+                    return await safe_edit_or_reply(proc, Msg.LIMIT_ERROR.format("Tidak ada respons dari @SpamBot"))
+            except UserIsBlocked:
+                return await safe_edit_or_reply(proc, Msg.LIMIT_ERROR.format("Akun kamu diblokir oleh @SpamBot (mungkin limit permanen)"))
+            except PeerIdInvalid:
+                return await safe_edit_or_reply(proc, Msg.LIMIT_ERROR.format("Tidak dapat menemukan @SpamBot"))
+            except FloodWait as e:
+                return await safe_edit_or_reply(proc, f"⏳ FloodWait! Tunggu {e.value} detik.")
+            except Exception as e:
+                return await safe_edit_or_reply(proc, Msg.LIMIT_ERROR.format(html.escape(str(e))))
+
         if "-f" in args:
             if not text:
                 return await safe_edit_or_reply(proc, Msg.INPUT_REQUIRED.format("nama depan"))
             await c.update_profile(first_name=text[:70])
             return await safe_edit_or_reply(proc, Msg.SUCCESS.format("Nama Depan", f"<code>{html.escape(text)}</code>"))
+        # ... (kode lain tetap sama)
+        # (seluruh bagian elif lainnya tidak diubah)
 
         elif "-l" in args:
             await c.update_profile(last_name=text or None)
@@ -210,10 +239,10 @@ async def advanced_set_command(c: Client, m: Message):
                 "• <code>-u &lt;username&gt;</code> → Ganti username (tanpa @)\n"
                 "• <code>-p</code> → Ganti foto profil (reply ke foto)\n"
                 "• <code>-delp</code> → Hapus semua foto profil\n"
-                "• <code>-s</code> → Lihat semua sesi aktif"
+                "• <code>-s</code> → Lihat semua sesi aktif\n"
+                "• <code>-limit</code> → Cek status limit akun (via @SpamBot)"
             )
             return await safe_edit_or_reply(proc, help_text)
-
     except FloodWait as e:
         await safe_edit_or_reply(proc, f"⏳ Terlalu cepat! Tunggu {e.value} detik.")
     except Exception as e:
@@ -221,3 +250,9 @@ async def advanced_set_command(c: Client, m: Message):
         logger.error(f"[SET PLUGIN ERROR]\n{error_detail}")
         print(f"[SET PLUGIN ERROR] {str(e)}")
         await safe_edit_or_reply(proc, f"❌ Terjadi kesalahan:\n<code>{html.escape(str(e))}</code>")
+
+# Log sukses loading
+try:
+    Altruix.log(f"[DEBUG] Loaded → {__plugin_name__} {PLUGIN_VERSION}", level=20)
+except Exception as e:
+    logger.info(f"[DEBUG] Loaded → {__plugin_name__} {PLUGIN_VERSION}")
