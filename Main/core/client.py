@@ -55,39 +55,52 @@ from pyrogram.types import LinkPreviewOptions
 from pyrogram.errors import FloodWait
 
 # ✅ PERUBAHAN 1: Tambahkan fungsi deteksi branch yang andal
+# ✅ PERUBAHAN 1: Perbaiki fungsi deteksi branch agar mengembalikan "branch (commit)" atau "unknown (commit)"
 def get_current_git_branch() -> str:
-    """Deteksi branch Git secara akurat, termasuk di Heroku/detached HEAD."""
+    """Deteksi branch Git secara akurat + commit hash pendek, termasuk di Heroku/detached HEAD."""
+    branch_name = "unknown"
+    commit_hash = "unknown"
+
     try:
-        # Coba cara utama
+        # Ambil commit hash pendek (selalu tersedia di environment deploy)
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0:
+            commit_hash = result.stdout.strip()[:7]  # Ambil 7 karakter pertama
+       
+        # Coba deteksi nama branch
         result = subprocess.run(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
             capture_output=True, text=True, timeout=5
         )
-        if result.returncode == 0 and result.stdout.strip() != "HEAD":
-            return result.stdout.strip()
-        
-        # Coba alternatif
-        result = subprocess.run(
-            ["git", "branch", "--show-current"],
-            capture_output=True, text=True, timeout=5
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
-        
-        # Baca dari .git/HEAD jika ada
-        try:
-            with open(".git/HEAD", "r") as f:
-                head = f.read().strip()
-                if head.startswith("ref: refs/heads/"):
-                    return head.replace("ref: refs/heads/", "")
-                elif len(head) == 40:  # detached HEAD (commit hash)
-                    return head[:7]
-        except (FileNotFoundError, OSError):
-            pass
-        
-        return "HEAD"
-    except (FileNotFoundError, subprocess.SubprocessError, OSError, subprocess.TimeoutExpired):
-        return "unknown"
+        if result.returncode == 0 and result.stdout.strip() not in ("HEAD", ""):
+            branch_name = result.stdout.strip()
+        else:
+            # Alternatif: coba branch --show-current
+            result = subprocess.run(
+                ["git", "branch", "--show-current"],
+                capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                branch_name = result.stdout.strip()
+            else:
+                # Baca .git/HEAD untuk ref branch
+                try:
+                    with open(".git/HEAD", "r") as f:
+                        head_content = f.read().strip()
+                        if head_content.startswith("ref: refs/heads/"):
+                            branch_name = head_content.replace("ref: refs/heads/", "")
+                except (FileNotFoundError, OSError):
+                    pass
+       
+        # Format akhir: branch (commit) — jika branch unknown, tetap tampilkan commit
+        return f"{branch_name} ({commit_hash})"
+       
+    except Exception:
+        return f"unknown ({commit_hash})" if commit_hash != "unknown" else "unknown"
+
 
 class AltruixClient:
     # ... (kode __init__, properti, dan metode lainnya tetap sama)
@@ -1075,4 +1088,4 @@ class AltruixClient:
                 self._command_help_message_data[plugin_name] = (
                     f"<b>⚠️ Error loading help for '{plugin_name}'</b>\n"
                     f"<code>{str(e)}</code>"
-                )
+        )
