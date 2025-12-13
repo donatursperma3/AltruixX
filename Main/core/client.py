@@ -113,7 +113,7 @@ def get_current_git_branch() -> str:
             pass  # Biarkan tetap "unknown"
 
     # Format akhir: branch (commit)
-    return f"{branch_name} ({commit_hash})"
+    return f"{branch_name} [{commit_hash}]"
 
 class AltruixClient:
     # ... (kode __init__, properti, dan metode lainnya tetap sama)
@@ -729,7 +729,7 @@ class AltruixClient:
                         
                         personal_message = (
                             f"{base_text}\n"
-                            f"<b>{client_type}: {mention_user}</b> [<code>{user_id}</code>]\n"
+                            f"<b>{client_type}: {mention_user}</b> [ <code>{user_id}</code> ]\n"
                         )
 
                         await client.send_message(
@@ -739,7 +739,7 @@ class AltruixClient:
                         )
                         await asyncio.sleep(3)
                         success_count += 1
-                        self.log(f"BERHASIL: [{client_type}] {name}{username} mengirim startup log")
+                        self.log(f"BERHASIL: [{client_type}] {name} mengirim startup log")
                     except FloodWait as e:
                         self.log(f"FloodWait terdeteksi. Menunggu {e.value} detik...")
                         await asyncio.sleep(e.value + 6)
@@ -1101,4 +1101,4 @@ class AltruixClient:
                 self._command_help_message_data[plugin_name] = (
                     f"<b>⚠️ Error loading help for '{plugin_name}'</b>\n"
                     f"<code>{str(e)}</code>"
-        )
+            )
