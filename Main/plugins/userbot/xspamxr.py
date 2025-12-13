@@ -31,7 +31,7 @@ import logging
 
 plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xspamxr"
-PLUGIN_VERSION = "0.3.0.25.1"  # 🔥 FIXED: hndlr, QUERY_ID_INVALID, CHANNEL_INVALID, timeout
+PLUGIN_VERSION = "0.3.0.25.2"  # 🔥 FIXED: FloodWait
 logger = logging.getLogger(f"{__plugin_name__}")
 if not logger.handlers:
     handler = logging.StreamHandler()
@@ -124,7 +124,7 @@ async def get_chat_safe(client: Client, identifier, timeout: int = 10) -> object
     try:
         return await asyncio.wait_for(client.get_chat(identifier), timeout=timeout)
     # except asyncio.TimeoutError:
-    except pyrogram.errors.exceptions.flood_420.FloodWait as fwe:
+    except FloodWait as fwe:
         Altruix.log(f"[CHAT_ERROR] FloodWait saat resolve chat {identifier}: {fwe}", level=40)
         return None
     except (errors.ChannelInvalid, errors.ChannelPrivate, errors.PeerIdInvalid, errors.UsernameInvalid, ValueError, TypeError) as e:
@@ -150,7 +150,7 @@ async def validate_chat(client: Client, destination: str, timeout: int = 10) -> 
                 else:
                     return False, f"Tidak dapat mengakses chat publik {destination}"
             # except asyncio.TimeoutError:
-            except pyrogram.errors.exceptions.flood_420.FloodWait as fwe:
+            except FloodWait as fwe:
                 return False, f"FloodWait saat join ke {destination}: {str(fwe)}"
             except Exception as e:
                 return False, f"Tidak dapat join ke chat {destination}: {str(e)}"
@@ -170,7 +170,7 @@ async def validate_chat(client: Client, destination: str, timeout: int = 10) -> 
         else:
             return False, "Tidak dapat mengakses chat tersebut."
     # except asyncio.TimeoutError:
-    except pyrogram.errors.exceptions.flood_420.FloodWait as fwe:
+    except FloodWait as fwe:
         return False, f"FloodWait saat memvalidasi chat. : {str(fwe)}"
     except Exception as e:
         return False, f"Error saat memvalidasi chat {destination}: {str(e)}"
