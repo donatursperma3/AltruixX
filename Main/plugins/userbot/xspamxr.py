@@ -18,7 +18,7 @@ from pyrogram import Client, filters
 from pyrogram.raw.functions import Ping
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from pyrogram import errors
-from pyrogram.errors import FloodWait, ChatWriteForbidden, SlowmodeWait, ChannelInvalid, ChannelPrivate, PeerIdInvalid, UsernameInvalid
+from pyrogram.errors import FloodWait, ChatWriteForbidden, SlowmodeWait, TimeoutError
 from Main.core.types.message import Message
 from Main.utils.essentials import Essentials
 from Main.core.decorators import inline_check
@@ -31,7 +31,7 @@ import logging
 
 plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xspamxr"
-PLUGIN_VERSION = "0.3.0.22"  # 🔥 FIXED: CHANNEL_INVALID + unpacking error + button freeze
+PLUGIN_VERSION = "0.3.0.24"  # 🔥 FIXED: hndlr, QUERY_ID_INVALID, CHANNEL_INVALID, timeout
 logger = logging.getLogger(f"{__plugin_name__}")
 if not logger.handlers:
     handler = logging.StreamHandler()
@@ -54,13 +54,12 @@ f"""
 • `.relayspamcekall` - Check all tasks
 
 **CHANGELOG {PLUGIN_VERSION}:**
-- 🔥 FIXED: Error 'too many values to unpack (expected 2)' di confirm_start_handler
-- 🔥 FIXED: Error 'CHANNEL_INVALID' saat resolve chat → gunakan get_chat_safe()
-- ✅ FIXED: Tombol tidak berfungsi setelah lama dipause → hapus task jika chat tidak valid
-- ✅ IMPROVED: Semua akses chat menggunakan get_chat_safe() untuk hindari crash
+- 🔥 FIXED: AttributeError 'hndlr' → gunakan Altruix.config.HANDLERS
+- 🔥 FIXED: QUERY_ID_INVALID → semua cb.answer() pakai safe_cb_answer()
+- ✅ FIXED: CHANNEL_INVALID/timeout → get_chat_safe() dengan asyncio.wait_for
 - ✅ IMPROVED: Validasi chat sebelum mulai task, sebelum callback, sebelum command
 - 🧹 CLEANUP: Hapus task otomatis jika chat tidak valid di semua handler
-- 📦 MAINTENANCE: Kode utuh tanpa potongan, siap pakai
+- 📦 MAINTENANCE: Kode lengkap tanpa potongan, siap pakai
 """
 
 # Dictionary global untuk menyimpan status task relayspam per chat
@@ -90,7 +89,7 @@ VALID_EMOJIS = [
     "🤷", "🤷‍♀️", "😡"
 ]
 
-# ==================== CLIENT SETUP ====================
+# ==================== CLIENT & CONFIG ====================
 try:
     if hasattr(Altruix, 'userbot'):
         USER_CLIENT = Altruix.userbot
@@ -101,9 +100,11 @@ except AttributeError:
     USER_CLIENT = Altruix
     BOT_CLIENT = None
 
-# ============= HANDLER & LOG CHAT ====================
+# 🔥 PERBAIKAN: Ambil handler dari config, bukan 'hndlr'
 try:
-    HANDLER = Altruix.config.HANDLERS[0] if isinstance(Altruix.config.HANDLERS, list) else Altruix.config.HANDLERS
+    HANDLER = Altruix.config.HANDLERS
+    if isinstance(HANDLER, list):
+        HANDLER = HANDLER[0]
 except AttributeError:
     HANDLER = "."
 
@@ -117,19 +118,71 @@ except AttributeError:
 if not LOG_CHAT_ID:
     LOG_CHAT_ID = "me"
 
-# ==================== SAFE CHAT RESOLVER ====================
-async def get_chat_safe(client: Client, identifier):
-    """Mengembalikan objek chat jika valid, atau None jika tidak valid."""
+# ==================== SAFE CHAT RESOLVER DENGAN TIMEOUT ====================
+async def get_chat_safe(client: Client, identifier, timeout: int = 10) -> object:
+    """Mengembalikan objek chat jika valid, atau None jika tidak valid/timeout."""
     try:
-        return await client.get_chat(identifier)
-    except (ChannelInvalid, ChannelPrivate, PeerIdInvalid, UsernameInvalid, ValueError, TypeError) as e:
+        return await asyncio.wait_for(client.get_chat(identifier), timeout=timeout)
+    except asyncio.TimeoutError:
+        Altruix.log(f"[CHAT_ERROR] Timeout saat resolve chat {identifier}", level=40)
+        return None
+    except (errors.ChannelInvalid, errors.ChannelPrivate, errors.PeerIdInvalid, errors.UsernameInvalid, ValueError, TypeError) as e:
         Altruix.log(f"[CHAT_ERROR] Gagal resolve chat {identifier}: {e}", level=40)
         return None
     except Exception as e:
         Altruix.log(f"[CHAT_ERROR] Error tak terduga saat resolve {identifier}: {e}", level=40)
         return None
 
-# ==================== LOG MESSAGE HELPER ====================
+# ==================== VALIDATE CHAT DENGAN TIMEOUT ====================
+async def validate_chat(client: Client, destination: str, timeout: int = 10) -> tuple:
+    try:
+        if destination.isdigit() and len(destination) >= 10:
+            destination = "-100" + destination
+        if destination.startswith("@"):
+            try:
+                target_chat = await asyncio.wait_for(client.join_chat(destination), timeout=timeout)
+                return True, (str(target_chat.id), target_chat)
+            except (errors.UserAlreadyParticipant, errors.PeerIdInvalid):
+                target_chat = await get_chat_safe(client, destination, timeout)
+                if target_chat:
+                    return True, (str(target_chat.id), target_chat)
+                else:
+                    return False, f"Tidak dapat mengakses chat publik {destination}"
+            except asyncio.TimeoutError:
+                return False, f"Timeout saat join ke {destination}"
+            except Exception as e:
+                return False, f"Tidak dapat join ke chat {destination}: {str(e)}"
+        try:
+            chat_id = int(destination) if destination.replace("-", "").isdigit() else None
+        except ValueError:
+            chat_id = None
+        if chat_id:
+            target_chat = await get_chat_safe(client, chat_id, timeout)
+            if target_chat:
+                return True, (str(target_chat.id), target_chat)
+            else:
+                return False, "Channel tidak valid atau userbot tidak memiliki akses."
+        target_chat = await get_chat_safe(client, destination, timeout)
+        if target_chat:
+            return True, (str(target_chat.id), target_chat)
+        else:
+            return False, "Tidak dapat mengakses chat tersebut."
+    except asyncio.TimeoutError:
+        return False, "Timeout saat memvalidasi chat."
+    except Exception as e:
+        return False, f"Error saat memvalidasi chat {destination}: {str(e)}"
+
+# ==================== SAFE CALLBACK ANSWER ====================
+async def safe_cb_answer(cb: CallbackQuery, text: str, show_alert: bool = True):
+    """Menjawab callback query dengan aman, mengabaikan error jika query sudah kadaluarsa."""
+    try:
+        await cb.answer(text, show_alert=show_alert)
+    except (errors.QueryIdInvalid, ValueError):
+        Altruix.log(f"[IGNORED] QueryIdInvalid: {text[:50]}...", level=30)
+    except Exception as e:
+        Altruix.log(f"[ERROR] Gagal jawab callback: {e}", level=40)
+
+# ==================== HELPER: SEND LOG MESSAGE ====================
 async def send_log_message(text, reply_to_message_id=None, reply_markup=None, client=None):
     try:
         if BOT_CLIENT:
@@ -161,41 +214,6 @@ async def send_log_message(text, reply_to_message_id=None, reply_markup=None, cl
     except Exception as e:
         Altruix.log(f"Error kritis di send_log_message: {e}", level=50)
         return None
-
-# ==================== VALIDATE CHAT (KONSISTEN RETURN 2 NILAI) ====================
-async def validate_chat(client: Client, destination: str) -> tuple:
-    try:
-        if destination.isdigit() and len(destination) >= 10:
-            destination = "-100" + destination
-        if destination.startswith("@"):
-            try:
-                target_chat = await client.join_chat(destination)
-                return True, (str(target_chat.id), target_chat)
-            except (errors.UserAlreadyParticipant, errors.PeerIdInvalid):
-                target_chat = await get_chat_safe(client, destination)
-                if target_chat:
-                    return True, (str(target_chat.id), target_chat)
-                else:
-                    return False, f"Tidak dapat mengakses chat {destination}"
-            except Exception as e:
-                return False, f"Tidak dapat join ke chat {destination}: {str(e)}"
-        try:
-            chat_id = int(destination) if destination.replace("-", "").isdigit() else None
-        except ValueError:
-            chat_id = None
-        if chat_id:
-            target_chat = await get_chat_safe(client, chat_id)
-            if target_chat:
-                return True, (str(target_chat.id), target_chat)
-            else:
-                return False, "Channel tidak valid atau userbot tidak memiliki akses."
-        target_chat = await get_chat_safe(client, destination)
-        if target_chat:
-            return True, (str(target_chat.id), target_chat)
-        else:
-            return False, "Tidak dapat mengakses chat tersebut."
-    except Exception as e:
-        return False, f"Error saat memvalidasi chat {destination}: {str(e)}"
 
 # ==================== DYNAMIC BUTTON UPDATERS ====================
 async def update_purge_button(message: Message, chat_id: str, purge_value: int):
@@ -270,7 +288,7 @@ async def start_relayspam(client: Client, destination: str, start_delay: float, 
                           msg_list: list, is_batch: bool, react_enabled: bool = True) -> bool:
     chat_id = None
     try:
-        validation_success, validation_result = await validate_chat(client, destination)
+        validation_success, validation_result = await validate_chat(client, destination, timeout=15)
         if not validation_success:
             await send_log_message(
                 f"❌ **VALIDATION FAILED**\n"
@@ -395,7 +413,6 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
         total_del_ggl = 0
         spam_client = client
 
-        # Validasi ulang akses chat
         if not await get_chat_safe(client, target_chat.id):
             error_msg = "❌ **TASK DIBATALKAN**\nUserbot kehilangan akses ke channel/grup."
             Altruix.log(f"[SPAM_LOOP_ERROR] {error_msg}", level=40)
@@ -636,7 +653,7 @@ async def see_msglist_handler(c: Client, cb):
     elif chat_id in COMPLETED_TASKS:
         config = COMPLETED_TASKS[chat_id]
     if not config:
-        await cb.answer("❌ Tidak ada data pesan untuk ditampilkan.", show_alert=True)
+        await safe_cb_answer(cb, "❌ Tidak ada data pesan untuk ditampilkan.", show_alert=True)
         return
     msg_list = config["msg_list"]
     is_batch = config["is_batch"]
@@ -664,12 +681,12 @@ async def see_msglist_handler(c: Client, cb):
         if len(preview_text) > 200:
             userbot_client = TELAYSPAM_TASKS.get(chat_id, {}).get("client") or USER_CLIENT
             await send_log_message(preview_text, client=userbot_client)
-            await cb.answer("ℹ️ Preview dikirim sebagai pesan.", show_alert=True)
+            await safe_cb_answer(cb, "ℹ️ Preview dikirim sebagai pesan.", show_alert=True)
         else:
-            await cb.answer(preview_text, show_alert=True)
+            await safe_cb_answer(cb, preview_text, show_alert=True)
     except Exception as e:
         Altruix.log(f"Error in see_msglist_handler: {e}", level=40)
-        await cb.answer("❌ Gagal menampilkan preview.", show_alert=True)
+        await safe_cb_answer(cb, "❌ Gagal menampilkan preview.", show_alert=True)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^confirm_start_[^_]+?\|\|[^_]+?_(confirm|cancel)$"))
 @log_errors
@@ -678,12 +695,12 @@ async def confirm_start_handler(c: Client, cb):
         full_data = cb.data
         Altruix.log(f"[DEBUG] Callback diterima: {full_data}", level=20)
         if not full_data.startswith("confirm_start_"):
-            await cb.answer("Data callback tidak valid.", show_alert=True)
+            await safe_cb_answer(cb, "Data callback tidak valid.", show_alert=True)
             return
         suffix = full_data[len("confirm_start_"):]
         last_underscore = suffix.rfind("_")
         if last_underscore == -1:
-            await cb.answer("Format callback tidak valid.", show_alert=True)
+            await safe_cb_answer(cb, "Format callback tidak valid.", show_alert=True)
             Altruix.log(f"[ERROR] Format callback tidak valid: {full_data}", level=40)
             return
         temp_id = suffix[:last_underscore]
@@ -692,14 +709,14 @@ async def confirm_start_handler(c: Client, cb):
         if action == "confirm":
             if temp_id not in PENDING_CONFIRMATIONS:
                 Altruix.log(f"[WARN] Konfirmasi kadaluarsa atau tidak ditemukan: {temp_id}", level=30)
-                await cb.answer("❌ Konfirmasi sudah kadaluarsa.", show_alert=True)
+                await safe_cb_answer(cb, "❌ Konfirmasi sudah kadaluarsa.", show_alert=True)
                 return
             data = PENDING_CONFIRMATIONS.pop(temp_id)
             Altruix.log(f"[INFO] Memulai task dari konfirmasi: {temp_id}", level=20)
 
-            validation_success, validation_result = await validate_chat(data["client"], data["destination"])
+            validation_success, validation_result = await validate_chat(data["client"], data["destination"], timeout=15)
             if not validation_success:
-                await cb.answer(f"❌ Gagal validasi chat: {validation_result}", show_alert=True)
+                await safe_cb_answer(cb, f"❌ Gagal validasi chat: {validation_result}", show_alert=True)
                 await send_log_message(
                     f"❌ **VALIDATION FAILED**\n"
                     f"Tujuan: {data['destination']}\n"
@@ -728,10 +745,10 @@ async def confirm_start_handler(c: Client, cb):
                 data["react_enabled"]
             )
             if success:
-                await cb.answer("✅ Task berhasil dimulai!", show_alert=True)
+                await safe_cb_answer(cb, "✅ Task berhasil dimulai!", show_alert=True)
                 Altruix.log(f"[SUCCESS] Task dimulai dari konfirmasi: {temp_id}", level=20)
             else:
-                await cb.answer("❌ Gagal memulai task.", show_alert=True)
+                await safe_cb_answer(cb, "❌ Gagal memulai task.", show_alert=True)
                 Altruix.log(f"[ERROR] Gagal memulai task dari konfirmasi: {temp_id}", level=40)
         elif action == "cancel":
             if temp_id in PENDING_CONFIRMATIONS:
@@ -739,35 +756,35 @@ async def confirm_start_handler(c: Client, cb):
                 Altruix.log(f"[INFO] Konfirmasi dibatalkan: {temp_id}", level=20)
             else:
                 Altruix.log(f"[WARN] Konfirmasi sudah tidak ada saat cancel: {temp_id}", level=30)
-            await cb.answer("❌ Pembuatan task dibatalkan.", show_alert=True)
+            await safe_cb_answer(cb, "❌ Pembuatan task dibatalkan.", show_alert=True)
             try:
                 await cb.message.delete()
             except Exception as e:
                 Altruix.log(f"[DEBUG] Gagal hapus pesan konfirmasi: {e}", level=20)
         else:
-            await cb.answer("Aksi tidak dikenali.", show_alert=True)
+            await safe_cb_answer(cb, "Aksi tidak dikenali.", show_alert=True)
             Altruix.log(f"[WARN] Aksi tidak dikenali: {action}", level=30)
     except Exception as e:
         Altruix.log(f"[CRITICAL] Error di confirm_start_handler: {e}", level=50)
-        await cb.answer("❌ Terjadi kesalahan internal. Silakan coba lagi.", show_alert=True)
+        await safe_cb_answer(cb, "❌ Terjadi kesalahan internal. Silakan coba lagi.", show_alert=True)
 
-@Altruix.bot.on_callback_query(filters.regex(r"^preview_msglist_(.+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^preview_msglist_.+$"))
 @log_errors
 async def preview_msglist_from_confirm(c: Client, cb):
     full_data = cb.data
     Altruix.log(f"[DEBUG] Preview callback: {full_data}", level=20)
     if not full_data.startswith("preview_msglist_"):
-        await cb.answer("Data tidak valid.", show_alert=True)
+        await safe_cb_answer(cb, "Data tidak valid.", show_alert=True)
         return
     temp_id = full_data[len("preview_msglist_"):]
     Altruix.log(f"[DEBUG] Preview untuk temp_id: {temp_id}", level=20)
     if temp_id not in PENDING_CONFIRMATIONS:
-        await cb.answer("❌ Data tidak ditemukan.", show_alert=True)
+        await safe_cb_answer(cb, "❌ Data tidak ditemukan.", show_alert=True)
         Altruix.log(f"[WARN] Data tidak ditemukan untuk preview: {temp_id}", level=30)
         return
     data = PENDING_CONFIRMATIONS[temp_id]
     await show_msg_list_preview(c, cb.message, data["msg_list"], data["is_batch"])
-    await cb.answer("ℹ️ Preview ditampilkan.", show_alert=False)
+    await safe_cb_answer(cb, "ℹ️ Preview ditampilkan.", show_alert=False)
 
 @Altruix.register_on_cmd(
     ["relayspam"],
@@ -1063,14 +1080,14 @@ async def check_all_relayspam_cmd(c: Client, m: Message):
     output = "Status Semua Task Relayspam:\n" + "\n".join(status_list)
     await m.edit(output)
 
-# ==================== MORE CALLBACKS ====================
+# ==================== SISA HANDLER CALLBACK ====================
 @Altruix.bot.on_callback_query(filters.regex(r"toggle_purge_(-?\d+)"))
 @log_errors
 async def toggle_purge_handler(c: Client, cb):
     data = cb.data
     chat_id = data.split("_")[-1]
     if chat_id not in TELAYSPAM_TASKS:
-        await cb.answer("Task tidak aktif.", show_alert=True)
+        await safe_cb_answer(cb, "Task tidak aktif.", show_alert=True)
         return
     config = TELAYSPAM_TASKS[chat_id]["config"]
     current_purge = config["old_purge"]
@@ -1081,7 +1098,7 @@ async def toggle_purge_handler(c: Client, cb):
         new_purge = 5
         status = "AKTIF"
     config["old_purge"] = new_purge
-    await cb.answer(f"Purge old message: {status}", show_alert=True)
+    await safe_cb_answer(cb, f"Purge old message: {status}", show_alert=True)
     userbot_client = TELAYSPAM_TASKS[chat_id]["client"]
     await send_log_message(
         f"PURGE TOGGLED\n"
@@ -1103,7 +1120,7 @@ async def toggle_reaction_handler(c: Client, cb):
     data = cb.data
     chat_id = data.split("_")[-1]
     if chat_id not in TELAYSPAM_TASKS:
-        await cb.answer("Task tidak aktif.", show_alert=True)
+        await safe_cb_answer(cb, "Task tidak aktif.", show_alert=True)
         return
     config = TELAYSPAM_TASKS[chat_id]["config"]
     current_enabled = config.get("react_enabled", True)
@@ -1111,7 +1128,7 @@ async def toggle_reaction_handler(c: Client, cb):
     config["react_enabled"] = new_enabled
     status = "AKTIF" if new_enabled else "NONAKTIF"
     emoji = config["emot_react"] if config["emot_react"] and config["emot_react"].lower() != "none" else "None"
-    await cb.answer(f"Reaction: {status} ({emoji})", show_alert=True)
+    await safe_cb_answer(cb, f"Reaction: {status} ({emoji})", show_alert=True)
     userbot_client = TELAYSPAM_TASKS[chat_id]["client"]
     await send_log_message(
         f"REACTION TOGGLED\n"
@@ -1133,7 +1150,7 @@ async def select_emoji_handler(c: Client, cb):
     data = cb.data
     chat_id = data.split("_")[-1]
     if chat_id not in TELAYSPAM_TASKS:
-        await cb.answer("Task tidak aktif.", show_alert=True)
+        await safe_cb_answer(cb, "Task tidak aktif.", show_alert=True)
         return
     keyboard = []
     row = []
@@ -1153,7 +1170,7 @@ async def select_emoji_handler(c: Client, cb):
         reply_markup=InlineKeyboardMarkup(keyboard),
         client=userbot_client
     )
-    await cb.answer("Pilih emoji dari daftar...", show_alert=False)
+    await safe_cb_answer(cb, "Pilih emoji dari daftar...", show_alert=False)
 
 @Altruix.bot.on_callback_query(filters.regex(r"set_emoji_(-?\d+)_(.+)"))
 @log_errors
@@ -1163,16 +1180,16 @@ async def set_emoji_handler(c: Client, cb):
     chat_id = parts[2]
     emoji = parts[3]
     if chat_id not in TELAYSPAM_TASKS:
-        await cb.answer("Task tidak aktif.", show_alert=True)
+        await safe_cb_answer(cb, "Task tidak aktif.", show_alert=True)
         return
     if emoji not in VALID_EMOJIS:
-        await cb.answer("Emoji tidak valid!", show_alert=True)
+        await safe_cb_answer(cb, "Emoji tidak valid!", show_alert=True)
         return
     config = TELAYSPAM_TASKS[chat_id]["config"]
     old_emoji = config["emot_react"]
     config["emot_react"] = emoji
     config["react_enabled"] = True
-    await cb.answer(f"Emoji reaction disetel ke: {emoji}", show_alert=True)
+    await safe_cb_answer(cb, f"Emoji reaction disetel ke: {emoji}", show_alert=True)
     userbot_client = TELAYSPAM_TASKS[chat_id]["client"]
     await send_log_message(
         f"EMOJI UPDATED\n"
@@ -1200,7 +1217,7 @@ async def cancel_emoji_handler(c: Client, cb):
     data = cb.data
     chat_id = data.split("_")[-1]
     EMOJI_SELECTION_WAITING.pop(chat_id, None)
-    await cb.answer("Pemilihan emoji dibatalkan", show_alert=True)
+    await safe_cb_answer(cb, "Pemilihan emoji dibatalkan", show_alert=True)
     try:
         await cb.message.delete()
     except:
@@ -1212,7 +1229,7 @@ async def adjust_purge_handler(c: Client, cb):
     data = cb.data
     chat_id = data.split("_")[-1]
     if chat_id not in TELAYSPAM_TASKS:
-        await cb.answer("Task tidak aktif.", show_alert=True)
+        await safe_cb_answer(cb, "Task tidak aktif.", show_alert=True)
         return
     keyboard = [
         [
@@ -1250,7 +1267,7 @@ async def adjust_purge_handler(c: Client, cb):
     )
     if adjust_msg:
         ADJUST_PURGE_WAITING[chat_id] = adjust_msg.id
-    await cb.answer("Menu adjust purge ditampilkan", show_alert=False)
+    await safe_cb_answer(cb, "Menu adjust purge ditampilkan", show_alert=False)
 
 @Altruix.bot.on_callback_query(filters.regex(r"inc_purge_(-?\d+)_(\d+)"))
 @log_errors
@@ -1260,7 +1277,7 @@ async def increase_purge_handler(c: Client, cb):
     chat_id = parts[2]
     inc_value = int(parts[3])
     if chat_id not in TELAYSPAM_TASKS:
-        await cb.answer("Task tidak aktif.", show_alert=True)
+        await safe_cb_answer(cb, "Task tidak aktif.", show_alert=True)
         return
     config = TELAYSPAM_TASKS[chat_id]["config"]
     current_purge = config["old_purge"]
@@ -1268,7 +1285,7 @@ async def increase_purge_handler(c: Client, cb):
     if new_purge < 0:
         new_purge = 0
     config["old_purge"] = new_purge
-    await cb.answer(f"Purge ditambah {inc_value}. Total: {new_purge}", show_alert=True)
+    await safe_cb_answer(cb, f"Purge ditambah {inc_value}. Total: {new_purge}", show_alert=True)
     userbot_client = TELAYSPAM_TASKS[chat_id]["client"]
     await send_log_message(
         f"PURGE INCREASED\n"
@@ -1300,7 +1317,7 @@ async def decrease_purge_handler(c: Client, cb):
     chat_id = parts[2]
     dec_value = int(parts[3])
     if chat_id not in TELAYSPAM_TASKS:
-        await cb.answer("Task tidak aktif.", show_alert=True)
+        await safe_cb_answer(cb, "Task tidak aktif.", show_alert=True)
         return
     config = TELAYSPAM_TASKS[chat_id]["config"]
     current_purge = config["old_purge"]
@@ -1309,7 +1326,7 @@ async def decrease_purge_handler(c: Client, cb):
         new_purge = 0
     config["old_purge"] = new_purge
     status = "NONAKTIF" if new_purge == 0 else f"{new_purge} pesan"
-    await cb.answer(f"Purge dikurangi {dec_value}. Total: {status}", show_alert=True)
+    await safe_cb_answer(cb, f"Purge dikurangi {dec_value}. Total: {status}", show_alert=True)
     userbot_client = TELAYSPAM_TASKS[chat_id]["client"]
     await send_log_message(
         f"PURGE DECREASED\n"
@@ -1347,7 +1364,7 @@ async def back_purge_handler(c: Client, cb):
     except:
         pass
     ADJUST_PURGE_WAITING.pop(chat_id, None)
-    await cb.answer("Kembali ke menu utama", show_alert=False)
+    await safe_cb_answer(cb, "Kembali ke menu utama", show_alert=False)
 
 @Altruix.bot.on_callback_query(filters.regex(r"cancel_adjust_purge_(-?\d+)"))
 @log_errors
@@ -1363,54 +1380,46 @@ async def cancel_adjust_purge_handler(c: Client, cb):
     except:
         pass
     ADJUST_PURGE_WAITING.pop(chat_id, None)
-    await cb.answer("Adjust purge dibatalkan", show_alert=True)
+    await safe_cb_answer(cb, "Adjust purge dibatalkan", show_alert=True)
 
 @Altruix.bot.on_callback_query(filters.regex(r"(stop|pause|resume|cek|recurring|delete_latest|delete_oldest|edit_last|edit_msglist|cancel_edit|cancel_editlast)_(-?\d+)"))
 @log_errors
 async def handle_task_control(c: Client, cb):
     data = cb.data
     action, chat_id = data.rsplit("_", 1)
-
-    # Validasi chat terlebih dahulu
     target_chat = await get_chat_safe(c, int(chat_id))
     if not target_chat:
         if chat_id in TELAYSPAM_TASKS:
             TELAYSPAM_TASKS.pop(chat_id, None)
         if chat_id in COMPLETED_TASKS:
             COMPLETED_TASKS.pop(chat_id, None)
-        await cb.answer("❌ Chat tidak valid atau userbot tidak memiliki akses. Task dihapus.", show_alert=True)
+        await safe_cb_answer(cb, "❌ Chat tidak valid atau userbot tidak memiliki akses. Task dihapus.", show_alert=True)
         Altruix.log(f"[CHAT_CLEANUP] Task dihapus karena chat {chat_id} tidak valid.", level=30)
         return
-
     chat_title = f"{target_chat.title}" if hasattr(target_chat, 'title') else (target_chat.first_name or target_chat.username or f"ID: {chat_id}")
-
     if action in ["stop", "pause", "resume", "cek"]:
         if chat_id not in TELAYSPAM_TASKS:
-            await cb.answer("⚫️ Task tidak aktif di chat ini.", show_alert=True)
+            await safe_cb_answer(cb, "⚫️ Task tidak aktif di chat ini.", show_alert=True)
             return
-
     try:
         if action == "stop":
             TELAYSPAM_TASKS[chat_id]["running"] = False
             TELAYSPAM_TASKS[chat_id]["pause_event"].set()
             if "task" in TELAYSPAM_TASKS[chat_id]:
                 TELAYSPAM_TASKS[chat_id]["task"].cancel()
-            await cb.answer(f"🔴 Task distop di {chat_title}.", show_alert=True)
+            await safe_cb_answer(cb, f"🔴 Task distop di {chat_title}.", show_alert=True)
             userbot_client = TELAYSPAM_TASKS[chat_id]["client"]
             await send_log_message(f"🔴 Task distop di {chat_title}.", client=userbot_client)
-
         elif action == "pause":
             TELAYSPAM_TASKS[chat_id]["pause_event"].clear()
-            await cb.answer(f"🟡 Task dipause di {chat_title}.", show_alert=True)
+            await safe_cb_answer(cb, f"🟡 Task dipause di {chat_title}.", show_alert=True)
             userbot_client = TELAYSPAM_TASKS[chat_id]["client"]
             await send_log_message(f"🟡 Task dipause di {chat_title}.", client=userbot_client)
-
         elif action == "resume":
             TELAYSPAM_TASKS[chat_id]["pause_event"].set()
-            await cb.answer(f"🟢 Task diresume di {chat_title}.", show_alert=True)
+            await safe_cb_answer(cb, f"🟢 Task diresume di {chat_title}.", show_alert=True)
             userbot_client = TELAYSPAM_TASKS[chat_id]["client"]
             await send_log_message(f"🟢 Task diresume di {chat_title}.", client=userbot_client)
-
         elif action == "cek":
             status = TELAYSPAM_TASKS[chat_id]
             if status["running"]:
@@ -1420,21 +1429,20 @@ async def handle_task_control(c: Client, cb):
                     status_text = f"🟡 Task dipause di {chat_title} (paused)."
             else:
                 status_text = f"🔴 Task distop di {chat_title} (stopped)."
-            await cb.answer(status_text, show_alert=True)
+            await safe_cb_answer(cb, status_text, show_alert=True)
             userbot_client = TELAYSPAM_TASKS[chat_id]["client"]
             await send_log_message(f"{status_text}.", client=userbot_client)
-
         elif action == "recurring":
             if chat_id in TELAYSPAM_TASKS:
-                await cb.answer("⚠️ Task masih berjalan, hentikan dulu sebelum recurring.", show_alert=True)
+                await safe_cb_answer(cb, "⚠️ Task masih berjalan, hentikan dulu sebelum recurring.", show_alert=True)
                 return
             config = COMPLETED_TASKS.get(chat_id)
             if not config:
-                await cb.answer("⚫️ Tidak ada task selesai untuk diulang di chat ini.", show_alert=True)
+                await safe_cb_answer(cb, "⚫️ Tidak ada task selesai untuk diulang di chat ini.", show_alert=True)
                 return
             recurring_client = USER_CLIENT or BOT_CLIENT
             if not recurring_client:
-                await cb.answer("❌ Tidak ada client yang tersedia untuk recurring.", show_alert=True)
+                await safe_cb_answer(cb, "❌ Tidak ada client yang tersedia untuk recurring.", show_alert=True)
                 return
             success = await start_relayspam(
                 recurring_client,
@@ -1450,15 +1458,14 @@ async def handle_task_control(c: Client, cb):
                 config.get("react_enabled", True)
             )
             if success:
-                await cb.answer(f"🔁 Task recurring dimulai ulang di {chat_title}.", show_alert=True)
+                await safe_cb_answer(cb, f"🔁 Task recurring dimulai ulang di {chat_title}.", show_alert=True)
             else:
-                await cb.answer(f"❌ Gagal memulai recurring di {chat_title}.", show_alert=True)
-
+                await safe_cb_answer(cb, f"❌ Gagal memulai recurring di {chat_title}.", show_alert=True)
         elif action == "delete_latest":
             try:
                 delete_client = TELAYSPAM_TASKS[chat_id].get("client") if chat_id in TELAYSPAM_TASKS else USER_CLIENT
                 if not delete_client:
-                    await cb.answer("❌ Tidak ada client untuk menghapus pesan.", show_alert=True)
+                    await safe_cb_answer(cb, "❌ Tidak ada client untuk menghapus pesan.", show_alert=True)
                     return
                 messages = []
                 async for message in delete_client.get_chat_history(int(chat_id), limit=30):
@@ -1469,20 +1476,19 @@ async def handle_task_control(c: Client, cb):
                         await delete_client.delete_messages(int(chat_id), message_ids)
                         del_suk = len(message_ids)
                         await asyncio.sleep(3)
-                        await cb.answer(f"🗑️ Berhasil hapus {del_suk} pesan terbaru di {chat_title}.", show_alert=True)
+                        await safe_cb_answer(cb, f"🗑️ Berhasil hapus {del_suk} pesan terbaru di {chat_title}.", show_alert=True)
                         await send_log_message(f"🗑️ Berhasil hapus {del_suk} pesan terbaru di {chat_title}.", client=delete_client)
                     else:
-                        await cb.answer("⚫️ Tidak ada pesan dari userbot untuk dihapus.", show_alert=True)
+                        await safe_cb_answer(cb, "⚫️ Tidak ada pesan dari userbot untuk dihapus.", show_alert=True)
                 else:
-                    await cb.answer("⚫️ Tidak ada pesan untuk dihapus.", show_alert=True)
+                    await safe_cb_answer(cb, "⚫️ Tidak ada pesan untuk dihapus.", show_alert=True)
             except Exception as err:
-                await cb.answer(f"Error: {err}", show_alert=True)
-
+                await safe_cb_answer(cb, f"Error: {err}", show_alert=True)
         elif action == "delete_oldest":
             try:
                 delete_client = TELAYSPAM_TASKS[chat_id].get("client") if chat_id in TELAYSPAM_TASKS else USER_CLIENT
                 if not delete_client:
-                    await cb.answer("❌ Tidak ada client untuk menghapus pesan.", show_alert=True)
+                    await safe_cb_answer(cb, "❌ Tidak ada client untuk menghapus pesan.", show_alert=True)
                     return
                 messages = []
                 async for message in delete_client.get_chat_history(int(chat_id), limit=30):
@@ -1493,20 +1499,19 @@ async def handle_task_control(c: Client, cb):
                         await delete_client.delete_messages(int(chat_id), message_ids)
                         del_suk = len(message_ids)
                         await asyncio.sleep(3)
-                        await cb.answer(f"🗑️ Berhasil hapus {del_suk} pesan terlama di {chat_title}.", show_alert=True)
+                        await safe_cb_answer(cb, f"🗑️ Berhasil hapus {del_suk} pesan terlama di {chat_title}.", show_alert=True)
                         await send_log_message(f"🗑️ Berhasil hapus {del_suk} pesan terlama di {chat_title}.", client=delete_client)
                     else:
-                        await cb.answer("⚫️ Tidak ada pesan dari userbot untuk dihapus.", show_alert=True)
+                        await safe_cb_answer(cb, "⚫️ Tidak ada pesan dari userbot untuk dihapus.", show_alert=True)
                 else:
-                    await cb.answer("⚫️ Tidak ada pesan untuk dihapus.", show_alert=True)
+                    await safe_cb_answer(cb, "⚫️ Tidak ada pesan untuk dihapus.", show_alert=True)
             except Exception as err:
-                await cb.answer(f"Error: {err}", show_alert=True)
-
+                await safe_cb_answer(cb, f"Error: {err}", show_alert=True)
         elif action == "edit_last":
             try:
                 edit_client = TELAYSPAM_TASKS[chat_id].get("client") if chat_id in TELAYSPAM_TASKS else USER_CLIENT
                 if not edit_client:
-                    await cb.answer("❌ Tidak ada client untuk edit pesan.", show_alert=True)
+                    await safe_cb_answer(cb, "❌ Tidak ada client untuk edit pesan.", show_alert=True)
                     return
                 messages = []
                 async for message in edit_client.get_chat_history(int(chat_id), limit=1):
@@ -1536,15 +1541,14 @@ async def handle_task_control(c: Client, cb):
                             "notif_msg_id": edit_notif_msg.id,
                             "client": edit_client
                         }
-                        await cb.answer(f"📝 Silakan masukkan teks baru untuk edit last msg di {chat_title}.", show_alert=True)
+                        await safe_cb_answer(cb, f"📝 Silakan masukkan teks baru untuk edit last msg di {chat_title}.", show_alert=True)
                     else:
-                        await cb.answer("❌ Gagal membuat notifikasi edit.", show_alert=True)
+                        await safe_cb_answer(cb, "❌ Gagal membuat notifikasi edit.", show_alert=True)
                 else:
-                    await cb.answer("⚫️ Tidak ada pesan terakhir dari userbot untuk diedit.", show_alert=True)
+                    await safe_cb_answer(cb, "⚫️ Tidak ada pesan terakhir dari userbot untuk diedit.", show_alert=True)
             except Exception as edit_err:
                 Altruix.log(f"Error saat memulai edit last msg: {edit_err}", level=40)
-                await cb.answer(f"❌ Gagal memulai edit: {edit_err}", show_alert=True)
-
+                await safe_cb_answer(cb, f"❌ Gagal memulai edit: {edit_err}", show_alert=True)
         elif action == "edit_msglist":
             config = None
             was_running = False
@@ -1561,7 +1565,7 @@ async def handle_task_control(c: Client, cb):
             elif chat_id in COMPLETED_TASKS:
                 config = COMPLETED_TASKS.get(chat_id)
             else:
-                await cb.answer("⚫️ Tidak ada task aktif atau selesai untuk mengedit msg_list.", show_alert=True)
+                await safe_cb_answer(cb, "⚫️ Tidak ada task aktif atau selesai untuk mengedit msg_list.", show_alert=True)
                 return
             if config:
                 old_msg_list = config["msg_list"]
@@ -1578,7 +1582,7 @@ async def handle_task_control(c: Client, cb):
                 cancel_button = [[InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_edit_{chat_id}")]]
                 send_client = task_client or USER_CLIENT or BOT_CLIENT
                 if not send_client:
-                    await cb.answer("❌ Tidak ada client untuk mengirim notifikasi.", show_alert=True)
+                    await safe_cb_answer(cb, "❌ Tidak ada client untuk mengirim notifikasi.", show_alert=True)
                     return
                 edit_notif_msg = await send_log_message(
                     notif_msg,
@@ -1592,12 +1596,11 @@ async def handle_task_control(c: Client, cb):
                         "notif_msg_id": edit_notif_msg.id,
                         "client": task_client
                     }
-                    await cb.answer(f"📝 Silakan masukkan list pesan baru di {chat_title}.", show_alert=True)
+                    await safe_cb_answer(cb, f"📝 Silakan masukkan list pesan baru di {chat_title}.", show_alert=True)
                 else:
-                    await cb.answer("❌ Gagal membuat notifikasi edit.", show_alert=True)
+                    await safe_cb_answer(cb, "❌ Gagal membuat notifikasi edit.", show_alert=True)
             else:
-                await cb.answer("⚫️ Tidak ada config untuk mengedit msg_list.", show_alert=True)
-
+                await safe_cb_answer(cb, "⚫️ Tidak ada config untuk mengedit msg_list.", show_alert=True)
         elif action == "cancel_edit":
             if chat_id in EDIT_MSGLIST_WAITING:
                 config = EDIT_MSGLIST_WAITING[chat_id]["config"]
@@ -1605,7 +1608,7 @@ async def handle_task_control(c: Client, cb):
                 notif_msg_id = EDIT_MSGLIST_WAITING[chat_id]["notif_msg_id"]
                 task_client = EDIT_MSGLIST_WAITING[chat_id].get("client")
                 EDIT_MSGLIST_WAITING.pop(chat_id, None)
-                await cb.answer(f"❌ Proses edit msg_list dibatalkan di {chat_title}.", show_alert=True)
+                await safe_cb_answer(cb, f"❌ Proses edit msg_list dibatalkan di {chat_title}.", show_alert=True)
                 if task_client:
                     try:
                         await task_client.delete_messages(LOG_CHAT_ID, notif_msg_id)
@@ -1631,31 +1634,29 @@ async def handle_task_control(c: Client, cb):
                             client=task_client
                         )
             else:
-                await cb.answer("⚫️ Tidak ada proses edit msg_list untuk dibatalkan.", show_alert=True)
-
+                await safe_cb_answer(cb, "⚫️ Tidak ada proses edit msg_list untuk dibatalkan.", show_alert=True)
         elif action == "cancel_editlast":
             if chat_id in EDIT_LASTMSG_WAITING:
                 notif_msg_id = EDIT_LASTMSG_WAITING[chat_id]["notif_msg_id"]
                 edit_client = EDIT_LASTMSG_WAITING[chat_id].get("client")
                 EDIT_LASTMSG_WAITING.pop(chat_id, None)
-                await cb.answer(f"❌ Proses edit last msg dibatalkan di {chat_title}.", show_alert=True)
+                await safe_cb_answer(cb, f"❌ Proses edit last msg dibatalkan di {chat_title}.", show_alert=True)
                 if edit_client:
                     try:
                         await edit_client.delete_messages(LOG_CHAT_ID, notif_msg_id)
                     except:
                         pass
             else:
-                await cb.answer("⚫️ Tidak ada proses edit last msg untuk dibatalkan.", show_alert=True)
-
+                await safe_cb_answer(cb, "⚫️ Tidak ada proses edit last msg untuk dibatalkan.", show_alert=True)
     except FloodWait as fwe:
         Altruix.log(f"FloodWaitError saat menangani aksi {action} untuk chat {chat_id}: Waiting for {fwe.value} seconds", level=30)
-        await cb.answer(f"⚠️ Terlalu banyak permintaan. Tunggu {fwe.value} detik.", show_alert=True)
+        await safe_cb_answer(cb, f"⚠️ Terlalu banyak permintaan. Tunggu {fwe.value} detik.", show_alert=True)
     except ChatWriteForbidden as cwe:
         Altruix.log(f"ChatWriteForbiddenError saat menangani aksi {action} untuk chat {chat_id}: Bot tidak memiliki izin", level=30)
-        await cb.answer(f"❌ Bot tidak memiliki izin untuk melakukan aksi ini di {chat_title}.", show_alert=True)
+        await safe_cb_answer(cb, f"❌ Bot tidak memiliki izin untuk melakukan aksi ini di {chat_title}.", show_alert=True)
     except Exception as err:
         Altruix.log(f"Error saat menangani aksi {action} untuk chat {chat_id}: {err}", level=40)
-        await cb.answer(f"Error: {err}", show_alert=True)
+        await safe_cb_answer(cb, f"Error: {err}", show_alert=True)
 
 @Altruix.bot.on_callback_query(filters.regex(r"(cekall|stopall|recurringall|pauseall|resumeall)"))
 @log_errors
@@ -1663,7 +1664,7 @@ async def handle_global_controls(c: Client, cb):
     data = cb.data
     if data == "cekall":
         if not TELAYSPAM_TASKS:
-            await cb.answer("⚫️ Tidak ada task relayspam yang aktif.", show_alert=True)
+            await safe_cb_answer(cb, "⚫️ Tidak ada task relayspam yang aktif.", show_alert=True)
             return
         status_list = []
         for chat_id, status in TELAYSPAM_TASKS.items():
@@ -1681,11 +1682,10 @@ async def handle_global_controls(c: Client, cb):
                 status_text = f"🔴 stopped di {chat_title}"
             status_list.append(status_text)
         output = "**Status Semua Task:**\n" + "\n".join(status_list)
-        await cb.answer(output, show_alert=True)
-
+        await safe_cb_answer(cb, output, show_alert=True)
     elif data == "stopall":
         if not TELAYSPAM_TASKS:
-            await cb.answer("⚫️ Tidak ada task aktif untuk dihentikan.", show_alert=True)
+            await safe_cb_answer(cb, "⚫️ Tidak ada task aktif untuk dihentikan.", show_alert=True)
             return
         stopped_count = 0
         for chat_id in list(TELAYSPAM_TASKS.keys()):
@@ -1694,16 +1694,15 @@ async def handle_global_controls(c: Client, cb):
             if "task" in TELAYSPAM_TASKS[chat_id]:
                 TELAYSPAM_TASKS[chat_id]["task"].cancel()
             stopped_count += 1
-        await cb.answer(f"🔴 Semua {stopped_count} task dihentikan.", show_alert=True)
+        await safe_cb_answer(cb, f"🔴 Semua {stopped_count} task dihentikan.", show_alert=True)
         if TELAYSPAM_TASKS:
             first_chat_id = list(TELAYSPAM_TASKS.keys())[0]
             userbot_client = TELAYSPAM_TASKS[first_chat_id].get("client")
             if userbot_client:
                 await send_log_message(f"🔴 Semua {stopped_count} task dihentikan.", client=userbot_client)
-
     elif data == "recurringall":
         if not COMPLETED_TASKS:
-            await cb.answer("⚫️ Tidak ada task selesai untuk diulang.", show_alert=True)
+            await safe_cb_answer(cb, "⚫️ Tidak ada task selesai untuk diulang.", show_alert=True)
             return
         restarted_count = 0
         for chat_id, config in list(COMPLETED_TASKS.items()):
@@ -1727,11 +1726,10 @@ async def handle_global_controls(c: Client, cb):
             )
             if success:
                 restarted_count += 1
-        await cb.answer(f"🔁 {restarted_count} task recurring dimulai ulang.", show_alert=True)
-
+        await safe_cb_answer(cb, f"🔁 {restarted_count} task recurring dimulai ulang.", show_alert=True)
     elif data == "pauseall":
         if not TELAYSPAM_TASKS:
-            await cb.answer("⚫️ Tidak ada task aktif untuk dipause.", show_alert=True)
+            await safe_cb_answer(cb, "⚫️ Tidak ada task aktif untuk dipause.", show_alert=True)
             return
         paused_count = 0
         for chat_id in list(TELAYSPAM_TASKS.keys()):
@@ -1739,13 +1737,12 @@ async def handle_global_controls(c: Client, cb):
                 TELAYSPAM_TASKS[chat_id]["pause_event"].clear()
                 paused_count += 1
         if paused_count == 0:
-            await cb.answer("⚫️ Tidak ada task aktif yang sedang running untuk dipause.", show_alert=True)
+            await safe_cb_answer(cb, "⚫️ Tidak ada task aktif yang sedang running untuk dipause.", show_alert=True)
         else:
-            await cb.answer(f"🟡 Semua {paused_count} task dipause.", show_alert=True)
-
+            await safe_cb_answer(cb, f"🟡 Semua {paused_count} task dipause.", show_alert=True)
     elif data == "resumeall":
         if not TELAYSPAM_TASKS:
-            await cb.answer("⚫️ Tidak ada task untuk diresume.", show_alert=True)
+            await safe_cb_answer(cb, "⚫️ Tidak ada task untuk diresume.", show_alert=True)
             return
         resumed_count = 0
         for chat_id in list(TELAYSPAM_TASKS.keys()):
@@ -1753,9 +1750,9 @@ async def handle_global_controls(c: Client, cb):
                 TELAYSPAM_TASKS[chat_id]["pause_event"].set()
                 resumed_count += 1
         if resumed_count == 0:
-            await cb.answer("⚫️ Tidak ada task yang dipause untuk diresume.", show_alert=True)
+            await safe_cb_answer(cb, "⚫️ Tidak ada task yang dipause untuk diresume.", show_alert=True)
         else:
-            await cb.answer(f"🟢 Semua {resumed_count} task diresume.", show_alert=True)
+            await safe_cb_answer(cb, f"🟢 Semua {resumed_count} task diresume.", show_alert=True)
 
 @Altruix.bot.on_message(filters.chat(LOG_CHAT_ID) & filters.incoming & filters.reply)
 @log_errors
@@ -1858,7 +1855,7 @@ async def handle_msg_list_input(c: Client, m: Message):
                 Altruix.log(f"Error saat memproses input last msg: {err}", level=40)
                 await m.reply(f"⚠️ **Error:** {err}")
 
-# Log sukses loading
+# ==================== LOG SUKSES LOADING ====================
 try:
     Altruix.log(f"[DEBUG] Loaded → {__plugin_name__} {PLUGIN_VERSION}", level=20)
 except Exception as e:
