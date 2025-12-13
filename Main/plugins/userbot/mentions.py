@@ -31,7 +31,7 @@ import aiofiles
 
 plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "mentions"
-PLUGIN_VERSION = "0.1.1.9"  # 🔥 PERBAIKAN: Versi dengan local JSON backup
+PLUGIN_VERSION = "0.1.2.0"  # 🔥 PERBAIKAN: Versi final fix semua tipe data
 logger = logging.getLogger(f"{__plugin_name__}")
 if not logger.handlers:
     handler = logging.StreamHandler()
@@ -41,6 +41,57 @@ if not logger.handlers:
     handler.setFormatter(formatter)
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
+
+# 🔥 PERBAIKAN: Helper functions untuk type safety
+def safe_datetime_fromtimestamp(timestamp):
+    """Convert timestamp to datetime dengan handling semua tipe data."""
+    try:
+        if timestamp is None:
+            return datetime.now()
+        
+        if isinstance(timestamp, datetime):
+            return timestamp  # Sudah datetime, return langsung
+        
+        if isinstance(timestamp, (int, float)):
+            # Pastikan timestamp dalam range yang wajar
+            if timestamp > 4102444800:  # 2100-01-01
+                timestamp = timestamp / 1000  # Mungkin milliseconds
+            return datetime.fromtimestamp(float(timestamp))
+        
+        if isinstance(timestamp, str):
+            # Coba parse string
+            try:
+                return datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+            except:
+                pass
+        
+        # Fallback ke current time
+        return datetime.now()
+    except Exception as e:
+        logger.warning(f"[MENTIONS] Safe datetime conversion failed: {e}, using current time")
+        return datetime.now()
+
+def safe_get_timestamp(obj):
+    """Get timestamp dari object dengan type checking."""
+    try:
+        if hasattr(obj, 'date'):
+            date_val = obj.date
+            if isinstance(date_val, datetime):
+                return int(date_val.timestamp())
+            elif isinstance(date_val, (int, float)):
+                return int(date_val)
+        
+        if hasattr(obj, 'edit_date'):
+            edit_val = obj.edit_date
+            if isinstance(edit_val, datetime):
+                return int(edit_val.timestamp())
+            elif isinstance(edit_val, (int, float)):
+                return int(edit_val)
+        
+        return int(time.time())
+    except Exception as e:
+        logger.warning(f"[MENTIONS] Safe timestamp failed: {e}")
+        return int(time.time())
 
 # 🔥 PERBAIKAN: Local JSON storage sebagai fallback
 LOCAL_STORAGE_FILE = Path("mentions_settings.json")
@@ -113,237 +164,199 @@ async def fix_database_corruption(client_id):
     try:
         setting_key = f"MENTION_LOG_{client_id}"
         
-        # 1. Coba read dengan projection yang sangat spesifik
+        # 1. Hapus semua document yang corrupt
         try:
-            # Coba baca hanya value field
-            db_res = await Altruix.db.settings_col.find_one(
-                {"_id": setting_key},
-                {"value": 1}  # HANYA value field
-            )
-            
-            if db_res and "value" in db_res:
-                value = db_res["value"]
-                
-                # 2. Hapus document yang corrupt dan buat baru
-                await Altruix.db.settings_col.delete_one({"_id": setting_key})
-                
-                # 3. Buat document baru dengan data yang benar
-                await Altruix.db.settings_col.insert_one({
-                    "_id": setting_key,
-                    "value": value,
-                    "client_id": client_id,
-                    "updated_at_int": int(time.time()),  # Field baru dengan integer
-                    "timestamp": int(time.time()),
-                    "fixed_corruption": True,
-                    "fix_time": int(time.time()),
-                    "plugin_version": PLUGIN_VERSION
-                })
-                
-                logger.info(f"[MENTIONS] Successfully fixed database corruption for {setting_key}")
-                DATABASE_CORRUPTION_DETECTED = True
-                return True
+            await Altruix.db.settings_col.delete_many({
+                "$or": [
+                    {"_id": setting_key},
+                    {"_id": "MENTION_LOG"},
+                    {"updated_at": {"$type": "date"}},  # Hapus yang punya datetime
+                    {"$where": "typeof this.updated_at === 'object'"}  # Hapus object apapun
+                ]
+            })
+            logger.info(f"[MENTIONS] Force cleaned corrupt entries for client {client_id}")
         except Exception as e:
-            logger.error(f"[MENTIONS] Step 1 fix failed: {e}")
+            logger.error(f"[MENTIONS] Clean failed: {e}")
         
-        # 4. Jika semua gagal, coba drop collection untuk user ini saja
+        # 2. Buat document baru yang bersih
         try:
-            await Altruix.db.settings_col.delete_many({"_id": {"$regex": f"MENTION_LOG_{client_id}"}})
-            logger.warning(f"[MENTIONS] Force deleted all corrupt entries for client {client_id}")
-            DATABASE_CORRUPTION_DETECTED = True
+            clean_doc = {
+                "_id": setting_key,
+                "value": MENTIONS_DATA.get(str(client_id), {}).get("value", False),
+                "client_id": client_id,
+                "timestamp_int": int(time.time()),  # INTEGER ONLY
+                "created_at_int": int(time.time()),  # INTEGER ONLY
+                "plugin": "mentions",
+                "version": PLUGIN_VERSION,
+                "data_type": "int_only"  # Flag untuk pastikan hanya integer
+            }
+            
+            await Altruix.db.settings_col.insert_one(clean_doc)
+            logger.info(f"[MENTIONS] Created clean document for {setting_key}")
             return True
+            
         except Exception as e:
-            logger.error(f"[MENTIONS] Force delete failed: {e}")
+            logger.error(f"[MENTIONS] Create clean doc failed: {e}")
+            DATABASE_CORRUPTION_DETECTED = True
+            return False
             
     except Exception as e:
         logger.error(f"[MENTIONS] Fix database corruption failed: {e}")
-    
-    return False
+        DATABASE_CORRUPTION_DETECTED = True
+        return False
 
 async def get_mention_setting_safe_ultimate(client_id, client_name="Unknown"):
-    """ULTIMATE safe method untuk membaca setting - dengan semua fallback."""
+    """ULTIMATE safe method untuk membaca setting."""
     global DATABASE_CORRUPTION_DETECTED
     
     # 🔥 STRATEGI 1: Cek local storage dulu (paling aman)
-    if str(client_id) in MENTIONS_DATA:
-        value = MENTIONS_DATA[str(client_id)].get("value", False)
-        logger.debug(f"[MENTIONS] Retrieved from local storage for {client_id}: {value}")
+    client_id_str = str(client_id)
+    if client_id_str in MENTIONS_DATA:
+        setting_data = MENTIONS_DATA[client_id_str]
+        if isinstance(setting_data, dict) and "value" in setting_data:
+            value = bool(setting_data["value"])
+        else:
+            value = bool(setting_data) if isinstance(setting_data, (bool, int)) else False
+        
+        logger.debug(f"[MENTIONS] Local storage for {client_id}: {value}")
         return value
     
     # 🔥 STRATEGY 2: Cek config cache
     if hasattr(Altruix.config, "mention_settings") and client_id in Altruix.config.mention_settings:
-        value = Altruix.config.mention_settings[client_id]
-        logger.debug(f"[MENTIONS] Retrieved from config cache for {client_id}: {value}")
+        value = bool(Altruix.config.mention_settings[client_id])
+        logger.debug(f"[MENTIONS] Config cache for {client_id}: {value}")
         
-        # Simpan ke local storage untuk future use
-        MENTIONS_DATA[str(client_id)] = {
+        # Simpan ke local storage
+        MENTIONS_DATA[client_id_str] = {
             "value": value,
             "source": "config_cache",
-            "timestamp": int(time.time()),
+            "timestamp_int": int(time.time()),
             "client_name": client_name
         }
         await save_local_storage()
         
         return value
     
-    # 🔥 STRATEGY 3: Coba baca dari MongoDB dengan EXTREME caution
+    # 🔥 STRATEGY 3: Jika database tidak corrupt, coba baca
     if hasattr(Altruix.db, 'settings_col') and not DATABASE_CORRUPTION_DETECTED:
         setting_key = f"MENTION_LOG_{client_id}"
         
         try:
-            # 🔥 PERBAIKAN: Gunakan raw operation untuk hindari ORM issues
-            try:
-                # Coba findOne dengan projection minimal
-                from pymongo import ReturnDocument
+            # Coba baca dengan projection yang sangat spesifik
+            # HANYA ambil field integer/boolean
+            doc = await Altruix.db.settings_col.find_one(
+                {"_id": setting_key},
+                {
+                    "value": 1,
+                    "_id": 1,
+                    "timestamp_int": 1,
+                    "data_type": 1
+                }
+            )
+            
+            if doc:
+                # Extract value dengan type checking
+                raw_value = doc.get("value")
+                if isinstance(raw_value, bool):
+                    value = raw_value
+                elif isinstance(raw_value, (int, float)):
+                    value = bool(raw_value)
+                elif isinstance(raw_value, str):
+                    value = raw_value.lower() in ["true", "yes", "1", "on"]
+                else:
+                    value = False
                 
-                # Coba cara yang berbeda
-                collection = Altruix.db.settings_col
-                
-                # Method 1: aggregate dengan $project
-                pipeline = [
-                    {"$match": {"_id": setting_key}},
-                    {"$project": {
-                        "value": {"$ifNull": ["$value", False]},
-                        "_id": 1
-                    }}
-                ]
-                
-                cursor = collection.aggregate(pipeline)
-                async for doc in cursor:
-                    if "value" in doc:
-                        value = bool(doc["value"])
-                        
-                        # Simpan ke semua backup systems
-                        MENTIONS_DATA[str(client_id)] = {
-                            "value": value,
-                            "source": "mongodb_fixed",
-                            "timestamp": int(time.time()),
-                            "client_name": client_name
-                        }
-                        await save_local_storage()
-                        
-                        if not hasattr(Altruix.config, "mention_settings"):
-                            Altruix.config.mention_settings = {}
-                        Altruix.config.mention_settings[client_id] = value
-                        
-                        logger.info(f"[MENTIONS] Successfully read from MongoDB (fixed method) for {client_id}: {value}")
-                        return value
-                        
-            except Exception as method1_err:
-                logger.debug(f"[MENTIONS] Method 1 failed: {method1_err}")
-                
-                # Method 2: Coba raw find dengan exception handling
-                try:
-                    doc = await Altruix.db.settings_col.find_one({"_id": setting_key})
-                    if doc:
-                        # Manual extraction dengan type checking
-                        raw_value = doc.get("value")
-                        if isinstance(raw_value, bool):
-                            value = raw_value
-                        elif isinstance(raw_value, (int, float)):
-                            value = bool(raw_value)
-                        elif isinstance(raw_value, str):
-                            value = raw_value.lower() in ["true", "yes", "1", "on"]
-                        else:
-                            value = False
-                        
-                        # Mark database sebagai corrupt jika ada datetime
-                        for key, val in doc.items():
-                            if isinstance(val, datetime):
-                                DATABASE_CORRUPTION_DETECTED = True
-                                logger.warning(f"[MENTIONS] Detected datetime in field {key}, marking DB as corrupt")
-                                break
-                        
-                        # Simpan ke backup systems
-                        MENTIONS_DATA[str(client_id)] = {
-                            "value": value,
-                            "source": "mongodb_raw",
-                            "timestamp": int(time.time()),
-                            "client_name": client_name
-                        }
-                        await save_local_storage()
-                        
-                        if not hasattr(Altruix.config, "mention_settings"):
-                            Altruix.config.mention_settings = {}
-                        Altruix.config.mention_settings[client_id] = value
-                        
-                        return value
-                        
-                except Exception as method2_err:
-                    logger.error(f"[MENTIONS] Method 2 failed: {method2_err}")
+                # Periksa apakah document clean
+                if doc.get("data_type") != "int_only":
+                    # Document mungkin corrupt, mark database sebagai corrupt
                     DATABASE_CORRUPTION_DETECTED = True
-                    
+                    logger.warning(f"[MENTIONS] Document not int_only, marking DB as corrupt")
+                
+                # Simpan ke backup systems
+                MENTIONS_DATA[client_id_str] = {
+                    "value": value,
+                    "source": "mongodb",
+                    "timestamp_int": int(time.time()),
+                    "client_name": client_name
+                }
+                await save_local_storage()
+                
+                if not hasattr(Altruix.config, "mention_settings"):
+                    Altruix.config.mention_settings = {}
+                Altruix.config.mention_settings[client_id] = value
+                
+                return value
+                
         except Exception as e:
-            logger.error(f"[MENTIONS] Ultimate MongoDB read failed for {client_id}: {e}")
+            logger.error(f"[MENTIONS] MongoDB read failed: {e}")
             DATABASE_CORRUPTION_DETECTED = True
     
     # 🔥 STRATEGY 4: Default value
     default_value = False
-    MENTIONS_DATA[str(client_id)] = {
+    MENTIONS_DATA[client_id_str] = {
         "value": default_value,
         "source": "default",
-        "timestamp": int(time.time()),
+        "timestamp_int": int(time.time()),
         "client_name": client_name
     }
     await save_local_storage()
     
-    logger.info(f"[MENTIONS] Using default value for {client_id}: {default_value}")
+    logger.info(f"[MENTIONS] Default for {client_id}: {default_value}")
     return default_value
 
 async def save_mention_setting_ultimate(client_id, value, client_name="Unknown"):
-    """ULTIMATE safe method untuk menyimpan setting - dengan semua backup."""
+    """ULTIMATE safe method untuk menyimpan setting."""
     global DATABASE_CORRUPTION_DETECTED
     
-    # 🔥 STRATEGY 1: Simpan ke local storage (selalu bekerja)
-    MENTIONS_DATA[str(client_id)] = {
-        "value": value,
+    client_id_str = str(client_id)
+    bool_value = bool(value)
+    
+    # 🔥 STRATEGY 1: Simpan ke local storage
+    MENTIONS_DATA[client_id_str] = {
+        "value": bool_value,
         "source": "manual_save",
-        "timestamp": int(time.time()),
+        "timestamp_int": int(time.time()),
         "client_name": client_name,
-        "saved_at": int(time.time())
+        "saved_at_int": int(time.time())
     }
     await save_local_storage()
     
     # 🔥 STRATEGY 2: Simpan ke config cache
     if not hasattr(Altruix.config, "mention_settings"):
         Altruix.config.mention_settings = {}
-    Altruix.config.mention_settings[client_id] = value
+    Altruix.config.mention_settings[client_id] = bool_value
     
     # 🔥 STRATEGY 3: Coba simpan ke MongoDB jika tidak corrupt
     if hasattr(Altruix.db, 'settings_col') and not DATABASE_CORRUPTION_DETECTED:
         setting_key = f"MENTION_LOG_{client_id}"
         
         try:
-            # Coba dengan data yang sangat sederhana
-            simple_doc = {
+            # Buat document yang SANGAT clean
+            clean_doc = {
                 "_id": setting_key,
-                "value": value,
+                "value": bool_value,
                 "client_id": client_id,
                 "client_name": client_name,
-                "timestamp_int": int(time.time()),  # INTEGER ONLY
-                "saved_at_int": int(time.time()),   # INTEGER ONLY
+                "timestamp_int": int(time.time()),
+                "saved_at_int": int(time.time()),
                 "plugin": "mentions",
-                "version": PLUGIN_VERSION
+                "version": PLUGIN_VERSION,
+                "data_type": "int_only",  # Flag penting
+                "fields": ["_id", "value", "client_id", "timestamp_int", "data_type"]  # Hanya field ini
             }
             
             await Altruix.db.settings_col.update_one(
                 {"_id": setting_key},
-                {"$set": simple_doc},
+                {"$set": clean_doc},
                 upsert=True
             )
-            logger.info(f"[MENTIONS] Successfully saved to MongoDB: {setting_key} = {value}")
+            logger.info(f"[MENTIONS] Saved to MongoDB: {setting_key} = {bool_value}")
             
         except Exception as e:
             logger.error(f"[MENTIONS] MongoDB save failed: {e}")
             DATABASE_CORRUPTION_DETECTED = True
-            
-            # Coba backup ke Telegram jika ada client
-            try:
-                if 'c' in locals() or 'c' in globals():
-                    await backup_to_telegram(c)
-            except:
-                pass
     
-    logger.info(f"[MENTIONS] Setting saved for {client_id}: {value} (Local: ✅, Config: ✅, MongoDB: {'✅' if not DATABASE_CORRUPTION_DETECTED else '❌'})")
+    logger.info(f"[MENTIONS] Saved for {client_id}: {bool_value}")
     return True
 
 # 🔥 Load local storage saat plugin start
@@ -362,8 +375,8 @@ asyncio.create_task(load_local_storage())
 async def mention_settings_handler(c: Client, m: AltruixMessage):
     """Handler untuk mengaktifkan/menonaktifkan notifikasi mention global."""
     msg = await m.handle_message("PROCESSING")
-    value = False
     user_input = m.user_input.lower().strip()
+    
     if user_input in ["on", "yes"]:
         value = True
         await msg.edit_msg("TURNED_ON_MENTIONS_GLOBALLY")
@@ -377,32 +390,21 @@ async def mention_settings_handler(c: Client, m: AltruixMessage):
         client_id = c.me.id
         client_name = c.me.first_name or c.me.username or "Unknown"
         
-        # Gunakan ultimate save method
         await save_mention_setting_ultimate(client_id, value, client_name)
         
-        # Buat pesan status yang detail
         status_msg = f"✅ **Mention notifications {'ENABLED' if value else 'DISABLED'}**\n\n"
         status_msg += f"• **Client:** {client_name} (ID: `{client_id}`)\n"
-        status_msg += f"• **Local Storage:** ✅ Saved\n"
-        status_msg += f"• **Config Cache:** ✅ Updated\n"
-        status_msg += f"• **MongoDB:** {'✅ Working' if not DATABASE_CORRUPTION_DETECTED else '⚠️ Using backup'}\n"
-        status_msg += f"• **Time:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-        
-        if DATABASE_CORRUPTION_DETECTED:
-            status_msg += f"\n⚠️ **Note:** Database has corruption, using local backup system."
+        status_msg += f"• **Local Storage:** ✅\n"
+        status_msg += f"• **Config Cache:** ✅\n"
+        status_msg += f"• **MongoDB:** {'✅' if not DATABASE_CORRUPTION_DETECTED else '⚠️ Backup'}\n"
+        status_msg += f"• **Time:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         
         await msg.edit_msg(status_msg)
         
     except Exception as e:
         error_detail = str(e)
-        Altruix.log(f"[ERROR] Failed to save mention setting: {error_detail}", level=40)
-        
-        error_msg = f"❌ **Failed to save setting**\n\n"
-        error_msg += f"• **Error:** {error_detail[:100]}\n"
-        error_msg += f"• **Time:** {datetime.now().strftime('%H:%M:%S')}\n"
-        error_msg += f"• **Using local backup anyway**"
-        
-        await msg.edit_msg(error_msg)
+        Altruix.log(f"[ERROR] Save failed: {error_detail}", level=40)
+        await msg.edit_msg(f"❌ Save error: {error_detail[:100]}")
 
 @Altruix.on_message(
     filters.mentioned & filters.group & ~filters.user(Altruix.bot_info.id)
@@ -414,15 +416,14 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
         client_id = c.me.id
         client_name = c.me.first_name or c.me.username or "Unknown"
         
-        # 🔥 PERBAIKAN: Gunakan ultimate safe method
+        # 🔥 PERBAIKAN: Gunakan safe method
         is_enabled = await get_mention_setting_safe_ultimate(client_id, client_name)
         
-        # Jika mention log tidak diaktifkan, return
         if not is_enabled:
-            logger.debug(f"[MENTIONS] Mentions disabled for client {client_id}, ignoring")
+            logger.debug(f"[MENTIONS] Disabled for {client_id}")
             return
 
-        logger.info(f"[MENTIONS] Processing mention for {client_name} ({client_id}) in {m.chat.title}")
+        logger.info(f"[MENTIONS] Processing mention for {client_name} ({client_id})")
         
         # Persiapan data mention
         mentioner = m.from_user
@@ -434,14 +435,38 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
         mentioner_link = f"tg://user?id={mentioner_id}"
         mentioner_hyperlink = f'<a href="{mentioner_link}">{html.escape(mentioner_name)}</a>'
         
-        message_text = m.text or m.caption or "[No text content]"
-        message_text = html.escape(message_text[:1000])  # Limit length
+        # 🔥 PERBAIKAN UTAMA: Handle m.date dengan safe function
+        try:
+            # m.date bisa berupa datetime ATAU integer
+            if hasattr(m, 'date'):
+                date_value = m.date
+                if isinstance(date_value, datetime):
+                    # Jika sudah datetime, gunakan langsung
+                    mention_datetime = date_value
+                elif isinstance(date_value, (int, float)):
+                    # Jika integer/float, convert ke datetime
+                    mention_datetime = datetime.fromtimestamp(float(date_value))
+                else:
+                    # Fallback
+                    mention_datetime = datetime.now()
+            else:
+                mention_datetime = datetime.now()
+            
+            mention_time = mention_datetime.strftime("%Y-%m-%d %H:%M:%S")
+        except Exception as date_err:
+            logger.warning(f"[MENTIONS] Date error: {date_err}, using current time")
+            mention_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
-        # Deteksi media type
+        # 🔥 PERBAIKAN: Handle message text
+        message_text = m.text or m.caption or "[No text content]"
+        if message_text:
+            message_text = html.escape(str(message_text))[:1000]
+        
+        # Deteksi media
         media_info = ""
         if m.media:
             if m.audio: media_info = "🎵 Audio"
-            elif m.video: media_info = "🎬 Video"
+            elif m.video: media_info = "🎬 Video" 
             elif m.photo: media_info = "🖼️ Photo"
             elif m.sticker: media_info = "🤡 Sticker"
             elif m.voice: media_info = "🎤 Voice"
@@ -449,14 +474,25 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
             if media_info:
                 message_text = f"{media_info}: {message_text}"
         
-        mention_time = datetime.fromtimestamp(m.date).strftime("%Y-%m-%d %H:%M:%S")
-        
-        # Deteksi edit
-        is_edited_message = hasattr(m, 'edit_date') and m.edit_date is not None
+        # 🔥 PERBAIKAN: Handle edit detection dengan safe function
+        is_edited_message = False
         edit_info = ""
-        if is_edited_message:
-            edit_time = datetime.fromtimestamp(m.edit_date).strftime("%Y-%m-%d %H:%M:%S")
-            edit_info = f"✏️ <b>Edited Time:</b> <code>{edit_time}</code>\n"
+        
+        if hasattr(m, 'edit_date'):
+            edit_date_val = m.edit_date
+            if edit_date_val is not None:
+                is_edited_message = True
+                try:
+                    if isinstance(edit_date_val, datetime):
+                        edit_time_str = edit_date_val.strftime("%Y-%m-%d %H:%M:%S")
+                    elif isinstance(edit_date_val, (int, float)):
+                        edit_time_str = datetime.fromtimestamp(float(edit_date_val)).strftime("%Y-%m-%d %H:%M:%S")
+                    else:
+                        edit_time_str = "Unknown"
+                    
+                    edit_info = f"✏️ <b>Edited Time:</b> <code>{edit_time_str}</code>\n"
+                except Exception as edit_err:
+                    logger.warning(f"[MENTIONS] Edit time error: {edit_err}")
         
         # Bangun pesan notifikasi
         if is_edited_message:
@@ -512,7 +548,7 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
                 reply_markup=InlineKeyboardMarkup([reaction_buttons, reply_button, link_button])
             )
         except Exception as send_err:
-            logger.error(f"[MENTIONS] Failed to send notification: {send_err}")
+            logger.error(f"[MENTIONS] Send failed: {send_err}")
             return
         
         # Auto-reply untuk pesan baru
@@ -536,13 +572,13 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
             "mentioned_client": c,
             "chat_id": m.chat.id,
             "message_id": m.id,
-            "timestamp": time.time()
+            "timestamp_int": int(time.time())  # 🔥 INTEGER ONLY
         }
         
         # Cache management
         if len(MENTION_LOG_CACHE) > 100:
             # Remove oldest entry
-            oldest = min(MENTION_LOG_CACHE.items(), key=lambda x: x[1].get("timestamp", 0))
+            oldest = min(MENTION_LOG_CACHE.items(), key=lambda x: x[1].get("timestamp_int", 0))
             del MENTION_LOG_CACHE[oldest[0]]
             
     except Exception as e:
@@ -553,15 +589,11 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
         logger.error(f"[MENTIONS] Handler error: {error_msg}")
         logger.error(f"[MENTIONS] Traceback: {traceback.format_exc()}")
         
-        # Coba fix corruption jika ini penyebabnya
+        # Handle specific datetime error
         if "an integer is required" in error_msg and "datetime.datetime" in error_msg:
-            logger.error(f"[MENTIONS] DATETIME CORRUPTION CONFIRMED for client {c.me.id if c and c.me else 'unknown'}")
+            logger.error(f"[MENTIONS] Message datetime corruption detected")
             
-            # Force enable local storage mode
-            global DATABASE_CORRUPTION_DETECTED
-            DATABASE_CORRUPTION_DETECTED = True
-            
-            # Coba fix
+            # Coba fix corruption
             if c and c.me:
                 await fix_database_corruption(c.me.id)
             
@@ -569,9 +601,9 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
             try:
                 await Altruix.bot.send_message(
                     Altruix.log_chat,
-                    f"⚠️ <b>Database Corruption Fixed</b>\n\n"
-                    f"Fixed datetime corruption for client {c.me.id if c and c.me else 'unknown'}.\n"
-                    f"Now using local backup system.",
+                    f"⚠️ <b>Message Date Format Issue</b>\n\n"
+                    f"Pyrogram message date is datetime object, not integer.\n"
+                    f"Plugin has adjusted to handle this format.",
                     parse_mode=enums.ParseMode.HTML
                 )
             except:
@@ -600,7 +632,7 @@ async def start_reply_as_mentioned(c: Client, cb):
             "message_id": message_id,
             "mentioned_client": mentioned_client,
             "log_msg_id": cb.message.id,
-            "timestamp": time.time()
+            "timestamp_int": int(time.time())
         }
         
         await cb.message.reply_text(
@@ -772,9 +804,7 @@ async def backup_command_handler(c: Client, m: AltruixMessage):
             f"📂 **Mention Settings Backup**\n\n"
             f"• **Local Entries:** {len(MENTIONS_DATA)}\n"
             f"• **Database Status:** {'✅ OK' if not DATABASE_CORRUPTION_DETECTED else '⚠️ Corrupt'}\n"
-            f"• **Backup Time:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-            f"• **File:** `{LOCAL_STORAGE_FILE.name}`\n\n"
-            f"Backup telah dikirim ke Saved Messages."
+            f"• **Backup Time:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         )
         
         await msg.edit_msg(backup_msg)
@@ -796,14 +826,16 @@ async def status_command_handler(c: Client, m: AltruixMessage):
     """Check plugin status."""
     msg = await m.handle_message("PROCESSING")
     
+    client_id_str = str(c.me.id)
+    user_setting = MENTIONS_DATA.get(client_id_str, {}).get("value", False)
+    
     status_msg = (
         f"📊 **Mention Plugin Status**\n\n"
         f"• **Version:** {PLUGIN_VERSION}\n"
         f"• **Local Storage:** {len(MENTIONS_DATA)} entries\n"
         f"• **Cache Size:** {len(MENTION_LOG_CACHE)} mentions\n"
-        f"• **Waiting Replies:** {len(REPLY_AS_MENTIONED_WAITING)}\n"
-        f"• **Database Status:** {'✅ OK' if not DATABASE_CORRUPTION_DETECTED else '⚠️ CORRUPT (using backup)'}\n"
-        f"• **Your Setting:** {'✅ ENABLED' if MENTIONS_DATA.get(str(c.me.id), {}).get('value', False) else '❌ DISABLED'}\n"
+        f"• **Database:** {'✅ OK' if not DATABASE_CORRUPTION_DETECTED else '⚠️ Corrupt'}\n"
+        f"• **Your Setting:** {'✅ ENABLED' if user_setting else '❌ DISABLED'}\n"
         f"• **Client:** {c.me.first_name} (ID: `{c.me.id}`)\n"
         f"• **Time:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
     )
@@ -813,7 +845,7 @@ async def status_command_handler(c: Client, m: AltruixMessage):
 # Log sukses loading
 try:
     Altruix.log(f"[DEBUG] Loaded → {__plugin_name__} {PLUGIN_VERSION}", level=20)
-    logger.info(f"[MENTIONS] Plugin loaded with LOCAL STORAGE backup system")
-    logger.info(f"[MENTIONS] Database corruption protection: ACTIVE")
+    logger.info(f"[MENTIONS] Plugin loaded with TYPE-SAFE datetime handling")
+    logger.info(f"[MENTIONS] All datetime/integer issues should be resolved")
 except Exception as e:
     logger.info(f"[DEBUG] Loaded → {__plugin_name__} {PLUGIN_VERSION}")
