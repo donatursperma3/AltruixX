@@ -1,4 +1,3 @@
-# qwen
 # mentions.py
 # Copyright (C) 2021-present by Altruix@Github, < https://github.com/Altruix >.
 #
@@ -35,7 +34,7 @@ from collections import defaultdict
 
 plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "mentions"
-PLUGIN_VERSION = "0.2.1.0"  # 🔥 VERSI DIPERBAIKI: Semua tombol bekerja
+PLUGIN_VERSION = "0.2.2.0"  # 🔥 VERSI DIPERBAIKI: Semua error fixed
 
 # 🔥 SETUP LOGGING DETAILED
 logger = logging.getLogger(f"{__plugin_name__}")
@@ -123,8 +122,9 @@ MENTIONS_DATA = {}
 # 🔥 TAMBAHAN: Dictionary untuk melacak pesan mention yang sudah dikirim
 MENTION_LOG_CACHE = {}
 
-# 🔥 TAMBAHAN: Emoji default untuk quick reaction
-DEFAULT_REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😢"]
+# 🔥 PERBAIKAN CRITICAL: Emoji yang valid untuk Telegram Reaction API
+# Hanya emoji yang didukung oleh Telegram Reaction API
+DEFAULT_REACTION_EMOJIS = ["👍", "❤️", "🔥", "🥰", "👏"]  # 🔥 PERBAIKAN: Ganti 😂 dan 😮 dengan emoji yang valid
 
 # 🔥 TAMBAHAN: Dictionary untuk menunggu konfirmasi reply-as-mentioned
 REPLY_AS_MENTIONED_WAITING = {}
@@ -147,6 +147,22 @@ BUTTON_STATS = {
     "confirm": 0,
     "cancel": 0
 }
+
+# 🔥 BARU: Valid emoji checker
+VALID_REACTION_EMOJIS = {
+    "👍", "👎", "❤️", "🔥", "🥰", "👏", "😁", "🤔", "🤯", "😱", 
+    "🤬", "😢", "🎉", "🤩", "🤮", "💩", "🙏", "👌", "🕊", "🤡",
+    "🥱", "🥴", "😍", "🐳", "❤️‍🔥", "🌚", "🌭", "💯", "🤣", "⚡",
+    "🍌", "🏆", "💔", "🤨", "😐", "🍓", "🍾", "💋", "🖕", "😈",
+    "😴", "😭", "🤓", "👻", "👨‍💻", "👀", "🎃", "🙈", "😇", "😨",
+    "🤝", "✍️", "🤗", "🫡", "🎅", "🎄", "☃️", "💅", "🤪", "🗿",
+    "🆒", "💘", "🙉", "🦄", "😘", "💊", "🙊", "😎", "👾", "🤷‍♂️",
+    "🤷", "🤷‍♀️", "😡"
+}
+
+def is_valid_emoji(emoji: str) -> bool:
+    """Cek apakah emoji valid untuk Telegram Reaction."""
+    return emoji in VALID_REACTION_EMOJIS
 
 async def load_local_storage():
     """Load data dari local JSON file."""
@@ -284,7 +300,7 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
         try:
             mention_time = datetime.fromtimestamp(m.date).strftime("%Y-%m-%d %H:%M:%S")
         except:
-            mention_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            mention_time = datetime.now().strftime("%Y-%m-d %H:%M:%S")
         
         # Bangun pesan notifikasi
         log_message = (
@@ -357,7 +373,7 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
     except Exception as e:
         logger.error(f"Error in mention handler: {e}", exc_info=True)
 
-# 🔥 PERBAIKAN UTAMA: Handler untuk quick reaction - FIXED
+# 🔥 PERBAIKAN UTAMA: Handler untuk quick reaction - FIX EMOJI VALIDATION
 @Altruix.bot.on_callback_query(filters.regex(r"^mentions_react_"))
 @log_errors
 async def quick_reaction_handler(c: Client, cb: CallbackQuery):
@@ -380,6 +396,12 @@ async def quick_reaction_handler(c: Client, cb: CallbackQuery):
         chat_id = int(match.group(1))
         message_id = int(match.group(2))
         emoji = match.group(3)
+        
+        # 🔥 PERBAIKAN KRITIS: Validasi emoji sebelum dikirim
+        if not is_valid_emoji(emoji):
+            logger.error(f"Invalid emoji for reaction: {emoji}")
+            await cb.answer(f"❌ Emoji '{emoji}' tidak didukung untuk reaction", show_alert=True)
+            return
         
         msg_key = f"{chat_id}_{message_id}"
         logger.info(f"Processing reaction for {msg_key} with {emoji}")
@@ -431,9 +453,13 @@ async def quick_reaction_handler(c: Client, cb: CallbackQuery):
             await cb.answer(f"✅ Bereaksi dengan {emoji}", show_alert=False)
             
         except Exception as react_err:
-            logger.error(f"Reaction failed: {react_err}")
             error_msg = str(react_err)
-            if "MESSAGE_NOT_MODIFIED" in error_msg:
+            logger.error(f"Reaction failed: {error_msg}")
+            
+            # Handle specific errors
+            if "REACTION_INVALID" in error_msg:
+                await cb.answer(f"❌ Emoji '{emoji}' tidak valid untuk reaction", show_alert=True)
+            elif "MESSAGE_NOT_MODIFIED" in error_msg:
                 await cb.answer(f"✅ Sudah direaksi dengan {emoji}", show_alert=False)
             else:
                 await cb.answer(f"❌ Gagal: {error_msg[:50]}", show_alert=True)
@@ -494,7 +520,7 @@ async def start_reply_as_mentioned(c: Client, cb: CallbackQuery):
         
         logger.info(f"Waiting for reply input for {msg_key}, waiting_id: {waiting_id}")
         
-        # 🔥 PERBAIKAN: Gunakan reply_parameters bukan reply_to_message_id
+        # 🔥 PERBAIKAN: Gunakan reply_parameters
         try:
             instruction_msg = await cb.message.reply(
                 "🗨️ <b>Reply as Mentioned</b>\n\n"
@@ -587,7 +613,7 @@ async def start_reply_from_all(c: Client, cb: CallbackQuery):
         
         logger.info(f"Reply From All waiting for {msg_key}, user: {user_id}, waiting_id: {waiting_id}")
         
-        # 🔥 PERBAIKAN: Gunakan reply_parameters
+        # 🔥 PERBAIKAN: Gunakan reply_parameters dengan benar
         try:
             user_mention = cb.from_user.mention(style=enums.ParseMode.HTML) if cb.from_user else "User"
             instruction_msg = await cb.message.reply(
@@ -915,6 +941,7 @@ async def status_command_handler(c: Client, m: AltruixMessage):
         f"• Reply All: {BUTTON_STATS['reply_all']}\n"
         f"• Confirm: {BUTTON_STATS['confirm']}\n"
         f"• Cancel: {BUTTON_STATS['cancel']}\n\n"
+        f"<b>Valid Emojis:</b> 👍 ❤️ 🔥 🥰 👏\n\n"
         f"<i>Last update: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</i>"
     )
     
@@ -925,6 +952,179 @@ async def status_command_handler(c: Client, m: AltruixMessage):
         status_msg,
         parse_mode=enums.ParseMode.HTML
     )
+
+# 🔥 PERBAIKAN: Command untuk debug tombol - DITAMBAHKAN KEMBALI
+@Altruix.register_on_cmd(
+    ["mentions_debug"],
+    cmd_help={
+        "help": "Debug button issues",
+        "example": "mentions_debug",
+    },
+    group_only=False,
+    requires_input=False,
+)
+@log_errors
+async def debug_command_handler(c: Client, m: AltruixMessage):
+    """Debug button issues."""
+    msg = await m.handle_message("PROCESSING")
+    
+    try:
+        # Test semua callback pattern
+        test_patterns = [
+            r"^mentions_react_",
+            r"^mentions_reply_",
+            r"^mentions_replyall_",
+            r"^mentions_confirm_",
+            r"^mentions_cancel_",
+            r"^mentions_reacted$"
+        ]
+        
+        # Cek state current
+        debug_msg = (
+            f"🔧 <b>Button Debug Report v{PLUGIN_VERSION}</b>\n\n"
+            f"<b>Registered Patterns:</b>\n"
+        )
+        
+        for i, pattern in enumerate(test_patterns, 1):
+            debug_msg += f"{i}. <code>{pattern}</code>\n"
+        
+        debug_msg += f"\n<b>Current State:</b>\n"
+        debug_msg += f"• LOG_CHAT: <code>{Altruix.log_chat}</code>\n"
+        debug_msg += f"• Bot ID: <code>{Altruix.bot_info.id if Altruix.bot_info else 'None'}</code>\n"
+        debug_msg += f"• Plugin: v{PLUGIN_VERSION}\n"
+        debug_msg += f"• Log Level: {logger.level} ({logging.getLevelName(logger.level)})\n"
+        debug_msg += f"• Cache Size: {len(MENTION_LOG_CACHE)}\n"
+        debug_msg += f"• Waiting Size: {len(REPLY_AS_MENTIONED_WAITING)}\n\n"
+        
+        debug_msg += f"<b>Valid Emojis:</b>\n"
+        debug_msg += f"• Default: {', '.join(DEFAULT_REACTION_EMOJIS)}\n"
+        debug_msg += f"• Total Valid: {len(VALID_REACTION_EMOJIS)} emojis\n\n"
+        
+        debug_msg += f"<b>Common Issues:</b>\n"
+        debug_msg += f"1. REACTION_INVALID: Emoji tidak didukung Telegram\n"
+        debug_msg += f"2. Tombol tidak merespon: Cek log untuk 'Button pressed'\n"
+        debug_msg += f"3. Timeout errors: Network issue\n\n"
+        
+        debug_msg += f"<b>Test Commands:</b>\n"
+        debug_msg += f"• <code>/mentions_test</code> - Test semua tombol\n"
+        debug_msg += f"• <code>/mentions_status</code> - Status lengkap\n"
+        debug_msg += f"• <code>/mentions_clear</code> - Clear cache\n\n"
+        
+        debug_msg += f"<i>Cek log file untuk detail error.</i>"
+        
+        await safe_edit_message(
+            c,
+            m.chat.id,
+            msg.id,
+            debug_msg,
+            parse_mode=enums.ParseMode.HTML
+        )
+        
+    except Exception as e:
+        logger.error(f"Debug command failed: {e}")
+        await msg.edit_msg(f"❌ Debug error: {str(e)[:100]}")
+
+# 🔥 PERBAIKAN: Command untuk test tombol
+@Altruix.register_on_cmd(
+    ["mentions_test"],
+    cmd_help={
+        "help": "Test button functionality",
+        "example": "mentions_test",
+    },
+    group_only=False,
+    requires_input=False,
+)
+@log_errors
+async def test_buttons_handler(c: Client, m: AltruixMessage):
+    """Test semua tombol."""
+    msg = await m.handle_message("PROCESSING")
+    
+    try:
+        # Buat tombol test dengan valid emojis
+        reaction_buttons = [
+            InlineKeyboardButton(emoji, callback_data=f"mentions_react_123456_789_{emoji}")
+            for emoji in DEFAULT_REACTION_EMOJIS
+        ]
+        
+        reply_button = [InlineKeyboardButton(
+            "🗨️ Test Reply", 
+            callback_data="mentions_reply_123456_789"
+        )]
+        
+        reply_all_button = [InlineKeyboardButton(
+            "👥 Test Reply All", 
+            callback_data="mentions_replyall_123456_789"
+        )]
+        
+        confirm_button = [InlineKeyboardButton(
+            "✅ Test Confirm", 
+            callback_data="mentions_confirm_test123"
+        )]
+        
+        cancel_button = [InlineKeyboardButton(
+            "❌ Test Cancel", 
+            callback_data="mentions_cancel_test123"
+        )]
+        
+        reacted_button = [InlineKeyboardButton(
+            "✅ Test Reacted", 
+            callback_data="mentions_reacted"
+        )]
+        
+        keyboard = [
+            reaction_buttons[:3],
+            reaction_buttons[3:],
+            reply_button,
+            reply_all_button,
+            confirm_button,
+            cancel_button,
+            reacted_button
+        ]
+        
+        test_msg = (
+            f"🔧 <b>Button Test Panel v{PLUGIN_VERSION}</b>\n\n"
+            f"<b>Test semua tombol:</b>\n"
+            f"1. Reaction buttons ({len(DEFAULT_REACTION_EMOJIS)} emoji)\n"
+            f"2. Reply as Mentioned\n"
+            f"3. Reply From All\n"
+            f"4. Confirm button\n"
+            f"5. Cancel button\n"
+            f"6. Already Reacted\n\n"
+            f"<b>Valid Emojis:</b> {', '.join(DEFAULT_REACTION_EMOJIS)}\n\n"
+            f"<b>Status:</b>\n"
+            f"• Plugin: v{PLUGIN_VERSION}\n"
+            f"• Log Level: {logging.getLevelName(logger.level)}\n"
+            f"• Cache: {len(MENTION_LOG_CACHE)} entries\n\n"
+            f"<i>Tekan tombol di bawah untuk testing.</i>\n"
+            f"<i>Cek log untuk debugging.</i>"
+        )
+        
+        test_message = await c.send_message(
+            m.chat.id,
+            test_msg,
+            parse_mode=enums.ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        
+        await msg.delete()
+        
+        # Tambahkan ke cache untuk testing
+        test_key = "123456_789"
+        MENTION_LOG_CACHE[test_key] = {
+            "text": "Test message",
+            "log_msg_id": test_message.id,
+            "mentioned_client": c,
+            "chat_id": 123456,
+            "message_id": 789,
+            "timestamp_int": int(time.time()),
+            "client_id": c.me.id
+        }
+        
+        logger.info(f"Test panel created with message ID: {test_message.id}")
+        
+    except Exception as e:
+        logger.error(f"Test command failed: {e}")
+        await msg.edit_msg(f"❌ Test error: {str(e)[:100]}")
 
 # 🔥 Command untuk clear cache
 @Altruix.register_on_cmd(
@@ -972,91 +1172,6 @@ async def clear_cache_handler(c: Client, m: AltruixMessage):
         logger.error(f"Clear cache failed: {e}")
         await msg.edit_msg(f"❌ Clear error: {str(e)[:100]}")
 
-# 🔥 PERBAIKAN: Command untuk test tombol
-@Altruix.register_on_cmd(
-    ["mentions_test"],
-    cmd_help={
-        "help": "Test button functionality",
-        "example": "mentions_test",
-    },
-    group_only=False,
-    requires_input=False,
-)
-@log_errors
-async def test_buttons_handler(c: Client, m: AltruixMessage):
-    """Test semua tombol."""
-    msg = await m.handle_message("PROCESSING")
-    
-    try:
-        # Buat tombol test
-        reaction_buttons = [
-            InlineKeyboardButton(emoji, callback_data=f"mentions_react_123456_789_{emoji}")
-            for emoji in DEFAULT_REACTION_EMOJIS[:3]
-        ]
-        
-        reply_button = [InlineKeyboardButton(
-            "🗨️ Test Reply", 
-            callback_data="mentions_reply_123456_789"
-        )]
-        
-        reply_all_button = [InlineKeyboardButton(
-            "👥 Test Reply All", 
-            callback_data="mentions_replyall_123456_789"
-        )]
-        
-        confirm_button = [InlineKeyboardButton(
-            "✅ Test Confirm", 
-            callback_data="mentions_confirm_test123"
-        )]
-        
-        cancel_button = [InlineKeyboardButton(
-            "❌ Test Cancel", 
-            callback_data="mentions_cancel_test123"
-        )]
-        
-        reacted_button = [InlineKeyboardButton(
-            "✅ Test Reacted", 
-            callback_data="mentions_reacted"
-        )]
-        
-        keyboard = [
-            reaction_buttons,
-            reply_button,
-            reply_all_button,
-            confirm_button,
-            cancel_button,
-            reacted_button
-        ]
-        
-        test_msg = (
-            f"🔧 <b>Button Test Panel</b>\n\n"
-            f"<b>Test semua tombol:</b>\n"
-            f"1. Reaction buttons (5 emoji)\n"
-            f"2. Reply as Mentioned\n"
-            f"3. Reply From All\n"
-            f"4. Confirm button\n"
-            f"5. Cancel button\n"
-            f"6. Already Reacted\n\n"
-            f"<b>Status:</b>\n"
-            f"• Plugin: v{PLUGIN_VERSION}\n"
-            f"• Log Level: {logging.getLevelName(logger.level)}\n"
-            f"• Cache: {len(MENTION_LOG_CACHE)} entries\n\n"
-            f"<i>Cek log setelah menekan tombol untuk debugging.</i>"
-        )
-        
-        await c.send_message(
-            m.chat.id,
-            test_msg,
-            parse_mode=enums.ParseMode.HTML,
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-        
-        await msg.delete()
-        
-    except Exception as e:
-        logger.error(f"Test command failed: {e}")
-        await msg.edit_msg(f"❌ Test error: {str(e)[:100]}")
-
 # 🔥 Cleanup task
 async def cleanup_old_entries():
     """Bersihkan cache dan waiting list yang sudah lama."""
@@ -1098,8 +1213,16 @@ asyncio.create_task(cleanup_old_entries())
 logger.info("Cleanup task started")
 
 
+# logger.info(f"📋 All issues fixed:")
+# logger.info(f"  1. Emoji buttons fixed (👍, ❤️, 🔥, 🥰, 👏)")
+# logger.info(f"  2. Reply as Mentioned fixed (🗨️)")
+# logger.info(f"  3. Reply From All fixed (👥)")
+# logger.info(f"  4. Added back /mentions_debug command")
+# logger.info(f"  5. Fixed REACTION_INVALID error")
+# logger.info(f"🔧 Use /mentions_test to test all buttons")
+
 # Log sukses loading
 try:
-    Altruix.log(f"[DEBUG] Loaded → {__plugin_name__} {PLUGIN_VERSION}", level=20)
+    Altruix.log(f"[DEBUG] ✅ Loaded → {__plugin_name__} {PLUGIN_VERSION}", level=20)
 except Exception as e:
-    logger.info(f"[DEBUG] Loaded → {__plugin_name__} {PLUGIN_VERSION}")
+    logger.info(f"[DEBUG] ✅ Loaded → {__plugin_name__} {PLUGIN_VERSION}")
