@@ -1,14 +1,14 @@
-# qwen
+# qwen client.py
 # Copyright (C) 2021-present by Altruix@Github, < https://github.com/Altruix >.
-#
+# 
 # This file is part of < https://github.com/Altruix/Altruix > project,
 # and is released under the "GNU v3.0 License Agreement".
 # Please see < https://github.com/Altriux/Altruix/blob/main/LICENSE >
-#
+# 
 # All rights reserved.
 import os
 import sys
-import subprocess  
+import subprocess
 import glob
 import html
 import time
@@ -55,23 +55,20 @@ from pyrogram.types import LinkPreviewOptions
 from pyrogram.errors import FloodWait
 
 # ✅ PERUBAHAN 1: Prioritaskan env vars Sevalla untuk deteksi branch/commit yang akurat
-#    - Cek SVL_DEPLOYMENT_BRANCH dan SVL_DEPLOYMENT_COMMIT_SHA terlebih dahulu (spesifik Sevalla).
-#    - Fallback ke deteksi Git manual jika env var tidak ada (untuk kompatibilitas lokal/Heroku/lainnya).
-#    - Selalu ambil short commit (7 char) untuk konsistensi.
-#    - Jika gagal total, tampilkan "unknown (unknown)".
 def get_current_git_branch() -> str:
     """Deteksi branch Git secara akurat + commit hash pendek, prioritas env vars Sevalla."""
     branch_name = "unknown"
     commit_hash = "unknown"
-
+    
     # ✅ PRIORITAS 1: Cek env vars Sevalla (runtime deployment info)
     sevalla_branch = os.getenv("SVL_DEPLOYMENT_BRANCH")
     sevalla_commit = os.getenv("SVL_DEPLOYMENT_COMMIT_SHA")
+    
     if sevalla_branch:
         branch_name = sevalla_branch
     if sevalla_commit:
-        commit_hash = sevalla_commit[:7]  # Short commit: 7 char
-
+        commit_hash = sevalla_commit[:7] # Short commit: 7 char
+    
     # ✅ PRIORITAS 2: Jika env vars Sevalla tidak ada, fallback ke deteksi Git
     if branch_name == "unknown" or commit_hash == "unknown":
         try:
@@ -82,7 +79,7 @@ def get_current_git_branch() -> str:
             )
             if result.returncode == 0:
                 commit_hash = result.stdout.strip()[:7]
-
+            
             # Deteksi branch name
             if branch_name == "unknown":
                 result = subprocess.run(
@@ -108,13 +105,11 @@ def get_current_git_branch() -> str:
                                     branch_name = head_content.replace("ref: refs/heads/", "")
                         except (FileNotFoundError, OSError):
                             pass
-
         except (FileNotFoundError, subprocess.SubprocessError, OSError, subprocess.TimeoutExpired):
-            pass  # Biarkan tetap "unknown"
-
+            pass # Biarkan tetap "unknown"
+    
     # Format akhir: branch (commit)
     return f"{branch_name} [{commit_hash}]"
-
 
 class AltruixClient:
     def __init__(self, *args, **kwargs) -> None:
@@ -123,7 +118,7 @@ class AltruixClient:
         self.clients: List[Client] = []
         self.cmd_list = {}
         self.all_lang_strings = {}
-        self.__version__ = "0.0.4"
+        self.__version__ = "0.0.4.1"
         self.selected_lang = "english"
         self.local_lang_file = "./Main/localization"
         self.cmd_list = {}
@@ -146,23 +141,36 @@ class AltruixClient:
         self.config = Config(self.db.env_col, loop=self.loop, executor=self.executor)
         self.log_chat = None
         self._command_help_message_data = {}
+        
+        # ✅ PERBAIKAN: Setup signal handlers untuk graceful shutdown
+        if sys.platform != "win32":
+            try:
+                import signal
+                self.loop.add_signal_handler(
+                    signal.SIGINT, 
+                    lambda: asyncio.create_task(self.graceful_shutdown("SIGINT"))
+                )
+                self.loop.add_signal_handler(
+                    signal.SIGTERM,
+                    lambda: asyncio.create_task(self.graceful_shutdown("SIGTERM"))
+                )
+            except (NotImplementedError, ImportError):
+                pass
+        
         self.loop.run_until_complete(self._setup(restart=False, *args, **kwargs))
 
     async def update_cache(self):
         cache = Cache(self.config, self.db, self.clients)
         await cache.update_auto_post_cache()
-        # await cache.init_all_custom_files()
 
     @property
     def banner(self):
         return f"""
-     _    _ _              _
-    / \\  | | |_ _ __ _   _(_)_  __
-   / _ \\ | | __| '__| | | | \\ \\/ /
-  / ___ \\| | |_| |  | |_| | |>  <
- /_/   \\_\\_|\\__|_|   \\__,_|_/_/\\_\\
-
-
+     * _ _ _
+    / \ | | |* _ __ _ *(*)* __
+   / _ \ | | **| '**| | | | \ \/ /
+  / ___ \| | |*| | | |*| | |> <
+ //*/ \*\*|\**|_| \**,**/*/\*\
  (C) Project-Altruix 2021-{datetime.today().year}
         """
 
@@ -272,7 +280,6 @@ class AltruixClient:
         custom_filters &= ~filters.command(
             self.cmd_list_s, [self.user_command_handler, self.sudo_cmd_handler]
         )
-
         def decorator(func):
             async def wrapper(client, message: Message):
                 if str(message.chat.type).lower().startswith("chattype."):
@@ -286,7 +293,6 @@ class AltruixClient:
                     raise StopPropagation from e
                 except ContinuePropagation as e:
                     raise ContinuePropagation from e
-
             self.custom_add_handler(
                 cmd=None,
                 func_=wrapper,
@@ -295,7 +301,6 @@ class AltruixClient:
                 bot_mode_unsupported=bot_mode_unsupported,
             )
             return wrapper
-
         return decorator
 
     async def update_on_startup(self):
@@ -331,7 +336,7 @@ class AltruixClient:
         await self.install_apm_from_file()
         mc = self.db.make_collection("packages")
         APM_ = APM(self)
-        packages_ = await mc.find_one({"_id": "APM"})
+        packages_ = await mc.find_one({"*id": "APM"})
         if (packages_) and packages_.get("installed_packages"):
             list_of_packages = packages_["installed_packages"]
             for package in list_of_packages:
@@ -357,18 +362,14 @@ class AltruixClient:
         requires_input: bool = False,
         requires_reply: bool = False,
         bot_mode_unsupported: bool = False,
-        # Incase a command can't be performed by an bot.
         group=1,
         disallow_if_sender_is_channel=False,
     ):
         if isinstance(cmd, str):
             cmd = [cmd]
-
         self.cmd_list_s.extend(cmd)
-
         previous_stack_frame = inspect.stack()[1]
         file_name = os.path.basename(previous_stack_frame.filename.replace(".py", ""))
-
         self.add_help_to_command_list(
             commands=cmd,
             file_name=file_name,
@@ -379,7 +380,6 @@ class AltruixClient:
             channel_only=channel_only,
             private_only=pm_only,
         )
-
         def decorator(func):
             async def wrapper(client, message: Message):
                 if str(message.chat.type).lower().startswith("chattype."):
@@ -422,20 +422,25 @@ class AltruixClient:
                         pass
                     except ContinuePropagation as e:
                         raise ContinuePropagation from e
+                    except FloodWait as e:
+                        self.log(f"FloodWait: {e.value}s untuk command {cmd}")
+                        await asyncio.sleep(e.value)
                     except Exception as _be:
-                        # ✅ PERBAIKAN 2: JANGAN PERNAH `raise` DI SINI!
-                        # Jika pengiriman error gagal, cukup log — jangan ganggu event loop!
+                        # ✅ LOG ERROR TAPI JANGAN CRASH
+                        error_msg = f"Command '{cmd}' error: {type(_be).__name__}: {str(_be)[:100]}"
+                        self.log(error_msg, level=logging.ERROR)
+                        
+                        # Coba kirim error ke user
                         try:
-                            await self.send_error(
-                                client, cmd, format_exc(), file_name=file_name
-                            )
+                            await message.edit(f"❌ Error: {type(_be).__name__}")
+                        except:
+                            pass
+                        
+                        # Coba kirim error log
+                        try:
+                            await self.send_error(client, cmd, str(_be)[:500], file_name)
                         except Exception as send_err:
-                            self.log(
-                                f"Failed to report error for command {cmd}: {send_err}. Original error: {_be}",
-                                level=logging.ERROR
-                            )
-                        # TIDAK ADA raise — biarkan handler selesai dengan aman
-
+                            self.log(f"Failed to send error report: {send_err}", level=logging.DEBUG)
             disabled_sudo = False
             if not self.training_wheels_protocol:
                 if disabled_sudo := (
@@ -449,7 +454,6 @@ class AltruixClient:
                     else False
                 ):
                     self.log(f"Not Loading - Disabled : {cmd[0]} For sudo!")
-
             self.custom_add_handler(
                 cmd,
                 wrapper,
@@ -458,7 +462,6 @@ class AltruixClient:
                 bot_mode_unsupported=bot_mode_unsupported,
             )
             return wrapper
-
         return decorator
 
     def add_help_to_command_list(
@@ -479,7 +482,6 @@ class AltruixClient:
         user_args = help_map.get("user_args")
         if isinstance(commands, str):
             commands = [commands]
-
         if file_name not in self.cmd_list:
             self.cmd_list[file_name] = [
                 {
@@ -532,7 +534,6 @@ class AltruixClient:
                 client.add_handler(
                     MessageHandler(func_, filters=basic_filters), group=group
                 )
-
         if self.bot_mode and not bot_mode_unsupported and not self.loaded_bot_cmds:
             bot_f = filter_s or filters.user(self.auth_users) & filters.command(
                 list(cmd), ["!", "/", "|"]
@@ -558,42 +559,208 @@ class AltruixClient:
             await self.initialize_telegram_sessions(*args, **kwargs)
         await self.update_cache()
 
-    #
     async def _run(self):
-        # ✅ PERBAIKAN 1: Gunakan LOOP TAK HINGGA agar bot tidak pernah exit karena crash
+        """Main loop dengan state management dan restart terkontrol"""
+        restart_count = 0
+        last_restart_time = 0
+        MAX_RESTARTS_PER_HOUR = 5
+        
         while True:
             try:
+                current_time = time.time()
+                
+                # ✅ CEK RESTART BERLEBIHAN
+                if current_time - last_restart_time < 3600:
+                    restart_count += 1
+                    if restart_count >= MAX_RESTARTS_PER_HOUR:
+                        self.log("❌ RESTART BERLEBIHAN! Menunggu 10 menit...", level=logging.CRITICAL)
+                        await asyncio.sleep(600)
+                        restart_count = 0
+                else:
+                    restart_count = 0
+                    
+                last_restart_time = current_time
+                
+                # ✅ LOAD MODUL
                 await self.load_all_modules()
                 print(self.banner)
-                self.log(
-                    f"Altruix v{self.__version__} has been successfully deployed with pyrogram version v{pyrogram_version}!"
-                )
+                branch_info = get_current_git_branch()
+                self.log(f"🌿 Branch: {branch_info}")
+                self.log(f"🚀 Altruix v{self.__version__} berjalan!")
+                
                 if self.training_wheels_protocol:
-                    self.log(
-                        "Altruix is in [TWP], all the userbot features will be disabled!",
-                        level=30,
-                    )
-                    self.log("Start the bot to learn how to disable it.", level=30)
-                await idle()
+                    self.log("⚠️ Altruix is in [TWP] mode - userbot features disabled!", level=30)
+                
+                # ✅ HEALTH CHECK SEBELUM IDLE
+                await self._health_check()
+                
+                # ✅ JALANKAN IDLE DENGAN MONITORING
+                await self._safe_idle()
+                
+                # Jika idle berhenti tanpa error, keluar dari loop
+                self.log("🛑 Idle stopped, shutting down...")
+                break
+                
             except KeyboardInterrupt:
-                self.log("Received keyboard interrupt. Shutting down...")
+                self.log("👋 Received keyboard interrupt. Shutting down gracefully...")
                 break
             except Exception as e:
-                error_msg = f"CRITICAL: _run crashed: {traceback.format_exc()}"
-                self.log(error_msg, level=50)
+                error_msg = f"🔥 CRITICAL ERROR: {type(e).__name__}: {str(e)[:200]}"
+                self.log(error_msg, level=logging.CRITICAL)
+                self.log(f"📋 Traceback: {traceback.format_exc()}", level=logging.DEBUG)
+                
                 try:
-                    log_chat = int(os.getenv("LOG_CHAT_ID", self.config.OWNER_ID))
-                    await self.bot.send_message(
-                        log_chat,
-                        f"💥 <b>Altruix Runtime Crash</b>\n<code>{str(e)}</code>",
-                        link_preview_options=LinkPreviewOptions(is_disabled=True)
-                    )
+                    # Kirim notifikasi error
+                    if hasattr(self, 'bot') and self.bot.is_connected:
+                        await self.bot.send_message(
+                            self.config.OWNER_ID,
+                            f"⚠️ <b>Altruix Runtime Error</b>\n"
+                            f"• Error: <code>{type(e).__name__}</code>\n"
+                            f"• Pesan: {str(e)[:100]}\n"
+                            f"• Waktu: {datetime.now().strftime('%H:%M:%S')}\n"
+                            f"• Restart ke: {restart_count}",
+                            link_preview_options=LinkPreviewOptions(is_disabled=True)
+                        )
                 except Exception:
                     pass
-                # ❌ HAPUS: raise
-                # ✅ PERBAIKAN: Jangan pernah lempar ulang — cukup restart idle loop
-                self.log("Restarting main loop in 10 seconds due to crash...", level=30)
-                await asyncio.sleep(10)
+                
+                # ✅ DELAY ANTAR RESTART (exponential backoff)
+                delay = min(300, 10 * (2 ** restart_count))
+                self.log(f"⏳ Restart dalam {delay} detik... (Restart #{restart_count})", level=logging.WARNING)
+                await asyncio.sleep(delay)
+
+    async def _safe_idle(self):
+        """Idle dengan heartbeat dan monitoring"""
+        try:
+            # Buat task untuk monitoring
+            monitor_task = asyncio.create_task(self._monitor_connections())
+            health_task = asyncio.create_task(self._heartbeat_monitor())
+            
+            # Jalankan idle
+            await idle()
+            
+            # Bersihkan task
+            monitor_task.cancel()
+            health_task.cancel()
+            
+            try:
+                await asyncio.gather(monitor_task, health_task, return_exceptions=True)
+            except asyncio.CancelledError:
+                pass
+                
+        except asyncio.CancelledError:
+            self.log("Monitoring tasks cancelled")
+        except Exception as e:
+            raise e
+
+    async def _monitor_connections(self):
+        """Monitor koneksi client secara berkala"""
+        while True:
+            try:
+                await asyncio.sleep(60)
+                
+                # Cek koneksi bot
+                if hasattr(self, 'bot') and not self.bot.is_connected:
+                    self.log("🤖 Bot disconnected, attempting reconnect...")
+                    try:
+                        await self.bot.start()
+                    except Exception as e:
+                        self.log(f"Failed to reconnect bot: {e}")
+                
+                # Cek koneksi user sessions
+                for idx, client in enumerate(self.clients):
+                    if not client.is_connected:
+                        self.log(f"👤 User session {idx} disconnected")
+                        # Bisa coba reconnect di sini jika perlu
+                        
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                self.log(f"Monitor error: {e}", level=logging.DEBUG)
+
+    async def _heartbeat_monitor(self):
+        """Kirim heartbeat untuk memastikan bot hidup"""
+        while True:
+            try:
+                await asyncio.sleep(300)
+                
+                uptime = Essentials.get_readable_time(time.time() - self.start_time)
+                self.log(f"💓 Heartbeat - Uptime: {uptime}")
+                
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                self.log(f"Heartbeat error: {e}", level=logging.DEBUG)
+
+    async def _health_check(self):
+        """Cek kesehatan semua komponen sebelum idle"""
+        checks_passed = 0
+        total_checks = 0
+        
+        # Cek database
+        try:
+            await self.db.ping()
+            self.log("✅ Database connection: OK")
+            checks_passed += 1
+        except Exception as e:
+            self.log(f"❌ Database connection: FAILED - {e}", level=logging.ERROR)
+        total_checks += 1
+        
+        # Cek bot connection
+        try:
+            if hasattr(self, 'bot') and self.bot.is_connected:
+                await self.bot.get_me()
+                self.log("✅ Bot connection: OK")
+                checks_passed += 1
+        except Exception as e:
+            self.log(f"❌ Bot connection: FAILED - {e}", level=logging.ERROR)
+        total_checks += 1
+        
+        # Cek user sessions
+        for idx, client in enumerate(self.clients):
+            try:
+                if client.is_connected:
+                    await client.get_me()
+                    self.log(f"✅ User session {idx}: OK")
+                    checks_passed += 1
+            except Exception as e:
+                self.log(f"❌ User session {idx}: FAILED - {e}", level=logging.WARNING)
+            total_checks += 1
+        
+        success_rate = (checks_passed / total_checks * 100) if total_checks > 0 else 0
+        self.log(f"📊 Health Check: {checks_passed}/{total_checks} passed ({success_rate:.1f}%)")
+        
+        if success_rate < 50:
+            self.log("⚠️ Health check warning: Beberapa komponen bermasalah", level=logging.WARNING)
+            return False
+        return True
+
+    async def graceful_shutdown(self, signal=None):
+        """Shutdown yang aman"""
+        self.log(f"🚦 Received shutdown signal: {signal}")
+        
+        try:
+            # Stop semua clients
+            for client in self.clients:
+                try:
+                    await client.stop()
+                except:
+                    pass
+            
+            # Stop bot
+            if hasattr(self, 'bot') and self.bot.is_connected:
+                await self.bot.stop()
+                
+            # Stop executor
+            self.executor.shutdown(wait=True)
+            
+            self.log("✅ Shutdown completed gracefully")
+            
+        except Exception as e:
+            self.log(f"❌ Error during shutdown: {e}", level=logging.ERROR)
+        
+        # Keluar dari program
+        sys.exit(0)
 
     async def _test(self):
         dev_chat_id = -1002653859864
@@ -639,7 +806,6 @@ class AltruixClient:
         except Exception as e:
             self.log(f"CRITICAL: Failed to start bot assistant: {e}", level=50)
             raise
-
         try:
             if string_sessions := self.config.SESSIONS:
                 self.log("User session was found locally, syncing in progress...")
@@ -647,7 +813,6 @@ class AltruixClient:
             else:
                 self.log("Searching in DB for a user session...")
                 string_sessions = await self.config.get_env_from_db("SESSIONS")
-
             if not string_sessions:
                 self.training_wheels_protocol = True
                 self.log(
@@ -671,7 +836,6 @@ class AltruixClient:
                 self.log("User Session found, using it!")
                 total_sessions = len(string_sessions)
                 unloaded_sessions = []
-
                 for count, each in enumerate(string_sessions):
                     try:
                         client = await Client(
@@ -701,14 +865,11 @@ class AltruixClient:
                         self.log(f"[{count + 1}/{total_sessions}] Session Unloaded: {err}", level=50)
                         self.log("became unusable, please re-add the session using the assistant bot.")
                         unloaded_sessions.append(each)
-
                 for bad_session in unloaded_sessions:
                     await self.config.pop_element_from_list("SESSIONS", bad_session)
-
                 if not self.clients:
                     await self.config.del_env_from_db("SESSIONS")
                     self.training_wheels_protocol = True
-
             # =============================================
             # SEMUA CLIENT (BOT + USER SESSION) KIRIM PESAN STARTUP KE LOG_CHAT_ID
             # =============================================
@@ -716,7 +877,7 @@ class AltruixClient:
                 # ✅ PERBAIKAN 3: Validasi LOG_CHAT_ID sebelum digunakan
                 try:
                     log_chat_id = int(BaseConfig.LOG_CHAT_ID)
-                    await self.bot.get_chat(log_chat_id)  # Pastikan bot bisa akses
+                    await self.bot.get_chat(log_chat_id) # Pastikan bot bisa akses
                 except (PeerIdInvalid, UserNotParticipant, ValueError) as ve:
                     self.log(f"LOG_CHAT_ID tidak valid atau bot tidak bisa akses: {ve}", level=40)
                     log_chat_id = None
@@ -727,7 +888,6 @@ class AltruixClient:
                     success_count = 0
                     failed_clients = []
                     self.log(f"Mencoba kirim startup log dari {len(all_clients)} client ke LOG_CHAT_ID...")
-
                     for client in all_clients:
                         try:
                             me = client.myself if hasattr(client, "myself") else await client.get_me()
@@ -736,19 +896,16 @@ class AltruixClient:
                             user_id = me.id
                             client_type = "🤖 Bot" if client == self.bot else "🦸🏼 Ubot"
                             mention_user = f'<a href="tg://user?id={user_id}">{name}</a>'
-
                             total_user_sessions = len(self.clients)
                             if client == self.bot:
                                 base_text = f"<b>✅ Altruix Bot Assistant is alive!</b>"
                             else:
                                 user_index = self.clients.index(client) + 1
                                 base_text = f"<b>✅ Altruix Userbot [{user_index}/{total_user_sessions}] is alive!</b>"
-
                             personal_message = (
                                 f"{base_text}\n"
                                 f"<b>{client_type}: {mention_user}</b> [ <code>{user_id}</code> ]\n"
                             )
-
                             await client.send_message(
                                 chat_id=log_chat_id,
                                 text=personal_message,
@@ -769,16 +926,14 @@ class AltruixClient:
                             client_type = "Bot" if client == self.bot else "User"
                             failed_clients.append(f"• <b>{name}{username}</b> → {error_type}")
                             self.log(f"GAGAL: [{client_type}] {name}{username} → {error_type}: {error_msg}")
-
                     self.log("=== RINGKASAN PENGIRIMAN STARTUP LOG ===")
                     self.log(f"Berhasil kirim: {success_count}/{len(all_clients)} client")
                     if failed_clients:
                         self.log("Client yang gagal:")
                         for fail in failed_clients:
-                            self.log(f"   {fail}")
+                            self.log(f" {fail}")
                     else:
                         self.log(f"SEMUA client berhasil mengirim pesan ke LOG_CHAT_ID: {log_chat_id}")
-
                     if success_count > 0:
                         try:
                             branch = get_current_git_branch()
@@ -797,7 +952,6 @@ class AltruixClient:
                             self.log(f"Ringkasan akhir berhasil dikirim. Branch: {branch}, Versi: {altruix_version}")
                         except Exception as e:
                             self.log(f"Gagal kirim ringkasan startup log: {e}", level=logging.ERROR)
-
         except Exception as e:
             self.log(f"CRITICAL: Session initialization failed: {e}", level=50)
             raise
@@ -872,7 +1026,6 @@ class AltruixClient:
         self.log(
             f"Altruix have been {'reloaded' if soft else 'restarted'} successfully!"
         )
-        # ❌ Jangan panggil idle() di sini — biarkan _run() yang mengatur idle loop
 
     async def send_error(
         self,
@@ -884,7 +1037,7 @@ class AltruixClient:
     ):
         chat_id = self.log_chat
         cmd_handler = self.config.CMD_HANDLER
-        headers = self.get_string("ERROR_")
+        headers = self.get_string("ERROR*")
         if isinstance(cmd, list):
             cmd = cmd[0]
         if not chat_id:
@@ -955,7 +1108,7 @@ class AltruixClient:
                                 + "] Loaded "
                                 + concatenate(plugin_name, " " * 30, " ")
                                 + "["
-                                + concatenate(str(end_time), "    ", "0")
+                                + concatenate(str(end_time), " ", "0")
                                 + "s]"
                             )
                             if msg:
@@ -1032,7 +1185,6 @@ class AltruixClient:
                 )
             except Exception:
                 pass
-            # Biarkan error terlihat di console saat startup, tapi tidak akan menghentikan _run() loop
 
     def run(self):
         self.loop.run_until_complete(self._run())
@@ -1075,20 +1227,20 @@ class AltruixClient:
                                     requires_input = arg_data.get("requires_input", False)
                                     self._command_help_message_data[
                                         plugin_name
-                                    ] += f"   <code>-{arg_name}</code> - {help_txt}{' [need input]' if requires_input else ''}\n"
+                                    ] += f" <code>-{arg_name}</code> - {help_txt}{' [need input]' if requires_input else ''}\n"
                                 else:
                                     self._command_help_message_data[
                                         plugin_name
-                                    ] += f"   <code>{arg_data}</code>\n"
+                                    ] += f" <code>{arg_data}</code>\n"
                         elif isinstance(user_args, dict):
                             for arg_flag, arg_help in user_args.items():
                                 self._command_help_message_data[
                                     plugin_name
-                                ] += f"   <code>{arg_flag}</code> - {arg_help}\n"
+                                ] += f" <code>{arg_flag}</code> - {arg_help}\n"
                         else:
                             self._command_help_message_data[
                                 plugin_name
-                            ] += f"   <i>{str(user_args)}</i>\n"
+                            ] += f" <i>{str(user_args)}</i>\n"
             except Exception as e:
                 self.log(
                     f"Failed to prepare help for plugin '{plugin_name}': {e}",
@@ -1097,4 +1249,4 @@ class AltruixClient:
                 self._command_help_message_data[plugin_name] = (
                     f"<b>⚠️ Error loading help for '{plugin_name}'</b>\n"
                     f"<code>{str(e)}</code>"
-            )
+        )
