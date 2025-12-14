@@ -1,3 +1,4 @@
+# settings.py
 # Copyright (C) 2021-present by Altruix@Github, < https://github.com/Altruix/Altruix   >
 #
 # This file is part of < https://github.com/Altruix/Altruix   > project,
@@ -29,10 +30,16 @@ from datetime import datetime
 import io
 import re
 
+# ✅ IMPORT BARU UNTUK CEK LIMIT
+from pyrogram.errors import UserIsBlocked as BotBlocked  # Alias agar tidak bentrok
+
 # Dictionary untuk menyimpan state konfirmasi user
 user_confirmation_state = {}
 user_text_confirmation_state = {}
 user_bulk_join_state = {}  # State untuk bulk join
+
+# ✅ TAMBAHAN STATE UNTUK CEK LIMIT (per session)
+user_limit_check_state = {}  # {user_id: {'session_index': int, 'page': int}}
 
 settings_menu_buttons = [
     [
@@ -1217,7 +1224,7 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery):
         "Yes" if is_scam else "No",
     )
     
-    # PERUBAHAN: Tambah tombol "Join Log Group"
+    # ✅ PERUBAHAN: Tambahkan tombol "🔍 Check Limit" di baris terpisah
     await cb.message.edit(
         text=txt,
         reply_markup=InlineKeyboardMarkup(
@@ -1237,11 +1244,97 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery):
                     InlineKeyboardButton("📢 Join Log Group", f"join_log_group_{index}"),
                 ],
                 [
+                    InlineKeyboardButton("🔍 Check Limit", f"check_limit_confirm_{index}_{callback_page}"),  # ✅ TOMBOL BARU
+                ],
+                [
                     InlineKeyboardButton("🔙 Back", f"sessions_list_{callback_page}"),
                 ],
             ]
         ),
     )
+
+
+# ✅ HANDLER BARU: Konfirmasi Check Limit
+@Altruix.bot.on_callback_query(filters.regex(r"check_limit_confirm_(\d+)_(\d+)"))
+@log_errors
+async def check_limit_confirmation_handler(c: Client, cb: CallbackQuery):
+    await cb.answer()
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+
+    confirmation_buttons = [
+        [
+            InlineKeyboardButton("✅ Yes, Check Limit", f"check_limit_execute_{index}_{page}"),
+            InlineKeyboardButton("❌ Cancel", f"session_info_{index}_{page}")
+        ]
+    ]
+
+    await cb.message.edit(
+        text="🔍 <b>Konfirmasi Check Limit</b>\n\n"
+             "Akun ini akan mengirim pesan ke @SpamBot untuk mengecek status limit.\n\n"
+             "⚠️ <b>Catatan:</b>\n"
+             "• Proses ini aman dan resmi dari Telegram\n"
+             "• Hanya memicu respons otomatis dari @SpamBot\n"
+             "• Hasil akan ditampilkan di sini",
+        reply_markup=InlineKeyboardMarkup(confirmation_buttons),
+        parse_mode=ParseMode.HTML
+    )
+
+# ✅ HANDLER BARU: Eksekusi Check Limit
+@Altruix.bot.on_callback_query(filters.regex(r"check_limit_execute_(\d+)_(\d+)"))
+@log_errors
+async def check_limit_execute_handler(c: Client, cb: CallbackQuery):
+    await cb.answer("🔍 Sedang mengecek limit...", show_alert=True)
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+
+    if index >= len(Altruix.clients):
+        await cb.message.edit("❌ Session tidak ditemukan.")
+        return
+
+    session_client = Altruix.clients[index]
+    session_info = getattr(session_client, 'myself', None) or await session_client.get_me()
+
+    await cb.message.edit("🔄 Mengirim /start ke @SpamBot...")
+
+    try:
+        # Kirim /start ke SpamBot untuk memicu respons
+        await session_client.send_message("spambot", "/start")
+        await asyncio.sleep(6)  # Tunggu respons masuk
+
+        # Ambil history chat dengan SpamBot
+        messages = [msg async for msg in session_client.get_chat_history("spambot", limit=15)]
+        bot_responses = [msg.text for msg in messages if msg.from_user and not msg.outgoing]
+
+        if bot_responses:
+            latest_response = bot_responses[0].strip()
+            if "Good news" in latest_response and "no limits" in latest_response:
+                result_text = "✅ <b>Akun BEBAS dari limit!</b>\n\n" + html.escape(latest_response)
+            else:
+                result_text = "⚠️ <b>Akun TERKENA LIMIT!</b>\n\n" + html.escape(latest_response)
+        else:
+            result_text = "❌ Tidak ada respons dari @SpamBot (mungkin belum pernah di-start)."
+
+        await cb.message.edit(
+            text=f"<b>🔍 Hasil Check Limit</b>\n\n"
+                 f"<b>Akun:</b> {html.escape(session_info.first_name or 'Unknown')}\n"
+                 f"<b>ID:</b> <code>{session_info.id}</code>\n\n"
+                 f"{result_text}",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 Back to Session Info", f"session_info_{index}_{page}")]
+            ]),
+            parse_mode=ParseMode.HTML
+        )
+
+    except BotBlocked:
+        await cb.message.edit("❌ Akun ini diblokir oleh @SpamBot (kemungkinan limit permanen atau sebelumnya terkena spam berat).")
+
+    except FloodWait as e:
+        await cb.message.edit(f"⏳ FloodWait! Akun ini harus menunggu {e.value} detik sebelum bisa mengirim pesan lagi.")
+
+    except Exception as e:
+        await cb.message.edit(f"❌ Gagal mengecek limit: {html.escape(str(e))}")
+        Altruix.log(f"Error check limit session {index}: {e}", level=logging.ERROR)
 
 
 @Altruix.bot.on_callback_query(filters.regex("test_ping_(\\d+)$"))
