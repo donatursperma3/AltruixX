@@ -172,11 +172,12 @@ class AltruixClient:
     @property
     def banner(self):
         return f"""
-     * _ _ _
-    / \ | | |* _ __ _ *(*)* __
-   / _ \ | | **| '**| | | | \ \/ /
-  / ___ \| | |*| | | |*| | |> <
- //*/ \*\*|\**|_| \**,**/*/\*\
+     _    _ _              _
+    / \\  | | |_ _ __ _   _(_)_  __
+   / _ \\ | | __| '__| | | | \\ \\/ /
+  / ___ \\| | |_| |  | |_| | |>  <
+ /_/   \\_\\_|\\__|_|   \\__,_|_/_/\\_\\
+
  (C) Project-Altruix 2021-{datetime.today().year}
         """
 
@@ -1411,4 +1412,4 @@ class AltruixClient:
                 self._command_help_message_data[plugin_name] = (
                     f"<b>⚠️ Error loading help for '{plugin_name}'</b>\n"
                     f"<code>{str(e)}</code>"
-            )
+        )
