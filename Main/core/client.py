@@ -53,6 +53,11 @@ from pyrogram.errors.exceptions.bad_request_400 import (
     MessageNotModified, UserNotParticipant)
 from pyrogram.types import LinkPreviewOptions
 from pyrogram.errors import FloodWait
+# Tambahkan di bagian import (setelah import lainnya)
+import psutil
+import resource
+import platform
+from datetime import datetime
 
 # ✅ PERUBAHAN 1: Prioritaskan env vars Sevalla untuk deteksi branch/commit yang akurat
 def get_current_git_branch() -> str:
@@ -559,6 +564,64 @@ class AltruixClient:
             await self.initialize_telegram_sessions(*args, **kwargs)
         await self.update_cache()
 
+
+    def get_system_stats(self) -> dict:
+        try:
+            import psutil
+            stats = {
+                "cpu": {
+                    "percent": round(psutil.cpu_percent(interval=0.5), 1),
+                    "cores": psutil.cpu_count(logical=False),
+                    "threads": psutil.cpu_count(logical=True),
+                    "freq": round(psutil.cpu_freq().current, 1) if hasattr(psutil, "cpu_freq") else 0
+                },
+                "ram": {
+                    "total": round(psutil.virtual_memory().total / (1024**3), 2),  # GB
+                    "used": round(psutil.virtual_memory().used / (1024**3), 2),    # GB
+                    "percent": psutil.virtual_memory().percent,
+                    "swap_used": round(psutil.swap_memory().used / (1024**3), 2)  # GB
+                },
+                "process": {
+                    "memory_mb": round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 2),
+                    "threads": threading.active_count(),
+                    "uptime": Essentials.get_readable_time(time.time() - self.start_time)
+                },
+                "system": {
+                    "platform": platform.system(),
+                    "python": platform.python_version(),
+                    "pyrogram": pyrogram_version
+                }
+            }
+            return stats
+        except ImportError:
+            # Fallback menggunakan resource dan os
+            import os
+            import resource
+            from datetime import datetime
+            
+            # RAM stats
+            ram_used = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024  # KB to MB
+            
+            return {
+                "cpu": {"percent": "N/A", "cores": os.cpu_count() or "N/A"},
+                "ram": {
+                    "used": round(ram_used, 2), 
+                    "total": "N/A", 
+                    "percent": "N/A"
+                },
+                "process": {
+                    "memory_mb": round(ram_used, 2),
+                    "threads": threading.active_count(),
+                    "uptime": Essentials.get_readable_time(time.time() - self.start_time)
+                },
+                "system": {
+                    "platform": platform.system(),
+                    "python": platform.python_version()
+                }
+            }
+
+
+
     async def _run(self):
         """Main loop dengan state management dan restart terkontrol"""
         restart_count = 0
@@ -583,6 +646,45 @@ class AltruixClient:
                 
                 # ✅ LOAD MODUL
                 await self.load_all_modules()
+
+                # ✅ TAMPILKAN STATISTIK SISTEM SETELAH SEMUA MODUL DILOAD
+                system_stats = self.get_system_stats()
+                
+                system_info = (
+                    f"📊 <b>SISTEM STATISTIK</b>\n"
+                    f"• <b>CPU:</b> {system_stats['cpu']['percent']}% "
+                    f"({system_stats['cpu']['cores']} core/{system_stats['cpu']['threads']} thread)\n"
+                    f"• <b>RAM:</b> {system_stats['ram']['used']}GB/{system_stats['ram']['total']}GB "
+                    f"({system_stats['ram']['percent']}%)\n"
+                    f"• <b>Proses:</b> {system_stats['process']['memory_mb']}MB "
+                    f"({system_stats['process']['threads']} thread)\n"
+                    f"• <b>Uptime:</b> {system_stats['process']['uptime']}\n"
+                    f"• <b>Platform:</b> {system_stats['system']['platform']} | "
+                    f"Python {system_stats['system']['python']}"
+                )
+                
+                # Kirim statistik ke log channel
+                if hasattr(self, 'bot') and self.bot.is_connected:
+                    try:
+                        await self.bot.send_message(
+                            self.log_chat,
+                            system_info,
+                            link_preview_options=LinkPreviewOptions(is_disabled=True)
+                        )
+                    except Exception as e:
+                        self.log(f"Error: tidak dapat mengirim pesan ke log \n{e}")
+                        
+                # Tampilkan di console juga
+                print("\n" + "="*50)
+                print("📊 SISTEM STATISTIK".center(50))
+                print("="*50)
+                print(f"CPU   : {system_stats['cpu']['percent']}% ({system_stats['cpu']['cores']} core)")
+                print(f"RAM   : {system_stats['ram']['used']}GB/{system_stats['ram']['total']}GB ({system_stats['ram']['percent']}%)")
+                print(f"Proses: {system_stats['process']['memory_mb']}MB | {system_stats['process']['threads']} thread")
+                print(f"Uptime: {system_stats['process']['uptime']}")
+                print(f"Python: {system_stats['system']['python']} | Pyrogram: {system_stats['system']['pyrogram']}")
+                print("="*50 + "\n")
+
                 print(self.banner)
                 branch_info = get_current_git_branch()
                 self.log(f"🌿 Branch: {branch_info}")
@@ -1249,4 +1351,4 @@ class AltruixClient:
                 self._command_help_message_data[plugin_name] = (
                     f"<b>⚠️ Error loading help for '{plugin_name}'</b>\n"
                     f"<code>{str(e)}</code>"
-        )
+                       )
