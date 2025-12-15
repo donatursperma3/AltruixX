@@ -205,7 +205,7 @@ class AltruixClient:
     def _init_logger(self) -> None:
         logging.getLogger("pyrogram").setLevel(logging.WARNING)
         logging.basicConfig(
-            level=logging.DEBUG,
+            level=logging.INFO,
             datefmt="[%d/%m/%Y %H:%M:%S]",
             format="%(asctime)s - [Altruix] >> %(levelname)s << %(message)s",
             handlers=[logging.FileHandler("/app/altruix.log"), logging.StreamHandler()],
@@ -673,7 +673,7 @@ class AltruixClient:
                         )
                     except Exception as e:
                         self.log(f"Error: tidak dapat mengirim pesan ke log \n{e}")
-                        
+
                 # Tampilkan di console juga
                 print("\n" + "="*50)
                 print("📊 SISTEM STATISTIK".center(50))
@@ -1351,4 +1351,4 @@ class AltruixClient:
                 self._command_help_message_data[plugin_name] = (
                     f"<b>⚠️ Error loading help for '{plugin_name}'</b>\n"
                     f"<code>{str(e)}</code>"
-                       )
+        )
