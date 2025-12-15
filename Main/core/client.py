@@ -565,68 +565,80 @@ class AltruixClient:
             await self.initialize_telegram_sessions(*args, **kwargs)
         await self.update_cache()
 
-
+    #
     def get_system_stats(self) -> dict:
+        """
+        Dapatkan statistik sistem dengan fallback yang aman untuk lingkungan terbatas (Sevalla).
+        """
         try:
             import psutil
-            stats = {
-                "cpu": {
-                    "percent": round(psutil.cpu_percent(interval=0.5), 1),
-                    "cores": psutil.cpu_count(logical=False),
-                    "threads": psutil.cpu_count(logical=True),
-                    "freq": round(psutil.cpu_freq().current, 1) if hasattr(psutil, "cpu_freq") else 0
-                },
-                "ram": {
-                    "total": round(psutil.virtual_memory().total / (1024**3), 2),  # GB
-                    "used": round(psutil.virtual_memory().used / (1024**3), 2),    # GB
-                    "percent": psutil.virtual_memory().percent,
-                    "swap_used": round(psutil.swap_memory().used / (1024**3), 2)  # GB
-                },
-                "process": {
-                    "memory_mb": round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 2),
-                    "threads": threading.active_count(),
-                    "uptime": Essentials.get_readable_time(time.time() - self.start_time)
-                },
-                "system": {
-                    "platform": platform.system(),
-                    "python": platform.python_version(),
-                    "pyrogram": pyrogram_version
-                }
-            }
-            return stats
-
-        except Exception as e:
-            # Fallback sederhana tanpa psutil
+            # Gunakan psutil jika tersedia
+            cpu_percent = round(psutil.cpu_percent(interval=0.5), 1)
+            cpu_cores = psutil.cpu_count(logical=False) or os.cpu_count() or "N/A"
+            cpu_threads = psutil.cpu_count(logical=True) or os.cpu_count() or "N/A"
+            
+            ram = psutil.virtual_memory()
+            ram_total_gb = round(ram.total / (1024**3), 2)
+            ram_used_gb = round(ram.used / (1024**3), 2)
+            ram_percent = ram.percent
+            
+            swap_used_gb = round(psutil.swap_memory().used / (1024**3), 2) if hasattr(psutil, 'swap_memory') else 0.0
+            
+        except (ImportError, Exception) as e:
+            # Fallback tanpa psutil
+            self.log(f"psutil tidak tersedia atau error: {e}. Menggunakan fallback.", level=logging.WARNING)
+            
+            cpu_percent = "N/A"
+            cpu_cores = os.cpu_count() or "N/A"
+            cpu_threads = os.cpu_count() or "N/A"
+            
+            # Gunakan resource untuk estimasi RAM (dalam KB → konversi ke MB/GB dengan benar)
             try:
-                import threading  # Import di sini aman karena hanya fallback
-                import os
-                import resource
-                from datetime import datetime
+                ram_used_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+                # Di Linux: ru_maxrss dalam KB → konversi ke GB
+                ram_used_gb = round(ram_used_kb / (1024**2), 2)  # KB → GB
+                ram_total_gb = "N/A"
+                ram_percent = "N/A"
             except Exception:
-                threading = None
+                ram_used_gb = "N/A"
+                ram_total_gb = "N/A"
+                ram_percent = "N/A"
             
-            # RAM stats
-            ram_used = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024  # KB to MB
-            
-            return {
-                "cpu": {"percent": "N/A", "cores": os.cpu_count() or "N/A"},
-                "ram": {
-                    "used": round(ram_used, 2), 
-                    "total": "N/A", 
-                    "percent": "N/A"
-                },
-                "process": {
-                    "memory_mb": round(ram_used, 2),
-                    "threads": threading.active_count(),
-                    "uptime": Essentials.get_readable_time(time.time() - self.start_time)
-                },
-                "system": {
-                    "platform": platform.system(),
-                    "python": platform.python_version(),
-                    "pyrogram": pyrogram_version
-                }
-            }
+            swap_used_gb = "N/A"
 
+        # Proses info (selalu bisa diakses)
+        try:
+            process_memory_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+            process_memory_mb = round(process_memory_kb / 1024, 2)  # KB → MB
+            process_threads = threading.active_count()
+        except Exception:
+            process_memory_mb = "N/A"
+            process_threads = "N/A"
+
+        return {
+            "cpu": {
+                "percent": cpu_percent,
+                "cores": cpu_cores,
+                "threads": cpu_threads,
+                "freq": round(psutil.cpu_freq().current, 1) if hasattr(psutil, "cpu_freq") else 0
+            },
+            "ram": {
+                "total": ram_total_gb,
+                "used": ram_used_gb,
+                "percent": ram_percent,
+                "swap_used": swap_used_gb
+            },
+            "process": {
+                "memory_mb": process_memory_mb,
+                "threads": process_threads,
+                "uptime": Essentials.get_readable_time(time.time() - self.start_time)
+            },
+            "system": {
+                "platform": platform.system(),
+                "python": platform.python_version(),
+                "pyrogram": pyrogram_version
+            }
+        }
 
     async def _run(self):
         """Main loop dengan state management dan restart terkontrol"""
@@ -717,6 +729,15 @@ class AltruixClient:
                 
                 # ✅ HEALTH CHECK SEBELUM IDLE
                 await self._health_check()
+
+                try:
+                    import resource
+                    process_memory_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+                    process_memory_mb = round(process_memory_kb / 1024, 2)  # Konversi KB ke MB
+                    self.log(f"MemoryWarning: Memori proses = {process_memory_mb} MB")
+                except Exception as e:
+                    self.log(f"Gagal cek penggunaan memori: {e}", level=logging.WARNING)
+
                 
                 # ✅ JALANKAN IDLE DENGAN MONITORING
                 await self._safe_idle()
@@ -811,6 +832,15 @@ class AltruixClient:
                 uptime = Essentials.get_readable_time(time.time() - self.start_time)
                 self.log(f"💓 Heartbeat - Uptime: {uptime}")
                 
+                # 🔍 Tambahkan pemantauan memori di heartbeat
+                try:
+                    import resource
+                    mem_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+                    mem_mb = round(mem_kb / 1024, 2)
+                    self.log(f"📊 Heartbeat - Memori: {mem_mb} MB")
+                except Exception as e:
+                    pass  # Abaikan jika gagal
+                
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -839,7 +869,15 @@ class AltruixClient:
         except Exception as e:
             self.log(f"❌ Bot connection: FAILED - {e}", level=logging.ERROR)
         total_checks += 1
-        
+
+        # Di _health_check(), tambahkan:
+        try:
+            mem_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+            if mem_mb > 7000:  # 7GB dari 8GB
+                self.log("MemoryWarning: Memori hampir penuh! Pertimbangkan restart manual.", level=logging.WARNING)
+        except Exception:
+            pass
+                
         # Cek user sessions
         for idx, client in enumerate(self.clients):
             try:
@@ -1373,4 +1411,4 @@ class AltruixClient:
                 self._command_help_message_data[plugin_name] = (
                     f"<b>⚠️ Error loading help for '{plugin_name}'</b>\n"
                     f"<code>{str(e)}</code>"
-    )
+            )
