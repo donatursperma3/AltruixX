@@ -191,16 +191,16 @@ class AltruixClient:
     @staticmethod
     def log(
         message: Optional[str] = None,
-        level=logging.INFO,
+        level=logging.DEBUG,
         logger: logging.Logger = logging.getLogger(__name__),
     ) -> Optional[str]:
         logger.log(level, message or traceback.format_exc())
         return message or traceback.format_exc()
 
     def _init_logger(self) -> None:
-        logging.getLogger("pyrogram").setLevel(logging.WARNING)
+        logging.getLogger("pyrogram").setLevel(logging.DEBUG)
         logging.basicConfig(
-            level=logging.INFO,
+            level=logging.DEBUG,
             datefmt="[%d/%m/%Y %H:%M:%S]",
             format="%(asctime)s - [Altruix] >> %(levelname)s << %(message)s",
             handlers=[logging.FileHandler("/app/altruix.log"), logging.StreamHandler()],
