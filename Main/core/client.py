@@ -594,11 +594,7 @@ class AltruixClient:
                 }
             }
             return stats
-        # except ImportError:
-        #     # Fallback menggunakan resource dan os
-        #     import os
-        #     import resource
-        #     from datetime import datetime
+
         except Exception as e:
             # Fallback sederhana tanpa psutil
             try:
@@ -626,10 +622,10 @@ class AltruixClient:
                 },
                 "system": {
                     "platform": platform.system(),
-                    "python": platform.python_version()
+                    "python": platform.python_version(),
+                    "pyrogram": pyrogram_version
                 }
             }
-
 
 
     async def _run(self):
@@ -661,15 +657,19 @@ class AltruixClient:
 
                 # ✅ TAMPILKAN STATISTIK SISTEM SETELAH SEMUA MODUL DILOAD
                 # ✅ PERBAIKAN: Aman terhadap fallback tanpa psutil
-                cpu_percent = system_stats['cpu'].get('percent', 'N/A')
-                cpu_cores = system_stats['cpu'].get('cores', 'N/A')
-                cpu_threads = system_stats['cpu'].get('threads', 'N/A')  # Bisa N/A jika fallback
-                ram_used = system_stats['ram'].get('used', 'N/A')
-                ram_total = system_stats['ram'].get('total', 'N/A')
-                ram_percent = system_stats['ram'].get('percent', 'N/A')
-                proc_memory = system_stats['process'].get('memory_mb', 'N/A')
-                proc_threads = system_stats['process'].get('threads', 'N/A')
-                uptime = system_stats['process'].get('uptime', 'N/A')
+                                # ✅ PERBAIKAN FINAL: Akses semua key dengan .get() + fallback default
+                cpu_percent = system_stats.get('cpu', {}).get('percent', 'N/A')
+                cpu_cores = system_stats.get('cpu', {}).get('cores', 'N/A')
+                cpu_threads = system_stats.get('cpu', {}).get('threads', 'N/A')
+                ram_used = system_stats.get('ram', {}).get('used', 'N/A')
+                ram_total = system_stats.get('ram', {}).get('total', 'N/A')
+                ram_percent = system_stats.get('ram', {}).get('percent', 'N/A')
+                proc_memory = system_stats.get('process', {}).get('memory_mb', 'N/A')
+                proc_threads = system_stats.get('process', {}).get('threads', 'N/A')
+                uptime = system_stats.get('process', {}).get('uptime', 'N/A')
+                platform_name = system_stats.get('system', {}).get('platform', 'Unknown')
+                python_version = system_stats.get('system', {}).get('python', 'Unknown')
+                pyrogram_version_safe = system_stats.get('system', {}).get('pyrogram', pyrogram_version)  # fallback ke global
 
                 system_info = (
                     f"📊 <b>SISTEM STATISTIK</b>\n"
@@ -680,12 +680,12 @@ class AltruixClient:
                     f"• <b>Proses:</b> {proc_memory}MB "
                     f"({proc_threads} thread)\n"
                     f"• <b>Uptime:</b> {uptime}\n"
-                    f"• <b>Platform:</b> {system_stats['system']['platform']} | "
-                    f"Python {system_stats['system']['python']}"
+                    f"• <b>Platform:</b> {platform_name} | "
+                    f"Python {python_version} | Pyrogram {pyrogram_version_safe}"
                 )
-                
-                # Kirim statistik ke log channel
-                if hasattr(self, 'bot') and self.bot.is_connected:
+               
+                # Kirim ke log chat
+                if hasattr(self, 'bot') and self.bot.is_connected and self.log_chat:
                     try:
                         await self.bot.send_message(
                             self.log_chat,
@@ -693,18 +693,19 @@ class AltruixClient:
                             link_preview_options=LinkPreviewOptions(is_disabled=True)
                         )
                     except Exception as e:
-                        self.log(f"Error: tidak dapat mengirim pesan ke log \n{e}")
+                        self.log(f"Gagal kirim stats ke log chat: {e}", level=logging.WARNING)
 
-                # Tampilkan di console juga
-                print("\n" + "="*50)
-                print("📊 SISTEM STATISTIK".center(50))
-                print("="*50)
-                print(f"CPU : {cpu_percent}% ({cpu_cores} core / {cpu_threads} thread)")
-                print(f"RAM : {ram_used}GB/{ram_total}GB ({ram_percent}%)")
-                print(f"Proses: {proc_memory}MB | {proc_threads} thread")
-                print(f"Uptime: {uptime}")
-                print(f"Python: {system_stats['system']['python']} | Pyrogram: {system_stats['system']['pyrogram']}")
-                print("="*50 + "\n")
+                # Tampilkan di console
+                print("\n" + "="*60)
+                print("📊 SISTEM STATISTIK".center(60))
+                print("="*60)
+                print(f"CPU     : {cpu_percent}% ({cpu_cores} core / {cpu_threads} thread)")
+                print(f"RAM     : {ram_used}GB / {ram_total}GB ({ram_percent}%)")
+                print(f"Proses  : {proc_memory}MB | {proc_threads} thread")
+                print(f"Uptime  : {uptime}")
+                print(f"System  : {platform_name} | Python {python_version}")
+                print(f"Pyrogram: {pyrogram_version_safe}")
+                print("="*60 + "\n")
 
                 print(self.banner)
                 branch_info = get_current_git_branch()
@@ -1372,4 +1373,4 @@ class AltruixClient:
                 self._command_help_message_data[plugin_name] = (
                     f"<b>⚠️ Error loading help for '{plugin_name}'</b>\n"
                     f"<code>{str(e)}</code>"
-                   )
+    )
