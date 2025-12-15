@@ -658,17 +658,26 @@ class AltruixClient:
                 await self.load_all_modules()
 
                 # ✅ TAMPILKAN STATISTIK SISTEM SETELAH SEMUA MODUL DILOAD
-                system_stats = self.get_system_stats()
-                
+                # ✅ PERBAIKAN: Aman terhadap fallback tanpa psutil
+                cpu_percent = system_stats['cpu'].get('percent', 'N/A')
+                cpu_cores = system_stats['cpu'].get('cores', 'N/A')
+                cpu_threads = system_stats['cpu'].get('threads', 'N/A')  # Bisa N/A jika fallback
+                ram_used = system_stats['ram'].get('used', 'N/A')
+                ram_total = system_stats['ram'].get('total', 'N/A')
+                ram_percent = system_stats['ram'].get('percent', 'N/A')
+                proc_memory = system_stats['process'].get('memory_mb', 'N/A')
+                proc_threads = system_stats['process'].get('threads', 'N/A')
+                uptime = system_stats['process'].get('uptime', 'N/A')
+
                 system_info = (
                     f"📊 <b>SISTEM STATISTIK</b>\n"
-                    f"• <b>CPU:</b> {system_stats['cpu']['percent']}% "
-                    f"({system_stats['cpu']['cores']} core/{system_stats['cpu']['threads']} thread)\n"
-                    f"• <b>RAM:</b> {system_stats['ram']['used']}GB/{system_stats['ram']['total']}GB "
-                    f"({system_stats['ram']['percent']}%)\n"
-                    f"• <b>Proses:</b> {system_stats['process']['memory_mb']}MB "
-                    f"({system_stats['process']['threads']} thread)\n"
-                    f"• <b>Uptime:</b> {system_stats['process']['uptime']}\n"
+                    f"• <b>CPU:</b> {cpu_percent}% "
+                    f"({cpu_cores} core/{cpu_threads} thread)\n"
+                    f"• <b>RAM:</b> {ram_used}GB/{ram_total}GB "
+                    f"({ram_percent}%)\n"
+                    f"• <b>Proses:</b> {proc_memory}MB "
+                    f"({proc_threads} thread)\n"
+                    f"• <b>Uptime:</b> {uptime}\n"
                     f"• <b>Platform:</b> {system_stats['system']['platform']} | "
                     f"Python {system_stats['system']['python']}"
                 )
@@ -688,10 +697,10 @@ class AltruixClient:
                 print("\n" + "="*50)
                 print("📊 SISTEM STATISTIK".center(50))
                 print("="*50)
-                print(f"CPU   : {system_stats['cpu']['percent']}% ({system_stats['cpu']['cores']} core)")
-                print(f"RAM   : {system_stats['ram']['used']}GB/{system_stats['ram']['total']}GB ({system_stats['ram']['percent']}%)")
-                print(f"Proses: {system_stats['process']['memory_mb']}MB | {system_stats['process']['threads']} thread")
-                print(f"Uptime: {system_stats['process']['uptime']}")
+                print(f"CPU : {cpu_percent}% ({cpu_cores} core / {cpu_threads} thread)")
+                print(f"RAM : {ram_used}GB/{ram_total}GB ({ram_percent}%)")
+                print(f"Proses: {proc_memory}MB | {proc_threads} thread")
+                print(f"Uptime: {uptime}")
                 print(f"Python: {system_stats['system']['python']} | Pyrogram: {system_stats['system']['pyrogram']}")
                 print("="*50 + "\n")
 
@@ -1361,4 +1370,4 @@ class AltruixClient:
                 self._command_help_message_data[plugin_name] = (
                     f"<b>⚠️ Error loading help for '{plugin_name}'</b>\n"
                     f"<code>{str(e)}</code>"
-                            )
+        )
