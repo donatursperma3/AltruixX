@@ -31,10 +31,11 @@ from pathlib import Path
 import aiofiles
 from typing import Optional, Union, Dict, Any
 from collections import defaultdict
+from pyrogram import types
 
 plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "mentions"
-PLUGIN_VERSION = "0.2.5.0"  # 🔥 VERSI DIPERBAIKI: Semua error fixed
+PLUGIN_VERSION = "0.2.5.1"  # 🔥 VERSI DIPERBAIKI: Semua error fixed
 
 # 🔥 SETUP LOGGING DETAILED
 logger = logging.getLogger(f"{__plugin_name__}")
@@ -918,7 +919,8 @@ async def confirm_send_reply(c: Client, cb: CallbackQuery):
             await mentioned_client.send_message(
                 chat_id,
                 reply_text,
-                reply_to_message_id=message_id
+                # reply_to_message_id=message_id,
+                reply_parameters=types.ReplyParameters(message_id=message_id)
             )
             logger.info(f"✅ Reply sent successfully to {chat_id}")
             
