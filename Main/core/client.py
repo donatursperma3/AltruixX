@@ -657,6 +657,8 @@ class AltruixClient:
                 # ✅ LOAD MODUL
                 await self.load_all_modules()
 
+                system_stats = self.get_system_stats()
+
                 # ✅ TAMPILKAN STATISTIK SISTEM SETELAH SEMUA MODUL DILOAD
                 # ✅ PERBAIKAN: Aman terhadap fallback tanpa psutil
                 cpu_percent = system_stats['cpu'].get('percent', 'N/A')
@@ -1370,4 +1372,4 @@ class AltruixClient:
                 self._command_help_message_data[plugin_name] = (
                     f"<b>⚠️ Error loading help for '{plugin_name}'</b>\n"
                     f"<code>{str(e)}</code>"
-        )
+                   )
