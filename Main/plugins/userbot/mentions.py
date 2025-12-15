@@ -34,7 +34,7 @@ from collections import defaultdict
 
 plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "mentions"
-PLUGIN_VERSION = "0.2.4.0"  # 🔥 VERSI DIPERBAIKI: Semua error fixed
+PLUGIN_VERSION = "0.2.5.0"  # 🔥 VERSI DIPERBAIKI: Semua error fixed
 
 # 🔥 SETUP LOGGING DETAILED
 logger = logging.getLogger(f"{__plugin_name__}")
@@ -248,15 +248,29 @@ async def get_mention_client(client_id: int) -> Optional[Client]:
             except Exception as e:
                 logger.warning(f"Error checking main ubot: {e}")
         
-        # 4. Cari di semua clients Altruix yang terdaftar
-        if hasattr(Altruix, 'clients'):
-            for client_name, client_obj in Altruix.clients.items():
-                try:
-                    if client_obj and client_obj.me and client_obj.me.id == client_id:
-                        logger.info(f"✅ Found client in Altruix.clients: {client_name}")
-                        return client_obj
-                except Exception as e:
-                    continue
+        # 4. Cari di semua clients Altruix yang terdaftar - FIXED untuk handle list/dict
+        if hasattr(Altruix, 'clients') and Altruix.clients:
+            clients = Altruix.clients
+            logger.info(f"🔍 Altruix.clients type: {type(clients)}")
+            
+            if isinstance(clients, dict):
+                for client_name, client_obj in clients.items():
+                    try:
+                        if client_obj and client_obj.me and client_obj.me.id == client_id:
+                            logger.info(f"✅ Found client in Altruix.clients dict: {client_name}")
+                            return client_obj
+                    except Exception:
+                        continue
+            elif isinstance(clients, list):
+                for idx, client_obj in enumerate(clients):
+                    try:
+                        if client_obj and client_obj.me and client_obj.me.id == client_id:
+                            logger.info(f"✅ Found client in Altruix.clients list index {idx}")
+                            return client_obj
+                    except Exception:
+                        continue
+            else:
+                logger.warning(f"⚠️ Altruix.clients is of unknown type: {type(clients)}")
         
         # 5. Last resort: coba cari di session manager
         try:
@@ -273,7 +287,7 @@ async def get_mention_client(client_id: int) -> Optional[Client]:
         logger.warning(f"❌ Client {client_id} not found in any active sessions")
         return None
     except Exception as e:
-        logger.error(f"❌ Error getting client: {e}")
+        logger.error(f"❌ Error getting client: {e}", exc_info=True)
         return None
 
 # 🔥 Load local storage
@@ -1028,6 +1042,41 @@ async def already_reacted_handler(c: Client, cb: CallbackQuery):
     log_button_press("ALREADY_REACTED", cb.data, cb.from_user.id if cb.from_user else None)
     await cb.answer("✅ Sudah direaksi sebelumnya", show_alert=False)
 
+# 🔥 Handler untuk tombol test (dari perintah /mentions_test atau /test_mention)
+@Altruix.bot.on_callback_query(filters.regex(r"^test_mentions_"))
+@log_errors
+async def test_buttons_handler_bot(c: Client, cb: CallbackQuery):
+    """Handler untuk tombol test dari bot."""
+    try:
+        pattern = r"test_mentions_(.+)_(-?\d+)_(\d+)"
+        match = re.match(pattern, cb.data)
+        
+        if not match:
+            await cb.answer("❌ Invalid test button", show_alert=True)
+            return
+        
+        action = match.group(1)
+        chat_id = int(match.group(2))
+        message_id = int(match.group(3))
+        
+        if action == "reply":
+            # Simulasikan tombol reply
+            await start_reply_as_mentioned(c, cb)
+        elif action == "replyall":
+            # Simulasikan tombol reply all
+            await start_reply_from_all(c, cb)
+        elif action == "react":
+            # Simulasikan tombol react
+            fake_cb_data = f"mentions_react_{chat_id}_{message_id}_👍"
+            cb.data = fake_cb_data
+            await quick_reaction_handler(c, cb)
+        else:
+            await cb.answer(f"❌ Unknown test action: {action}", show_alert=True)
+            
+    except Exception as e:
+        logger.error(f"❌ Test button handler failed: {e}")
+        await cb.answer("❌ Test failed", show_alert=True)
+
 # 🔥 Command untuk status
 @Altruix.register_on_cmd(
     ["mentions_status"],
@@ -1102,7 +1151,8 @@ async def debug_command_handler(c: Client, m: AltruixMessage):
             r"^mentions_replyall_",
             r"^mentions_confirm_",
             r"^mentions_cancel_",
-            r"^mentions_reacted$"
+            r"^mentions_reacted$",
+            r"^test_mentions_"
         ]
         
         # Cek state current
@@ -1153,40 +1203,6 @@ async def debug_command_handler(c: Client, m: AltruixMessage):
         await msg.edit_msg(f"❌ Debug error: {str(e)[:100]}")
 
 # 🔥 PERBAIKAN: Command untuk test tombol - DIPERBAIKI!
-@Altruix.bot.on_callback_query(filters.regex(r"^test_mentions_"))
-@log_errors
-async def test_buttons_handler_bot(c: Client, cb: CallbackQuery):
-    """Handler untuk tombol test dari bot."""
-    try:
-        pattern = r"test_mentions_(.+)_(\d+)_(\d+)"
-        match = re.match(pattern, cb.data)
-        
-        if not match:
-            await cb.answer("❌ Invalid test button", show_alert=True)
-            return
-        
-        action = match.group(1)
-        chat_id = int(match.group(2))
-        message_id = int(match.group(3))
-        
-        if action == "reply":
-            # Simulasikan tombol reply
-            await start_reply_as_mentioned(c, cb)
-        elif action == "replyall":
-            # Simulasikan tombol reply all
-            await start_reply_from_all(c, cb)
-        elif action == "react":
-            # Simulasikan tombol react
-            fake_cb_data = f"mentions_react_{chat_id}_{message_id}_👍"
-            cb.data = fake_cb_data
-            await quick_reaction_handler(c, cb)
-        else:
-            await cb.answer(f"❌ Unknown test action: {action}", show_alert=True)
-            
-    except Exception as e:
-        logger.error(f"❌ Test button handler failed: {e}")
-        await cb.answer("❌ Test failed", show_alert=True)
-
 @Altruix.register_on_cmd(
     ["mentions_test"],
     cmd_help={
@@ -1408,7 +1424,7 @@ except Exception as e:
     logger.info(f"[DEBUG] ✅ Loaded → {__plugin_name__} {PLUGIN_VERSION}")
 
 # logger.info(f"📋 All issues fixed:")
-# logger.info(f"  1. Fixed get_mention_client() function to properly find clients")
+# logger.info(f"  1. Fixed get_mention_client() function to properly handle list/dict")
 # logger.info(f"  2. Added test button handler for bot (/mentions_test)")
 # logger.info(f"  3. Fixed callback patterns for test buttons")
 # logger.info(f"  4. Improved logging for debugging")
