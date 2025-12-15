@@ -34,7 +34,7 @@ from collections import defaultdict
 
 plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "mentions"
-PLUGIN_VERSION = "0.2.2.0"  # 🔥 VERSI DIPERBAIKI: Semua error fixed
+PLUGIN_VERSION = "0.2.3.0"  # 🔥 VERSI DIPERBAIKI: Semua error fixed
 
 # 🔥 SETUP LOGGING DETAILED
 logger = logging.getLogger(f"{__plugin_name__}")
@@ -124,7 +124,7 @@ MENTION_LOG_CACHE = {}
 
 # 🔥 PERBAIKAN CRITICAL: Emoji yang valid untuk Telegram Reaction API
 # Hanya emoji yang didukung oleh Telegram Reaction API
-DEFAULT_REACTION_EMOJIS = ["👍", "❤️", "🔥", "🥰", "👏"]  # 🔥 PERBAIKAN: Ganti 😂 dan 😮 dengan emoji yang valid
+DEFAULT_REACTION_EMOJIS = ["👍", "❤️", "🔥", "🥰", "👏"]
 
 # 🔥 TAMBAHAN: Dictionary untuk menunggu konfirmasi reply-as-mentioned
 REPLY_AS_MENTIONED_WAITING = {}
@@ -135,9 +135,6 @@ AUTO_REPLY_ENABLED = False
 # 🔥 PERBAIKAN: Rate limiting untuk Reply From All
 USER_REPLY_COUNTS = defaultdict(lambda: defaultdict(int))
 USER_REPLY_LIMIT = 3
-
-# 🔥 PERBAIKAN: Cache untuk userbot clients
-USERBOT_CLIENTS = {}
 
 # 🔥 BARU: Button press statistics
 BUTTON_STATS = {
@@ -219,9 +216,34 @@ async def save_mention_setting(client_id: int, value: bool) -> bool:
     logger.info(f"Saved setting for {client_id}: {value}")
     return True
 
-async def get_userbot_client(client_id: int) -> Optional[Client]:
-    """Get userbot client dari cache."""
-    return USERBOT_CLIENTS.get(client_id)
+# 🔥 BARU: Fungsi untuk mendapatkan client dari client_id
+async def get_mention_client(client_id: int) -> Optional[Client]:
+    """Get client for mention reply dari session manager Altruix."""
+    try:
+        # Cari di semua userbot clients yang aktif
+        if hasattr(Altruix, 'userbot_clients') and Altruix.userbot_clients:
+            for ub in Altruix.userbot_clients:
+                try:
+                    if ub.me and ub.me.id == client_id:
+                        logger.info(f"Found client for ID {client_id}: {ub.me.first_name}")
+                        return ub
+                except Exception as e:
+                    logger.warning(f"Error checking client {ub}: {e}")
+                    continue
+        
+        # Coba cari di session manager lain
+        if hasattr(Altruix, 'ubot') and Altruix.ubot:
+            try:
+                if Altruix.ubot.me.id == client_id:
+                    return Altruix.ubot
+            except:
+                pass
+        
+        logger.warning(f"Client {client_id} not found in active sessions")
+        return None
+    except Exception as e:
+        logger.error(f"Error getting client: {e}")
+        return None
 
 # 🔥 Load local storage
 asyncio.create_task(load_local_storage())
@@ -256,7 +278,6 @@ async def mention_settings_handler(c: Client, m: AltruixMessage):
     try:
         client_id = c.me.id
         await save_mention_setting(client_id, value)
-        USERBOT_CLIENTS[client_id] = c
         
         status_msg = f"{emoji} **Mention notifications {status_text}**"
         await safe_edit_message(c, m.chat.id, msg.id, status_msg, parse_mode=enums.ParseMode.MARKDOWN)
@@ -272,6 +293,18 @@ async def mention_settings_handler(c: Client, m: AltruixMessage):
 async def send_mention_log_handler(c: Client, m: RawMessage):
     """Handler utama untuk menangkap mention dan mengirim notifikasi ke LOG_CHAT."""
     try:
+        # Cek apakah log_chat dikonfigurasi
+        if not Altruix.log_chat:
+            logger.error("LOG_CHAT not configured, cannot send mention notifications")
+            return
+            
+        # Cek apakah bot bisa mengirim pesan ke log_chat
+        try:
+            await Altruix.bot.get_chat(Altruix.log_chat)
+        except Exception as chat_err:
+            logger.error(f"Cannot access log chat {Altruix.log_chat}: {chat_err}")
+            return
+            
         client_id = c.me.id
         
         # Cek apakah mention notifications enabled
@@ -312,7 +345,7 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
             f"📄 <b>Message:</b>\n<blockquote>{message_text}</blockquote>"
         )
         
-        # 🔥 PERBAIKAN: Tombol dengan callback data yang benar
+        # PERBAIKAN: Tombol dengan callback data yang benar
         reaction_buttons = [
             InlineKeyboardButton(
                 emoji,
@@ -333,7 +366,7 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
         
         link_button = [InlineKeyboardButton("🔗 Go to Message", url=m.link)]
         
-        # 🔥 PERBAIKAN: Keyboard layout yang benar
+        # PERBAIKAN: Keyboard layout yang benar
         keyboard = [
             reaction_buttons[:3],  # Baris pertama: 3 emoji
             reaction_buttons[3:],  # Baris kedua: 2 emoji
@@ -359,15 +392,16 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
             logger.error(f"Send failed: {send_err}")
             return
         
-        # Cache untuk edit detection
+        # Cache untuk edit detection - SIMPAN client_id BUKAN objek Client
         MENTION_LOG_CACHE[msg_key] = {
             "text": message_text,
             "log_msg_id": sent_log_msg.id,
-            "mentioned_client": c,
+            "client_id": client_id,  # Simpan ID saja
             "chat_id": m.chat.id,
             "message_id": m.id,
             "timestamp_int": int(time.time()),
-            "client_id": client_id
+            "mentioned_by": mentioner_id,
+            "group_name": m.chat.title
         }
         
     except Exception as e:
@@ -383,7 +417,7 @@ async def quick_reaction_handler(c: Client, cb: CallbackQuery):
         log_button_press("REACT", cb.data, cb.from_user.id if cb.from_user else None)
         logger.info(f"📊 React button pressed. Total: {BUTTON_STATS['react']}")
         
-        # 🔥 PERBAIKAN: Parse callback data dengan benar
+        # PERBAIKAN: Parse callback data dengan benar
         # Format: mentions_react_{chat_id}_{message_id}_{emoji}
         pattern = r"mentions_react_(-?\d+)_(\d+)_(.+)"
         match = re.match(pattern, cb.data)
@@ -397,7 +431,7 @@ async def quick_reaction_handler(c: Client, cb: CallbackQuery):
         message_id = int(match.group(2))
         emoji = match.group(3)
         
-        # 🔥 PERBAIKAN KRITIS: Validasi emoji sebelum dikirim
+        # PERBAIKAN KRITIS: Validasi emoji sebelum dikirim
         if not is_valid_emoji(emoji):
             logger.error(f"Invalid emoji for reaction: {emoji}")
             await cb.answer(f"❌ Emoji '{emoji}' tidak didukung untuk reaction", show_alert=True)
@@ -411,14 +445,18 @@ async def quick_reaction_handler(c: Client, cb: CallbackQuery):
             await cb.answer("❌ Mention tidak ditemukan di cache.", show_alert=True)
             return
         
-        userbot_client = MENTION_LOG_CACHE[msg_key]["mentioned_client"]
+        # DAPATKAN CLIENT DARI CLIENT_ID
+        cache_data = MENTION_LOG_CACHE[msg_key]
+        client_id = cache_data["client_id"]
+        userbot_client = await get_mention_client(client_id)
+        
         if not userbot_client:
-            logger.warning(f"Userbot client not available: {msg_key}")
+            logger.warning(f"Userbot client not available for ID: {client_id}")
             await cb.answer("❌ Akun yang disebut tidak tersedia.", show_alert=True)
             return
         
         try:
-            # 🔥 PERBAIKAN: Kirim reaction dengan error handling
+            # PERBAIKAN: Kirim reaction dengan error handling
             await userbot_client.send_reaction(chat_id, message_id, emoji)
             logger.info(f"Reaction sent: {emoji} to {msg_key}")
             
@@ -478,7 +516,7 @@ async def start_reply_as_mentioned(c: Client, cb: CallbackQuery):
         log_button_press("REPLY", cb.data, cb.from_user.id if cb.from_user else None)
         logger.info(f"📊 Reply button pressed. Total: {BUTTON_STATS['reply']}")
         
-        # 🔥 PERBAIKAN: Parse dengan regex
+        # PERBAIKAN: Parse dengan regex
         pattern = r"mentions_reply_(-?\d+)_(\d+)"
         match = re.match(pattern, cb.data)
         
@@ -498,29 +536,34 @@ async def start_reply_as_mentioned(c: Client, cb: CallbackQuery):
             await cb.answer("❌ Mention tidak ditemukan di cache.", show_alert=True)
             return
         
-        mentioned_client = MENTION_LOG_CACHE[msg_key]["mentioned_client"]
+        # DAPATKAN CLIENT DARI CLIENT_ID
+        cache_data = MENTION_LOG_CACHE[msg_key]
+        client_id = cache_data["client_id"]
+        mentioned_client = await get_mention_client(client_id)
+        
         if not mentioned_client:
-            logger.warning(f"Userbot client not available: {msg_key}")
+            logger.warning(f"Userbot client not available for ID: {client_id}")
             await cb.answer("❌ Akun yang disebut tidak tersedia.", show_alert=True)
             return
         
-        # 🔥 PERBAIKAN: Generate unique waiting ID
+        # PERBAIKAN: Generate unique waiting ID
         waiting_id = f"reply_{int(time.time())}_{cb.id}"
         REPLY_AS_MENTIONED_WAITING[waiting_id] = {
             "chat_id": chat_id,
             "message_id": message_id,
-            "mentioned_client": mentioned_client,
+            "client_id": client_id,
             "log_msg_id": cb.message.id,
             "user_id": cb.from_user.id if cb.from_user else None,
             "timestamp_int": int(time.time()),
             "callback_message_id": cb.message.id,
             "is_reply_all": False,
-            "waiting_id": waiting_id
+            "waiting_id": waiting_id,
+            "msg_key": msg_key
         }
         
         logger.info(f"Waiting for reply input for {msg_key}, waiting_id: {waiting_id}")
         
-        # 🔥 PERBAIKAN: Gunakan reply_parameters
+        # PERBAIKAN: Gunakan reply_parameters
         try:
             instruction_msg = await cb.message.reply(
                 "🗨️ <b>Reply as Mentioned</b>\n\n"
@@ -558,7 +601,7 @@ async def start_reply_from_all(c: Client, cb: CallbackQuery):
         log_button_press("REPLY_ALL", cb.data, cb.from_user.id if cb.from_user else None)
         logger.info(f"📊 Reply All button pressed. Total: {BUTTON_STATS['reply_all']}")
         
-        # 🔥 PERBAIKAN: Parse dengan regex
+        # PERBAIKAN: Parse dengan regex
         pattern = r"mentions_replyall_(-?\d+)_(\d+)"
         match = re.match(pattern, cb.data)
         
@@ -591,36 +634,43 @@ async def start_reply_from_all(c: Client, cb: CallbackQuery):
             await cb.answer("❌ Mention tidak ditemukan di cache.", show_alert=True)
             return
         
-        mentioned_client = MENTION_LOG_CACHE[msg_key]["mentioned_client"]
+        # DAPATKAN CLIENT DARI CLIENT_ID
+        cache_data = MENTION_LOG_CACHE[msg_key]
+        client_id = cache_data["client_id"]
+        mentioned_client = await get_mention_client(client_id)
+        
         if not mentioned_client:
-            logger.warning(f"Userbot client not available: {msg_key}")
+            logger.warning(f"Userbot client not available for ID: {client_id}")
             await cb.answer("❌ Akun yang disebut tidak tersedia.", show_alert=True)
             return
         
-        # 🔥 PERBAIKAN: Generate unique waiting ID
+        # PERBAIKAN: Generate unique waiting ID
         waiting_id = f"replyall_{int(time.time())}_{cb.id}"
         REPLY_AS_MENTIONED_WAITING[waiting_id] = {
             "chat_id": chat_id,
             "message_id": message_id,
-            "mentioned_client": mentioned_client,
+            "client_id": client_id,
             "log_msg_id": cb.message.id,
             "user_id": user_id,
             "timestamp_int": int(time.time()),
             "callback_message_id": cb.message.id,
             "is_reply_all": True,
-            "waiting_id": waiting_id
+            "waiting_id": waiting_id,
+            "msg_key": msg_key
         }
         
         logger.info(f"Reply From All waiting for {msg_key}, user: {user_id}, waiting_id: {waiting_id}")
         
-        # 🔥 PERBAIKAN: Gunakan reply_parameters dengan benar
+        # PERBAIKAN: Gunakan reply_parameters dengan benar
         try:
             user_mention = cb.from_user.mention(style=enums.ParseMode.HTML) if cb.from_user else "User"
+            client_name = mentioned_client.me.first_name if mentioned_client.me else "Unknown"
+            
             instruction_msg = await cb.message.reply(
                 f"👥 <b>Reply From All</b>\n\n"
                 f"Halo {user_mention}!\n\n"
                 f"Silakan ketik pesan balasan Anda di bawah ini.\n"
-                f"Pesan akan dikirim sebagai <b>{mentioned_client.me.first_name}</b> ke grup asal.\n\n"
+                f"Pesan akan dikirim sebagai <b>{client_name}</b> ke grup asal.\n\n"
                 f"<i>Note: Maksimal {USER_REPLY_LIMIT}x reply per hari per mention</i>\n"
                 f"<i>Balas pesan ini dengan teks yang ingin dikirim.</i>",
                 parse_mode=enums.ParseMode.HTML,
@@ -674,7 +724,18 @@ async def handle_reply_as_mentioned_input(c: Client, m: RawMessage):
         data = REPLY_AS_MENTIONED_WAITING[waiting_id]
         chat_id = data["chat_id"]
         message_id = data["message_id"]
-        mentioned_client = data["mentioned_client"]
+        client_id = data["client_id"]
+        
+        # DAPATKAN CLIENT DARI CLIENT_ID
+        mentioned_client = await get_mention_client(client_id)
+        if not mentioned_client:
+            logger.error(f"Cannot find client {client_id} for reply")
+            await m.reply(
+                "❌ <b>Akun tidak ditemukan</b>\n\n"
+                "Akun yang disebut tidak tersedia atau session sudah berakhir.",
+                parse_mode=enums.ParseMode.HTML
+            )
+            return
         
         reply_text = m.text or m.caption or ""
         if not reply_text.strip():
@@ -696,6 +757,8 @@ async def handle_reply_as_mentioned_input(c: Client, m: RawMessage):
         if data.get("is_reply_all") and m.from_user:
             user_info = f"👤 <b>Replying as:</b> {m.from_user.mention(style=enums.ParseMode.HTML)}\n"
         
+        client_name = mentioned_client.me.first_name if mentioned_client.me else "Unknown"
+        
         confirm_buttons = [
             [InlineKeyboardButton("✅ Yes, Send", callback_data=f"mentions_confirm_{waiting_id}")],
             [InlineKeyboardButton("❌ No, Cancel", callback_data=f"mentions_cancel_{waiting_id}")]
@@ -708,7 +771,7 @@ async def handle_reply_as_mentioned_input(c: Client, m: RawMessage):
             f"<b>Detail:</b>\n"
             f"• <b>Group:</b> <code>{chat_id}</code>\n"
             f"• <b>To Message:</b> <code>{message_id}</code>\n"
-            f"• <b>Send as:</b> {mentioned_client.me.first_name if mentioned_client.me else 'Unknown'}\n\n"
+            f"• <b>Send as:</b> {client_name}\n\n"
             f"Apakah Anda yakin?"
         )
         
@@ -766,7 +829,7 @@ async def confirm_send_reply(c: Client, cb: CallbackQuery):
         data = REPLY_AS_MENTIONED_WAITING[waiting_id]
         chat_id = data["chat_id"]
         message_id = data["message_id"]
-        mentioned_client = data["mentioned_client"]
+        client_id = data["client_id"]
         reply_text = data["reply_text"]
         user_msg_id = data.get("user_msg_id")
         confirm_msg_id = data.get("confirm_msg_id")
@@ -774,6 +837,17 @@ async def confirm_send_reply(c: Client, cb: CallbackQuery):
         is_reply_all = data.get("is_reply_all", False)
         
         logger.info(f"Sending reply to {chat_id}_{message_id}, is_reply_all: {is_reply_all}")
+        
+        # DAPATKAN CLIENT DARI CLIENT_ID
+        mentioned_client = await get_mention_client(client_id)
+        if not mentioned_client:
+            logger.error(f"Cannot find client {client_id} for sending reply")
+            await cb.message.edit_text(
+                "❌ <b>Gagal mengirim balasan:</b>\nAkun yang disebut tidak tersedia.",
+                parse_mode=enums.ParseMode.HTML
+            )
+            await cb.answer("❌ Akun tidak tersedia", show_alert=True)
+            return
         
         try:
             # Kirim balasan
@@ -785,16 +859,18 @@ async def confirm_send_reply(c: Client, cb: CallbackQuery):
             logger.info(f"Reply sent successfully to {chat_id}")
             
             # Update status pesan
+            client_name = mentioned_client.me.first_name if mentioned_client.me else "Unknown"
             await cb.message.edit_text(
-                "✅ <b>Balasan berhasil dikirim!</b>\n\n"
+                f"✅ <b>Balasan berhasil dikirim!</b>\n\n"
                 f"• <b>Group:</b> <code>{chat_id}</code>\n"
+                f"• <b>Send as:</b> {client_name}\n"
                 f"• <b>Time:</b> {datetime.now().strftime('%H:%M:%S')}",
                 parse_mode=enums.ParseMode.HTML
             )
             
             # Hapus pesan terkait
             messages_to_delete = []
-            if user_msg_id:
+            if user_msg_id and user_msg_id != cb.message.id:
                 messages_to_delete.append(user_msg_id)
             if confirm_msg_id and confirm_msg_id != cb.message.id:
                 messages_to_delete.append(confirm_msg_id)
@@ -953,7 +1029,7 @@ async def status_command_handler(c: Client, m: AltruixMessage):
         parse_mode=enums.ParseMode.HTML
     )
 
-# 🔥 PERBAIKAN: Command untuk debug tombol - DITAMBAHKAN KEMBALI
+# 🔥 PERBAIKAN: Command untuk debug tombol
 @Altruix.register_on_cmd(
     ["mentions_debug"],
     cmd_help={
@@ -996,11 +1072,12 @@ async def debug_command_handler(c: Client, m: AltruixMessage):
         debug_msg += f"• Cache Size: {len(MENTION_LOG_CACHE)}\n"
         debug_msg += f"• Waiting Size: {len(REPLY_AS_MENTIONED_WAITING)}\n\n"
         
-        debug_msg += f"<b>Valid Emojis:</b>\n"
-        debug_msg += f"• Default: {', '.join(DEFAULT_REACTION_EMOJIS)}\n"
-        debug_msg += f"• Total Valid: {len(VALID_REACTION_EMOJIS)} emojis\n\n"
+        debug_msg += f"<b>Recent Cache Keys:</b>\n"
+        cache_keys = list(MENTION_LOG_CACHE.keys())[:5]
+        for i, key in enumerate(cache_keys, 1):
+            debug_msg += f"{i}. {key}\n"
         
-        debug_msg += f"<b>Common Issues:</b>\n"
+        debug_msg += f"\n<b>Common Issues:</b>\n"
         debug_msg += f"1. REACTION_INVALID: Emoji tidak didukung Telegram\n"
         debug_msg += f"2. Tombol tidak merespon: Cek log untuk 'Button pressed'\n"
         debug_msg += f"3. Timeout errors: Network issue\n\n"
@@ -1113,11 +1190,12 @@ async def test_buttons_handler(c: Client, m: AltruixMessage):
         MENTION_LOG_CACHE[test_key] = {
             "text": "Test message",
             "log_msg_id": test_message.id,
-            "mentioned_client": c,
+            "client_id": c.me.id,
             "chat_id": 123456,
             "message_id": 789,
             "timestamp_int": int(time.time()),
-            "client_id": c.me.id
+            "mentioned_by": m.from_user.id if m.from_user else 0,
+            "group_name": "Test Group"
         }
         
         logger.info(f"Test panel created with message ID: {test_message.id}")
@@ -1212,17 +1290,53 @@ async def cleanup_old_entries():
 asyncio.create_task(cleanup_old_entries())
 logger.info("Cleanup task started")
 
-
-# logger.info(f"📋 All issues fixed:")
-# logger.info(f"  1. Emoji buttons fixed (👍, ❤️, 🔥, 🥰, 👏)")
-# logger.info(f"  2. Reply as Mentioned fixed (🗨️)")
-# logger.info(f"  3. Reply From All fixed (👥)")
-# logger.info(f"  4. Added back /mentions_debug command")
-# logger.info(f"  5. Fixed REACTION_INVALID error")
-# logger.info(f"🔧 Use /mentions_test to test all buttons")
+# 🔥 BARU: Command untuk test mention system
+@Altruix.register_on_cmd(
+    ["test_mention"],
+    cmd_help={"help": "Test mention system", "example": "test_mention"},
+)
+@log_errors
+async def test_mention_system(c: Client, m: AltruixMessage):
+    """Test mention system."""
+    msg = await m.handle_message("PROCESSING")
+    
+    try:
+        # Simulasikan mention
+        test_key = f"{m.chat.id}_{m.id}"
+        MENTION_LOG_CACHE[test_key] = {
+            "text": "This is a test mention message",
+            "log_msg_id": m.id,
+            "client_id": c.me.id,
+            "chat_id": m.chat.id,
+            "message_id": m.id,
+            "timestamp_int": int(time.time()),
+            "mentioned_by": m.from_user.id if m.from_user else 0,
+            "group_name": m.chat.title
+        }
+        
+        # Buat tombol test
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🗨️ Test Reply", callback_data=f"mentions_reply_{m.chat.id}_{m.id}")],
+            [InlineKeyboardButton("👥 Test Reply All", callback_data=f"mentions_replyall_{m.chat.id}_{m.id}")],
+            [InlineKeyboardButton("👍 Test React", callback_data=f"mentions_react_{m.chat.id}_{m.id}_👍")],
+        ])
+        
+        await safe_edit_message(
+            c,
+            m.chat.id,
+            msg.id,
+            "🔧 **Test Mention System**\n\nTekan tombol di bawah untuk testing:",
+            reply_markup=keyboard,
+            parse_mode=enums.ParseMode.MARKDOWN
+        )
+        
+    except Exception as e:
+        logger.error(f"Test mention failed: {e}")
+        await msg.edit_msg(f"❌ Test error: {str(e)[:100]}")
 
 # Log sukses loading
 try:
     Altruix.log(f"[DEBUG] ✅ Loaded → {__plugin_name__} {PLUGIN_VERSION}", level=20)
 except Exception as e:
     logger.info(f"[DEBUG] ✅ Loaded → {__plugin_name__} {PLUGIN_VERSION}")
+
