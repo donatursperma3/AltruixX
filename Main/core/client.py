@@ -58,6 +58,7 @@ import psutil
 import resource
 import platform
 from datetime import datetime
+import threading
 
 # ✅ PERUBAHAN 1: Prioritaskan env vars Sevalla untuk deteksi branch/commit yang akurat
 def get_current_git_branch() -> str:
@@ -341,7 +342,7 @@ class AltruixClient:
         await self.install_apm_from_file()
         mc = self.db.make_collection("packages")
         APM_ = APM(self)
-        packages_ = await mc.find_one({"*id": "APM"})
+        packages_ = await mc.find_one({"_id": "APM"})
         if (packages_) and packages_.get("installed_packages"):
             list_of_packages = packages_["installed_packages"]
             for package in list_of_packages:
@@ -593,11 +594,20 @@ class AltruixClient:
                 }
             }
             return stats
-        except ImportError:
-            # Fallback menggunakan resource dan os
-            import os
-            import resource
-            from datetime import datetime
+        # except ImportError:
+        #     # Fallback menggunakan resource dan os
+        #     import os
+        #     import resource
+        #     from datetime import datetime
+        except Exception as e:
+            # Fallback sederhana tanpa psutil
+            try:
+                import threading  # Import di sini aman karena hanya fallback
+                import os
+                import resource
+                from datetime import datetime
+            except Exception:
+                threading = None
             
             # RAM stats
             ram_used = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024  # KB to MB
@@ -1351,4 +1361,4 @@ class AltruixClient:
                 self._command_help_message_data[plugin_name] = (
                     f"<b>⚠️ Error loading help for '{plugin_name}'</b>\n"
                     f"<code>{str(e)}</code>"
-        )
+                            )
