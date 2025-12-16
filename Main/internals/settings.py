@@ -8,7 +8,7 @@
 # All rights reserved.
 
 from Main import Altruix
-from typing import List, Tuple
+from typing import List, Tuple, Dict, Any
 from pyrogram import Client, filters
 from Main.core.decorators import log_errors
 from Main.core.types.message import Message
@@ -19,7 +19,9 @@ from pyrogram.types import (
 from pyrogram.errors import (
     PeerIdInvalid, UserIsBlocked, ChatWriteForbidden, FloodWait, MessageIdInvalid,
     SlowmodeWait, InviteHashInvalid, InviteHashExpired, UserAlreadyParticipant,
-    ChatAdminRequired, UsernameNotOccupied, ChannelPrivate, UsernameInvalid
+    ChatAdminRequired, UsernameNotOccupied, ChannelPrivate, UsernameInvalid,
+    UsernameNotModified, AboutTooLong, FirstNameInvalid, PhotoInvalidDimensions,
+    PhotoSaveFileInvalid, UsernameOccupied
 )
 from pyrogram.enums import ParseMode
 import os
@@ -37,6 +39,9 @@ from pyrogram.errors import UserIsBlocked as BotBlocked  # Alias agar tidak bent
 user_confirmation_state = {}
 user_text_confirmation_state = {}
 user_bulk_join_state = {}  # State untuk bulk join
+user_profile_edit_state = {}  # ✅ BARU: State untuk edit profil
+user_photo_delete_state = {}  # ✅ BARU: State untuk hapus foto profil
+user_edit_confirmation_state = {}  # ✅ BARU: State untuk konfirmasi edit profil
 
 # ✅ TAMBAHAN STATE UNTUK CEK LIMIT (per session)
 user_limit_check_state = {}  # {user_id: {'session_index': int, 'page': int}}
@@ -291,15 +296,290 @@ async def bulk_join_delay_handler(c: Client, cb: CallbackQuery):
     )
 
 
+# ✅ FUNGSI BARU: Kirim notifikasi ke log group
+async def send_log_notification(
+    c: Client, 
+    action: str, 
+    session_index: int, 
+    user: Any, 
+    success: bool, 
+    error_msg: str = None,
+    additional_info: Dict[str, Any] = None
+):
+    """Mengirim notifikasi ke log group untuk semua aksi"""
+    try:
+        log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
+        
+        if session_index >= len(Altruix.clients):
+            return
+        
+        session_client = Altruix.clients[session_index]
+        session_info = getattr(session_client, 'myself', None)
+        if not session_info:
+            try:
+                session_info = await session_client.get_me()
+            except:
+                session_info = None
+        
+        # Map action to readable text
+        action_map = {
+            'change_first_name': 'Ganti Nama Depan',
+            'change_last_name': 'Ganti Nama Belakang',
+            'change_bio': 'Ganti Bio',
+            'change_username': 'Ganti Username',
+            'change_profile_photo': 'Ganti Foto Profil',
+            'view_all_sessions': 'Lihat Sesi Login',
+            'delete_all_profile_photos': 'Hapus Semua Foto Profil',
+            'test_ping': 'Test Ping',
+            'export_phone': 'Export Phone',
+            'export_session': 'Export Session',
+            'join_log_group': 'Join Log Group'
+        }
+        
+        action_text = action_map.get(action, action)
+        status = "✅ BERHASIL" if success else "❌ GAGAL"
+        timestamp = datetime.now().strftime('%d-%m-%Y %H:%M:%S')
+        
+        # Buat pesan log
+        log_message = (
+            f"📢 <b>AKSI PROFIL - {action_text}</b>\n"
+            f"• Status: <b>{status}</b>\n"
+            f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a>\n"
+            f"• User ID: <code>{user.id}</code>\n"
+        )
+        
+        if session_info:
+            log_message += (
+                f"• Akun: <a href='tg://user?id={session_info.id}'>{html.escape(session_info.first_name or '')}</a>\n"
+                f"• Akun ID: <code>{session_info.id}</code>\n"
+            )
+        
+        if additional_info:
+            for key, value in additional_info.items():
+                if value and str(value).strip():
+                    log_message += f"• {key}: <code>{html.escape(str(value))}</code>\n"
+        
+        if error_msg:
+            log_message += f"• Error: <code>{html.escape(error_msg)}</code>\n"
+        
+        log_message += f"• Waktu: <code>{timestamp}</code>"
+        
+        # Kirim ke log group
+        await Altruix.bot.send_message(
+            log_chat_id,
+            log_message,
+            parse_mode=ParseMode.HTML,
+            link_preview_options=LinkPreviewOptions(is_disabled=True)
+        )
+        
+    except Exception as e:
+        Altruix.log(f"Error sending log notification: {e}", level=logging.ERROR)
+
+
+# ✅ PERUBAHAN: Handler untuk menerima input teks (dengan konfirmasi)
 @Altruix.bot.on_message(filters.text & filters.private & filters.user(Altruix.auth_users))
 @log_errors
-async def bulk_join_link_handler(c: Client, m: Message):
-    """Handler untuk menerima link grup untuk bulk join"""
+async def user_text_handler(c: Client, m: Message):
+    """Handler untuk menerima input teks dari user (dengan konfirmasi)"""
     user_id = m.from_user.id
     text = m.text.strip()
     
-    # Cek jika user sedang dalam proses bulk join
-    if user_id in user_bulk_join_state and user_bulk_join_state[user_id]['step'] == 'waiting_link':
+    # ✅ PERUBAHAN: Cek jika user sedang dalam konfirmasi edit profil
+    if user_id in user_edit_confirmation_state:
+        state = user_edit_confirmation_state[user_id]
+        
+        if text.lower() == "ya":
+            # Proses aksi yang sudah ditentukan
+            session_index = state['session_index']
+            page = state.get('page', 1)
+            action = state['action']
+            data = state['data']
+            
+            # Hapus state
+            del user_edit_confirmation_state[user_id]
+            
+            if session_index >= len(Altruix.clients):
+                await m.reply("❌ Session tidak ditemukan.")
+                return
+            
+            session_client = Altruix.clients[session_index]
+            
+            try:
+                old_info = await session_client.get_me()
+                success = False
+                error_msg = None
+                additional_info = {}
+                
+                if action == 'change_first_name':
+                    # Update first name
+                    await session_client.update_profile(first_name=data)
+                    success = True
+                    additional_info = {
+                        'Nama Lama': old_info.first_name,
+                        'Nama Baru': data
+                    }
+                    await m.reply(f"✅ Nama depan berhasil diubah menjadi: <code>{html.escape(data)}</code>")
+                    
+                elif action == 'change_last_name':
+                    # Update last name (bisa kosong untuk menghapus)
+                    if data.lower() == "kosong" or data == "":
+                        await session_client.update_profile(last_name="")
+                        success = True
+                        additional_info = {
+                            'Nama Belakang Lama': old_info.last_name or 'Kosong',
+                            'Nama Belakang Baru': 'Dihapus'
+                        }
+                        await m.reply("✅ Nama belakang berhasil dihapus.")
+                    else:
+                        await session_client.update_profile(last_name=data)
+                        success = True
+                        additional_info = {
+                            'Nama Belakang Lama': old_info.last_name,
+                            'Nama Belakang Baru': data
+                        }
+                        await m.reply(f"✅ Nama belakang berhasil diubah menjadi: <code>{html.escape(data)}</code>")
+                        
+                elif action == 'change_bio':
+                    # Update bio
+                    await session_client.update_profile(bio=data)
+                    success = True
+                    additional_info = {
+                        'Bio Lama': old_info.bio or 'Kosong',
+                        'Bio Baru': data
+                    }
+                    await m.reply(f"✅ Bio berhasil diubah menjadi: <code>{html.escape(data)}</code>")
+                    
+                elif action == 'change_username':
+                    # Update username
+                    username = data.replace("@", "")
+                    try:
+                        await session_client.update_username(username)
+                        success = True
+                        additional_info = {
+                            'Username Lama': old_info.username or 'Kosong',
+                            'Username Baru': username
+                        }
+                        await m.reply(f"✅ Username berhasil diubah menjadi: @{html.escape(username)}")
+                    except UsernameOccupied:
+                        error_msg = "Username sudah digunakan"
+                        await m.reply(f"❌ Username @{html.escape(username)} sudah digunakan.")
+                    except UsernameInvalid as e:
+                        error_msg = str(e)
+                        await m.reply(f"❌ Username tidak valid: {str(e)}")
+                    except Exception as e:
+                        error_msg = str(e)
+                        await m.reply(f"❌ Error: {str(e)}")
+                        
+            except FirstNameInvalid as e:
+                error_msg = f"Nama tidak valid: {str(e)}"
+                await m.reply(f"❌ Nama tidak valid: {str(e)}")
+            except AboutTooLong as e:
+                error_msg = f"Bio terlalu panjang: {str(e)}"
+                await m.reply(f"❌ Bio terlalu panjang: {str(e)}")
+            except FloodWait as e:
+                error_msg = f"FloodWait {e.value} detik"
+                await m.reply(f"⏳ FloodWait: Tunggu {e.value} detik sebelum mencoba lagi.")
+            except Exception as e:
+                error_msg = str(e)
+                await m.reply(f"❌ Error: {str(e)}")
+                Altruix.log(f"Error updating profile: {e}", level=logging.ERROR)
+            finally:
+                # Kirim notifikasi ke log group
+                await send_log_notification(
+                    c, action, session_index, m.from_user, 
+                    success, error_msg, additional_info
+                )
+                
+                # Kembali ke info session
+                try:
+                    await asyncio.sleep(1)
+                    cb = CallbackQuery(
+                        id="temp",
+                        from_user=m.from_user,
+                        message=m,
+                        chat_instance="temp",
+                        data=f"session_info_{session_index}_{page}"
+                    )
+                    await sessions_info_cb_handler(c, cb)
+                except Exception:
+                    pass
+        
+        elif text.lower() == "tidak":
+            # Batalkan aksi
+            del user_edit_confirmation_state[user_id]
+            await m.reply("❌ Aksi dibatalkan.")
+            
+            # Kembali ke info session
+            session_index = state['session_index']
+            page = state.get('page', 1)
+            try:
+                cb = CallbackQuery(
+                    id="temp",
+                    from_user=m.from_user,
+                    message=m,
+                    chat_instance="temp",
+                    data=f"session_info_{session_index}_{page}"
+                )
+                await sessions_info_cb_handler(c, cb)
+            except Exception:
+                pass
+        else:
+            await m.reply("❌ Silakan jawab 'ya' atau 'tidak'.")
+        return
+    
+    # ✅ PERUBAHAN: Cek jika user sedang menunggu input untuk edit profil (langsung minta konfirmasi)
+    elif user_id in user_profile_edit_state:
+        state = user_profile_edit_state[user_id]
+        action = state['action']
+        session_index = state['session_index']
+        page = state.get('page', 1)
+        
+        # Hapus state waiting
+        del user_profile_edit_state[user_id]
+        
+        if text.lower() == "/cancel":
+            await m.reply("❌ Aksi dibatalkan.")
+            try:
+                cb = CallbackQuery(
+                    id="temp",
+                    from_user=m.from_user,
+                    message=m,
+                    chat_instance="temp",
+                    data=f"session_info_{session_index}_{page}"
+                )
+                await sessions_info_cb_handler(c, cb)
+            except Exception:
+                pass
+            return
+        
+        # Simpan data dan minta konfirmasi
+        user_edit_confirmation_state[user_id] = {
+            'action': action,
+            'session_index': session_index,
+            'page': page,
+            'data': text
+        }
+        
+        action_names = {
+            'change_first_name': 'Ganti Nama Depan',
+            'change_last_name': 'Ganti Nama Belakang',
+            'change_bio': 'Ganti Bio',
+            'change_username': 'Ganti Username'
+        }
+        
+        action_text = action_names.get(action, action)
+        
+        await m.reply(
+            f"❓ <b>Konfirmasi {action_text}</b>\n\n"
+            f"Data: <code>{html.escape(text)}</code>\n\n"
+            f"Apakah Anda yakin ingin melanjutkan?\n"
+            f"Ketik <b>ya</b> untuk lanjut atau <b>tidak</b> untuk batalkan.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    # ✅ PERUBAHAN: Cek jika user sedang dalam proses bulk join
+    elif user_id in user_bulk_join_state and user_bulk_join_state[user_id]['step'] == 'waiting_link':
         if text.lower() == "/cancel":
             del user_bulk_join_state[user_id]
             await m.reply("❌ Bulk join dibatalkan.")
@@ -341,6 +621,7 @@ async def bulk_join_link_handler(c: Client, m: Message):
             reply_markup=InlineKeyboardMarkup(confirmation_buttons),
             parse_mode=ParseMode.HTML
         )
+        return
     
     # Handler untuk konfirmasi teks 'ok' dari user (untuk export)
     elif user_id in user_text_confirmation_state and text.lower() == "ok":
@@ -359,6 +640,186 @@ async def bulk_join_link_handler(c: Client, m: Message):
             await execute_export_all_phones(c, m)
         else:
             await m.reply("❌ Unknown action. Please try again.")
+        return
+
+
+# ✅ PERUBAHAN: Handler untuk foto profil dengan konfirmasi
+@Altruix.bot.on_message(filters.photo & filters.private & filters.user(Altruix.auth_users))
+@log_errors
+async def profile_photo_handler(c: Client, m: Message):
+    """Handler untuk menerima foto profil baru (dengan konfirmasi)"""
+    user_id = m.from_user.id
+    
+    if user_id in user_profile_edit_state:
+        state = user_profile_edit_state[user_id]
+        action = state['action']
+        
+        if action == 'change_profile_photo':
+            session_index = state['session_index']
+            page = state.get('page', 1)
+            
+            # Hapus state waiting
+            del user_profile_edit_state[user_id]
+            
+            if session_index >= len(Altruix.clients):
+                await m.reply("❌ Session tidak ditemukan.")
+                return
+            
+            # Download foto
+            try:
+                photo_path = await m.download()
+                
+                # Simpan path di state konfirmasi
+                user_edit_confirmation_state[user_id] = {
+                    'action': action,
+                    'session_index': session_index,
+                    'page': page,
+                    'data': photo_path,
+                    'photo_message': m
+                }
+                
+                await m.reply(
+                    "❓ <b>Konfirmasi Ganti Foto Profil</b>\n\n"
+                    "Apakah Anda yakin ingin mengganti foto profil dengan foto yang dikirim?\n\n"
+                    "⚠️ <b>Note:</b>\n"
+                    "• Foto lama akan diganti\n"
+                    "• Tidak bisa dikembalikan\n\n"
+                    "Ketik <b>ya</b> untuk lanjut atau <b>tidak</b> untuk batalkan.",
+                    parse_mode=ParseMode.HTML
+                )
+                
+            except Exception as e:
+                await m.reply(f"❌ Error: {str(e)}")
+                Altruix.log(f"Error downloading photo: {e}", level=logging.ERROR)
+
+
+# ✅ PERUBAHAN: Handler untuk konfirmasi ya/tidak khusus foto
+@Altruix.bot.on_message(filters.regex(r'^(ya|tidak)$', re.I) & filters.private & filters.user(Altruix.auth_users))
+@log_errors
+async def confirmation_handler(c: Client, m: Message):
+    """Handler khusus untuk konfirmasi ya/tidak"""
+    user_id = m.from_user.id
+    text = m.text.lower()
+    
+    if user_id in user_edit_confirmation_state:
+        state = user_edit_confirmation_state[user_id]
+        action = state['action']
+        session_index = state['session_index']
+        page = state.get('page', 1)
+        
+        if text == "ya":
+            # Proses aksi
+            try:
+                session_client = Altruix.clients[session_index]
+                success = False
+                error_msg = None
+                additional_info = {}
+                
+                if action == 'change_profile_photo':
+                    photo_path = state.get('data')
+                    
+                    if photo_path and os.path.exists(photo_path):
+                        try:
+                            # Dapatkan info foto lama
+                            old_photos = []
+                            async for photo in session_client.get_chat_photos("me", limit=1):
+                                old_photos.append(photo)
+                            
+                            # Update foto profil
+                            await session_client.set_profile_photo(photo=photo_path)
+                            success = True
+                            additional_info = {
+                                'Aksi': 'Foto profil diganti'
+                            }
+                            await m.reply("✅ Foto profil berhasil diubah!")
+                            
+                            # Kirim notifikasi ke log group
+                            await send_log_notification(
+                                c, action, session_index, m.from_user, 
+                                success, error_msg, additional_info
+                            )
+                            
+                            # Hapus file sementara
+                            os.remove(photo_path)
+                            
+                        except PhotoInvalidDimensions as e:
+                            error_msg = f"Dimensi foto tidak valid: {str(e)}"
+                            await m.reply(f"❌ Dimensi foto tidak valid: {str(e)}")
+                        except PhotoSaveFileInvalid as e:
+                            error_msg = f"File foto tidak valid: {str(e)}"
+                            await m.reply(f"❌ File foto tidak valid: {str(e)}")
+                        except FloodWait as e:
+                            error_msg = f"FloodWait {e.value} detik"
+                            await m.reply(f"⏳ FloodWait: Tunggu {e.value} detik sebelum mencoba lagi.")
+                        except Exception as e:
+                            error_msg = str(e)
+                            await m.reply(f"❌ Error: {str(e)}")
+                            Altruix.log(f"Error updating profile photo: {e}", level=logging.ERROR)
+                        finally:
+                            if not success and photo_path and os.path.exists(photo_path):
+                                os.remove(photo_path)
+                    else:
+                        error_msg = "File foto tidak ditemukan"
+                        await m.reply("❌ File foto tidak ditemukan.")
+                
+                elif action == 'delete_all_profile_photos':
+                    # Proses hapus semua foto profil
+                    delay = state.get('delay', 2)
+                    await m.reply(f"🔄 Memulai penghapusan semua foto profil dengan delay {delay} detik...")
+                    
+                    # Panggil fungsi penghapusan
+                    await delete_all_profile_photos_process(c, m, session_index, page, delay)
+                    
+                    # Notifikasi log sudah dikirim dari fungsi delete_all_profile_photos_process
+                    return
+                    
+            except Exception as e:
+                error_msg = str(e)
+                await m.reply(f"❌ Error: {str(e)}")
+                Altruix.log(f"Error in confirmation handler: {e}", level=logging.ERROR)
+            
+            # Hapus state
+            del user_edit_confirmation_state[user_id]
+            
+            # Kembali ke info session
+            try:
+                await asyncio.sleep(1)
+                cb = CallbackQuery(
+                    id="temp",
+                    from_user=m.from_user,
+                    message=m,
+                    chat_instance="temp",
+                    data=f"session_info_{session_index}_{page}"
+                )
+                await sessions_info_cb_handler(c, cb)
+            except Exception:
+                pass
+            
+        elif text == "tidak":
+            # Batalkan aksi
+            state = user_edit_confirmation_state[user_id]
+            
+            # Hapus file foto jika ada
+            if state.get('action') == 'change_profile_photo' and state.get('data'):
+                photo_path = state['data']
+                if os.path.exists(photo_path):
+                    os.remove(photo_path)
+            
+            del user_edit_confirmation_state[user_id]
+            await m.reply("❌ Aksi dibatalkan.")
+            
+            # Kembali ke info session
+            try:
+                cb = CallbackQuery(
+                    id="temp",
+                    from_user=m.from_user,
+                    message=m,
+                    chat_instance="temp",
+                    data=f"session_info_{state['session_index']}_{state.get('page', 1)}"
+                )
+                await sessions_info_cb_handler(c, cb)
+            except Exception:
+                pass
 
 
 @Altruix.bot.on_callback_query(filters.regex("bulk_join_confirm_(yes|no)"))
@@ -543,7 +1004,7 @@ async def execute_bulk_join(c: Client, cb: CallbackQuery, delay: int, link: str)
 @Altruix.bot.on_callback_query(filters.regex("join_log_group_(\\d+)$"))
 @log_errors
 async def join_log_group_handler(c: Client, cb: CallbackQuery):
-    """Handler untuk join log group per session"""
+    """Handler untuk join log group per session (dengan notifikasi log)"""
     await cb.answer()
     index = int(cb.matches[0].group(1))
     
@@ -559,6 +1020,11 @@ async def join_log_group_handler(c: Client, cb: CallbackQuery):
             session_info = await session_client.get_me()
         except Exception as e:
             await cb.message.edit(f"Error getting session info: {str(e)}")
+            # Kirim notifikasi error ke log group
+            await send_log_notification(
+                c, 'join_log_group', index, cb.from_user, 
+                False, str(e), {'Aksi': 'Join log group gagal'}
+            )
             return
     
     # Dapatkan LOG_CHAT_ID
@@ -583,6 +1049,12 @@ async def join_log_group_handler(c: Client, cb: CallbackQuery):
                     raise Exception("No invite link available")
             except Exception:
                 await cb.message.edit("❌ Cannot get invite link for log group. Make sure bot is admin.")
+                # Kirim notifikasi error ke log group
+                await send_log_notification(
+                    c, 'join_log_group', index, cb.from_user, 
+                    False, "Tidak dapat mendapatkan invite link", 
+                    {'Aksi': 'Join log group gagal'}
+                )
                 return
         
         # Coba join dengan session
@@ -603,8 +1075,19 @@ async def join_log_group_handler(c: Client, cb: CallbackQuery):
             
             await cb.message.edit("✅ Successfully joined log group!")
             
+            # ✅ BARU: Kirim notifikasi ke log group via fungsi
+            await send_log_notification(
+                c, 'join_log_group', index, cb.from_user, 
+                True, None, {'Aksi': 'Join log group berhasil'}
+            )
+            
         except UserAlreadyParticipant:
             await cb.message.edit("ℹ️ This session is already in the log group.")
+            # ✅ BARU: Kirim notifikasi ke log group
+            await send_log_notification(
+                c, 'join_log_group', index, cb.from_user, 
+                True, None, {'Aksi': 'Join log group (sudah bergabung)'}
+            )
             
         except Exception as e:
             await cb.message.edit(f"❌ Failed to join log group: {str(e)}")
@@ -618,9 +1101,20 @@ async def join_log_group_handler(c: Client, cb: CallbackQuery):
                 f"• Time: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>",
                 parse_mode=ParseMode.HTML
             )
+            
+            # ✅ BARU: Kirim notifikasi error ke log group
+            await send_log_notification(
+                c, 'join_log_group', index, cb.from_user, 
+                False, str(e), {'Aksi': 'Join log group gagal'}
+            )
     
     except Exception as e:
         await cb.message.edit(f"❌ Error: {str(e)}")
+        # ✅ BARU: Kirim notifikasi error ke log group
+        await send_log_notification(
+            c, 'join_log_group', index, cb.from_user, 
+            False, str(e), {'Aksi': 'Join log group gagal'}
+        )
 
 
 # ====================== EXPORT ALL SESSIONS ======================
@@ -1206,52 +1700,432 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery):
     dc_id = getattr(session_info, 'dc_id', 'Unknown')
     username = getattr(session_info, 'username', 'None')
     user_id = getattr(session_info, 'id', 'Unknown')
+    bio = getattr(session_info, 'bio', 'None')
 
     txt = (
-        "<b>Session info</b>\n\n"
-        "<b>First name:</b> {}\n"
-        "<b>Last name:</b> {}\n"
-        "<b>DC ID:</b> <code>{}</code>\n"
-        "<b>Username:</b> @{}\n"
-        "<b>User ID:</b> <code>{}</code>\n"
-        "<b>Is SCAM:</b> <code>{}</code>"
-    ).format(
-        first_name or "None",
-        last_name or "None",
-        dc_id or "Unknown",
-        username or "None",
-        user_id,
-        "Yes" if is_scam else "No",
+        "<b>📋 Session Info</b>\n\n"
+        f"<b>👤 First name:</b> <code>{html.escape(first_name or 'None')}</code>\n"
+        f"<b>👤 Last name:</b> <code>{html.escape(last_name or 'None')}</code>\n"
+        f"<b>📝 Bio:</b> <code>{html.escape(bio[:50] + '...' if bio and len(bio) > 50 else bio or 'None')}</code>\n"
+        f"<b>🌐 DC ID:</b> <code>{dc_id or 'Unknown'}</code>\n"
+        f"<b>🔗 Username:</b> @{username or 'None'}\n"
+        f"<b>🆔 User ID:</b> <code>{user_id}</code>\n"
+        f"<b>⚠️ Is SCAM:</b> <code>{'Yes' if is_scam else 'No'}</code>"
     )
     
-    # ✅ PERUBAHAN: Tambahkan tombol "🔍 Check Limit" di baris terpisah
+    # ✅ PERUBAHAN: Tambahkan tombol-tombol edit profil sesuai permintaan
     await cb.message.edit(
         text=txt,
         reply_markup=InlineKeyboardMarkup(
             [
+                # Baris 1: Refresh dan Unlink
                 [
                     InlineKeyboardButton("🔄 Refresh data", f"refresh_session_info_{index}"),
                     InlineKeyboardButton("🔗 Unlink (Remove)", f"unlink_session_{index}"),
                 ],
+                # Baris 2: Export Session dan Phone
                 [
                     InlineKeyboardButton("📤 Export Session", f"export_session_{index}"),
-                ],
-                [
                     InlineKeyboardButton("📞 Export Phone Number", f"export_phone_{index}"),
                 ],
+                # Baris 3: Test Ping dan Join Log Group
                 [
                     InlineKeyboardButton("🏓 Test Ping", f"test_ping_{index}"),
                     InlineKeyboardButton("📢 Join Log Group", f"join_log_group_{index}"),
                 ],
+                # Baris 4: Check Limit
                 [
-                    InlineKeyboardButton("🔍 Check Limit", f"check_limit_confirm_{index}_{callback_page}"),  # ✅ TOMBOL BARU
+                    InlineKeyboardButton("🔍 Check Limit", f"check_limit_confirm_{index}_{callback_page}"),
                 ],
+                # ✅ BARU: Baris 5-9 untuk fitur edit profil
+                # Baris 5: Ganti Nama Depan dan Belakang
+                [
+                    InlineKeyboardButton("✏️ Ganti nama depan", f"change_first_name_{index}_{callback_page}"),
+                    InlineKeyboardButton("✏️ Ganti nama belakang", f"change_last_name_{index}_{callback_page}"),
+                ],
+                # Baris 6: Ganti Bio dan Username
+                [
+                    InlineKeyboardButton("📝 Ganti bio", f"change_bio_{index}_{callback_page}"),
+                    InlineKeyboardButton("👤 Ganti username", f"change_username_{index}_{callback_page}"),
+                ],
+                # Baris 7: Ganti Foto Profil dan Lihat Sesi Login
+                [
+                    InlineKeyboardButton("🖼️ Ganti foto profil", f"change_profile_photo_{index}_{callback_page}"),
+                    InlineKeyboardButton("👁️ Lihat semua sesi", f"view_all_sessions_{index}_{callback_page}"),
+                ],
+                # Baris 8: Hapus Semua Foto Profil
+                [
+                    InlineKeyboardButton("🗑️ Hapus semua foto profil", f"delete_all_profile_photos_{index}_{callback_page}"),
+                ],
+                # Baris 9: Tombol Back
                 [
                     InlineKeyboardButton("🔙 Back", f"sessions_list_{callback_page}"),
                 ],
             ]
         ),
+        parse_mode=ParseMode.HTML
     )
+
+
+# ✅ HANDLER BARU: Ganti Nama Depan dengan konfirmasi
+@Altruix.bot.on_callback_query(filters.regex(r"change_first_name_(\d+)_(\d+)"))
+@log_errors
+async def change_first_name_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk mengganti nama depan (dengan konfirmasi)"""
+    await cb.answer()
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    
+    user_id = cb.from_user.id
+    user_profile_edit_state[user_id] = {
+        'action': 'change_first_name',
+        'session_index': index,
+        'page': page
+    }
+    
+    await cb.message.edit(
+        text="✏️ <b>Ganti Nama Depan</b>\n\n"
+             "Silakan kirim nama depan baru untuk akun ini.\n\n"
+             "⚠️ <b>Note:</b>\n"
+             "• Nama depan maksimal 64 karakter\n"
+             "• Tidak boleh mengandung karakter khusus\n\n"
+             "❌ <b>Cancel:</b> Kirim /cancel",
+        parse_mode=ParseMode.HTML
+    )
+
+
+# ✅ HANDLER BARU: Ganti Nama Belakang dengan konfirmasi
+@Altruix.bot.on_callback_query(filters.regex(r"change_last_name_(\d+)_(\d+)"))
+@log_errors
+async def change_last_name_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk mengganti nama belakang (dengan konfirmasi)"""
+    await cb.answer()
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    
+    user_id = cb.from_user.id
+    user_profile_edit_state[user_id] = {
+        'action': 'change_last_name',
+        'session_index': index,
+        'page': page
+    }
+    
+    await cb.message.edit(
+        text="✏️ <b>Ganti Nama Belakang</b>\n\n"
+             "Silakan kirim nama belakang baru untuk akun ini.\n"
+             "Kirim 'kosong' atau string kosong untuk menghapus nama belakang.\n\n"
+             "⚠️ <b>Note:</b>\n"
+             "• Nama belakang maksimal 64 karakter\n"
+             "• Kosongkan untuk menghapus nama belakang\n\n"
+             "❌ <b>Cancel:</b> Kirim /cancel",
+        parse_mode=ParseMode.HTML
+    )
+
+
+# ✅ HANDLER BARU: Ganti Bio dengan konfirmasi
+@Altruix.bot.on_callback_query(filters.regex(r"change_bio_(\d+)_(\d+)"))
+@log_errors
+async def change_bio_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk mengganti bio (dengan konfirmasi)"""
+    await cb.answer()
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    
+    user_id = cb.from_user.id
+    user_profile_edit_state[user_id] = {
+        'action': 'change_bio',
+        'session_index': index,
+        'page': page
+    }
+    
+    await cb.message.edit(
+        text="📝 <b>Ganti Bio</b>\n\n"
+             "Silakan kirim bio baru untuk akun ini.\n"
+             "Maksimal 70 karakter.\n\n"
+             "⚠️ <b>Note:</b>\n"
+             "• Bio akan tampil di profil\n"
+             "• Bisa berisi emoji dan link\n\n"
+             "❌ <b>Cancel:</b> Kirim /cancel",
+        parse_mode=ParseMode.HTML
+    )
+
+
+# ✅ HANDLER BARU: Ganti Username dengan konfirmasi
+@Altruix.bot.on_callback_query(filters.regex(r"change_username_(\d+)_(\d+)"))
+@log_errors
+async def change_username_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk mengganti username (dengan konfirmasi)"""
+    await cb.answer()
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    
+    user_id = cb.from_user.id
+    user_profile_edit_state[user_id] = {
+        'action': 'change_username',
+        'session_index': index,
+        'page': page
+    }
+    
+    await cb.message.edit(
+        text="👤 <b>Ganti Username</b>\n\n"
+             "Silakan kirim username baru (tanpa @).\n"
+             "Contoh: username_baru\n\n"
+             "⚠️ <b>Note:</b>\n"
+             "• Username harus unik dan tersedia\n"
+             "• Minimal 5 karakter\n"
+             "• Hanya boleh mengandung huruf, angka, dan underscore\n"
+             "• Tidak boleh mengandung kata kasar\n\n"
+             "❌ <b>Cancel:</b> Kirim /cancel",
+        parse_mode=ParseMode.HTML
+    )
+
+
+# ✅ HANDLER BARU: Ganti Foto Profil dengan konfirmasi
+@Altruix.bot.on_callback_query(filters.regex(r"change_profile_photo_(\d+)_(\d+)"))
+@log_errors
+async def change_profile_photo_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk mengganti foto profil (dengan konfirmasi)"""
+    await cb.answer()
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    
+    user_id = cb.from_user.id
+    user_profile_edit_state[user_id] = {
+        'action': 'change_profile_photo',
+        'session_index': index,
+        'page': page
+    }
+    
+    await cb.message.edit(
+        text="🖼️ <b>Ganti Foto Profil</b>\n\n"
+             "Silakan kirim foto baru untuk profil akun ini.\n\n"
+             "⚠️ <b>Note:</b>\n"
+             "• Foto harus dalam format JPEG/PNG\n"
+             "• Ukuran maksimal 10MB\n"
+             "• Rasio disarankan 1:1 (persegi)\n"
+             "• Foto lama akan diganti\n\n"
+             "❌ <b>Cancel:</b> Kirim /cancel",
+        parse_mode=ParseMode.HTML
+    )
+
+
+# ✅ HANDLER BARU: Lihat semua sesi login dengan notifikasi log
+@Altruix.bot.on_callback_query(filters.regex(r"view_all_sessions_(\d+)_(\d+)"))
+@log_errors
+async def view_all_sessions_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk melihat semua sesi login (dengan notifikasi log)"""
+    await cb.answer()
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    
+    if index >= len(Altruix.clients):
+        await cb.message.edit("❌ Session tidak ditemukan.")
+        return
+    
+    session_client = Altruix.clients[index]
+    session_info = getattr(session_client, 'myself', None) or await session_client.get_me()
+    
+    try:
+        # Coba dapatkan informasi sesi aktif
+        authorized = await session_client.get_me() is not None
+        
+        # Kirim notifikasi ke log group
+        await send_log_notification(
+            c, 'view_all_sessions', index, cb.from_user, 
+            True, None, {'Aksi': 'Melihat sesi login'}
+        )
+        
+        session_text = (
+            f"<b>👁️ Informasi Sesi Login</b>\n\n"
+            f"<b>Akun:</b> {html.escape(session_info.first_name or 'Unknown')}\n"
+            f"<b>ID:</b> <code>{session_info.id}</code>\n"
+            f"<b>Status:</b> {'✅ Authorized' if authorized else '❌ Not Authorized'}\n"
+            f"<b>Username:</b> @{session_info.username or 'tidak ada'}\n"
+            f"<b>DC ID:</b> <code>{session_info.dc_id or 'Unknown'}</code>\n\n"
+            f"<b>⚠️ Catatan:</b>\n"
+            f"Pyrogram tidak menyediakan API untuk melihat semua sesi login.\n"
+            f"Informasi ini hanya menunjukkan status autorisasi saat ini."
+        )
+        
+        await cb.message.edit(
+            text=session_text,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]
+            ]),
+            parse_mode=ParseMode.HTML
+        )
+        
+    except Exception as e:
+        await cb.message.edit(f"❌ Error: {html.escape(str(e))}")
+        # Kirim notifikasi error ke log group
+        await send_log_notification(
+            c, 'view_all_sessions', index, cb.from_user, 
+            False, str(e), {'Aksi': 'Melihat sesi login'}
+        )
+
+
+# ✅ HANDLER BARU: Hapus semua foto profil dengan konfirmasi
+@Altruix.bot.on_callback_query(filters.regex(r"delete_all_profile_photos_(\d+)_(\d+)"))
+@log_errors
+async def delete_all_profile_photos_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk menghapus semua foto profil (dengan konfirmasi)"""
+    await cb.answer()
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    
+    user_id = cb.from_user.id
+    user_edit_confirmation_state[user_id] = {
+        'action': 'delete_all_profile_photos',
+        'session_index': index,
+        'page': page,
+        'delay': 2  # Default delay 2 detik
+    }
+    
+    # Tampilkan konfirmasi
+    await cb.message.edit(
+        text="🗑️ <b>Konfirmasi Hapus Semua Foto Profil</b>\n\n"
+             "Apakah Anda yakin ingin menghapus SEMUA foto profil akun ini?\n\n"
+             "⚠️ <b>PERINGATAN TINGGI:</b>\n"
+             "• Tindakan ini TIDAK DAPAT DIBATALKAN\n"
+             "• Semua foto profil akan dihapus permanen\n"
+             "• Risiko flood wait/limit jika terlalu banyak foto\n\n"
+             "Ketik <b>ya</b> untuk lanjut atau <b>tidak</b> untuk batalkan.\n\n"
+             "Setelah konfirmasi, Anda bisa pilih delay:",
+        parse_mode=ParseMode.HTML
+    )
+
+
+# ✅ FUNGSI BARU: Hapus semua foto profil dengan notifikasi log
+async def delete_all_profile_photos_process(c: Client, m: Message, session_index: int, page: int, delay: int):
+    """Fungsi untuk menghapus semua foto profil dengan delay dan notifikasi log"""
+    if session_index >= len(Altruix.clients):
+        await m.reply("❌ Session tidak ditemukan.")
+        return
+    
+    session_client = Altruix.clients[session_index]
+    session_info = getattr(session_client, 'myself', None) or await session_client.get_me()
+    
+    try:
+        # Dapatkan semua foto profil
+        photos = []
+        async for photo in session_client.get_chat_photos("me"):
+            photos.append(photo)
+        
+        total_photos = len(photos)
+        
+        if total_photos == 0:
+            await m.reply("ℹ️ Akun ini tidak memiliki foto profil.")
+            # Kirim notifikasi ke log group
+            await send_log_notification(
+                c, 'delete_all_profile_photos', session_index, m.from_user, 
+                True, None, {
+                    'Aksi': 'Hapus semua foto profil',
+                    'Total Foto': '0',
+                    'Status': 'Tidak ada foto'
+                }
+            )
+            return
+        
+        # Kirim notifikasi mulai ke log group
+        await send_log_notification(
+            c, 'delete_all_profile_photos', session_index, m.from_user, 
+            True, None, {
+                'Aksi': 'Mulai hapus semua foto profil',
+                'Total Foto': str(total_photos),
+                'Delay': f'{delay} detik'
+            }
+        )
+        
+        await m.reply(f"🔄 Menghapus {total_photos} foto profil dengan delay {delay} detik...")
+        
+        deleted_count = 0
+        failed_count = 0
+        errors = []
+        
+        for i, photo in enumerate(photos, 1):
+            try:
+                await session_client.delete_profile_photos(photo.file_id)
+                deleted_count += 1
+                
+                # Update progress
+                if i % 5 == 0 or i == total_photos:
+                    progress_msg = (
+                        f"🔄 Progress: {i}/{total_photos} foto\n"
+                        f"✅ Berhasil: {deleted_count}\n"
+                        f"❌ Gagal: {failed_count}"
+                    )
+                    await m.reply(progress_msg, quote=False)
+                
+                # Delay antara penghapusan
+                if i < total_photos:
+                    await asyncio.sleep(delay)
+                    
+            except FloodWait as e:
+                await m.reply(f"⏳ FloodWait {e.value} detik, menunggu...")
+                await asyncio.sleep(e.value)
+                try:
+                    await session_client.delete_profile_photos(photo.file_id)
+                    deleted_count += 1
+                except Exception as e:
+                    failed_count += 1
+                    errors.append(f"Foto {i}: {type(e).__name__}: {str(e)}")
+                    
+            except Exception as e:
+                failed_count += 1
+                errors.append(f"Foto {i}: {type(e).__name__}: {str(e)}")
+                Altruix.log(f"Error deleting photo {i}: {e}", level=logging.ERROR)
+        
+        # Hasil akhir
+        result_text = (
+            f"✅ <b>Penghapusan Foto Profil Selesai</b>\n\n"
+            f"<b>Akun:</b> {html.escape(session_info.first_name or 'Unknown')}\n"
+            f"<b>Total Foto:</b> {total_photos}\n"
+            f"<b>Berhasil Dihapus:</b> {deleted_count}\n"
+            f"<b>Gagal:</b> {failed_count}\n"
+            f"<b>Delay:</b> {delay} detik"
+        )
+        
+        await m.reply(result_text, parse_mode=ParseMode.HTML)
+        
+        # Kirim notifikasi selesai ke log group
+        error_info = "; ".join(errors[:5]) if errors else "Tidak ada error"
+        if len(errors) > 5:
+            error_info += f"... dan {len(errors) - 5} error lainnya"
+            
+        await send_log_notification(
+            c, 'delete_all_profile_photos', session_index, m.from_user, 
+            True if failed_count == 0 else False, 
+            error_info if errors else None,
+            {
+                'Aksi': 'Selesai hapus foto profil',
+                'Total Foto': str(total_photos),
+                'Berhasil': str(deleted_count),
+                'Gagal': str(failed_count),
+                'Delay': f'{delay} detik'
+            }
+        )
+        
+        # Kembali ke info session
+        try:
+            cb = CallbackQuery(
+                id="temp",
+                from_user=m.from_user,
+                message=m,
+                chat_instance="temp",
+                data=f"session_info_{session_index}_{page}"
+            )
+            await sessions_info_cb_handler(c, cb)
+        except Exception:
+            pass
+            
+    except Exception as e:
+        await m.reply(f"❌ Error: {str(e)}")
+        Altruix.log(f"Error in delete_all_profile_photos_process: {e}", level=logging.ERROR)
+        # Kirim notifikasi error ke log group
+        await send_log_notification(
+            c, 'delete_all_profile_photos', session_index, m.from_user, 
+            False, str(e), {'Aksi': 'Error hapus foto profil'}
+        )
 
 
 # ✅ HANDLER BARU: Konfirmasi Check Limit
@@ -1279,6 +2153,7 @@ async def check_limit_confirmation_handler(c: Client, cb: CallbackQuery):
         reply_markup=InlineKeyboardMarkup(confirmation_buttons),
         parse_mode=ParseMode.HTML
     )
+
 
 # ✅ HANDLER BARU: Eksekusi Check Limit
 @Altruix.bot.on_callback_query(filters.regex(r"check_limit_execute_(\d+)_(\d+)"))
@@ -1381,12 +2256,24 @@ async def test_ping_cb_handler(c: Client, cb: CallbackQuery):
             parse_mode=ParseMode.HTML
         )
         
+        # ✅ BARU: Kirim notifikasi ke log group melalui fungsi
+        await send_log_notification(
+            c, 'test_ping', index, cb.from_user, 
+            True, None, {'Aksi': 'Test ping berhasil'}
+        )
+        
         Altruix.log(f"Test ping sukses untuk session {index} ({getattr(session_user, 'id', 'Unknown')})")
 
     except FloodWait as e:
         await asyncio.sleep(e.value)
         await cb.message.edit(f"⏳ FloodWait terdeteksi. Tunggu {e.value} detik.")
         Altruix.log(f"FloodWait saat test ping session {index}: {e.value}s")
+        
+        # ✅ BARU: Kirim notifikasi error ke log group
+        await send_log_notification(
+            c, 'test_ping', index, cb.from_user, 
+            False, f"FloodWait {e.value}s", {'Aksi': 'Test ping gagal'}
+        )
 
     except (PeerIdInvalid, UserIsBlocked, ChatWriteForbidden) as e:
         error_msg = "❌ Gagal mengirim ping: Bot tidak bisa mengirim pesan ke grup log."
@@ -1405,6 +2292,12 @@ async def test_ping_cb_handler(c: Client, cb: CallbackQuery):
             )
         except Exception as log_err:
             Altruix.log(f"Gagal kirim log error test ping: {log_err}")
+            
+        # ✅ BARU: Kirim notifikasi error ke log group
+        await send_log_notification(
+            c, 'test_ping', index, cb.from_user, 
+            False, f"{type(e).__name__}: {str(e)}", {'Aksi': 'Test ping gagal'}
+        )
 
     except SlowmodeWait as e:
         error_msg = f"❌ Slowmode aktif. Tunggu {e.value} detik."
@@ -1421,6 +2314,12 @@ async def test_ping_cb_handler(c: Client, cb: CallbackQuery):
             )
         except Exception as log_err:
             Altruix.log(f"Gagal kirim log error Slowmode: {log_err}")
+            
+        # ✅ BARU: Kirim notifikasi error ke log group
+        await send_log_notification(
+            c, 'test_ping', index, cb.from_user, 
+            False, f"SlowmodeWait {e.value}s", {'Aksi': 'Test ping gagal'}
+        )
 
     except Exception as e:
         await cb.message.edit("❌ Gagal menguji ping. Owner telah diberi tahu.")
@@ -1438,6 +2337,12 @@ async def test_ping_cb_handler(c: Client, cb: CallbackQuery):
             )
         except Exception as log_err:
             Altruix.log(f"Gagal kirim log error kritis test ping: {log_err}")
+            
+        # ✅ BARU: Kirim notifikasi error ke log group
+        await send_log_notification(
+            c, 'test_ping', index, cb.from_user, 
+            False, str(e), {'Aksi': 'Test ping gagal'}
+        )
 
 
 @Altruix.bot.on_callback_query(filters.regex("export_phone_(\\d+)$"))
@@ -1461,6 +2366,11 @@ async def export_phone_cb_handler(c: Client, cb: CallbackQuery):
 
         if not user_info.phone_number:
             await cb.message.edit("❌ Akun ini tidak memiliki nomor telepon yang terdaftar.")
+            # ✅ BARU: Kirim notifikasi ke log group
+            await send_log_notification(
+                c, 'export_phone', index, cb.from_user, 
+                False, "Tidak ada nomor telepon", {'Aksi': 'Export phone gagal'}
+            )
             return
 
         await c.send_message(
@@ -1476,6 +2386,16 @@ async def export_phone_cb_handler(c: Client, cb: CallbackQuery):
             f"• <b>Waktu:</b> <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>"
         )
         await Altruix.bot.send_message(log_chat_id, log_msg, parse_mode=ParseMode.HTML)
+        
+        # ✅ BARU: Kirim notifikasi ke log group
+        await send_log_notification(
+            c, 'export_phone', index, cb.from_user, 
+            True, None, {
+                'Aksi': 'Export phone berhasil',
+                'Nomor': user_info.phone_number
+            }
+        )
+        
         await cb.message.edit("✅ Nomor telepon dikirim ke pesan pribadi Anda.")
         
     except Exception as e:
@@ -1493,6 +2413,12 @@ async def export_phone_cb_handler(c: Client, cb: CallbackQuery):
 
         await cb.message.edit("❌ Gagal mengekspor nomor telepon. Owner telah diberi tahu.")
         Altruix.log(f"Error mengekspor nomor telepon: {e}", level=logging.ERROR)
+        
+        # ✅ BARU: Kirim notifikasi error ke log group
+        await send_log_notification(
+            c, 'export_phone', index, cb.from_user, 
+            False, str(e), {'Aksi': 'Export phone gagal'}
+        )
 
 
 @Altruix.bot.on_callback_query(filters.regex("export_session_(\\d+)$"))
@@ -1529,6 +2455,13 @@ async def export_session_cb_handler(c: Client, cb: CallbackQuery):
             f"• <b>Waktu:</b> <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>"
         )
         await Altruix.bot.send_message(log_chat_id, log_msg, parse_mode=ParseMode.HTML)
+        
+        # ✅ BARU: Kirim notifikasi ke log group
+        await send_log_notification(
+            c, 'export_session', index, cb.from_user, 
+            True, None, {'Aksi': 'Export session berhasil'}
+        )
+        
         await cb.message.edit("✅ Session dikirim ke pesan pribadi Anda.")
         
     except Exception as e:
@@ -1546,6 +2479,12 @@ async def export_session_cb_handler(c: Client, cb: CallbackQuery):
 
         await cb.message.edit("❌ Gagal mengekspor session. Owner telah diberi tahu.")
         Altruix.log(f"Error mengekspor session: {e}", level=logging.ERROR)
+        
+        # ✅ BARU: Kirim notifikasi error ke log group
+        await send_log_notification(
+            c, 'export_session', index, cb.from_user, 
+            False, str(e), {'Aksi': 'Export session gagal'}
+        )
 
 
 @Altruix.bot.on_callback_query(filters.regex("refresh_session_info_(\\d+)$"))
