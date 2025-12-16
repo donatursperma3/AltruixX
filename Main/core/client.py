@@ -205,7 +205,7 @@ class AltruixClient:
         return message or traceback.format_exc()
 
     def _init_logger(self) -> None:
-        logging.getLogger("pyrogram").setLevel(logging.WARNING)
+        logging.getLogger("pyrogram").setLevel(logging.ERROR)
         logging.basicConfig(
             level=logging.INFO,
             datefmt="[%d/%m/%Y %H:%M:%S]",
