@@ -31,11 +31,10 @@ from pathlib import Path
 import aiofiles
 from typing import Optional, Union, Dict, Any
 from collections import defaultdict
-from pyrogram import types
 
 plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "mentions"
-PLUGIN_VERSION = "0.2.5.1"  # 🔥 VERSI DIPERBAIKI: Semua error fixed
+PLUGIN_VERSION = "0.2.6.0"  # 🔥 VERSI DIPERBAIKI: Semua error fixed
 
 # 🔥 SETUP LOGGING DETAILED
 logger = logging.getLogger(f"{__plugin_name__}")
@@ -221,74 +220,91 @@ async def save_mention_setting(client_id: int, value: bool) -> bool:
 async def get_mention_client(client_id: int) -> Optional[Client]:
     """Get client for mention reply dari session manager Altruix."""
     try:
-        logger.info(f"🔍 Looking for client with ID: {client_id}")
+        logger.info(f"🔍 [get_mention_client] Looking for client with ID: {client_id}")
         
         # 1. Cek jika ini adalah bot client
-        if hasattr(Altruix, 'bot') and Altruix.bot and Altruix.bot.me.id == client_id:
-            logger.info(f"Found bot client for ID {client_id}")
+        if hasattr(Altruix, 'bot') and Altruix.bot and hasattr(Altruix.bot, 'me') and Altruix.bot.me.id == client_id:
+            logger.info(f"✅ [get_mention_client] Found bot client for ID {client_id}")
             return Altruix.bot
         
         # 2. Cari di semua userbot clients yang aktif (jika ada)
         if hasattr(Altruix, 'userbot_clients') and Altruix.userbot_clients:
-            logger.info(f"Checking {len(Altruix.userbot_clients)} userbot clients")
-            for ub in Altruix.userbot_clients:
+            logger.info(f"🔍 [get_mention_client] Checking {len(Altruix.userbot_clients)} userbot clients")
+            for idx, ub in enumerate(Altruix.userbot_clients):
                 try:
-                    if ub and ub.me and ub.me.id == client_id:
-                        logger.info(f"✅ Found userbot client: {ub.me.first_name} ({client_id})")
+                    if ub and hasattr(ub, 'me') and ub.me and ub.me.id == client_id:
+                        logger.info(f"✅ [get_mention_client] Found userbot client at index {idx}: {ub.me.first_name} ({client_id})")
                         return ub
                 except Exception as e:
-                    logger.warning(f"Error checking client: {e}")
+                    logger.warning(f"⚠️ [get_mention_client] Error checking userbot client at index {idx}: {e}")
                     continue
         
         # 3. Coba cari di ubot utama
         if hasattr(Altruix, 'ubot') and Altruix.ubot:
             try:
                 if Altruix.ubot.me and Altruix.ubot.me.id == client_id:
-                    logger.info(f"✅ Found main ubot: {Altruix.ubot.me.first_name}")
+                    logger.info(f"✅ [get_mention_client] Found main ubot: {Altruix.ubot.me.first_name}")
                     return Altruix.ubot
             except Exception as e:
-                logger.warning(f"Error checking main ubot: {e}")
+                logger.warning(f"⚠️ [get_mention_client] Error checking main ubot: {e}")
         
         # 4. Cari di semua clients Altruix yang terdaftar - FIXED untuk handle list/dict
-        if hasattr(Altruix, 'clients') and Altruix.clients:
+        if hasattr(Altruix, 'clients'):
             clients = Altruix.clients
-            logger.info(f"🔍 Altruix.clients type: {type(clients)}")
+            logger.info(f"🔍 [get_mention_client] Altruix.clients type: {type(clients)}")
             
             if isinstance(clients, dict):
                 for client_name, client_obj in clients.items():
                     try:
-                        if client_obj and client_obj.me and client_obj.me.id == client_id:
-                            logger.info(f"✅ Found client in Altruix.clients dict: {client_name}")
+                        if client_obj and hasattr(client_obj, 'me') and client_obj.me and client_obj.me.id == client_id:
+                            logger.info(f"✅ [get_mention_client] Found client in Altruix.clients dict: {client_name}")
                             return client_obj
-                    except Exception:
+                    except Exception as e:
+                        logger.warning(f"⚠️ [get_mention_client] Error checking client {client_name}: {e}")
                         continue
             elif isinstance(clients, list):
                 for idx, client_obj in enumerate(clients):
                     try:
-                        if client_obj and client_obj.me and client_obj.me.id == client_id:
-                            logger.info(f"✅ Found client in Altruix.clients list index {idx}")
+                        if client_obj and hasattr(client_obj, 'me') and client_obj.me and client_obj.me.id == client_id:
+                            logger.info(f"✅ [get_mention_client] Found client in Altruix.clients list index {idx}")
                             return client_obj
-                    except Exception:
+                    except Exception as e:
+                        logger.warning(f"⚠️ [get_mention_client] Error checking client at index {idx}: {e}")
                         continue
             else:
-                logger.warning(f"⚠️ Altruix.clients is of unknown type: {type(clients)}")
+                logger.warning(f"⚠️ [get_mention_client] Altruix.clients is of unknown type: {type(clients)}")
+        else:
+            logger.warning(f"⚠️ [get_mention_client] Altruix.clients not found")
         
         # 5. Last resort: coba cari di session manager
         try:
             from Main.core.clients.session_manager import session_manager
             sessions = session_manager.get_sessions()
+            logger.info(f"🔍 [get_mention_client] Checking {len(sessions)} sessions")
             for session in sessions:
                 if session.is_active and session.user_id == client_id:
-                    logger.info(f"✅ Found active session for user_id: {client_id}")
+                    logger.info(f"✅ [get_mention_client] Found active session for user_id: {client_id}")
                     # Get client from session
                     return await session.get_client()
         except Exception as e:
-            logger.warning(f"Session manager check failed: {e}")
+            logger.warning(f"⚠️ [get_mention_client] Session manager check failed: {e}")
         
-        logger.warning(f"❌ Client {client_id} not found in any active sessions")
+        # 6. Debug semua userbot clients yang tersedia
+        if hasattr(Altruix, 'userbot_clients') and Altruix.userbot_clients:
+            logger.info(f"🔍 [get_mention_client] Available userbot client IDs:")
+            for idx, ub in enumerate(Altruix.userbot_clients):
+                try:
+                    if ub and hasattr(ub, 'me') and ub.me:
+                        logger.info(f"  {idx}. {ub.me.first_name} ({ub.me.id})")
+                    else:
+                        logger.info(f"  {idx}. Invalid client object")
+                except Exception as e:
+                    logger.info(f"  {idx}. Error getting client info: {e}")
+        
+        logger.warning(f"❌ [get_mention_client] Client {client_id} not found in any active sessions")
         return None
     except Exception as e:
-        logger.error(f"❌ Error getting client: {e}", exc_info=True)
+        logger.error(f"❌ [get_mention_client] Error getting client: {e}", exc_info=True)
         return None
 
 # 🔥 Load local storage
@@ -451,7 +467,7 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
             "client_name": c.me.first_name if c.me else "Unknown"
         }
         
-        logger.info(f"✅ Cached mention: {msg_key} for client {client_id}")
+        logger.info(f"✅ Cached mention: {msg_key} for client {client_id} ({c.me.first_name})")
         
     except Exception as e:
         logger.error(f"❌ Error in mention handler: {e}", exc_info=True)
@@ -594,8 +610,10 @@ async def start_reply_as_mentioned(c: Client, cb: CallbackQuery):
             await cb.answer("❌ Mention tidak ditemukan di cache.", show_alert=True)
             return
         
-        # DAPATKAN CLIENT DARI CLIENT_ID
         cache_data = MENTION_LOG_CACHE[msg_key]
+        logger.info(f"🔍 Cache data for {msg_key}: {cache_data}")
+        
+        # DAPATKAN CLIENT DARI CLIENT_ID
         client_id = cache_data["client_id"]
         logger.info(f"🔍 Looking for client with ID: {client_id}")
         
@@ -919,8 +937,7 @@ async def confirm_send_reply(c: Client, cb: CallbackQuery):
             await mentioned_client.send_message(
                 chat_id,
                 reply_text,
-                # reply_to_message_id=message_id,
-                reply_parameters=types.ReplyParameters(message_id=message_id)
+                reply_to_message_id=message_id
             )
             logger.info(f"✅ Reply sent successfully to {chat_id}")
             
@@ -1340,7 +1357,7 @@ async def clear_cache_handler(c: Client, m: AltruixMessage):
         logger.error(f"❌ Clear cache failed: {e}")
         await msg.edit_msg(f"❌ Clear error: {str(e)[:100]}")
 
-# 🔥 BARU: Command untuk test mention system - DIPERBAIKI
+# 🔥 BARU: Command untuk test mention system - DIPERBAKI
 @Altruix.register_on_cmd(
     ["test_mention"],
     cmd_help={"help": "Test mention system", "example": "test_mention"},
@@ -1419,6 +1436,110 @@ async def cleanup_old_entries():
 asyncio.create_task(cleanup_old_entries())
 logger.info("Cleanup task started")
 
+# 🔥 BARU: Debug command untuk melihat struktur Altruix
+@Altruix.register_on_cmd(
+    ["mentions_debug_structure"],
+    cmd_help={
+        "help": "Debug Altruix structure",
+        "example": "mentions_debug_structure",
+    },
+    group_only=False,
+    requires_input=False,
+)
+@log_errors
+async def debug_structure_handler(c: Client, m: AltruixMessage):
+    """Debug Altruix structure untuk menemukan client."""
+    msg = await m.handle_message("PROCESSING")
+    
+    try:
+        debug_info = f"🔍 <b>Altruix Structure Debug v{PLUGIN_VERSION}</b>\n\n"
+        
+        # Cek atribut yang ada
+        debug_info += "<b>Available Attributes:</b>\n"
+        
+        attrs = []
+        for attr_name in dir(Altruix):
+            if not attr_name.startswith('_'):
+                attrs.append(attr_name)
+        
+        debug_info += f"• Total attributes: {len(attrs)}\n"
+        debug_info += f"• First 20: {', '.join(attrs[:20])}\n\n"
+        
+        # Cek spesifik atribut
+        debug_info += "<b>Specific Attributes:</b>\n"
+        
+        if hasattr(Altruix, 'bot'):
+            debug_info += f"• bot: {type(Altruix.bot)} "
+            if Altruix.bot and hasattr(Altruix.bot, 'me'):
+                debug_info += f"(ID: {Altruix.bot.me.id}, Name: {Altruix.bot.me.first_name})\n"
+            else:
+                debug_info += "(no me attribute)\n"
+        else:
+            debug_info += "• bot: NOT FOUND\n"
+        
+        if hasattr(Altruix, 'userbot_clients'):
+            debug_info += f"• userbot_clients: {type(Altruix.userbot_clients)} "
+            if Altruix.userbot_clients:
+                debug_info += f"(length: {len(Altruix.userbot_clients)})\n"
+                # Tampilkan 3 pertama
+                for i, ub in enumerate(Altruix.userbot_clients[:3]):
+                    try:
+                        if ub and hasattr(ub, 'me') and ub.me:
+                            debug_info += f"  {i}. {ub.me.first_name} (ID: {ub.me.id})\n"
+                        else:
+                            debug_info += f"  {i}. Invalid or no me attribute\n"
+                    except:
+                        debug_info += f"  {i}. Error accessing\n"
+            else:
+                debug_info += "(empty)\n"
+        else:
+            debug_info += "• userbot_clients: NOT FOUND\n"
+        
+        if hasattr(Altruix, 'ubot'):
+            debug_info += f"• ubot: {type(Altruix.ubot)} "
+            if Altruix.ubot and hasattr(Altruix.ubot, 'me'):
+                debug_info += f"(ID: {Altruix.ubot.me.id}, Name: {Altruix.ubot.me.first_name})\n"
+            else:
+                debug_info += "(no me attribute)\n"
+        else:
+            debug_info += "• ubot: NOT FOUND\n"
+        
+        if hasattr(Altruix, 'clients'):
+            debug_info += f"• clients: {type(Altruix.clients)} "
+            if Altruix.clients:
+                if isinstance(Altruix.clients, dict):
+                    debug_info += f"(dict, keys: {len(Altruix.clients)})\n"
+                    # Tampilkan 3 keys pertama
+                    for i, key in enumerate(list(Altruix.clients.keys())[:3]):
+                        debug_info += f"  {i}. key: {key}\n"
+                elif isinstance(Altruix.clients, list):
+                    debug_info += f"(list, length: {len(Altruix.clients)})\n"
+            else:
+                debug_info += "(empty)\n"
+        else:
+            debug_info += "• clients: NOT FOUND\n"
+        
+        debug_info += f"\n<b>Current Client:</b>\n"
+        debug_info += f"• ID: {c.me.id if c.me else 'N/A'}\n"
+        debug_info += f"• Name: {c.me.first_name if c.me else 'N/A'}\n"
+        debug_info += f"• Type: {type(c)}\n"
+        
+        debug_info += f"\n<b>Cache Info:</b>\n"
+        debug_info += f"• MENTION_LOG_CACHE: {len(MENTION_LOG_CACHE)} entries\n"
+        debug_info += f"• REPLY_AS_MENTIONED_WAITING: {len(REPLY_AS_MENTIONED_WAITING)} entries\n"
+        
+        await safe_edit_message(
+            c,
+            m.chat.id,
+            msg.id,
+            debug_info,
+            parse_mode=enums.ParseMode.HTML
+        )
+        
+    except Exception as e:
+        logger.error(f"❌ Debug structure failed: {e}")
+        await msg.edit_msg(f"❌ Debug error: {str(e)[:100]}")
+
 # Log sukses loading
 try:
     Altruix.log(f"[DEBUG] ✅ Loaded → {__plugin_name__} {PLUGIN_VERSION}", level=20)
@@ -1426,11 +1547,11 @@ except Exception as e:
     logger.info(f"[DEBUG] ✅ Loaded → {__plugin_name__} {PLUGIN_VERSION}")
 
 # logger.info(f"📋 All issues fixed:")
-# logger.info(f"  1. Fixed get_mention_client() function to properly handle list/dict")
-# logger.info(f"  2. Added test button handler for bot (/mentions_test)")
-# logger.info(f"  3. Fixed callback patterns for test buttons")
-# logger.info(f"  4. Improved logging for debugging")
-# logger.info(f"  5. Separated bot-only test commands")
+# logger.info(f"  1. Enhanced get_mention_client() with detailed logging")
+# logger.info(f"  2. Added cache data logging in reply handlers")
+# logger.info(f"  3. Added debug structure command (/mentions_debug_structure)")
+# logger.info(f"  4. Improved error handling and logging")
+# logger.info(f"🔧 Use /mentions_debug_structure to see Altruix structure")
 # logger.info(f"🔧 Use /mentions_test (via bot) to test all buttons")
 # logger.info(f"🔧 Use /test_mention (via bot) for quick testing")
 # logger.info(f"⚠️  Note: Userbots cannot send inline buttons, only bot can!")
