@@ -14,7 +14,7 @@ from Main.core.decorators import log_errors
 from Main.core.types.message import Message
 from pyrogram.types import (
     CallbackQuery, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove,
-    InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions
+    InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions, User
 )
 from pyrogram.errors import (
     PeerIdInvalid, UserIsBlocked, ChatWriteForbidden, FloodWait, MessageIdInvalid,
@@ -52,6 +52,85 @@ settings_menu_buttons = [
         InlineKeyboardButton("Configs", callback_data="configs_home"),
     ],
 ]
+
+# ✅ FUNGSI BARU: Kirim notifikasi ke log group
+async def send_log_notification(
+    c: Client, 
+    action: str, 
+    session_index: int, 
+    user: Any, 
+    success: bool, 
+    error_msg: str = None,
+    additional_info: Dict[str, Any] = None
+):
+    """Mengirim notifikasi ke log group untuk semua aksi"""
+    try:
+        log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
+        
+        if session_index >= len(Altruix.clients):
+            return
+        
+        session_client = Altruix.clients[session_index]
+        session_info = getattr(session_client, 'myself', None)
+        if not session_info:
+            try:
+                session_info = await session_client.get_me()
+            except:
+                session_info = None
+        
+        # Map action to readable text
+        action_map = {
+            'change_first_name': 'Ganti Nama Depan',
+            'change_last_name': 'Ganti Nama Belakang',
+            'change_bio': 'Ganti Bio',
+            'change_username': 'Ganti Username',
+            'change_profile_photo': 'Ganti Foto Profil',
+            'view_all_sessions': 'Lihat Sesi Login',
+            'delete_all_profile_photos': 'Hapus Semua Foto Profil',
+            'test_ping': 'Test Ping',
+            'export_phone': 'Export Phone',
+            'export_session': 'Export Session',
+            'join_log_group': 'Join Log Group'
+        }
+        
+        action_text = action_map.get(action, action)
+        status = "✅ BERHASIL" if success else "❌ GAGAL"
+        timestamp = datetime.now().strftime('%d-%m-%Y %H:%M:%S')
+        
+        # Buat pesan log
+        log_message = (
+            f"📢 <b>AKSI PROFIL - {action_text}</b>\n"
+            f"• Status: <b>{status}</b>\n"
+            f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a>\n"
+            f"• User ID: <code>{user.id}</code>\n"
+        )
+        
+        if session_info:
+            log_message += (
+                f"• Akun: <a href='tg://user?id={session_info.id}'>{html.escape(session_info.first_name or '')}</a>\n"
+                f"• Akun ID: <code>{session_info.id}</code>\n"
+            )
+        
+        if additional_info:
+            for key, value in additional_info.items():
+                if value and str(value).strip():
+                    log_message += f"• {key}: <code>{html.escape(str(value))}</code>\n"
+        
+        if error_msg:
+            log_message += f"• Error: <code>{html.escape(error_msg)}</code>\n"
+        
+        log_message += f"• Waktu: <code>{timestamp}</code>"
+        
+        # Kirim ke log group
+        await Altruix.bot.send_message(
+            log_chat_id,
+            log_message,
+            parse_mode=ParseMode.HTML,
+            link_preview_options=LinkPreviewOptions(is_disabled=True)
+        )
+        
+    except Exception as e:
+        Altruix.log(f"Error sending log notification: {e}", level=logging.ERROR)
 
 
 @Altruix.bot.on_callback_query(filters.regex("configs_home"))
@@ -131,15 +210,21 @@ def get_sessions_buttons(page=1) -> Tuple[List[InlineKeyboardButton], bool, int]
 )
 @log_errors
 async def settings_command_handler(c: Client, m: Message):
-    total_sessions = len(Altruix.clients) if hasattr(Altruix, 'clients') else 0
-    settings_text = Altruix.get_string("SETTINGS_TEXT") or "<b>🛠️ Settings</b>"
-    full_text = f"{settings_text}\n\n<b>Total Sessions:</b> <code>{total_sessions}</code>"
-    
-    await m.reply(
-        full_text,
-        reply_markup=InlineKeyboardMarkup(settings_menu_buttons),
-        quote=True,
-    )
+    """Handler untuk command /settings"""
+    try:
+        total_sessions = len(Altruix.clients) if hasattr(Altruix, 'clients') else 0
+        settings_text = Altruix.get_string("SETTINGS_TEXT") or "<b>🛠️ Settings</b>"
+        full_text = f"{settings_text}\n\n<b>Total Sessions:</b> <code>{total_sessions}</code>"
+        
+        await m.reply(
+            full_text,
+            reply_markup=InlineKeyboardMarkup(settings_menu_buttons),
+            quote=True,
+        )
+        logging.info(f"User {m.from_user.id} used /settings command")
+    except Exception as e:
+        logging.error(f"Error in settings_command_handler: {e}")
+        await m.reply("❌ Terjadi error saat memproses command.")
 
 
 @Altruix.bot.on_callback_query(filters.regex("sessions_list_(\\d+)$"))
@@ -296,86 +381,6 @@ async def bulk_join_delay_handler(c: Client, cb: CallbackQuery):
     )
 
 
-# ✅ FUNGSI BARU: Kirim notifikasi ke log group
-async def send_log_notification(
-    c: Client, 
-    action: str, 
-    session_index: int, 
-    user: Any, 
-    success: bool, 
-    error_msg: str = None,
-    additional_info: Dict[str, Any] = None
-):
-    """Mengirim notifikasi ke log group untuk semua aksi"""
-    try:
-        log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
-        
-        if session_index >= len(Altruix.clients):
-            return
-        
-        session_client = Altruix.clients[session_index]
-        session_info = getattr(session_client, 'myself', None)
-        if not session_info:
-            try:
-                session_info = await session_client.get_me()
-            except:
-                session_info = None
-        
-        # Map action to readable text
-        action_map = {
-            'change_first_name': 'Ganti Nama Depan',
-            'change_last_name': 'Ganti Nama Belakang',
-            'change_bio': 'Ganti Bio',
-            'change_username': 'Ganti Username',
-            'change_profile_photo': 'Ganti Foto Profil',
-            'view_all_sessions': 'Lihat Sesi Login',
-            'delete_all_profile_photos': 'Hapus Semua Foto Profil',
-            'test_ping': 'Test Ping',
-            'export_phone': 'Export Phone',
-            'export_session': 'Export Session',
-            'join_log_group': 'Join Log Group'
-        }
-        
-        action_text = action_map.get(action, action)
-        status = "✅ BERHASIL" if success else "❌ GAGAL"
-        timestamp = datetime.now().strftime('%d-%m-%Y %H:%M:%S')
-        
-        # Buat pesan log
-        log_message = (
-            f"📢 <b>AKSI PROFIL - {action_text}</b>\n"
-            f"• Status: <b>{status}</b>\n"
-            f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a>\n"
-            f"• User ID: <code>{user.id}</code>\n"
-        )
-        
-        if session_info:
-            log_message += (
-                f"• Akun: <a href='tg://user?id={session_info.id}'>{html.escape(session_info.first_name or '')}</a>\n"
-                f"• Akun ID: <code>{session_info.id}</code>\n"
-            )
-        
-        if additional_info:
-            for key, value in additional_info.items():
-                if value and str(value).strip():
-                    log_message += f"• {key}: <code>{html.escape(str(value))}</code>\n"
-        
-        if error_msg:
-            log_message += f"• Error: <code>{html.escape(error_msg)}</code>\n"
-        
-        log_message += f"• Waktu: <code>{timestamp}</code>"
-        
-        # Kirim ke log group
-        await Altruix.bot.send_message(
-            log_chat_id,
-            log_message,
-            parse_mode=ParseMode.HTML,
-            link_preview_options=LinkPreviewOptions(is_disabled=True)
-        )
-        
-    except Exception as e:
-        Altruix.log(f"Error sending log notification: {e}", level=logging.ERROR)
-
-
 # ✅ PERUBAHAN: Handler untuk menerima input teks (dengan konfirmasi)
 @Altruix.bot.on_message(filters.text & filters.private & filters.user(Altruix.auth_users))
 @log_errors
@@ -493,14 +498,14 @@ async def user_text_handler(c: Client, m: Message):
                 # Kembali ke info session
                 try:
                     await asyncio.sleep(1)
-                    cb = CallbackQuery(
+                    cb_obj = CallbackQuery(
                         id="temp",
                         from_user=m.from_user,
                         message=m,
                         chat_instance="temp",
                         data=f"session_info_{session_index}_{page}"
                     )
-                    await sessions_info_cb_handler(c, cb)
+                    await sessions_info_cb_handler(c, cb_obj)
                 except Exception:
                     pass
         
@@ -513,14 +518,14 @@ async def user_text_handler(c: Client, m: Message):
             session_index = state['session_index']
             page = state.get('page', 1)
             try:
-                cb = CallbackQuery(
+                cb_obj = CallbackQuery(
                     id="temp",
                     from_user=m.from_user,
                     message=m,
                     chat_instance="temp",
                     data=f"session_info_{session_index}_{page}"
                 )
-                await sessions_info_cb_handler(c, cb)
+                await sessions_info_cb_handler(c, cb_obj)
             except Exception:
                 pass
         else:
@@ -540,14 +545,14 @@ async def user_text_handler(c: Client, m: Message):
         if text.lower() == "/cancel":
             await m.reply("❌ Aksi dibatalkan.")
             try:
-                cb = CallbackQuery(
+                cb_obj = CallbackQuery(
                     id="temp",
                     from_user=m.from_user,
                     message=m,
                     chat_instance="temp",
                     data=f"session_info_{session_index}_{page}"
                 )
-                await sessions_info_cb_handler(c, cb)
+                await sessions_info_cb_handler(c, cb_obj)
             except Exception:
                 pass
             return
@@ -784,14 +789,14 @@ async def confirmation_handler(c: Client, m: Message):
             # Kembali ke info session
             try:
                 await asyncio.sleep(1)
-                cb = CallbackQuery(
+                cb_obj = CallbackQuery(
                     id="temp",
                     from_user=m.from_user,
                     message=m,
                     chat_instance="temp",
                     data=f"session_info_{session_index}_{page}"
                 )
-                await sessions_info_cb_handler(c, cb)
+                await sessions_info_cb_handler(c, cb_obj)
             except Exception:
                 pass
             
@@ -810,14 +815,14 @@ async def confirmation_handler(c: Client, m: Message):
             
             # Kembali ke info session
             try:
-                cb = CallbackQuery(
+                cb_obj = CallbackQuery(
                     id="temp",
                     from_user=m.from_user,
                     message=m,
                     chat_instance="temp",
                     data=f"session_info_{state['session_index']}_{state.get('page', 1)}"
                 )
-                await sessions_info_cb_handler(c, cb)
+                await sessions_info_cb_handler(c, cb_obj)
             except Exception:
                 pass
 
@@ -2107,14 +2112,14 @@ async def delete_all_profile_photos_process(c: Client, m: Message, session_index
         
         # Kembali ke info session
         try:
-            cb = CallbackQuery(
+            cb_obj = CallbackQuery(
                 id="temp",
                 from_user=m.from_user,
                 message=m,
                 chat_instance="temp",
                 data=f"session_info_{session_index}_{page}"
             )
-            await sessions_info_cb_handler(c, cb)
+            await sessions_info_cb_handler(c, cb_obj)
         except Exception:
             pass
             
@@ -2536,3 +2541,11 @@ async def unlink_session_cb_handler(c: Client, cb: CallbackQuery):
     await Altruix.remove_session(index)
     cb.data = "sessions_list_1"
     await sessions_menu_cb_handler(c, cb)
+
+
+# ✅ HANDLER UNTUK ADD SESSION (PLACEHOLDER)
+@Altruix.bot.on_callback_query(filters.regex("add_session"))
+@log_errors
+async def add_session_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk tombol Add a Session"""
+    await cb.answer("Fitur ini akan segera ditambahkan!", show_alert=True)
