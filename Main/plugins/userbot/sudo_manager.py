@@ -12,11 +12,17 @@ A-Z for sudo users!
 from Main import Altruix
 from style import bullets
 from pyrogram import Client
+from pyrogram.types import User
 from ...core.types.message import Message
+import os
+import asyncio
+import re
+from pyrogram.errors import RPCError
+from Main.core.decorators import log_errors
 
 plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "sudo_manager"
-PLUGIN_VERSION = "0.0.2"  # 🔥 VERSI DIPERBAIKI: Semua error fixed dan fitur ditambahkan
+PLUGIN_VERSION = "0.0.3"  # 🔥 VERSI DIPERBAIKI: Semua error fixed dan fitur ditambahkan
 
 # 🔥 SETUP LOGGING DETAILED
 logger = logging.getLogger(f"{__plugin_name__}")
@@ -32,35 +38,55 @@ if not logger.handlers:
 # 🔥 LOG STARTUP
 logger.info(f"🚀 Initializing settings plugin v{PLUGIN_VERSION}")
 
+
 b4 = bullets["bullet4"]
 b5 = bullets["bullet5"]
 b6 = bullets["bullet6"]
 b7 = bullets["bullet7"]
 
-# ← PERUBAHAN BARU: Fungsi bulletify ditingkatkan untuk menampilkan total jumlah sudo user
-#     - Menambahkan header dengan total count
-#     - Penanganan kasus kosong lebih rapi
-#     - Formatting bullet lebih konsisten
-def bulletify(u_):
-    total = len(u_)
+# ← PERUBAHAN BARU: Fungsi bulletify sepenuhnya dirombak
+#     - Semua nama user jadi hyperlink tg://user?id=...
+#     - Compatible 100% di Android, iOS, Desktop, Web
+#     - Handling deleted account dengan aman
+#     - Total count di header
+def bulletify(users_list: list[User]) -> str:
+    total = len(users_list)
     out = f"<b>Sudo Users (Total: {total})</b>:\n\n"
 
     if total == 0:
-        return "<b>Sudo Users (Total: 0)</b>:\n\n<i>Tidak ada sudo user saat ini.</i>"
+        return "<b>Sudo Users (Total: 0)</b>\n\n<i>Tidak ada sudo user saat ini.</i>"
 
-    if total == 1:
-        return f"{out}{b6}{b4} {u_[0].mention}"
-
-    if total == 2:
-        return f"{out}{b5}{b4} {u_[0].mention}\n{b7}{b4} {u_[1].mention}"
-
-    for idx, user in enumerate(u_):
-        if idx == 0:
-            out += f"{b5}{b4} {user.mention}"
-        elif idx == total - 1:
-            out += f"\n{b7}{b4} {user.mention}"
+    for idx, user in enumerate(users_list):
+        # Buat hyperlink yang valid di semua platform Telegram
+        user_id = user.id
+        if user.is_deleted:
+            display_name = "<i>Deleted Account</i>"
+        elif user.first_name:
+            # Escape karakter HTML khusus jika ada
+            first_name = user.first_name.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            last_name = f" {user.last_name}" if user.last_name else ""
+            last_name = last_name.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            display_name = f"{first_name}{last_name}".strip()
         else:
-            out += f"\n{b6}{b4} {user.mention}"
+            display_name = "<i>Unknown User</i>"
+
+        hyperlink = f"<a href=\"tg://user?id={user_id}\">{display_name}</a>"
+
+        if total == 1:
+            out += f"{b6}{b4} {hyperlink}"
+        elif total == 2:
+            if idx == 0:
+                out += f"{b5}{b4} {hyperlink}"
+            else:
+                out += f"\n{b7}{b4} {hyperlink}"
+        else:
+            if idx == 0:
+                out += f"{b5}{b4} {hyperlink}"
+            elif idx == total - 1:
+                out += f"\n{b7}{b4} {hyperlink}"
+            else:
+                out += f"\n{b6}{b4} {hyperlink}"
+
     return out
 
 
@@ -69,12 +95,12 @@ def bulletify(u_):
     cmd_help={"help": "Disabled cmds for sudo users!", "example": "dpfs eval"},
     requires_input=True,
 )
+@log_errors
 async def disabled_ps_func(c: Client, m: Message):
     msg = await m.handle_message("PROCESSING")
     input_ = m.user_input.strip()
     if "," in input_:
         input_ = [x.strip() for x in input_.split(",")]
-        # ← PERUBAHAN BARU: Membersihkan spasi ekstra pada setiap command yang di-input
     await Altruix.config.sync_env_to_db("DISABLED_SUDO_CMD_LIST", input_, push_=True)
     await msg.edit_msg("DISABLED_SUDO_CMD", string_args=(input_))
 
@@ -89,7 +115,6 @@ async def remove_disabled_ps_func(c: Client, m: Message):
     input_ = m.user_input.strip()
     if "," in input_:
         input_ = [x.strip() for x in input_.split(",")]
-        # ← PERUBAHAN BARU: Membersihkan spasi ekstra pada setiap command yang di-input
     await Altruix.config.unsync_env_to_db("DISABLED_SUDO_CMD_LIST", input_)
     await msg.edit_msg("UNDISABLED_SUDO_CMD", string_args=(input_))
 
@@ -101,6 +126,7 @@ async def remove_disabled_ps_func(c: Client, m: Message):
         "example": "addsudo @warner_stark",
     },
 )
+@log_errors
 async def add_sudo_func(c: Client, m: Message):
     msg = await m.handle_message("PROCESSING")
     user, _, is_channel = m.get_user
@@ -130,6 +156,7 @@ async def add_sudo_func(c: Client, m: Message):
         ],
     },
 )
+@log_errors
 async def rm_sudo_func(c: Client, m: Message):
     msg = await m.handle_message("PROCESSING")
     user, _, is_channel = m.get_user
@@ -159,31 +186,43 @@ async def rm_sudo_func(c: Client, m: Message):
 
 @Altruix.register_on_cmd(
     "listsudo",
-    cmd_help={"help": "List all sudo users + total count", "example": "listsudo"}
+    cmd_help={"help": "List all sudo users (clickable names + total count)", "example": "listsudo"}
 )
+@log_errors
 # ← PERUBAHAN BARU: 
-#     - Nama fungsi diubah jadi list_sudo_func agar tidak bentrok dengan addsudo sebelumnya
-#     - Update help text
-#     - Penanganan kasus kosong langsung di sini (lebih cepat)
-#     - Menggunakan bulletify yang sudah diupgrade
+#     - Semua nama user jadi hyperlink clickable di semua platform
+#     - Handling deleted account dengan aman
+#     - Total count tetap ditampilkan
 async def list_sudo_func(c: Client, m: Message):
     msg = await m.handle_message("PROCESSING")
-    users_ = await Altruix.config.get_sudo()
+    sudo_ids = await Altruix.config.get_sudo()
 
-    if not users_:
+    if not sudo_ids:
         return await msg.edit_msg("<b>Sudo Users (Total: 0)</b>\n\n<i>Tidak ada sudo user saat ini.</i>")
 
-    user_ = []
-    for i in users_:
+    valid_users = []
+    for user_id in sudo_ids:
         try:
-            user_.append(await c.get_users(int(i)))
+            user = await c.get_users(int(user_id))
+            valid_users.append(user)
         except Exception:
-            continue  # skip user yang tidak bisa di-fetch (misal deleted account)
+            # Jika user tidak bisa di-fetch (akun dihapus/banned/blocked bot)
+            # Buat objek dummy User agar tetap bisa ditampilkan
+            dummy_user = User(
+                id=int(user_id),
+                is_deleted=True,
+                first_name=None,
+                last_name=None,
+                username=None,
+                dc_id=None,
+                is_bot=False
+            )
+            valid_users.append(dummy_user)
 
-    if not user_:
+    if not valid_users:
         return await msg.edit_msg("<b>Sudo Users (Total: 0)</b>\n\n<i>Tidak ada sudo user yang valid.</i>")
 
-    await msg.edit_msg(bulletify(user_))
+    await msg.edit_msg(bulletify(valid_users))
 
 # Log sukses loading
 try:
