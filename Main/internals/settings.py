@@ -1,20 +1,21 @@
 # settings.py
-# Copyright (C) 2021-present by Altruix@Github, < https://github.com/Altruix/Altruix   >
+# Copyright (C) 2021-present by Altruix@Github, < https://github.com/Altruix/Altruix >
 #
-# This file is part of < https://github.com/Altruix/Altruix   > project,
+# This file is part of < https://github.com/Altruix/Altruix > project,
 # and is released under "GNU v3.0 License Agreement".
-# Please see < https://github.com/Altriux/Altruix/blob/main/LICENSE   >
+# Please see < https://github.com/Altriux/Altruix/blob/main/LICENSE >
 #
 # All rights reserved.
 
 from Main import Altruix
-from typing import List, Tuple, Dict, Any
+from typing import List, Tuple, Dict, Any, Union
 from pyrogram import Client, filters
 from Main.core.decorators import log_errors
 from Main.core.types.message import Message
 from pyrogram.types import (
     CallbackQuery, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove,
-    InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions, User
+    InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions, User,
+    Chat, MessageEntity
 )
 
 # ====================== PERBAIKAN IMPORT ERROR ======================
@@ -24,7 +25,7 @@ from pyrogram.errors import (
     SlowmodeWait, InviteHashInvalid, InviteHashExpired, UserAlreadyParticipant,
     ChatAdminRequired, UsernameNotOccupied, ChannelPrivate, UsernameInvalid,
     UsernameNotModified, AboutTooLong, PhotoInvalidDimensions,
-    PhotoSaveFileInvalid, UsernameOccupied
+    PhotoSaveFileInvalid, UsernameOccupied, RPCError
 )
 
 # Handle FirstNameInvalid yang mungkin tidak ada di beberapa versi Pyrogram
@@ -38,7 +39,7 @@ except ImportError:
 # ✅ IMPORT BARU UNTUK CEK LIMIT
 from pyrogram.errors import UserIsBlocked as BotBlocked  # Alias agar tidak bentrok
 
-from pyrogram.enums import ParseMode
+from pyrogram.enums import ParseMode, ChatType
 import os
 import logging
 import asyncio
@@ -46,32 +47,36 @@ import html
 from datetime import datetime
 import io
 import re
+import pyrogram
 
 plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "settings"
-PLUGIN_VERSION = "0.1.1.1"  # 🔥 VERSI DIPERBAIKI: Semua error fixed
+PLUGIN_VERSION = "1.0.0"  # 🔥 VERSI DIPERBAIKI: Semua error fixed dan fitur ditambahkan
 
 # 🔥 SETUP LOGGING DETAILED
 logger = logging.getLogger(f"{__plugin_name__}")
 if not logger.handlers:
     handler = logging.StreamHandler()
     formatter = logging.Formatter(
-        "%(asctime)s - [MENTIONS] - %(levelname)s - %(filename)s:%(lineno)d - %(message)s"
+        "%(asctime)s - [SETTINGS] - %(levelname)s - %(filename)s:%(lineno)d - %(message)s"
     )
     handler.setFormatter(formatter)
     logger.addHandler(handler)
     logger.setLevel(logging.DEBUG)
 
 # 🔥 LOG STARTUP
-logger.info(f"🚀 Initializing mentions plugin v{PLUGIN_VERSION}")
+logger.info(f"🚀 Initializing settings plugin v{PLUGIN_VERSION}")
 
 # Dictionary untuk menyimpan state konfirmasi user
 user_confirmation_state = {}
 user_text_confirmation_state = {}
 user_bulk_join_state = {}  # State untuk bulk join
-user_profile_edit_state = {}  # ✅ BARU: State untuk edit profil
-user_photo_delete_state = {}  # ✅ BARU: State untuk hapus foto profil
-user_edit_confirmation_state = {}  # ✅ BARU: State untuk konfirmasi edit profil
+user_profile_edit_state = {}  # State untuk edit profil
+user_photo_delete_state = {}  # State untuk hapus foto profil
+user_edit_confirmation_state = {}  # State untuk konfirmasi edit profil
+user_mentions_state = {}  # ✅ BARU: State untuk cek mention
+user_recent_messages_state = {}  # ✅ BARU: State untuk pesan terbaru
+user_message_count_state = {}  # ✅ BARU: State untuk jumlah pesan
 
 # ✅ TAMBAHAN STATE UNTUK CEK LIMIT (per session)
 user_limit_check_state = {}  # {user_id: {'session_index': int, 'page': int}}
@@ -120,7 +125,11 @@ async def send_log_notification(
             'test_ping': 'Test Ping',
             'export_phone': 'Export Phone',
             'export_session': 'Export Session',
-            'join_log_group': 'Join Log Group'
+            'join_log_group': 'Join Log Group',
+            'check_limit': 'Check Limit',
+            'recent_messages': 'Pesan Terbaru',  # ✅ BARU
+            'view_mentions': 'Lihat Mention',  # ✅ BARU
+            'send_profile_photo': 'Kirim Foto Profil'  # ✅ BARU
         }
         
         action_text = action_map.get(action, action)
@@ -273,9 +282,6 @@ async def sessions_menu_cb_handler(c: Client, cb: CallbackQuery):
     # Dapatkan LOG_CHAT_ID dengan benar
     LOG_CHAT_ID = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
 
-    # PERUBAHAN: Susunan tombol sesuai permintaan baru
-    # session_buttons sudah dalam format 3 baris untuk 9 tombol session
-    
     # Baris 4: Tombol aksi [Test Ping All][Bulk Join][Add a Session]
     action_buttons = [
         InlineKeyboardButton("🏓 Tes Ping All", "test_ping_all_confirmation"),
@@ -513,7 +519,7 @@ async def user_text_handler(c: Client, m: Message):
                 await m.reply(f"❌ Bio terlalu panjang: {str(e)}")
             except pyrogram.errors.exceptions.flood_420.FloodWait as wait_err:
                 error_msg = f"FloodWait {wait_err.value} detik"
-                await m.reply(f"⏳ FloodWait: Tunggu {error_msg} sebelum mencoba lagi.: {str(wait_err)}")
+                await m.reply(f"⏳ FloodWait: Tunggu {wait_err.value} detik sebelum mencoba lagi.")
             except Exception as e:
                 error_msg = str(e)
                 await m.reply(f"❌ Error: {str(e)}")
@@ -656,6 +662,144 @@ async def user_text_handler(c: Client, m: Message):
             reply_markup=InlineKeyboardMarkup(confirmation_buttons),
             parse_mode=ParseMode.HTML
         )
+        return
+    
+    # ✅ BARU: Cek jika user sedang dalam proses lihat mention
+    elif user_id in user_mentions_state and user_mentions_state[user_id]['step'] == 'waiting_group':
+        if text.lower() == "/cancel":
+            del user_mentions_state[user_id]
+            await m.reply("❌ Lihat mention dibatalkan.")
+            return
+        
+        # Simpan group dan minta jumlah pesan
+        user_mentions_state[user_id]['group'] = text
+        user_mentions_state[user_id]['step'] = 'waiting_count'
+        
+        # Tampilkan pilihan jumlah pesan
+        buttons = [
+            [
+                InlineKeyboardButton("10 pesan", callback_data=f"mention_count_{user_id}_10"),
+                InlineKeyboardButton("20 pesan", callback_data=f"mention_count_{user_id}_20"),
+            ],
+            [
+                InlineKeyboardButton("30 pesan", callback_data=f"mention_count_{user_id}_30"),
+                InlineKeyboardButton("50 pesan", callback_data=f"mention_count_{user_id}_50"),
+            ],
+            [
+                InlineKeyboardButton("🔙 Cancel", callback_data=f"cancel_mention_{user_id}"),
+            ]
+        ]
+        
+        await m.reply(
+            text="<b>🔔 Lihat Mention</b>\n\n"
+                 f"Group: <code>{html.escape(text)}</code>\n\n"
+                 "Pilih jumlah pesan yang akan diperiksa (semakin banyak, semakin lama):",
+            reply_markup=InlineKeyboardMarkup(buttons),
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    # ✅ BARU: Cek jika user sedang dalam proses pesan terbaru
+    elif user_id in user_recent_messages_state and user_recent_messages_state[user_id]['step'] == 'waiting_count':
+        if text.lower() == "/cancel":
+            del user_recent_messages_state[user_id]
+            await m.reply("❌ Pesan terbaru dibatalkan.")
+            return
+        
+        try:
+            count = int(text)
+            if count < 1 or count > 50:
+                await m.reply("❌ Jumlah pesan harus antara 1-50.")
+                return
+        except ValueError:
+            await m.reply("❌ Masukkan angka yang valid.")
+            return
+        
+        # Proses mengambil pesan terbaru
+        state = user_recent_messages_state[user_id]
+        session_index = state['session_index']
+        page = state.get('page', 1)
+        
+        if session_index >= len(Altruix.clients):
+            await m.reply("❌ Session tidak ditemukan.")
+            del user_recent_messages_state[user_id]
+            return
+        
+        session_client = Altruix.clients[session_index]
+        
+        await m.reply(f"🔄 Mengambil {count} pesan terbaru...")
+        
+        try:
+            messages = []
+            async for dialog in session_client.get_dialogs(limit=100):
+                if dialog.chat.type == ChatType.PRIVATE and dialog.top_message:
+                    messages.append({
+                        'chat': dialog.chat,
+                        'message': dialog.top_message,
+                        'date': dialog.top_message.date
+                    })
+            
+            # Urutkan berdasarkan tanggal terbaru
+            messages.sort(key=lambda x: x['date'], reverse=True)
+            
+            if not messages:
+                await m.reply("❌ Tidak ada pesan terbaru ditemukan.")
+                return
+            
+            # Ambil jumlah yang diminta
+            messages = messages[:count]
+            
+            # Format hasil
+            result_text = f"<b>📨 {len(messages)} Pesan Terbaru</b>\n\n"
+            
+            for i, msg_data in enumerate(messages, 1):
+                chat = msg_data['chat']
+                message = msg_data['message']
+                
+                # Ambil informasi pengirim
+                sender_name = "Tidak diketahui"
+                if hasattr(message, 'from_user') and message.from_user:
+                    sender_name = message.from_user.first_name or "Tidak ada nama"
+                
+                # Ambil teks pesan
+                message_text = message.text or message.caption or "[Media/Tidak ada teks]"
+                if len(message_text) > 100:
+                    message_text = message_text[:100] + "..."
+                
+                # Format waktu
+                time_str = message.date.strftime('%d-%m-%Y %H:%M')
+                
+                result_text += (
+                    f"<b>{i}. {html.escape(sender_name)}</b>\n"
+                    f"   Waktu: {time_str}\n"
+                    f"   Pesan: {html.escape(message_text)}\n"
+                    f"   Chat ID: <code>{chat.id}</code>\n\n"
+                )
+            
+            await m.reply(result_text, parse_mode=ParseMode.HTML)
+            
+            # Kirim notifikasi log
+            await send_log_notification(
+                c, 'recent_messages', session_index, m.from_user,
+                True, None, {'Jumlah Pesan': count}
+            )
+            
+        except Exception as e:
+            error_msg = f"Gagal mengambil pesan: {str(e)}"
+            await m.reply(f"❌ {error_msg}")
+            Altruix.log(f"Error recent_messages session {session_index}: {e}", level=logging.ERROR)
+            
+            # Kirim notifikasi error ke log group
+            await send_log_notification(
+                c, 'recent_messages', session_index, m.from_user,
+                False, str(e), {'Jumlah Pesan': count}
+            )
+        
+        finally:
+            # Hapus state
+            if user_id in user_recent_messages_state:
+                del user_recent_messages_state[user_id]
+        
         return
     
     # Handler untuk konfirmasi teks 'ok' dari user (untuk export)
@@ -1741,7 +1885,7 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery):
         "<b>📋 Session Info</b>\n\n"
         f"<b>👤 First name:</b> <code>{html.escape(first_name or 'None')}</code>\n"
         f"<b>👤 Last name:</b> <code>{html.escape(last_name or 'None')}</code>\n"
-        f"<b>📝 Bio:</b> <code>{html.escape(bio[:50] + '...' if bio and len(bio) > 50 else bio or 'None')}</code>\n"
+        f"<b>📝 Bio:</b> <code>{html.escape(bio or 'None')}</code>\n"
         f"<b>🌐 DC ID:</b> <code>{dc_id or 'Unknown'}</code>\n"
         f"<b>🔗 Username:</b> @{username or 'None'}\n"
         f"<b>🆔 User ID:</b> <code>{user_id}</code>\n"
@@ -1749,57 +1893,440 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery):
     )
     
     # ✅ PERUBAHAN: Tambahkan tombol-tombol edit profil sesuai permintaan
+    buttons = [
+        # Baris 1: Refresh dan Unlink
+        [
+            InlineKeyboardButton("🔄 Refresh data", f"refresh_session_info_{index}"),
+            InlineKeyboardButton("🔗 Unlink (Remove)", f"unlink_session_{index}"),
+        ],
+        # Baris 2: Export Session dan Phone
+        [
+            InlineKeyboardButton("📤 Export Session", f"export_session_{index}"),
+            InlineKeyboardButton("📞 Export Phone Number", f"export_phone_{index}"),
+        ],
+        # Baris 3: Test Ping dan Join Log Group
+        [
+            InlineKeyboardButton("🏓 Test Ping", f"test_ping_{index}"),
+            InlineKeyboardButton("📢 Join Log Group", f"join_log_group_{index}"),
+        ],
+        # Baris 4: Check Limit
+        [
+            InlineKeyboardButton("🔍 Check Limit", f"check_limit_confirm_{index}_{callback_page}"),
+        ],
+        # ✅ BARU: Baris 5-6 untuk fitur baru
+        # Baris 5: Pesan Terbaru dan Lihat Mention
+        [
+            InlineKeyboardButton("📨 Pesan Terbaru", f"recent_messages_menu_{index}_{callback_page}"),
+            InlineKeyboardButton("🔔 Lihat Mention", f"view_mentions_menu_{index}_{callback_page}"),
+        ],
+        # Baris 6: Kirim Foto Profil
+        [
+            InlineKeyboardButton("🖼️ Kirim Foto Profil", f"send_profile_photo_{index}_{callback_page}"),
+        ],
+        # Baris 7: Ganti Nama Depan dan Belakang
+        [
+            InlineKeyboardButton("✏️ Ganti nama depan", f"change_first_name_{index}_{callback_page}"),
+            InlineKeyboardButton("✏️ Ganti nama belakang", f"change_last_name_{index}_{callback_page}"),
+        ],
+        # Baris 8: Ganti Bio dan Username
+        [
+            InlineKeyboardButton("📝 Ganti bio", f"change_bio_{index}_{callback_page}"),
+            InlineKeyboardButton("👤 Ganti username", f"change_username_{index}_{callback_page}"),
+        ],
+        # Baris 9: Ganti Foto Profil dan Lihat Sesi Login
+        [
+            InlineKeyboardButton("🖼️ Ganti foto profil", f"change_profile_photo_{index}_{callback_page}"),
+            InlineKeyboardButton("👁️ Lihat semua sesi", f"view_all_sessions_{index}_{callback_page}"),
+        ],
+        # Baris 10: Hapus Semua Foto Profil
+        [
+            InlineKeyboardButton("🗑️ Hapus semua foto profil", f"delete_all_profile_photos_{index}_{callback_page}"),
+        ],
+        # Baris 11: Tombol Back
+        [
+            InlineKeyboardButton("🔙 Back", f"sessions_list_{callback_page}"),
+        ],
+    ]
+    
     await cb.message.edit(
         text=txt,
-        reply_markup=InlineKeyboardMarkup(
-            [
-                # Baris 1: Refresh dan Unlink
-                [
-                    InlineKeyboardButton("🔄 Refresh data", f"refresh_session_info_{index}"),
-                    InlineKeyboardButton("🔗 Unlink (Remove)", f"unlink_session_{index}"),
-                ],
-                # Baris 2: Export Session dan Phone
-                [
-                    InlineKeyboardButton("📤 Export Session", f"export_session_{index}"),
-                    InlineKeyboardButton("📞 Export Phone Number", f"export_phone_{index}"),
-                ],
-                # Baris 3: Test Ping dan Join Log Group
-                [
-                    InlineKeyboardButton("🏓 Test Ping", f"test_ping_{index}"),
-                    InlineKeyboardButton("📢 Join Log Group", f"join_log_group_{index}"),
-                ],
-                # Baris 4: Check Limit
-                [
-                    InlineKeyboardButton("🔍 Check Limit", f"check_limit_confirm_{index}_{callback_page}"),
-                ],
-                # ✅ BARU: Baris 5-9 untuk fitur edit profil
-                # Baris 5: Ganti Nama Depan dan Belakang
-                [
-                    InlineKeyboardButton("✏️ Ganti nama depan", f"change_first_name_{index}_{callback_page}"),
-                    InlineKeyboardButton("✏️ Ganti nama belakang", f"change_last_name_{index}_{callback_page}"),
-                ],
-                # Baris 6: Ganti Bio dan Username
-                [
-                    InlineKeyboardButton("📝 Ganti bio", f"change_bio_{index}_{callback_page}"),
-                    InlineKeyboardButton("👤 Ganti username", f"change_username_{index}_{callback_page}"),
-                ],
-                # Baris 7: Ganti Foto Profil dan Lihat Sesi Login
-                [
-                    InlineKeyboardButton("🖼️ Ganti foto profil", f"change_profile_photo_{index}_{callback_page}"),
-                    InlineKeyboardButton("👁️ Lihat semua sesi", f"view_all_sessions_{index}_{callback_page}"),
-                ],
-                # Baris 8: Hapus Semua Foto Profil
-                [
-                    InlineKeyboardButton("🗑️ Hapus semua foto profil", f"delete_all_profile_photos_{index}_{callback_page}"),
-                ],
-                # Baris 9: Tombol Back
-                [
-                    InlineKeyboardButton("🔙 Back", f"sessions_list_{callback_page}"),
-                ],
-            ]
-        ),
+        reply_markup=InlineKeyboardMarkup(buttons),
         parse_mode=ParseMode.HTML
     )
+
+
+# ✅ HANDLER BARU: Menu Pesan Terbaru
+@Altruix.bot.on_callback_query(filters.regex(r"recent_messages_menu_(\d+)_(\d+)"))
+@log_errors
+async def recent_messages_menu_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk menu pesan terbaru"""
+    await cb.answer()
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    
+    # Tampilkan pilihan jumlah pesan
+    buttons = [
+        [
+            InlineKeyboardButton("3 pesan", callback_data=f"recent_messages_quick_{index}_{page}_3"),
+            InlineKeyboardButton("6 pesan", callback_data=f"recent_messages_quick_{index}_{page}_6"),
+        ],
+        [
+            InlineKeyboardButton("9 pesan", callback_data=f"recent_messages_quick_{index}_{page}_9"),
+            InlineKeyboardButton("11 pesan", callback_data=f"recent_messages_quick_{index}_{page}_11"),
+        ],
+        [
+            InlineKeyboardButton("📝 Custom jumlah", callback_data=f"recent_messages_custom_{index}_{page}"),
+        ],
+        [
+            InlineKeyboardButton("🔙 Back", callback_data=f"session_info_{index}_{page}"),
+        ]
+    ]
+    
+    await cb.message.edit(
+        text="<b>📨 Pesan Terbaru</b>\n\n"
+             "Pilih jumlah pesan terbaru yang akan ditampilkan (dari chat private):\n\n"
+             "⚠️ <b>Note:</b>\n"
+             "• Hanya menampilkan pesan dari chat private\n"
+             "• Pesan diurutkan berdasarkan waktu terbaru",
+        reply_markup=InlineKeyboardMarkup(buttons),
+        parse_mode=ParseMode.HTML
+    )
+
+
+# ✅ HANDLER BARU: Pesan Terbaru Quick Select
+@Altruix.bot.on_callback_query(filters.regex(r"recent_messages_quick_(\d+)_(\d+)_(\d+)"))
+@log_errors
+async def recent_messages_quick_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk pesan terbaru quick select"""
+    await cb.answer()
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    count = int(cb.matches[0].group(3))
+    
+    user_id = cb.from_user.id
+    user_recent_messages_state[user_id] = {
+        'session_index': index,
+        'page': page,
+        'step': 'waiting_count',
+        'count': count
+    }
+    
+    # Langsung proses
+    await cb.message.edit(f"🔄 Mengambil {count} pesan terbaru...")
+    
+    try:
+        if index >= len(Altruix.clients):
+            await cb.message.edit("❌ Session tidak ditemukan.")
+            if user_id in user_recent_messages_state:
+                del user_recent_messages_state[user_id]
+            return
+        
+        session_client = Altruix.clients[index]
+        
+        messages = []
+        async for dialog in session_client.get_dialogs(limit=100):
+            if dialog.chat.type == ChatType.PRIVATE and dialog.top_message:
+                messages.append({
+                    'chat': dialog.chat,
+                    'message': dialog.top_message,
+                    'date': dialog.top_message.date
+                })
+        
+        # Urutkan berdasarkan tanggal terbaru
+        messages.sort(key=lambda x: x['date'], reverse=True)
+        
+        if not messages:
+            await cb.message.edit("❌ Tidak ada pesan terbaru ditemukan.")
+            return
+        
+        # Ambil jumlah yang diminta
+        messages = messages[:count]
+        
+        # Format hasil
+        result_text = f"<b>📨 {len(messages)} Pesan Terbaru</b>\n\n"
+        
+        for i, msg_data in enumerate(messages, 1):
+            chat = msg_data['chat']
+            message = msg_data['message']
+            
+            # Ambil informasi pengirim
+            sender_name = "Tidak diketahui"
+            if hasattr(message, 'from_user') and message.from_user:
+                sender_name = message.from_user.first_name or "Tidak ada nama"
+            
+            # Ambil teks pesan
+            message_text = message.text or message.caption or "[Media/Tidak ada teks]"
+            if len(message_text) > 100:
+                message_text = message_text[:100] + "..."
+            
+            # Format waktu
+            time_str = message.date.strftime('%d-%m-%Y %H:%M')
+            
+            result_text += (
+                f"<b>{i}. {html.escape(sender_name)}</b>\n"
+                f"   Waktu: {time_str}\n"
+                f"   Pesan: {html.escape(message_text)}\n"
+                f"   Chat ID: <code>{chat.id}</code>\n\n"
+            )
+        
+        # Tambahkan tombol kembali
+        buttons = [
+            [InlineKeyboardButton("🔙 Back", callback_data=f"session_info_{index}_{page}")]
+        ]
+        
+        await cb.message.edit(
+            text=result_text,
+            reply_markup=InlineKeyboardMarkup(buttons),
+            parse_mode=ParseMode.HTML
+        )
+        
+        # Kirim notifikasi log
+        await send_log_notification(
+            c, 'recent_messages', index, cb.from_user,
+            True, None, {'Jumlah Pesan': count}
+        )
+        
+    except Exception as e:
+        error_msg = f"Gagal mengambil pesan: {str(e)}"
+        await cb.message.edit(f"❌ {error_msg}")
+        Altruix.log(f"Error recent_messages session {index}: {e}", level=logging.ERROR)
+        
+        # Kirim notifikasi error ke log group
+        await send_log_notification(
+            c, 'recent_messages', index, cb.from_user,
+            False, str(e), {'Jumlah Pesan': count}
+        )
+    
+    finally:
+        # Hapus state
+        if user_id in user_recent_messages_state:
+            del user_recent_messages_state[user_id]
+
+
+# ✅ HANDLER BARU: Pesan Terbaru Custom
+@Altruix.bot.on_callback_query(filters.regex(r"recent_messages_custom_(\d+)_(\d+)"))
+@log_errors
+async def recent_messages_custom_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk pesan terbaru custom jumlah"""
+    await cb.answer()
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    
+    user_id = cb.from_user.id
+    user_recent_messages_state[user_id] = {
+        'session_index': index,
+        'page': page,
+        'step': 'waiting_count'
+    }
+    
+    await cb.message.edit(
+        text="<b>📨 Pesan Terbaru (Custom)</b>\n\n"
+             "Silakan kirim jumlah pesan yang ingin ditampilkan (1-50):\n\n"
+             "❌ <b>Cancel:</b> Ketik /cancel",
+        parse_mode=ParseMode.HTML
+    )
+
+
+# ✅ HANDLER BARU: Menu Lihat Mention
+@Altruix.bot.on_callback_query(filters.regex(r"view_mentions_menu_(\d+)_(\d+)"))
+@log_errors
+async def view_mentions_menu_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk menu lihat mention"""
+    await cb.answer()
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    
+    user_id = cb.from_user.id
+    user_mentions_state[user_id] = {
+        'session_index': index,
+        'page': page,
+        'step': 'waiting_group'
+    }
+    
+    await cb.message.edit(
+        text="<b>🔔 Lihat Mention</b>\n\n"
+             "Silakan kirim username atau ID group (contoh: @username atau -1001234567890):\n\n"
+             "❌ <b>Cancel:</b> Ketik /cancel",
+        parse_mode=ParseMode.HTML
+    )
+
+
+# ✅ HANDLER BARU: Pilihan Jumlah Mention
+@Altruix.bot.on_callback_query(filters.regex(r"mention_count_(\d+)_(\d+)"))
+@log_errors
+async def mention_count_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk pilihan jumlah mention"""
+    await cb.answer()
+    user_id = int(cb.matches[0].group(1))
+    count = int(cb.matches[0].group(2))
+    
+    if user_id not in user_mentions_state:
+        await cb.message.edit("❌ Session tidak ditemukan atau state expired.")
+        return
+    
+    state = user_mentions_state[user_id]
+    index = state['session_index']
+    page = state.get('page', 1)
+    group = state.get('group')
+    
+    if index >= len(Altruix.clients):
+        await cb.message.edit("❌ Session tidak ditemukan.")
+        if user_id in user_mentions_state:
+            del user_mentions_state[user_id]
+        return
+    
+    session_client = Altruix.clients[index]
+    session_info = getattr(session_client, 'myself', None) or await session_client.get_me()
+    
+    await cb.message.edit(f"🔔 Mencari mention di {group}...")
+    
+    try:
+        # Resolve group
+        try:
+            chat = await session_client.get_chat(group)
+        except Exception as e:
+            await cb.message.edit(f"❌ Gagal mendapatkan group: {str(e)}")
+            if user_id in user_mentions_state:
+                del user_mentions_state[user_id]
+            return
+        
+        # Ambil pesan dari group
+        messages = []
+        async for message in session_client.get_chat_history(chat.id, limit=count):
+            # Cek apakah pesan mengandung mention ke akun kita
+            if message.entities:
+                for entity in message.entities:
+                    if entity.type == "mention":
+                        # Cek mention username kita
+                        mentioned_username = message.text[entity.offset:entity.offset+entity.length]
+                        if mentioned_username.lower() == f"@{session_info.username}".lower():
+                            messages.append(message)
+                            break
+                    elif entity.type == "text_mention":
+                        if entity.user.id == session_info.id:
+                            messages.append(message)
+                            break
+        
+        if not messages:
+            await cb.message.edit(f"❌ Tidak ditemukan mention untuk @{session_info.username} di group {chat.title}.")
+            if user_id in user_mentions_state:
+                del user_mentions_state[user_id]
+            return
+        
+        # Format pesan
+        text = f"<b>🔔 Mention di {html.escape(chat.title)}</b>\n\n"
+        for i, msg in enumerate(messages, 1):
+            sender = msg.from_user.first_name if msg.from_user else "Unknown"
+            time = msg.date.strftime('%d-%m-%Y %H:%M')
+            preview = msg.text[:100] + "..." if msg.text and len(msg.text) > 100 else (msg.text or "[Media]")
+            text += f"{i}. <b>{html.escape(sender)}</b> ({time}):\n   {html.escape(preview)}\n\n"
+        
+        # Tambahkan tombol kembali
+        buttons = [
+            [InlineKeyboardButton("🔙 Back", callback_data=f"session_info_{index}_{page}")]
+        ]
+        
+        await cb.message.edit(
+            text=text,
+            reply_markup=InlineKeyboardMarkup(buttons),
+            parse_mode=ParseMode.HTML
+        )
+        
+        # Kirim log
+        await send_log_notification(
+            c, 'view_mentions', index, cb.from_user,
+            True, None, {'Group': group, 'Jumlah Pesan': count, 'Mention Ditemukan': len(messages)}
+        )
+        
+    except Exception as e:
+        await cb.message.edit(f"❌ Gagal mencari mention: {str(e)}")
+        Altruix.log(f"Error view_mentions session {index}: {e}", level=logging.ERROR)
+        await send_log_notification(
+            c, 'view_mentions', index, cb.from_user,
+            False, str(e), {'Group': group, 'Jumlah Pesan': count}
+        )
+    
+    finally:
+        # Hapus state
+        if user_id in user_mentions_state:
+            del user_mentions_state[user_id]
+
+
+# ✅ HANDLER BARU: Cancel Mention
+@Altruix.bot.on_callback_query(filters.regex(r"cancel_mention_(\d+)"))
+@log_errors
+async def cancel_mention_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk cancel mention"""
+    user_id = int(cb.matches[0].group(1))
+    if user_id in user_mentions_state:
+        del user_mentions_state[user_id]
+    await cb.answer("Cancelled.")
+    await cb.message.edit("❌ Lihat mention dibatalkan.")
+
+
+# ✅ HANDLER BARU: Kirim Foto Profil
+@Altruix.bot.on_callback_query(filters.regex(r"send_profile_photo_(\d+)_(\d+)"))
+@log_errors
+async def send_profile_photo_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk mengirim foto profil"""
+    await cb.answer()
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    
+    if index >= len(Altruix.clients):
+        await cb.answer("❌ Session tidak ditemukan.", show_alert=True)
+        return
+    
+    session_client = Altruix.clients[index]
+    session_info = getattr(session_client, 'myself', None) or await session_client.get_me()
+    
+    await cb.answer("🖼️ Mengirim foto profil...", show_alert=False)
+    
+    try:
+        # Ambil foto profil
+        photos = []
+        async for photo in session_client.get_chat_photos("me", limit=1):
+            photos.append(photo)
+        
+        if not photos:
+            await cb.message.edit("❌ Akun ini tidak memiliki foto profil.")
+            # Kirim log
+            await send_log_notification(
+                c, 'send_profile_photo', index, cb.from_user,
+                False, "Tidak ada foto profil", {'Aksi': 'Kirim foto profil gagal'}
+            )
+            return
+        
+        # Kirim foto ke user
+        await c.send_photo(
+            chat_id=cb.from_user.id,
+            photo=photos[0].file_id,
+            caption=f"🖼️ Foto profil akun: {html.escape(session_info.first_name or '')}\n"
+                   f"ID: <code>{session_info.id}</code>",
+            parse_mode=ParseMode.HTML
+        )
+        
+        await cb.message.edit("✅ Foto profil telah dikirim ke pesan pribadi Anda.")
+        
+        # Kirim log
+        await send_log_notification(
+            c, 'send_profile_photo', index, cb.from_user,
+            True, None, {'Aksi': 'Kirim foto profil berhasil'}
+        )
+        
+    except FloodWait as e:
+        await cb.message.edit(f"⏳ FloodWait: Tunggu {e.value} detik.")
+        await send_log_notification(
+            c, 'send_profile_photo', index, cb.from_user,
+            False, f"FloodWait {e.value}s", {'Aksi': 'Kirim foto profil gagal'}
+        )
+    except Exception as e:
+        await cb.message.edit(f"❌ Gagal mengirim foto profil: {str(e)}")
+        Altruix.log(f"Error send_profile_photo session {index}: {e}", level=logging.ERROR)
+        await send_log_notification(
+            c, 'send_profile_photo', index, cb.from_user,
+            False, str(e), {'Aksi': 'Kirim foto profil gagal'}
+        )
 
 
 # ✅ HANDLER BARU: Ganti Nama Depan dengan konfirmasi
