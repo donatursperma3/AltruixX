@@ -16,13 +16,28 @@ from pyrogram.types import (
     CallbackQuery, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove,
     InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions, User
 )
+
+# ====================== PERBAIKAN IMPORT ERROR ======================
+# Import semua error yang tersedia di Pyrogram
 from pyrogram.errors import (
     PeerIdInvalid, UserIsBlocked, ChatWriteForbidden, FloodWait, MessageIdInvalid,
     SlowmodeWait, InviteHashInvalid, InviteHashExpired, UserAlreadyParticipant,
     ChatAdminRequired, UsernameNotOccupied, ChannelPrivate, UsernameInvalid,
-    UsernameNotModified, AboutTooLong, FirstNameInvalid, PhotoInvalidDimensions,
+    UsernameNotModified, AboutTooLong, PhotoInvalidDimensions,
     PhotoSaveFileInvalid, UsernameOccupied
 )
+
+# Handle FirstNameInvalid yang mungkin tidak ada di beberapa versi Pyrogram
+try:
+    from pyrogram.errors import FirstNameInvalid
+except ImportError:
+    # Buat kelas dummy jika FirstNameInvalid tidak ada
+    class FirstNameInvalid(Exception):
+        pass
+
+# ✅ IMPORT BARU UNTUK CEK LIMIT
+from pyrogram.errors import UserIsBlocked as BotBlocked  # Alias agar tidak bentrok
+
 from pyrogram.enums import ParseMode
 import os
 import logging
@@ -31,9 +46,6 @@ import html
 from datetime import datetime
 import io
 import re
-
-# ✅ IMPORT BARU UNTUK CEK LIMIT
-from pyrogram.errors import UserIsBlocked as BotBlocked  # Alias agar tidak bentrok
 
 # Dictionary untuk menyimpan state konfirmasi user
 user_confirmation_state = {}
