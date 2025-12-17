@@ -1,4 +1,3 @@
-# sudo_manager.py
 # Copyright (C) 2021-present by Altruix@Github, < https://github.com/Altruix >.
 #
 # This file is part of < https://github.com/Altruix/Altruix > project,
@@ -14,16 +13,12 @@ from style import bullets
 from pyrogram import Client
 from pyrogram.types import User
 from ...core.types.message import Message
-import os
-import asyncio
-import re
-from pyrogram.errors import RPCError
-from Main.core.decorators import log_errors
+
 import logging
 
 plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "sudo_manager"
-PLUGIN_VERSION = "0.0.3"  # 🔥 VERSI DIPERBAIKI: Semua error fixed dan fitur ditambahkan
+PLUGIN_VERSION = "0.0.4"  # 🔥 VERSI DIPERBAIKI: Semua error fixed dan fitur ditambahkan
 
 # 🔥 SETUP LOGGING DETAILED
 logger = logging.getLogger(f"{__plugin_name__}")
@@ -40,53 +35,48 @@ if not logger.handlers:
 logger.info(f"🚀 Initializing settings plugin v{PLUGIN_VERSION}")
 
 
-b4 = bullets["bullet4"]
-b5 = bullets["bullet5"]
-b6 = bullets["bullet6"]
-b7 = bullets["bullet7"]
 
-# ← PERUBAHAN BARU: Fungsi bulletify sepenuhnya dirombak
-#     - Semua nama user jadi hyperlink tg://user?id=...
-#     - Compatible 100% di Android, iOS, Desktop, Web
-#     - Handling deleted account dengan aman
-#     - Total count di header
-def bulletify(users_list: list[User]) -> str:
-    total = len(users_list)
+# ← PERUBAHAN BARU: Fungsi bulletify diganti total dengan format box terpisah aktif/deleted
+def format_sudo_list(active_users: list[User], deleted_users: list[User]) -> str:
+    total = len(active_users) + len(deleted_users)
     out = f"<b>Sudo Users (Total: {total})</b>:\n\n"
 
-    if total == 0:
-        return "<b>Sudo Users (Total: 0)</b>\n\n<i>Tidak ada sudo user saat ini.</i>"
-
-    for idx, user in enumerate(users_list):
-        # Buat hyperlink yang valid di semua platform Telegram
-        user_id = user.id
-        if user.is_deleted:
-            display_name = "<i>Deleted Account</i>"
-        elif user.first_name:
-            # Escape karakter HTML khusus jika ada
-            first_name = user.first_name.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    # === Bagian Aktif Users ===
+    if active_users:
+        out += f"<b>Aktif Users ({len(active_users)})</b>:\n"
+        for i, user in enumerate(active_users):
+            # Escape karakter HTML
+            first_name = user.first_name or ""
             last_name = f" {user.last_name}" if user.last_name else ""
-            last_name = last_name.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            display_name = f"{first_name}{last_name}".strip()
-        else:
-            display_name = "<i>Unknown User</i>"
+            display_name = (first_name + last_name).strip()
+            display_name = display_name.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
-        hyperlink = f"<a href=\"tg://user?id={user_id}\">{display_name}</a>"
+            hyperlink = f"<a href=\"tg://user?id={user.id}\">{display_name}</a>"
 
-        if total == 1:
-            out += f"{b6}{b4} {hyperlink}"
-        elif total == 2:
-            if idx == 0:
-                out += f"{b5}{b4} {hyperlink}"
+            if i == 0:
+                out += f"┏◈ {hyperlink}\n"
+            elif i == len(active_users) - 1:
+                out += f"┗◈ {hyperlink}\n"
             else:
-                out += f"\n{b7}{b4} {hyperlink}"
-        else:
-            if idx == 0:
-                out += f"{b5}{b4} {hyperlink}"
-            elif idx == total - 1:
-                out += f"\n{b7}{b4} {hyperlink}"
+                out += f"┣◈ {hyperlink}\n"
+        out += "\n"
+    else:
+        out += "<b>Aktif Users (0)</b>:\n<i>Tidak ada user aktif.</i>\n\n"
+
+    # === Bagian Deleted Users ===
+    if deleted_users:
+        out += f"<b>Deleted Users ({len(deleted_users)})</b>:\n"
+        for i, user in enumerate(deleted_users):
+            hyperlink = f"<a href=\"tg://user?id={user.id}\">Deleted Account</a>"
+
+            if i == 0:
+                out += f"┏◈ {hyperlink}\n"
+            elif i == len(deleted_users) - 1:
+                out += f"┗◈ {hyperlink}\n"
             else:
-                out += f"\n{b6}{b4} {hyperlink}"
+                out += f"┣◈ {hyperlink}\n"
+    else:
+        out += "<b>Deleted Users (0)</b>:\n<i>Tidak ada akun terhapus.</i>"
 
     return out
 
@@ -96,7 +86,6 @@ def bulletify(users_list: list[User]) -> str:
     cmd_help={"help": "Disabled cmds for sudo users!", "example": "dpfs eval"},
     requires_input=True,
 )
-@log_errors
 async def disabled_ps_func(c: Client, m: Message):
     msg = await m.handle_message("PROCESSING")
     input_ = m.user_input.strip()
@@ -127,7 +116,6 @@ async def remove_disabled_ps_func(c: Client, m: Message):
         "example": "addsudo @warner_stark",
     },
 )
-@log_errors
 async def add_sudo_func(c: Client, m: Message):
     msg = await m.handle_message("PROCESSING")
     user, _, is_channel = m.get_user
@@ -157,7 +145,6 @@ async def add_sudo_func(c: Client, m: Message):
         ],
     },
 )
-@log_errors
 async def rm_sudo_func(c: Client, m: Message):
     msg = await m.handle_message("PROCESSING")
     user, _, is_channel = m.get_user
@@ -187,28 +174,32 @@ async def rm_sudo_func(c: Client, m: Message):
 
 @Altruix.register_on_cmd(
     "listsudo",
-    cmd_help={"help": "List all sudo users (clickable names + total count)", "example": "listsudo"}
+    cmd_help={"help": "List all sudo users (separated active & deleted)", "example": "listsudo"}
 )
-@log_errors
-# ← PERUBAHAN BARU: 
-#     - Semua nama user jadi hyperlink clickable di semua platform
-#     - Handling deleted account dengan aman
-#     - Total count tetap ditampilkan
+# ← PERUBAHAN BARU: Pisah aktif vs deleted, format box rapi, hyperlink tetap jalan
 async def list_sudo_func(c: Client, m: Message):
     msg = await m.handle_message("PROCESSING")
     sudo_ids = await Altruix.config.get_sudo()
 
     if not sudo_ids:
-        return await msg.edit_msg("<b>Sudo Users (Total: 0)</b>\n\n<i>Tidak ada sudo user saat ini.</i>")
+        return await msg.edit_msg(
+            "<b>Sudo Users (Total: 0)</b>\n\n"
+            "<b>Aktif Users (0)</b>:\n<i>Tidak ada user aktif.</i>\n\n"
+            "<b>Deleted Users (0)</b>:\n<i>Tidak ada akun terhapus.</i>"
+        )
 
-    valid_users = []
+    active_users = []
+    deleted_users = []
+
     for user_id in sudo_ids:
         try:
             user = await c.get_users(int(user_id))
-            valid_users.append(user)
+            if user.is_deleted:
+                deleted_users.append(user)
+            else:
+                active_users.append(user)
         except Exception:
-            # Jika user tidak bisa di-fetch (akun dihapus/banned/blocked bot)
-            # Buat objek dummy User agar tetap bisa ditampilkan
+            # Jika gagal fetch (banned, blocked, dll) → anggap deleted
             dummy_user = User(
                 id=int(user_id),
                 is_deleted=True,
@@ -218,12 +209,9 @@ async def list_sudo_func(c: Client, m: Message):
                 dc_id=None,
                 is_bot=False
             )
-            valid_users.append(dummy_user)
+            deleted_users.append(dummy_user)
 
-    if not valid_users:
-        return await msg.edit_msg("<b>Sudo Users (Total: 0)</b>\n\n<i>Tidak ada sudo user yang valid.</i>")
-
-    await msg.edit_msg(bulletify(valid_users))
+    await msg.edit_msg(format_sudo_list(active_users, deleted_users))
 
 # Log sukses loading
 try:
