@@ -34,7 +34,8 @@ from collections import defaultdict
 
 plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "mentions"
-PLUGIN_VERSION = "0.2.6.0"  # 🔥 VERSI DIPERBAIKI: Semua error fixed
+PLUGIN_VERSION = "0.2.6.1"  # 🔥 VERSI DIPERBAIKI: Button Reply Fixed
+
 
 # 🔥 SETUP LOGGING DETAILED
 logger = logging.getLogger(f"{__plugin_name__}")
@@ -580,139 +581,55 @@ async def quick_reaction_handler(c: Client, cb: CallbackQuery):
         logger.error(f"❌ Quick reaction error: {e}", exc_info=True)
         await cb.answer("❌ Terjadi kesalahan.", show_alert=True)
 
-# 🔥 PERBAIKAN: Handler untuk reply as mentioned - FIXED
-@Altruix.bot.on_callback_query(filters.regex(r"^mentions_reply_"))
-@log_errors
-async def start_reply_as_mentioned(c: Client, cb: CallbackQuery):
-    """Memulai proses reply-as-mentioned."""
-    try:
-        BUTTON_STATS["reply"] += 1
-        log_button_press("REPLY", cb.data, cb.from_user.id if cb.from_user else None)
-        logger.info(f"📊 Reply button pressed. Total: {BUTTON_STATS['reply']}")
-        
-        # PERBAIKAN: Parse dengan regex
-        pattern = r"mentions_reply_(-?\d+)_(\d+)"
-        match = re.match(pattern, cb.data)
-        
-        if not match:
-            logger.error(f"❌ Invalid reply callback data: {cb.data}")
-            await cb.answer("❌ Invalid callback data", show_alert=True)
-            return
-        
-        chat_id = int(match.group(1))
-        message_id = int(match.group(2))
-        msg_key = f"{chat_id}_{message_id}"
-        
-        logger.info(f"🔄 Starting reply process for {msg_key}")
-        
-        if msg_key not in MENTION_LOG_CACHE:
-            logger.warning(f"❌ Mention not in cache: {msg_key}")
-            await cb.answer("❌ Mention tidak ditemukan di cache.", show_alert=True)
-            return
-        
-        cache_data = MENTION_LOG_CACHE[msg_key]
-        logger.info(f"🔍 Cache data for {msg_key}: {cache_data}")
-        
-        # DAPATKAN CLIENT DARI CLIENT_ID
-        client_id = cache_data["client_id"]
-        logger.info(f"🔍 Looking for client with ID: {client_id}")
-        
-        mentioned_client = await get_mention_client(client_id)
-        
-        if not mentioned_client:
-            logger.warning(f"❌ Userbot client not available for ID: {client_id}")
-            await cb.answer("❌ Akun yang disebut tidak tersedia atau tidak aktif.", show_alert=True)
-            return
-        
-        # PERBAIKAN: Generate unique waiting ID
-        waiting_id = f"reply_{int(time.time())}_{cb.id}"
-        REPLY_AS_MENTIONED_WAITING[waiting_id] = {
-            "chat_id": chat_id,
-            "message_id": message_id,
-            "client_id": client_id,
-            "log_msg_id": cb.message.id,
-            "user_id": cb.from_user.id if cb.from_user else None,
-            "timestamp_int": int(time.time()),
-            "callback_message_id": cb.message.id,
-            "is_reply_all": False,
-            "waiting_id": waiting_id,
-            "msg_key": msg_key
-        }
-        
-        logger.info(f"⏳ Waiting for reply input for {msg_key}, waiting_id: {waiting_id}")
-        
-        # PERBAIKAN: Gunakan reply_parameters
-        try:
-            instruction_msg = await cb.message.reply(
-                "🗨️ <b>Reply as Mentioned</b>\n\n"
-                "Silakan ketik pesan balasan Anda di bawah ini.\n"
-                "Pesan akan dikirim sebagai akun yang disebut di grup asal.\n\n"
-                "<i>Balas pesan ini dengan teks yang ingin dikirim.</i>",
-                parse_mode=enums.ParseMode.HTML,
-                reply_parameters=ReplyParameters(
-                    message_id=cb.message.id,
-                    chat_id=cb.message.chat.id
-                )
-            )
-            
-            REPLY_AS_MENTIONED_WAITING[waiting_id]["instruction_msg_id"] = instruction_msg.id
-            logger.info(f"📤 Instruction sent: {instruction_msg.id}")
-            
-        except Exception as e:
-            logger.error(f"❌ Instruction send failed: {e}")
-            await cb.answer("❌ Gagal mengirim instruksi", show_alert=True)
-            return
-        
-        await cb.answer("✅ Silakan ketik balasan Anda.", show_alert=False)
-        
-    except Exception as e:
-        logger.error(f"❌ Reply start error: {e}", exc_info=True)
-        await cb.answer("❌ Terjadi kesalahan.", show_alert=True)
-
-# 🔥 PERBAIKAN UTAMA: Handler untuk Reply From All - FIXED
+# 🔥 PERBAIKAN: Handler untuk Reply From All - DIPINDAHKAN KE ATAS & FIXED
+# Menggunakan regex yang lebih spesifik dan urutan yang benar
 @Altruix.bot.on_callback_query(filters.regex(r"^mentions_replyall_"))
 @log_errors
 async def start_reply_from_all(c: Client, cb: CallbackQuery):
     """Memulai proses reply-from-all untuk semua user."""
     try:
+        # 1. Log Aktivitas
         BUTTON_STATS["reply_all"] += 1
         log_button_press("REPLY_ALL", cb.data, cb.from_user.id if cb.from_user else None)
         logger.info(f"📊 Reply All button pressed. Total: {BUTTON_STATS['reply_all']}")
         
-        # PERBAIKAN: Parse dengan regex
+        # 2. Parse Data dengan Aman
+        # Format: mentions_replyall_{chat_id}_{message_id}
         pattern = r"mentions_replyall_(-?\d+)_(\d+)"
         match = re.match(pattern, cb.data)
         
         if not match:
             logger.error(f"❌ Invalid replyall callback data: {cb.data}")
-            await cb.answer("❌ Invalid callback data", show_alert=True)
+            await cb.answer("❌ Data tombol tidak valid", show_alert=True)
             return
         
         chat_id = int(match.group(1))
         message_id = int(match.group(2))
         msg_key = f"{chat_id}_{message_id}"
         
-        # Cek rate limit
+        # 3. Validasi User
         user_id = cb.from_user.id if cb.from_user else None
         if not user_id:
             await cb.answer("❌ User tidak dikenal", show_alert=True)
             return
         
+        # 4. Cek Rate Limit (Anti-Spam)
         today = datetime.now().strftime("%Y%m%d")
         if USER_REPLY_COUNTS[user_id][today] >= USER_REPLY_LIMIT:
             logger.warning(f"⚠️ User {user_id} hit rate limit for today")
             await cb.answer(
-                f"❌ Anda sudah mencapai batas reply ({USER_REPLY_LIMIT}x per hari). Coba lagi besok.",
+                f"❌ Batas reply tercapai ({USER_REPLY_LIMIT}x per hari). Coba lagi besok.",
                 show_alert=True
             )
             return
         
+        # 5. Cek Ketersediaan Cache
         if msg_key not in MENTION_LOG_CACHE:
             logger.warning(f"❌ Mention not in cache: {msg_key}")
-            await cb.answer("❌ Mention tidak ditemukan di cache.", show_alert=True)
+            await cb.answer("❌ Data mention kadaluarsa atau hilang (restarted).", show_alert=True)
             return
         
-        # DAPATKAN CLIENT DARI CLIENT_ID
+        # 6. Dapatkan Client Userbot
         cache_data = MENTION_LOG_CACHE[msg_key]
         client_id = cache_data["client_id"]
         logger.info(f"🔍 Looking for client with ID: {client_id}")
@@ -721,10 +638,10 @@ async def start_reply_from_all(c: Client, cb: CallbackQuery):
         
         if not mentioned_client:
             logger.warning(f"❌ Userbot client not available for ID: {client_id}")
-            await cb.answer("❌ Akun yang disebut tidak tersedia atau tidak aktif.", show_alert=True)
+            await cb.answer("❌ Akun userbot tidak aktif/offline.", show_alert=True)
             return
         
-        # PERBAIKAN: Generate unique waiting ID
+        # 7. Generate Waiting ID unik
         waiting_id = f"replyall_{int(time.time())}_{cb.id}"
         REPLY_AS_MENTIONED_WAITING[waiting_id] = {
             "chat_id": chat_id,
@@ -741,13 +658,13 @@ async def start_reply_from_all(c: Client, cb: CallbackQuery):
         
         logger.info(f"⏳ Reply From All waiting for {msg_key}, user: {user_id}, waiting_id: {waiting_id}")
         
-        # PERBAIKAN: Gunakan reply_parameters dengan benar
+        # 8. Kirim Instruksi ke User
         try:
             user_mention = cb.from_user.mention(style=enums.ParseMode.HTML) if cb.from_user else "User"
             client_name = mentioned_client.me.first_name if mentioned_client.me else "Unknown"
             
             instruction_msg = await cb.message.reply(
-                f"👥 <b>Reply From All</b>\n\n"
+                f"� <b>Reply From All</b>\n\n"
                 f"Halo {user_mention}!\n\n"
                 f"Silakan ketik pesan balasan Anda di bawah ini.\n"
                 f"Pesan akan dikirim sebagai <b>{client_name}</b> ke grup asal.\n\n"
@@ -763,20 +680,116 @@ async def start_reply_from_all(c: Client, cb: CallbackQuery):
             REPLY_AS_MENTIONED_WAITING[waiting_id]["instruction_msg_id"] = instruction_msg.id
             logger.info(f"📤 Reply All instruction sent: {instruction_msg.id}")
             
+            # Update counter hanya jika instruksi berhasil dikirim
+            USER_REPLY_COUNTS[user_id][today] += 1
+            
+            # FEEDBACK SUKSES KE USER
+            await cb.answer("✅ Silakan ketik balasan Anda (Lihat pesan baru).", show_alert=False)
+            
         except Exception as e:
             logger.error(f"❌ Reply All instruction failed: {e}")
-            await cb.answer("❌ Gagal mengirim instruksi", show_alert=True)
+            REPLY_AS_MENTIONED_WAITING.pop(waiting_id, None) # Hapus jika gagal
+            await cb.answer("❌ Gagal mengirim pesan instruksi.", show_alert=True)
+            return
+
+    except Exception as e:
+        logger.error(f"❌ Reply From All logic error: {e}", exc_info=True)
+        await cb.answer(f"❌ Terjadi kesalahan sistem: {str(e)[:50]}", show_alert=True)
+
+
+# 🔥 PERBAIKAN: Handler untuk Reply as Mentioned - UPDATED REGEX
+# Regex updated matched ^mentions_reply_ followed by digits specifically
+@Altruix.bot.on_callback_query(filters.regex(r"^mentions_reply_(-?\d+)_"))
+@log_errors
+async def start_reply_as_mentioned(c: Client, cb: CallbackQuery):
+    """Memulai proses reply-as-mentioned."""
+    try:
+        # 1. Log Aktivitas
+        BUTTON_STATS["reply"] += 1
+        log_button_press("REPLY", cb.data, cb.from_user.id if cb.from_user else None)
+        logger.info(f"📊 Reply button pressed. Total: {BUTTON_STATS['reply']}")
+        
+        # 2. Parse regex aman
+        # Pattern disesuaikan agar tidak false match
+        pattern = r"mentions_reply_(-?\d+)_(\d+)"
+        match = re.match(pattern, cb.data)
+        
+        if not match:
+            logger.error(f"❌ Invalid reply callback data: {cb.data}")
+            await cb.answer("❌ Data tombol validasi gagal", show_alert=True)
             return
         
-        # Update count
-        USER_REPLY_COUNTS[user_id][today] += 1
-        logger.info(f"📈 User {user_id} reply count: {USER_REPLY_COUNTS[user_id][today]}/{USER_REPLY_LIMIT}")
+        chat_id = int(match.group(1))
+        message_id = int(match.group(2))
+        msg_key = f"{chat_id}_{message_id}"
         
-        await cb.answer("✅ Silakan ketik balasan Anda. (Reply From All)", show_alert=False)
+        logger.info(f"🔄 Starting reply process for {msg_key}")
+        
+        # 3. Cek Cache
+        if msg_key not in MENTION_LOG_CACHE:
+            logger.warning(f"❌ Mention not in cache: {msg_key}")
+            await cb.answer("❌ Data mention kadaluarsa/hilang. (Bot restart?)", show_alert=True)
+            return
+        
+        cache_data = MENTION_LOG_CACHE[msg_key]
+        
+        # 4. Validasi Client
+        client_id = cache_data["client_id"]
+        logger.info(f"🔍 Looking for client with ID: {client_id}")
+        
+        mentioned_client = await get_mention_client(client_id)
+        
+        if not mentioned_client:
+            logger.warning(f"❌ Userbot client not available for ID: {client_id}")
+            await cb.answer("❌ Akun userbot tidak aktif saat ini.", show_alert=True)
+            return
+        
+        # 5. Generate Waiting ID
+        waiting_id = f"reply_{int(time.time())}_{cb.id}"
+        REPLY_AS_MENTIONED_WAITING[waiting_id] = {
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "client_id": client_id,
+            "log_msg_id": cb.message.id,
+            "user_id": cb.from_user.id if cb.from_user else None,
+            "timestamp_int": int(time.time()),
+            "callback_message_id": cb.message.id,
+            "is_reply_all": False,
+            "waiting_id": waiting_id,
+            "msg_key": msg_key
+        }
+        
+        logger.info(f"⏳ Waiting for reply input for {msg_key}, waiting_id: {waiting_id}")
+        
+        # 6. Kirim Instruksi
+        try:
+            instruction_msg = await cb.message.reply(
+                "�️ <b>Reply as Mentioned</b>\n\n"
+                "Silakan ketik pesan balasan Anda di bawah ini.\n"
+                "Pesan akan dikirim sebagai akun yang disebut di grup asal.\n\n"
+                "<i>Balas pesan ini dengan teks yang ingin dikirim.</i>",
+                parse_mode=enums.ParseMode.HTML,
+                reply_parameters=ReplyParameters(
+                    message_id=cb.message.id,
+                    chat_id=cb.message.chat.id
+                )
+            )
+            
+            REPLY_AS_MENTIONED_WAITING[waiting_id]["instruction_msg_id"] = instruction_msg.id
+            logger.info(f"📤 Instruction sent: {instruction_msg.id}")
+            
+            # FEEDBACK SUKSES
+            await cb.answer("✅ Silakan ketik balasan Anda.", show_alert=False)
+            
+        except Exception as e:
+            logger.error(f"❌ Instruction send failed: {e}")
+            REPLY_AS_MENTIONED_WAITING.pop(waiting_id, None) # Cleanup
+            await cb.answer("❌ Gagal mengirim instruksi reply.", show_alert=True)
+            return
         
     except Exception as e:
-        logger.error(f"❌ Reply From All error: {e}", exc_info=True)
-        await cb.answer("❌ Terjadi kesalahan.", show_alert=True)
+        logger.error(f"❌ Reply start error: {e}", exc_info=True)
+        await cb.answer(f"❌ Error: {str(e)[:50]}", show_alert=True)
 
 # 🔥 PERBAIKAN: Handler untuk menerima input balasan
 @Altruix.bot.on_message(filters.chat(Altruix.log_chat) & filters.reply)
