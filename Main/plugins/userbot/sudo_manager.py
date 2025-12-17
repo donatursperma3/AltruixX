@@ -1,3 +1,4 @@
+# sudo_manager.py
 # Copyright (C) 2021-present by Altruix@Github, < https://github.com/Altruix >.
 #
 # This file is part of < https://github.com/Altruix/Altruix > project,
@@ -13,12 +14,16 @@ from style import bullets
 from pyrogram import Client
 from pyrogram.types import User
 from ...core.types.message import Message
-
+import os
+import asyncio
+import re
+from pyrogram.errors import RPCError
+from Main.core.decorators import log_errors
 import logging
 
 plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "sudo_manager"
-PLUGIN_VERSION = "0.0.4"  # 🔥 VERSI DIPERBAIKI: Semua error fixed dan fitur ditambahkan
+PLUGIN_VERSION = "0.0.5"  # 🔥 VERSI DIPERBAIKI: Semua error fixed dan fitur ditambahkan
 
 # 🔥 SETUP LOGGING DETAILED
 logger = logging.getLogger(f"{__plugin_name__}")
@@ -86,6 +91,7 @@ def format_sudo_list(active_users: list[User], deleted_users: list[User]) -> str
     cmd_help={"help": "Disabled cmds for sudo users!", "example": "dpfs eval"},
     requires_input=True,
 )
+@log_errors
 async def disabled_ps_func(c: Client, m: Message):
     msg = await m.handle_message("PROCESSING")
     input_ = m.user_input.strip()
@@ -100,6 +106,7 @@ async def disabled_ps_func(c: Client, m: Message):
     cmd_help={"help": "Disabled cmds from sudo users", "example": "dpfs eval"},
     requires_input=True,
 )
+@log_errors
 async def remove_disabled_ps_func(c: Client, m: Message):
     msg = await m.handle_message("PROCESSING")
     input_ = m.user_input.strip()
@@ -116,6 +123,7 @@ async def remove_disabled_ps_func(c: Client, m: Message):
         "example": "addsudo @warner_stark",
     },
 )
+@log_errors
 async def add_sudo_func(c: Client, m: Message):
     msg = await m.handle_message("PROCESSING")
     user, _, is_channel = m.get_user
@@ -145,6 +153,7 @@ async def add_sudo_func(c: Client, m: Message):
         ],
     },
 )
+@log_errors
 async def rm_sudo_func(c: Client, m: Message):
     msg = await m.handle_message("PROCESSING")
     user, _, is_channel = m.get_user
@@ -176,6 +185,7 @@ async def rm_sudo_func(c: Client, m: Message):
     "listsudo",
     cmd_help={"help": "List all sudo users (separated active & deleted)", "example": "listsudo"}
 )
+@log_errors
 # ← PERUBAHAN BARU: Pisah aktif vs deleted, format box rapi, hyperlink tetap jalan
 async def list_sudo_func(c: Client, m: Message):
     msg = await m.handle_message("PROCESSING")
