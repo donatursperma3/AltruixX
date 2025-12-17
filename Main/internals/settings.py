@@ -511,9 +511,9 @@ async def user_text_handler(c: Client, m: Message):
             except AboutTooLong as e:
                 error_msg = f"Bio terlalu panjang: {str(e)}"
                 await m.reply(f"❌ Bio terlalu panjang: {str(e)}")
-            except FloodWait as e:
-                error_msg = f"FloodWait {e.value} detik"
-                await m.reply(f"⏳ FloodWait: Tunggu {e.value} detik sebelum mencoba lagi.")
+            except pyrogram.errors.exceptions.flood_420.FloodWait as wait_err:
+                error_msg = f"FloodWait {wait_err.value} detik"
+                await m.reply(f"⏳ FloodWait: Tunggu {error_msg} sebelum mencoba lagi.: {str(wait_err)}")
             except Exception as e:
                 error_msg = str(e)
                 await m.reply(f"❌ Error: {str(e)}")
