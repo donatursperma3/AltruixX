@@ -1,4 +1,3 @@
-# sudo_manager.py
 # Copyright (C) 2021-present by Altruix@Github, < https://github.com/Altruix >.
 #
 # This file is part of < https://github.com/Altruix/Altruix > project,
@@ -41,23 +40,22 @@ logger.info(f"🚀 Initializing settings plugin v{PLUGIN_VERSION}")
 
 
 
-# ← PERUBAHAN BARU: Fungsi bulletify diganti total dengan format box terpisah aktif/deleted
-def format_sudo_list(active_users: list[User], deleted_users: list[User]) -> str:
-    total = len(active_users) + len(deleted_users)
+# ← PERUBAHAN BARU: Format function dirombak untuk handle 3 kategori (Aktif, Unfetchable, Deleted)
+#     - Unfetchable: Untuk ID gagal fetch (mungkin aktif tapi privacy/blocked)
+#     - Tampilkan ID di unfetchable agar bisa dicek manual
+def format_sudo_list(active_users: list[User], unfetchable_users: list[User], deleted_users: list[User]) -> str:
+    total = len(active_users) + len(unfetchable_users) + len(deleted_users)
     out = f"<b>Sudo Users (Total: {total})</b>:\n\n"
 
     # === Bagian Aktif Users ===
     if active_users:
         out += f"<b>Aktif Users ({len(active_users)})</b>:\n"
         for i, user in enumerate(active_users):
-            # Escape karakter HTML
             first_name = user.first_name or ""
             last_name = f" {user.last_name}" if user.last_name else ""
             display_name = (first_name + last_name).strip()
             display_name = display_name.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
             hyperlink = f"<a href=\"tg://user?id={user.id}\">{display_name}</a>"
-
             if i == 0:
                 out += f"┏◈ {hyperlink}\n"
             elif i == len(active_users) - 1:
@@ -68,12 +66,26 @@ def format_sudo_list(active_users: list[User], deleted_users: list[User]) -> str
     else:
         out += "<b>Aktif Users (0)</b>:\n<i>Tidak ada user aktif.</i>\n\n"
 
+    # === Bagian Unfetchable Users ===
+    if unfetchable_users:
+        out += f"<b>Unfetchable Users ({len(unfetchable_users)})</b> <i>(Mungkin aktif tapi gagal diambil, cek manual)</i>:\n"
+        for i, user in enumerate(unfetchable_users):
+            hyperlink = f"<a href=\"tg://user?id={user.id}\">Unfetchable Account (ID: {user.id})</a>"
+            if i == 0:
+                out += f"┏◈ {hyperlink}\n"
+            elif i == len(unfetchable_users) - 1:
+                out += f"┗◈ {hyperlink}\n"
+            else:
+                out += f"┣◈ {hyperlink}\n"
+        out += "\n"
+    else:
+        out += "<b>Unfetchable Users (0)</b>:\n<i>Tidak ada user yang gagal diambil.</i>\n\n"
+
     # === Bagian Deleted Users ===
     if deleted_users:
         out += f"<b>Deleted Users ({len(deleted_users)})</b>:\n"
         for i, user in enumerate(deleted_users):
             hyperlink = f"<a href=\"tg://user?id={user.id}\">Deleted Account</a>"
-
             if i == 0:
                 out += f"┏◈ {hyperlink}\n"
             elif i == len(deleted_users) - 1:
@@ -183,10 +195,10 @@ async def rm_sudo_func(c: Client, m: Message):
 
 @Altruix.register_on_cmd(
     "listsudo",
-    cmd_help={"help": "List all sudo users (separated active & deleted)", "example": "listsudo"}
+    cmd_help={"help": "List all sudo users (separated active, unfetchable & deleted)", "example": "listsudo"}
 )
 @log_errors
-# ← PERUBAHAN BARU: Pisah aktif vs deleted, format box rapi, hyperlink tetap jalan
+# ← PERUBAHAN BARU: Tambah kategori Unfetchable untuk handle gagal fetch (penyebab count aktif kurang)
 async def list_sudo_func(c: Client, m: Message):
     msg = await m.handle_message("PROCESSING")
     sudo_ids = await Altruix.config.get_sudo()
@@ -195,10 +207,12 @@ async def list_sudo_func(c: Client, m: Message):
         return await msg.edit_msg(
             "<b>Sudo Users (Total: 0)</b>\n\n"
             "<b>Aktif Users (0)</b>:\n<i>Tidak ada user aktif.</i>\n\n"
+            "<b>Unfetchable Users (0)</b>:\n<i>Tidak ada user yang gagal diambil.</i>\n\n"
             "<b>Deleted Users (0)</b>:\n<i>Tidak ada akun terhapus.</i>"
         )
 
     active_users = []
+    unfetchable_users = []
     deleted_users = []
 
     for user_id in sudo_ids:
@@ -209,21 +223,21 @@ async def list_sudo_func(c: Client, m: Message):
             else:
                 active_users.append(user)
         except Exception:
-            # Jika gagal fetch (banned, blocked, dll) → anggap deleted
+            # Jika gagal fetch → kategori unfetchable (mungkin aktif)
             dummy_user = User(
                 id=int(user_id),
-                is_deleted=True,
+                is_deleted=False,  # Bukan deleted, tapi unfetchable
                 first_name=None,
                 last_name=None,
                 username=None,
                 dc_id=None,
                 is_bot=False
             )
-            deleted_users.append(dummy_user)
+            unfetchable_users.append(dummy_user)
 
-    await msg.edit_msg(format_sudo_list(active_users, deleted_users))
+    await msg.edit_msg(format_sudo_list(active_users, unfetchable_users, deleted_users))
 
-# Log sukses loading
+    # Log sukses loading
 try:
     Altruix.log(f"[DEBUG] ✅ Loaded → {__plugin_name__} {PLUGIN_VERSION}", level=20)
 except Exception as e:
