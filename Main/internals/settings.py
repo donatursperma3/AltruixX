@@ -47,6 +47,24 @@ from datetime import datetime
 import io
 import re
 
+plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
+__plugin_name__ = plugin_name if plugin_name else "settings"
+PLUGIN_VERSION = "0.1.1.1"  # 🔥 VERSI DIPERBAIKI: Semua error fixed
+
+# 🔥 SETUP LOGGING DETAILED
+logger = logging.getLogger(f"{__plugin_name__}")
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter(
+        "%(asctime)s - [MENTIONS] - %(levelname)s - %(filename)s:%(lineno)d - %(message)s"
+    )
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.setLevel(logging.DEBUG)
+
+# 🔥 LOG STARTUP
+logger.info(f"🚀 Initializing mentions plugin v{PLUGIN_VERSION}")
+
 # Dictionary untuk menyimpan state konfirmasi user
 user_confirmation_state = {}
 user_text_confirmation_state = {}
@@ -2561,3 +2579,9 @@ async def unlink_session_cb_handler(c: Client, cb: CallbackQuery):
 async def add_session_handler(c: Client, cb: CallbackQuery):
     """Handler untuk tombol Add a Session"""
     await cb.answer("Fitur ini akan segera ditambahkan!", show_alert=True)
+
+# Log sukses loading
+try:
+    Altruix.log(f"[DEBUG] ✅ Loaded → {__plugin_name__} {PLUGIN_VERSION}", level=20)
+except Exception as e:
+    logger.info(f"[DEBUG] ✅ Loaded → {__plugin_name__} {PLUGIN_VERSION}")
