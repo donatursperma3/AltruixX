@@ -35,7 +35,7 @@ logger = logging.getLogger("altruix.pm_logger_bot")
 logger.setLevel(logging.INFO)
 
 PLUGIN_NAME = __plugin_name__ 
-PLUGIN_VERSION = "1.2.3" # ✅ Added Debug Logs
+PLUGIN_VERSION = "1.2.4" # ✅ fix error import 
 STORAGE_FILE = Path("pm_logger_bot_settings.json")
 
 # Settings Cache
@@ -183,7 +183,7 @@ async def pml_status_bot_handler(c: Client, m: AltruixMessage):
     
     # Userbot settings (import from the other plugin)
     try:
-        from Main.plugins.userbot.pm_logger_user import PM_LOGGER_USER_DATA as U_DATA, REPLY_FROM_ALL_ACCESSIBLE
+        from Main.plugins.userbot.xpm_logger_user import PM_LOGGER_USER_DATA as U_DATA, REPLY_FROM_ALL_ACCESSIBLE
         u_enabled = U_DATA.get("enabled", False)
         mode = U_DATA.get("mode", "both")
     except:
@@ -229,7 +229,7 @@ async def pm_logger_bot_handler(c: Client, m: RawMessage):
         if not PM_LOGGER_BOT_DATA.get("enabled", False):
             return
 
-        from Main.plugins.userbot.pm_logger_user import PM_LOGGER_USER_DATA as U_DATA
+        from Main.plugins.userbot.xpm_logger_user import PM_LOGGER_USER_DATA as U_DATA
         mode = U_DATA.get("mode", "both")
         if mode == "user":
             return
@@ -308,7 +308,7 @@ async def pm_logger_bot_handler(c: Client, m: RawMessage):
         )
         
         # Cache for recovery
-        from Main.plugins.userbot.pm_logger_user import PM_LOG_CACHE as U_CACHE
+        from Main.plugins.userbot.xpm_logger_user import PM_LOG_CACHE as U_CACHE
         U_CACHE[f"{m.chat.id}_{m.id}"] = {
             "client_id": c.me.id,
             "log_msg_id": sent_log.id,
@@ -329,7 +329,7 @@ async def pm_logger_bot_edit_handler(c: Client, m: RawMessage):
         if not PM_LOGGER_BOT_DATA.get("enabled", False):
             return
 
-        from Main.plugins.userbot.pm_logger_user import PM_LOG_CACHE as U_CACHE
+        from Main.plugins.userbot.xpm_logger_user import PM_LOG_CACHE as U_CACHE
         msg_key = f"{m.chat.id}_{m.id}"
         cache = U_CACHE.get(msg_key)
         if not cache: return
@@ -386,7 +386,7 @@ async def pmlb_save_callback(c: Client, cb: CallbackQuery):
 @Altruix.bot.on_callback_query(filters.regex(r"^pmlb_reply_"))
 @log_errors
 async def pmlb_reply_callback(c: Client, cb: CallbackQuery):
-    from Main.plugins.userbot.pm_logger_user import REPLY_AS_MENTIONED_WAITING as WAIT_CACHE
+    from Main.plugins.userbot.xpm_logger_user import REPLY_AS_MENTIONED_WAITING as WAIT_CACHE
     try:
         data = cb.data.split("_")
         chat_id, msg_id, client_id = int(data[2]), int(data[3]), int(data[4])
