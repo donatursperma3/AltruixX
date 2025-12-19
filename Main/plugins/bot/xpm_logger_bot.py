@@ -35,7 +35,7 @@ logger = logging.getLogger("altruix.pm_logger_bot")
 logger.setLevel(logging.INFO)
 
 PLUGIN_NAME = __plugin_name__ 
-PLUGIN_VERSION = "1.2.4" # ✅ fix error import 
+PLUGIN_VERSION = "1.2.3" # ✅ Added Debug Logs
 STORAGE_FILE = Path("pm_logger_bot_settings.json")
 
 # Settings Cache
@@ -464,7 +464,7 @@ async def pmlb_unreact_callback(c: Client, cb: CallbackQuery):
 @Altruix.bot.on_callback_query(filters.regex(r"^pmlb_replyall_"))
 @log_errors
 async def pmlb_replyall_callback(c: Client, cb: CallbackQuery):
-    from Main.plugins.userbot.pm_logger_user import REPLY_AS_MENTIONED_WAITING as WAIT_CACHE, USER_REPLY_COUNTS, USER_REPLY_LIMIT
+    from Main.plugins.userbot.xpm_logger_user import REPLY_AS_MENTIONED_WAITING as WAIT_CACHE, USER_REPLY_COUNTS, USER_REPLY_LIMIT
     try:
         if not REPLY_FROM_ALL_ACCESSIBLE:
             return await cb.answer("❌ Fitur ini sedang dinonaktifkan.", show_alert=True)
@@ -490,7 +490,7 @@ async def pmlb_replyall_callback(c: Client, cb: CallbackQuery):
 @Altruix.bot.on_callback_query(filters.regex(r"^pmlb_unsend_"))
 @log_errors
 async def pmlb_unsend_callback(c: Client, cb: CallbackQuery):
-    from Main.plugins.userbot.pm_logger_user import PM_LOG_CACHE as U_CACHE
+    from Main.plugins.userbot.xpm_logger_user import PM_LOG_CACHE as U_CACHE
     try:
         data = cb.data.split("_")
         chat_id, msg_id, client_id = int(data[2]), int(data[3]), int(data[4])
