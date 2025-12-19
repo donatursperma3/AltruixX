@@ -1,63 +1,58 @@
-declare -A pm;
-pm[/etc/redhat-release]=yum
-pm[/etc/arch-release]=pacman
-pm[/etc/gentoo-release]=emerge
-pm[/etc/SuSE-release]=zypp
-pm[/etc/debian_version]=apt-get
-pm[/etc/alpine-release]=apk
+#!/usr/bin/env bash
+# -------------------------------------------------
+# start.sh – Launch Altruix Userbot
+# -------------------------------------------------
 
-if [ $(echo $PREFIX | grep -o 'com.termux') ];then
-    on_termux=True
+# Exit on any error
+set -e
+
+# Detect Python interpreter
+PYTHON_CMD="python"
+if command -v python3 >/dev/null 2>&1; then
+    PYTHON_CMD="python3"
+fi
+
+# Fix Unicode errors on Windows
+export PYTHONIOENCODING=utf-8
+
+# Create virtual environment if it does not exist
+if [ ! -d "venv" ]; then
+    echo "Creating virtual environment..."
+    $PYTHON_CMD -m venv venv
+fi
+
+# Detect venv paths (Windows 'Scripts' vs Linux 'bin')
+if [ -d "venv/Scripts" ]; then
+    VENV_PYTHON="./venv/Scripts/python.exe"
+
+elif [ -d "venv/bin" ]; then
+    VENV_PYTHON="./venv/bin/python"
+
 else
-    on_termux=False  
+    echo "Error: Could not find venv/Scripts or venv/bin. Virtual environment setup failed."
+    exit 1
 fi
 
-install_package () {
-    if [ "$on_termux" == "False" ]; then
-        { for f in ${!pm[@]}  
-            do
-                if [[ -f $f ]];then
-                    echo "Using : [${pm[$f]}] to install packages"
-                    sudo ${pm[$f]} install "$1" -y || ${pm[$f]} install "$1" -y
-                    fi
-            done    }
-    else
-        echo "Using : [pkg] to install packages"
-        pkg install "$1" -y 
+echo "Using Python: $VENV_PYTHON"
+
+# Upgrade pip and install dependencies using the VENV executable directly
+echo "Installing dependencies..."
+$VENV_PYTHON -m pip install --upgrade pip
+$VENV_PYTHON -m pip install -r requirements.txt
+
+# Load environment variables from .env if present
+if [ -f ".env" ]; then
+    echo "Loading environment variables from .env..."
+    while IFS= read -r line || [ -n "$line" ]; do
+        # Strip carriage return and skip comments/empty lines
+        line=$(echo "$line" | tr -d '\r')
+        case "$line" in
+            \#*|"") continue ;;
+        esac
+        export "$line"
+    done < ".env"
 fi
-}
 
-package_check () {
-if [ $(dpkg-query -W -f='${Status}' $1 2>/dev/null | grep -c "ok installed") -eq 0 ];
-then
-  echo "Package $1 not found. Installing package $1"
-  install_package "$1"   
-fi
-}
-
-install_all_packages () {
-    echo "Checking and installing Required packages...."
-    package_check 'python3'
-    package_check 'ffmpeg'
-    if [ "$on_termux" == "False" ]; then
-        package_check 'python3-venv'
-    fi
-}
-
-activate_venv_and_install_pip_packages () {
-    sudo python3 -m venv venv || python3 -m venv venv
-    source venv/bin/activate
-    if [ "$on_termux" == "True" ]; then
-        pip install wheel && pkg install libjpeg-turbo && LDFLAGS="-L/system/lib/" CFLAGS="-I/data/data/com.termux/files/usr/include/" pip install Pillow
-    fi
-    sudo pip3 install --upgrade pip || pip3 install --upgrade pip
-    sudo pip3 install -r requirements.txt || pip3 install -r requirements.txt
-    sudo python3 -m Main || python3 -m Main
-}
-
-run () {
-    install_all_packages
-    activate_venv_and_install_pip_packages
-}
-
-run
+# Run the bot using the VENV python executable
+echo "Starting Altruix..."
+$VENV_PYTHON -m Main

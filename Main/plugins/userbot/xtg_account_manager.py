@@ -20,19 +20,12 @@ from Main.core.decorators import log_errors
 # =============================================================================
 # LOGGER KHUSUS PLUGIN
 # =============================================================================
-logger = logging.getLogger("xtg_account_manager")
-if not logger.handlers:
-    handler = logging.StreamHandler()
-    formatter = logging.Formatter(
-        "%(asctime)s - [SET PLUGIN] - %(levelname)s - %(message)s"
-    )
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-    logger.setLevel(logging.INFO)
+logger = logging.getLogger("altruix.xtg_account_manager")
+logger.setLevel(logging.INFO)
+
 __plugin_name__ = "xtg_account_manager"
-PLUGIN_VERSION = "1.2.5"
+PLUGIN_VERSION = "1.2.6"  # ✅ REFACTORED: Unified logging
 logger.info(f"{__plugin_name__} v{PLUGIN_VERSION} berhasil dimuat")
-print(f"Loaded → {__plugin_name__} v{PLUGIN_VERSION}")
 
 # =============================================================================
 class CustomMsg:
@@ -252,7 +245,4 @@ async def advanced_set_command(c: Client, m: Message):
         await safe_edit_or_reply(proc, f"❌ Terjadi kesalahan:\n<code>{html.escape(str(e))}</code>")
 
 # Log sukses loading
-try:
-    Altruix.log(f"[DEBUG] Loaded → {__plugin_name__} {PLUGIN_VERSION}", level=20)
-except Exception as e:
-    logger.info(f"[DEBUG] Loaded → {__plugin_name__} {PLUGIN_VERSION}")
+logger.info(f"✅ Loaded → {__plugin_name__} v{PLUGIN_VERSION}")

@@ -10,7 +10,8 @@ motor
 gtts
 psutil
 hachoir
-googletrans==4.0.0-rc1
+# googletrans==4.0.0-rc1
+# googletrans==4.0.0-rc1
 cachetools
 tinytag
 pyromod
@@ -19,7 +20,9 @@ pyyaml
 aiohttp
 requests
 telegraph
-tgcrypto
+deep-translator
+httpx>=0.27.0
+# tgcrypto
 ujson
 natsort
 gitpython

@@ -38,22 +38,19 @@ from Main.utils.helpers import ChatPrivileges
 from pyrogram.types import *
 
 
+# ─── LOGGER KHUSUS PLUGIN ───────────────────────────────────────────────
+import logging
+
 plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xchatsanomlau"
-PLUGIN_VERSION = "0.1.1.3.2"  # 🔥 Versi terbaru dengan smart_send dan error handling optimal
-logger = logging.getLogger(f"{__plugin_name__}")
-if not logger.handlers:
-    handler = logging.StreamHandler()
-    formatter = logging.Formatter(
-        "%(asctime)s - [SET PLUGIN] - %(levelname)s - %(message)s"
-    )
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-    logger.setLevel(logging.INFO)
+PLUGIN_VERSION = "0.1.2"  # ✅ REFACTORED: Unified logging & client access
+
+logger = logging.getLogger("altruix.xchatsanomlau")
+logger.setLevel(logging.INFO)
 
 # ==================== KONFIGURASI ====================
-# Dapatkan LOG_CHAT_ID dari environment atau config Altruix
-LOG_CHAT_ID = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
+# Dapatkan LOG_CHAT_ID dari config Altruix
+LOG_CHAT_ID = Altruix.log_chat or Altruix.config.LOG_CHAT_ID or Altruix.config.OWNER_ID
 
 # 🔥 PERBAIKAN: Ambil handler dari config, bukan 'hndlr'
 try:
@@ -113,9 +110,7 @@ LOVE_QUOTES_3 = [
 SRC_CHANNEL = "alphaxbbc"
 LIST_MSG_IDS = [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
 
-# Setup logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# NOTE: We use Altruix.bot and Altruix.clients directly
 
 # ==================== UTILITY FUNCTIONS ====================
 def format_duration(seconds: int) -> str:

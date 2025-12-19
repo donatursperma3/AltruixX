@@ -10,11 +10,33 @@ import os
 from Main import Altruix
 from gtts import gTTS, lang
 from ...utils.file_helpers import run_in_exc
-from googletrans import LANGUAGES, Translator
+from deep_translator import GoogleTranslator
+
+# Compatibility layer for googletrans LANGUAGES
+try:
+    _langs = GoogleTranslator().get_supported_languages(as_dict=True)
+    LANGUAGES = {v: k for k, v in _langs.items()}
+except Exception:
+    LANGUAGES = {"en": "english", "id": "indonesian", "auto": "automatic"}
 
 
-translator_2_ = Translator()
-translate_now = run_in_exc(translator_2_.translate)
+class MockTranslation:
+    def __init__(self, text, src, dest):
+        self.text = text
+        self.src = src
+        self.dest = dest
+
+
+def translate_wrapper(text, src, dest):
+    try:
+        translator = GoogleTranslator(source=src, target=dest)
+        translation_text = translator.translate(text)
+        return MockTranslation(translation_text, src, dest)
+    except Exception as e:
+        return MockTranslation(str(e), src, dest)
+
+
+translate_now = run_in_exc(translate_wrapper)
 
 
 @run_in_exc
@@ -23,7 +45,6 @@ def tts_(to_tts, lang):
     tts = gTTS(to_tts, lang=lang)
     tts.save(file_name)
     return file_name
-
 
 @Altruix.register_on_cmd(
     "tts",
@@ -73,18 +94,22 @@ async def translate_(c, m):
         input_ = m.user_input.strip().split(" ", 1)
         lang_to = input_[0]
         from_lang = input_[1] if len(input_) != 1 else "auto"
+    
+    # Check language validity
     if not LANGUAGES.get(lang_to.lower()):
         return await _m_.edit_msg("LANGUAGE_NOT_SUPPORTED", string_args=(lang_to))
     if from_lang != "auto" and not LANGUAGES.get(from_lang.lower()):
         return await _m_.edit_msg("LANGUAGE_NOT_SUPPORTED", string_args=(from_lang))
+        
     translation = await translate_now(
         to_tr, src=from_lang.lower(), dest=lang_to.lower()
     )
+    
     await _m_.edit_msg(
         "TRANSLATED",
         string_args=(
-            LANGUAGES.get(translation.src.title()) or translation.src.title(),
-            LANGUAGES.get(translation.dest.title()) or translation.dest.title(),
+            LANGUAGES.get(translation.src) or translation.src,
+            LANGUAGES.get(translation.dest) or translation.dest,
             translation.text,
         ),
     )

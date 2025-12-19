@@ -31,17 +31,11 @@ import logging
 
 plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xspamxr"
-PLUGIN_VERSION = "0.3.0.30"  # 🔥 FIXED: CMD_HANDLER, pyrogram, CallbackQuery, TimeoutError, tombol tidak berfungsi
+PLUGIN_VERSION = "0.3.1"  # ✅ REFACTORED: Unified client access & logging
 
-logger = logging.getLogger(f"{__plugin_name__}")
-if not logger.handlers:
-    handler = logging.StreamHandler()
-    formatter = logging.Formatter(
-        "%(asctime)s - [SET PLUGIN] - %(levelname)s - %(message)s"
-    )
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-    logger.setLevel(logging.INFO)
+logger = logging.getLogger("altruix.xspamxr")
+logger.setLevel(logging.INFO)
+# Handler handled by core client
 
 f"""
 ✘ Commands Available -
@@ -94,15 +88,7 @@ VALID_EMOJIS = [
 ]
 
 # ==================== CLIENT & CONFIG ====================
-try:
-    if hasattr(Altruix, 'userbot'):
-        USER_CLIENT = Altruix.userbot
-    else:
-        USER_CLIENT = Altruix
-    BOT_CLIENT = Altruix.bot if hasattr(Altruix, 'bot') else None
-except AttributeError:
-    USER_CLIENT = Altruix
-    BOT_CLIENT = None
+# NOTE: We use Altruix.bot and Altruix.clients directly to avoid stale objects
 
 # 🔥 PERBAIKAN: Ambil handler dari config, bukan 'CMD_HANDLER'
 try:
@@ -113,7 +99,7 @@ except AttributeError:
     HANDLER = "."
 
 try:
-    LOG_CHAT_ID = Altruix.config.LOG_CHAT_ID
+    LOG_CHAT_ID = Altruix.log_chat or Altruix.config.LOG_CHAT_ID
 except AttributeError:
     try:
         LOG_CHAT_ID = Altruix.config.OWNER_ID
@@ -121,6 +107,17 @@ except AttributeError:
         LOG_CHAT_ID = None
 if not LOG_CHAT_ID:
     LOG_CHAT_ID = "me"
+
+# 🔥 TAMBAHAN: Definisi client yang hilang agar tidak NameError
+# Menggunakan lambda agar selalu dinamis mengikuti state Altruix
+BOT_CLIENT = Altruix.bot
+# USER_CLIENT didefinisikan sebagai client pertama yang tersedia (jika ada)
+@property
+def USER_CLIENT():
+    return Altruix.clients[0] if hasattr(Altruix, "clients") and Altruix.clients else None
+# Sayangnya @property tidak bekerja di tingkat module, jadi kita akan mengganti usage 
+# atau mendefinisikan helper. Untuk kompatibilitas maksimal, kita gunakan variabel 
+# yang diupdate jika memungkinkan, tapi penggantian langsung (inline) lebih aman.
 
 # ==================== SAFE CHAT RESOLVER DENGAN TIMEOUT ====================
 async def get_chat_safe(client: Client, identifier, timeout: int = 10) -> object:
@@ -189,10 +186,11 @@ async def safe_cb_answer(cb: CallbackQuery, text: str, show_alert: bool = True):
 # ==================== HELPER: SEND LOG MESSAGE ====================
 async def send_log_message(text, reply_to_message_id=None, reply_markup=None, client=None):
     try:
-        if BOT_CLIENT:
+        # Prioritize bot for logging
+        if Altruix.bot and Altruix.bot.is_connected:
             try:
                 return await smart_send(
-                    client=BOT_CLIENT,
+                    client=Altruix.bot,
                     method_name="send_message",
                     chat_id=LOG_CHAT_ID,
                     text=text,
@@ -200,11 +198,14 @@ async def send_log_message(text, reply_to_message_id=None, reply_markup=None, cl
                     reply_markup=reply_markup
                 )
             except Exception as e:
-                Altruix.log(f"Error menggunakan BOT_CLIENT: {e}", level=40)
-        if USER_CLIENT:
+                logger.debug(f"Error using Altruix.bot for logging: {e}")
+        
+        # Fallback to the client that triggered the action or any active client
+        log_client = client or (Altruix.clients[0] if Altruix.clients else None)
+        if log_client and log_client.is_connected:
             try:
                 return await smart_send(
-                    client=USER_CLIENT,
+                    client=log_client,
                     method_name="send_message",
                     chat_id=LOG_CHAT_ID,
                     text=text,
@@ -212,11 +213,12 @@ async def send_log_message(text, reply_to_message_id=None, reply_markup=None, cl
                     reply_markup=reply_markup
                 )
             except Exception as e:
-                Altruix.log(f"Error menggunakan USER_CLIENT: {e}", level=40)
-        Altruix.log(f"Tidak ada client yang dapat mengirim pesan log: {text}", level=40)
+                logger.debug(f"Error using fallback client for logging: {e}")
+                
+        logger.warning(f"No connected client available to send log message: {text[:50]}...")
         return None
     except Exception as e:
-        Altruix.log(f"Error kritis di send_log_message: {e}", level=50)
+        logger.error(f"Critical error in send_log_message: {e}")
         return None
 
 # ==================== DYNAMIC BUTTON UPDATERS ====================
@@ -683,7 +685,7 @@ async def see_msglist_handler(c: Client, cb):
             "\n".join(preview_lines)
         )
         if len(preview_text) > 200:
-            userbot_client = TELAYSPAM_TASKS.get(chat_id, {}).get("client") or USER_CLIENT
+            userbot_client = TELAYSPAM_TASKS.get(chat_id, {}).get("client") or (Altruix.clients[0] if Altruix.clients else None)
             await send_log_message(preview_text, client=userbot_client)
             await safe_cb_answer(cb, "ℹ️ Preview dikirim sebagai pesan.", show_alert=True)
         else:
@@ -898,12 +900,12 @@ async def telayspammer_cmd(c: Client, m: Message):
         f"React: {'Aktif' if react_enabled else 'Nonaktif'}"
     )
     try:
-        if not BOT_CLIENT:
+        if not Altruix.bot:
             await m.handle_message("BOT_NOT_AVAILABLE")
             Altruix.log("Bot client tidak tersedia.", level=40)
             PENDING_CONFIRMATIONS.pop(temp_id, None)
             return
-        await BOT_CLIENT.send_message(
+        await Altruix.bot.send_message(
             chat_id=LOG_CHAT_ID,
             text=confirm_msg,
             reply_markup=InlineKeyboardMarkup(confirm_buttons)
@@ -1444,8 +1446,7 @@ async def handle_task_control(c: Client, cb):
             config = COMPLETED_TASKS.get(chat_id)
             if not config:
                 await safe_cb_answer(cb, "⚫️ Tidak ada task selesai untuk diulang di chat ini.", show_alert=True)
-                return
-            recurring_client = USER_CLIENT or BOT_CLIENT
+            recurring_client = (Altruix.clients[0] if Altruix.clients else None) or Altruix.bot
             if not recurring_client:
                 await safe_cb_answer(cb, "❌ Tidak ada client yang tersedia untuk recurring.", show_alert=True)
                 return
@@ -1468,7 +1469,7 @@ async def handle_task_control(c: Client, cb):
                 await safe_cb_answer(cb, f"❌ Gagal memulai recurring di {chat_title}.", show_alert=True)
         elif action == "delete_latest":
             try:
-                delete_client = TELAYSPAM_TASKS[chat_id].get("client") if chat_id in TELAYSPAM_TASKS else USER_CLIENT
+                delete_client = TELAYSPAM_TASKS[chat_id].get("client") if chat_id in TELAYSPAM_TASKS else (Altruix.clients[0] if Altruix.clients else None)
                 if not delete_client:
                     await safe_cb_answer(cb, "❌ Tidak ada client untuk menghapus pesan.", show_alert=True)
                     return
@@ -1491,7 +1492,7 @@ async def handle_task_control(c: Client, cb):
                 await safe_cb_answer(cb, f"Error: {err}", show_alert=True)
         elif action == "delete_oldest":
             try:
-                delete_client = TELAYSPAM_TASKS[chat_id].get("client") if chat_id in TELAYSPAM_TASKS else USER_CLIENT
+                delete_client = TELAYSPAM_TASKS[chat_id].get("client") if chat_id in TELAYSPAM_TASKS else (Altruix.clients[0] if Altruix.clients else None)
                 if not delete_client:
                     await safe_cb_answer(cb, "❌ Tidak ada client untuk menghapus pesan.", show_alert=True)
                     return
@@ -1514,7 +1515,7 @@ async def handle_task_control(c: Client, cb):
                 await safe_cb_answer(cb, f"Error: {err}", show_alert=True)
         elif action == "edit_last":
             try:
-                edit_client = TELAYSPAM_TASKS[chat_id].get("client") if chat_id in TELAYSPAM_TASKS else USER_CLIENT
+                edit_client = TELAYSPAM_TASKS[chat_id].get("client") if chat_id in TELAYSPAM_TASKS else (Altruix.clients[0] if Altruix.clients else None)
                 if not edit_client:
                     await safe_cb_answer(cb, "❌ Tidak ada client untuk edit pesan.", show_alert=True)
                     return
@@ -1585,7 +1586,7 @@ async def handle_task_control(c: Client, cb):
                     f"Klik 'Cancel' untuk membatalkan proses edit."
                 )
                 cancel_button = [[InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_edit_{chat_id}")]]
-                send_client = task_client or USER_CLIENT or BOT_CLIENT
+                send_client = task_client or (Altruix.clients[0] if Altruix.clients else None) or Altruix.bot
                 if not send_client:
                     await safe_cb_answer(cb, "❌ Tidak ada client untuk mengirim notifikasi.", show_alert=True)
                     return
@@ -1713,7 +1714,7 @@ async def handle_global_controls(c: Client, cb):
         for chat_id, config in list(COMPLETED_TASKS.items()):
             if chat_id in TELAYSPAM_TASKS:
                 continue
-            recurring_client = USER_CLIENT or BOT_CLIENT
+            recurring_client = (Altruix.clients[0] if Altruix.clients else None) or Altruix.bot
             if not recurring_client:
                 continue
             success = await start_relayspam(

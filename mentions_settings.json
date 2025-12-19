@@ -1,0 +1,22 @@
+{
+  "settings": {
+    "7115438332": {
+      "value": true,
+      "timestamp_int": 1766085238
+    },
+    "5240721396": {
+      "value": true,
+      "timestamp_int": 1766088814
+    }
+  },
+  "auto_reply": false,
+  "last_saved": 1766088858,
+  "version": "0.5.1",
+  "button_stats": {
+    "react": 2,
+    "reply": 1,
+    "reply_all": 1,
+    "confirm": 2,
+    "cancel": 0
+  }
+}

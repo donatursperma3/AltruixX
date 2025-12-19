@@ -122,7 +122,10 @@ async def add_session_cb_handler(_, cb: CallbackQuery):
         "<code>Processing the given string session...</code>"
     )
     new_session = await Altruix.add_session(session, status)
+    if not new_session:
+        return # add_session already handled the error message/logging
+
     await new_session.send_message(
-        Altruix.bot.info.id,
+        Altruix.bot.me.id,
         "<b>Altruix have been successfully connected with your account!</b> \nPlease visit @AltruixUB for any support or help!",
     )

@@ -33,38 +33,138 @@ class MongoDB:
         return self._db_name[name]
 
 
+
+class LocalCollection:
+    def __init__(self, db: "LocalDatabase", name: str):
+        self.db = db
+        self.name = name
+
+    async def find_one(self, query: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        data = self.db.get_collection_data(self.name)
+        for item in data.values():
+            if all(item.get(k) == v for k, v in query.items()):
+                return item
+        return None
+
+    async def find(self, query: Dict[str, Any]):
+        data = self.db.get_collection_data(self.name)
+        for item in data.values():
+            if not query or all(item.get(k) == v for k, v in query.items()):
+                yield item
+
+    async def insert_one(self, document: Dict[str, Any]):
+        if "_id" not in document:
+            raise ValueError("Document must have an _id")
+        self.db.update_collection(self.name, document["_id"], document)
+        return document
+
+    async def find_one_and_delete(self, query: Dict[str, Any]):
+        item = await self.find_one(query)
+        if item:
+            self.db.delete_from_collection(self.name, item["_id"])
+        return item
+
+    async def find_one_and_update(
+        self, query: Dict[str, Any], update: Dict[str, Any], upsert: bool = False
+    ):
+        item = await self.find_one(query)
+        if not item:
+            if upsert:
+                # Create new document based on query
+                item = query.copy()
+                if "_id" not in item:
+                    # Try to infer _id from query if possible, mostly used like {_id: 'NAME'}
+                    if "_id" in query:
+                        item["_id"] = query["_id"]
+                    else:
+                        raise ValueError("Upsert requires _id in query for LocalDB")
+            else:
+                return None
+
+        # Apply updates
+        if "$set" in update:
+            item.update(update["$set"])
+        
+        if "$push" in update:
+            for k, v in update["$push"].items():
+                if k not in item:
+                    item[k] = []
+                if not isinstance(item[k], list):
+                    item[k] = [item[k]]
+                
+                if isinstance(v, dict) and "$each" in v:
+                    item[k].extend(v["$each"])
+                else:
+                    item[k].append(v)
+
+        if "$addToSet" in update:
+            for k, v in update["$addToSet"].items():
+                if k not in item:
+                    item[k] = []
+                if not isinstance(item[k], list):
+                    item[k] = [item[k]]
+                if v not in item[k]:
+                    item[k].append(v)
+
+        if "$pull" in update:
+            for k, v in update["$pull"].items():
+                if k in item and isinstance(item[k], list):
+                    if v in item[k]:
+                        item[k].remove(v)
+
+        # Save back to DB
+        self.db.update_collection(self.name, item["_id"], item)
+        return item
+
+
 class LocalDatabase:
-    def __init__(self, file_path="db.json"):
+    def __init__(self, file_path="altruix_local_db.json"):
         self.path = file_path
-        if not path.exists(file_path):
+        self.data = {}
+        self._load()
+        
+        # Initialize collections
+        self.settings_col = LocalCollection(self, "SETTINGS")
+        self.data_col = LocalCollection(self, "DATA")
+        self.user_col = LocalCollection(self, "USERS")
+        self.env_col = LocalCollection(self, "ENV")
+        self.stickers_col = LocalCollection(self, "STICKERS")
+
+    def _load(self):
+        if not path.exists(self.path):
             self.data = {}
             self.save()
         try:
-            self.data = json.load(open(self.path))
-        except ValueError:
-            os.remove(file_path)
+            with open(self.path, "r") as f:
+                self.data = json.load(f)
+        except (ValueError, FileNotFoundError):
             self.data = {}
-        self.save()
-
-    def add_to_col(self, col_name: str, data: Dict[Any, Any]) -> None:
-        if not self.data.get(col_name):
-            self.data[col_name] = {}
-        self.data[col_name].update(data)
-        self.save()
-        return
-
-    def get_from_col(
-        self, col_name: str, key: str, pop: bool = True
-    ) -> Optional[Dict[Any, Any]]:
-        if self.data.get(col_name) and self.data[col_name].get(key):
-            if not pop:
-                return self.data[col_name][key]
-            value = self.data[col_name].pop(key)
             self.save()
-            return value
-        return None
 
     def save(self) -> None:
         with open(self.path, "w+") as _file:
             json.dump(self.data, _file, indent=4)
-            _file.close()
+
+    def get_collection_data(self, col_name: str) -> Dict[str, Any]:
+        if col_name not in self.data:
+            self.data[col_name] = {}
+        return self.data[col_name]
+
+    def update_collection(self, col_name: str, doc_id: str, document: Dict[str, Any]):
+        if col_name not in self.data:
+            self.data[col_name] = {}
+        self.data[col_name][str(doc_id)] = document
+        self.save()
+
+    def delete_from_collection(self, col_name: str, doc_id: str):
+        if col_name in self.data and str(doc_id) in self.data[col_name]:
+            del self.data[col_name][str(doc_id)]
+            self.save()
+
+    # Compatibility methods needed by existing code if any
+    async def ping(self):
+        return "pong"
+    
+    def make_collection(self, name: str):
+        return LocalCollection(self, name)
+

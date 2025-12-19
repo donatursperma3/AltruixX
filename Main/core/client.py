@@ -53,11 +53,8 @@ from pyrogram.errors.exceptions.bad_request_400 import (
     MessageNotModified, UserNotParticipant)
 from pyrogram.types import LinkPreviewOptions
 from pyrogram.errors import FloodWait
-# Tambahkan di bagian import (setelah import lainnya)
 import psutil
-import resource
 import platform
-from datetime import datetime
 import threading
 
 # ✅ PERUBAHAN 1: Prioritaskan env vars Sevalla untuk deteksi branch/commit yang akurat
@@ -124,7 +121,7 @@ class AltruixClient:
         self.clients: List[Client] = []
         self.cmd_list = {}
         self.all_lang_strings = {}
-        self.__version__ = "0.0.4.1"
+        self.__version__ = "0.0.4.2"
         self.selected_lang = "english"
         self.local_lang_file = "./Main/localization"
         self.cmd_list = {}
@@ -205,12 +202,22 @@ class AltruixClient:
         return message or traceback.format_exc()
 
     def _init_logger(self) -> None:
+        if sys.platform == "win32":
+            # Force UTF-8 for Windows console to handle emojis
+            if sys.stdout.encoding.lower() != "utf-8":
+                sys.stdout.reconfigure(encoding="utf-8")
+            if sys.stderr.encoding.lower() != "utf-8":
+                sys.stderr.reconfigure(encoding="utf-8")
+
         logging.getLogger("pyrogram").setLevel(logging.ERROR)
         logging.basicConfig(
             level=logging.INFO,
             datefmt="[%d/%m/%Y %H:%M:%S]",
             format="%(asctime)s - [Altruix] >> %(levelname)s << %(message)s",
-            handlers=[logging.FileHandler("/app/altruix.log"), logging.StreamHandler()],
+            handlers=[
+                logging.FileHandler("altruix.log", encoding="utf-8"),
+                logging.StreamHandler()
+            ],
         )
         self.log("Initialized Logger successfully!")
 
@@ -227,10 +234,15 @@ class AltruixClient:
         with contextlib.suppress(Exception):
             await self.update_on_startup()
         await self.resolve_dns()
-        self.db = MongoDB(self.config.DB_URI)
-        self.log("Initialized Mongo successfully!")
+        if self.config.DB_URI:
+            self.db = MongoDB(self.config.DB_URI)
+            self.log("Initialized Mongo successfully!")
+        else:
+            self.db = LocalDatabase()
+            self.log("Initialized LocalDatabase successfully! (No DB_URI found)")
+            
         await self.db.ping()
-        self.log("Pinged Mongo successfully!")
+        self.log("Pinged Database successfully!")
         self.app_url_ = await prepare_heroku_url()
 
     def run_in_exc(self, func_):
@@ -732,9 +744,9 @@ class AltruixClient:
                 await self._health_check()
 
                 try:
-                    import resource
-                    process_memory_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-                    process_memory_mb = round(process_memory_kb / 1024, 2)  # Konversi KB ke MB
+                    # ✅ Gunakan psutil (cross-platform) sebagai ganti resource module
+                    process = psutil.Process(os.getpid())
+                    process_memory_mb = round(process.memory_info().rss / (1024 * 1024), 2)
                     self.log(f"MemoryWarning: Memori proses = {process_memory_mb} MB")
                 except Exception as e:
                     self.log(f"Gagal cek penggunaan memori: {e}", level=logging.WARNING)
@@ -835,11 +847,11 @@ class AltruixClient:
                 
                 # 🔍 Tambahkan pemantauan memori di heartbeat
                 try:
-                    import resource
-                    mem_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-                    mem_mb = round(mem_kb / 1024, 2)
+                    # ✅ Gunakan psutil (cross-platform) sebagai ganti resource module
+                    process = psutil.Process(os.getpid())
+                    mem_mb = round(process.memory_info().rss / (1024 * 1024), 2)
                     self.log(f"📊 Heartbeat - Memori: {mem_mb} MB")
-                except Exception as e:
+                except Exception:
                     pass  # Abaikan jika gagal
                 
             except asyncio.CancelledError:
@@ -1101,6 +1113,7 @@ class AltruixClient:
                         try:
                             branch = get_current_git_branch()
                             altruix_version = getattr(self, "__version__", "unknown")
+                            db_type = "MongoDB" if self.config.DB_URI else "LocalDB"
                             summary = (
                                 "Semua client selesai mengirim startup log!\n"
                                 f"Total Session: <code>{len(self.clients)}</code> user + <code>1</code> bot\n"
@@ -1108,6 +1121,7 @@ class AltruixClient:
                                 f"Gagal: <code>{len(failed_clients)}</code> client\n"
                                 f"Owner ID: <code>{BaseConfig.OWNER_ID}</code>\n"
                                 f"Branch: <code>{branch}</code>\n"
+                                f"Database: <code>{db_type}</code>\n"
                                 f"Versi: <code>{altruix_version}</code>\n"
                                 f"Waktu: <code>{startup_time}</code>"
                             )
@@ -1120,39 +1134,118 @@ class AltruixClient:
             raise
 
     async def add_session(self, session: str, status: Message = None) -> Client:
-        await self.config.add_element_to_list("SESSIONS", session)
-        self.config.append_session(session)
-        self.config.SESSIONS.append(session)
-        self.log("User session added successfully!")
-        if self.training_wheels_protocol:
-            self.log("[TWP] has been disabled!")
+        """
+        Validates and adds a new user session.
+        Checks for duplicates and connection validity BEFORE saving.
+        """
+        from pyrogram.errors import (
+            AuthKeyDuplicated,
+            SessionPasswordNeeded,
+            UserDeactivated,
+            PeerIdInvalid
+        )
+
+        # 1. Gunakan nama unik untuk client baru untuk mencegah konflik internal Pyrogram
+        import time
+        temp_client_name = f"temp_session_{int(time.time()*1000)}"
+        
+        self.log(f"Attempting to add new session with temp name: {temp_client_name}")
+
         app = Client(
-            "main_instance",
+            temp_client_name,
             api_id=self.config.API_ID,
             api_hash=self.config.API_HASH,
             session_string=session,
             workdir="cache",
+            in_memory=True, # Jangan buat file .session fisik dulu
         )
-        self.clients.append(app)
-        await app.start()
-        session_user_info = await app.get_me()
-        app.myself = session_user_info
-        if not app.myself.id == self.config.OWNER_ID:
-            self.ourselves.append(session_user_info)
-        self.training_wheels_protocol = False
-        await self.load_all_modules()
-        self.log("Userbot plugins have been loaded.")
-        if status:
-            await status.edit(
-                "<b>Account Successfully added!</b>",
-            )
-        return app
+
+        try:
+            # 2. Coba connect dulu
+            await app.start()
+            
+            # 3. Validasi User
+            me = await app.get_me()
+            user_id = me.id
+            
+            # 4. Cek apakah user ini SUDAH ada di daftar client yang aktif
+            for existing_client in self.clients:
+                existing_me = existing_client.myself if hasattr(existing_client, "myself") else await existing_client.get_me()
+                if existing_me.id == user_id:
+                    try:
+                        await app.stop()
+                    except Exception:
+                        pass
+                    msg = f"User {me.first_name} (ID: {user_id}) sudah aktif! Tidak bisa menambahkan akun yang sama dua kali."
+                    self.log(msg, level=logging.WARNING)
+                    if status:
+                        await status.edit(msg)
+                    return None
+
+            # 5. Jika lolos validasi, simpan session secara permanen
+            app.myself = me # Simpan info user di object client
+            
+            # -- Add to DB/Config --
+            await self.config.add_element_to_list("SESSIONS", session)
+            self.config.append_session(session)
+            # Pastikan tidak double add di list memori jika append_session sudah handle
+            if session not in self.config.SESSIONS:
+                self.config.SESSIONS.append(session)
+            
+            self.log(f"User session added successfully: {me.first_name} ({user_id})")
+            
+            # Add to active clients list
+            self.clients.append(app)
+
+            # Jika ini session pertama, matikan TWP
+            if self.training_wheels_protocol:
+                self.training_wheels_protocol = False
+                self.log("[TWP] Support mode disabled - features unlocked!")
+
+            # Tambahkan ke ourselves list jika bukan owner (untuk sudo checks)
+            if user_id != self.config.OWNER_ID:
+                self.ourselves.append(me)
+
+            # ✅ Load modules for this new session
+            await self.load_all_modules()
+            self.log("Userbot plugins have been loaded for new session.")
+
+            if status:
+                await status.edit("<b>Account Successfully added!</b>")
+
+            return app
+
+        except (AuthKeyDuplicated, UserDeactivated, SessionPasswordNeeded) as e:
+            try:
+                await app.stop()
+            except Exception:
+                pass # Abaikan jika client sudah terminated (sering terjadi pada AuthKeyDuplicated)
+            error_msg = f"Session Invalid/Expired/2FA Required: {type(e).__name__} - {e}"
+            self.log(error_msg, level=logging.ERROR)
+            if status:
+                await status.edit(f"❌ Gagal menambahkan akun:\n`{error_msg}`")
+            raise e # Lempar ulang agar caller tau gagal
+            
+        except Exception as e:
+            try:
+                await app.stop()
+            except Exception:
+                pass
+            error_msg = f"Unknown Error adding session: {e}"
+            self.log(error_msg, level=logging.ERROR)
+            self.log(traceback.format_exc())
+            if status:
+                await status.edit(f"❌ Error tidak dikenal:\n`{str(e)[:100]}`")
+            raise e
 
     async def remove_session(self, index: int) -> User:
         session = self.config.pop_session(index)
         await self.config.pop_element_from_list("SESSIONS", session)
         removed_session_info = self.ourselves.pop(index)
-        await self.clients.pop(index).stop()
+        try:
+            await self.clients.pop(index).stop()
+        except Exception:
+            pass
         if not self.ourselves:
             self.training_wheels_protocol = True
             self.log("[TWP] has been enabled!")
