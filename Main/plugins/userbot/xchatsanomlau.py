@@ -41,7 +41,7 @@ from pyrogram.types import *
 # ─── LOGGER KHUSUS PLUGIN ───────────────────────────────────────────────
 import logging
 
-plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
+plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xchatsanomlau"
 PLUGIN_VERSION = "0.1.2"  # ✅ REFACTORED: Unified logging & client access
 
@@ -1023,12 +1023,16 @@ async def send_completion_report(
 
 # ==================== COMMAND HANDLER ====================
 
-@Altruix.bot.on_message(
-    filters.command("laucreate", prefixes=HANDLER) & 
-    filters.user(Altruix.auth_users)
+@Altruix.register_on_cmd(
+    ["laucreate"],
+    cmd_help={
+        "help": "Advanced group creation tool.",
+        "example": "laucreate <delay> <jumlah> <delay_batch> <ukuran_batch> <tipe> <pola_nama> ; <username> <bot_list>",
+    },
+    group_only=False,
 )
 @log_errors
-async def laucreate_command_handler(client: Client, message: Message):
+async def laucreate_command_handler(client: Client, message: AltruixMessage):
     """Handler untuk command .laucreate"""
     
     # Cek jika ada task yang sedang berjalan
@@ -1381,24 +1385,6 @@ async def laucreate_control_handler(client: Client, callback_query: CallbackQuer
     except Exception as e:
         logger.error(f"Error in laucreate_control_handler: {e}")
         await callback_query.answer(f"Error: {str(e)}")
-
-# ==================== CLEANUP ON SHUTDOWN ====================
-async def cleanup_laucreate_tasks():
-    """Cleanup semua task laucreate saat shutdown"""
-    for task_id in list(LAUCREATE_TASKS.keys()):
-        if LAUCREATE_TASKS[task_id].get("running", False):
-            LAUCREATE_TASKS[task_id]["running"] = False
-            logger.info(f"Stopped laucreate task {task_id} on shutdown")
-
-# ==================== PLUGIN INFO ====================
-__plugin_name__ = "Laucreate"
-__plugin_version__ = "1.0.3"
-__plugin_author__ = "AlphaXproject Team (ported for Altruix)"
-__plugin_description__ = "Advanced group creation tool for Telegram with full control panel"
-
-# Register cleanup
-import atexit
-atexit.register(lambda: asyncio.run(cleanup_laucreate_tasks()))
 
 # Log sukses loading
 try:

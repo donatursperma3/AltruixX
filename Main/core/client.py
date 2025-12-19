@@ -37,7 +37,7 @@ from pyrogram.session import Session
 from .config import Config, BaseConfig
 from ..utils.essentials import Essentials
 from .database import MongoDB, LocalDatabase
-from pyrogram.handlers import MessageHandler
+from pyrogram.handlers import MessageHandler, EditedMessageHandler, DeletedMessagesHandler, CallbackQueryHandler
 from ..utils.custom_filters import user_filters
 from ..utils.startup_helpers import concatenate
 from Main.utils.heroku_ import prepare_heroku_url
@@ -121,7 +121,7 @@ class AltruixClient:
         self.clients: List[Client] = []
         self.cmd_list = {}
         self.all_lang_strings = {}
-        self.__version__ = "0.0.4.2"
+        self.__version__ = "0.0.4.3"
         self.selected_lang = "english"
         self.local_lang_file = "./Main/localization"
         self.cmd_list = {}
@@ -317,7 +317,71 @@ class AltruixClient:
                 func_=wrapper,
                 filter_s=custom_filters,
                 group=group,
+                handler_type=MessageHandler,
                 bot_mode_unsupported=bot_mode_unsupported,
+            )
+            return wrapper
+        return decorator
+
+    def on_edited_message(self, custom_filters, group=1, bot_mode_unsupported=False):
+        def decorator(func):
+            async def wrapper(client, message: Message):
+                if str(message.chat.type).lower().startswith("chattype."):
+                    chat_type = str(
+                        (str(message.chat.type).lower()).split("chattype.")[1]
+                    )
+                    message.chat.type = chat_type
+                try:
+                    await func(client, message)
+                except StopPropagation as e:
+                    raise StopPropagation from e
+                except ContinuePropagation as e:
+                    raise ContinuePropagation from e
+            self.custom_add_handler(
+                cmd=None,
+                func_=wrapper,
+                filter_s=custom_filters,
+                group=group,
+                handler_type=EditedMessageHandler,
+                bot_mode_unsupported=bot_mode_unsupported,
+            )
+            return wrapper
+        return decorator
+
+    def on_callback_query(self, custom_filters, group=1):
+        def decorator(func):
+            async def wrapper(client, cb: CallbackQuery):
+                try:
+                    await func(client, cb)
+                except StopPropagation as e:
+                    raise StopPropagation from e
+                except ContinuePropagation as e:
+                    raise ContinuePropagation from e
+            self.custom_add_handler(
+                cmd=None,
+                func_=wrapper,
+                filter_s=custom_filters,
+                group=group,
+                handler_type=CallbackQueryHandler,
+            )
+            return wrapper
+        return decorator
+
+    def on_deleted_messages(self, custom_filters, group=1):
+        def decorator(func):
+            async def wrapper(client, messages: List[Message]):
+                try:
+                    await func(client, messages)
+                except StopPropagation as e:
+                    raise StopPropagation from e
+                except ContinuePropagation as e:
+                    raise ContinuePropagation from e
+            self.custom_add_handler(
+                cmd=None,
+                func_=wrapper,
+                filter_s=custom_filters,
+                group=group,
+                handler_type=DeletedMessagesHandler,
             )
             return wrapper
         return decorator
@@ -539,25 +603,26 @@ class AltruixClient:
         filter_s=None,
         disable_sudo=False,
         group=0,
+        handler_type=MessageHandler,
         bot_mode_unsupported=False,
     ):
         if not self.training_wheels_protocol:
             self.config.CMD_HANDLER
             basic_filters = (
                 filter_s
-                or user_filters(list(cmd), disable_sudo=disable_sudo)
+                or user_filters(list(cmd) if cmd else [], disable_sudo=disable_sudo)
                 & ~filters.via_bot
                 & ~filters.forwarded
             )
             for client in self.clients:
                 client.add_handler(
-                    MessageHandler(func_, filters=basic_filters), group=group
+                    handler_type(func_, filters=basic_filters), group=group
                 )
         if self.bot_mode and not bot_mode_unsupported and not self.loaded_bot_cmds:
             bot_f = filter_s or filters.user(self.auth_users) & filters.command(
-                list(cmd), ["!", "/", "|"]
+                list(cmd) if cmd else [], ["/", "|"] # removed "!" to avoid conflict with userbot sudo handler
             )
-            self.bot.add_handler(MessageHandler(func_, filters=bot_f), group=group)
+            self.bot.add_handler(handler_type(func_, filters=bot_f), group=group)
 
     async def _setup(self, restart=False, *args, **kwargs):
         if not os.path.isdir("cache"):

@@ -52,7 +52,7 @@ import pyrogram
 # ─── LOGGER KHUSUS PLUGIN ───────────────────────────────────────────────
 import logging
 
-plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
+plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "settings"
 PLUGIN_VERSION = "1.0.2"  # ✅ REFACTORED: Integrated session addition
 

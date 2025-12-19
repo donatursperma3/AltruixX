@@ -29,7 +29,7 @@ from Main.utils.compatibility import smart_send
 # ─── LOGGER KHUSUS PLUGIN ───────────────────────────────────────────────
 import logging
 
-plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
+plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xspamxr"
 PLUGIN_VERSION = "0.3.1"  # ✅ REFACTORED: Unified client access & logging
 

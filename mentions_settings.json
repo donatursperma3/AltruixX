@@ -2,21 +2,24 @@
   "settings": {
     "7115438332": {
       "value": true,
-      "timestamp_int": 1766085238
+      "timestamp_int": 1766144541
     },
     "5240721396": {
-      "value": true,
-      "timestamp_int": 1766088814
+      "value": false,
+      "timestamp_int": 1766159461
     }
   },
   "auto_reply": false,
-  "last_saved": 1766088858,
-  "version": "0.5.1",
+  "reply_from_all_accessible": true,
+  "last_saved": 1766166726,
+  "version": "0.5.3",
   "button_stats": {
-    "react": 2,
-    "reply": 1,
-    "reply_all": 1,
+    "react": 0,
+    "reply": 0,
+    "reply_all": 2,
     "confirm": 2,
-    "cancel": 0
+    "cancel": 0,
+    "save": 0,
+    "unsend": 0
   }
 }

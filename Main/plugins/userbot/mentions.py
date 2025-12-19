@@ -35,9 +35,9 @@ from collections import defaultdict
 # ─── LOGGER KHUSUS PLUGIN ───────────────────────────────────────────────
 import logging
 
-plugin_name = f"plugins/userbot/{os.path.basename(__file__)}"
+plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "mentions"
-PLUGIN_VERSION = "0.5.1"  # ✅ REFACTORED: Unified client lookup & logging
+PLUGIN_VERSION = "0.5.3"  # ✅ Fixed Duplicate Notifications
 
 # Gunakan logger Altruix jika tersedia, atau buat baru yang konsisten
 logger = logging.getLogger("altruix.mentions")
@@ -121,13 +121,13 @@ MENTION_LOG_CACHE = {}
 
 # 🔥 PERBAIKAN CRITICAL: Emoji yang valid untuk Telegram Reaction API
 # Hanya emoji yang didukung oleh Telegram Reaction API
-DEFAULT_REACTION_EMOJIS = ["👍", "❤️", "🔥", "🥰", "👏"]
+DEFAULT_REACTION_EMOJIS = ["👍", "❤️", "🔥", "🥰", "👏", "🎉"]
 
 # 🔥 TAMBAHAN: Dictionary untuk menunggu konfirmasi reply-as-mentioned
 REPLY_AS_MENTIONED_WAITING = {}
 
-# 🔥 PERBAIKAN: Flag untuk auto-reply
 AUTO_REPLY_ENABLED = False
+REPLY_FROM_ALL_ACCESSIBLE = True # Global toggle for Reply From All button visibility
 
 # 🔥 PERBAIKAN: Rate limiting untuk Reply From All
 USER_REPLY_COUNTS = defaultdict(lambda: defaultdict(int))
@@ -139,7 +139,9 @@ BUTTON_STATS = {
     "reply": 0,
     "reply_all": 0,
     "confirm": 0,
-    "cancel": 0
+    "cancel": 0,
+    "save": 0,
+    "unsend": 0
 }
 
 # 🔥 BARU: Valid emoji checker
@@ -169,7 +171,8 @@ async def load_local_storage():
                     data = json.loads(content)
                     MENTIONS_DATA = data.get("settings", {})
                     AUTO_REPLY_ENABLED = data.get("auto_reply", False)
-                    logger.info(f"Loaded {len(MENTIONS_DATA)} settings, auto_reply: {AUTO_REPLY_ENABLED}")
+                    REPLY_FROM_ALL_ACCESSIBLE = data.get("reply_from_all_accessible", True)
+                    logger.info(f"Loaded {len(MENTIONS_DATA)} settings, auto_reply: {AUTO_REPLY_ENABLED}, reply_from_all: {REPLY_FROM_ALL_ACCESSIBLE}")
         else:
             MENTIONS_DATA = {}
             AUTO_REPLY_ENABLED = False
@@ -184,6 +187,7 @@ async def save_local_storage():
         data = {
             "settings": MENTIONS_DATA,
             "auto_reply": AUTO_REPLY_ENABLED,
+            "reply_from_all_accessible": REPLY_FROM_ALL_ACCESSIBLE,
             "last_saved": int(time.time()),
             "version": PLUGIN_VERSION,
             "button_stats": BUTTON_STATS
@@ -270,8 +274,8 @@ logger.info("Local storage loaded")
 @Altruix.register_on_cmd(
     ["mentions"],
     cmd_help={
-        "help": "To toggle notify mentions globally.",
-        "example": "mentions (on/off)",
+        "help": "To toggle notify mentions globally or toggle reply-from-all access.",
+        "example": "mentions (on/off) | mentions replyall (on/off)",
     },
     group_only=False,
     requires_input=True,
@@ -281,6 +285,21 @@ async def mention_settings_handler(c: Client, m: AltruixMessage):
     """Handler untuk mengaktifkan/menonaktifkan notifikasi mention global."""
     msg = await m.handle_message("PROCESSING")
     user_input = m.user_input.lower().strip()
+
+    if user_input.startswith("replyall"):
+        arg = user_input.replace("replyall", "").strip()
+        global REPLY_FROM_ALL_ACCESSIBLE
+        if arg in ["on", "yes"]:
+            REPLY_FROM_ALL_ACCESSIBLE = True
+            msg_text = "✅ **Reply From All is now ACCESSIBLE**"
+        elif arg in ["off", "no"]:
+            REPLY_FROM_ALL_ACCESSIBLE = False
+            msg_text = "❌ **Reply From All is now RESTRICTED**"
+        else:
+            return await msg.edit_msg("Usage: `.mentions replyall on/off`")
+        
+        await save_local_storage()
+        return await safe_edit_message(c, m.chat.id, msg.id, msg_text, parse_mode=enums.ParseMode.MARKDOWN)
     
     if user_input in ["on", "yes"]:
         value = True
@@ -311,6 +330,10 @@ async def mention_settings_handler(c: Client, m: AltruixMessage):
 async def send_mention_log_handler(c: Client, m: RawMessage):
     """Handler utama untuk menangkap mention dan mengirim notifikasi ke LOG_CHAT."""
     try:
+        msg_key = f"{m.chat.id}_{m.id}"
+        if msg_key in MENTION_LOG_CACHE and MENTION_LOG_CACHE[msg_key].get("log_msg_id"):
+            return
+            
         # Cek apakah log_chat dikonfigurasi
         if not Altruix.log_chat:
             logger.error("LOG_CHAT not configured, cannot send mention notifications")
@@ -349,9 +372,12 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
         
         # Format waktu
         try:
-            mention_time = datetime.fromtimestamp(m.date).strftime("%Y-%m-%d %H:%M:%S")
+            if isinstance(m.date, datetime):
+                mention_time = m.date.strftime("%Y-%m-%d %H:%M:%S")
+            else:
+                mention_time = datetime.fromtimestamp(m.date).strftime("%Y-%m-%d %H:%M:%S")
         except:
-            mention_time = datetime.now().strftime("%Y-%m-d %H:%M:%S")
+            mention_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
         # Bangun pesan notifikasi
         log_message = (
@@ -389,15 +415,29 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
         
         link_button = [InlineKeyboardButton("🔗 Go to Message", url=m.link)]
         
-        # PERBAIKAN: Keyboard layout yang benar
+        log_button_press = [
+            InlineKeyboardButton("💾 Save to Log", callback_data=f"mentions_save_{m.chat.id}_{m.id}"),
+            InlineKeyboardButton("🗑️ Unsend Reply", callback_data=f"mentions_unsend_{m.chat.id}_{m.id}")
+        ]
+        
+        others_button = [InlineKeyboardButton("➕ Choose Others", callback_data=f"mentions_others_{m.chat.id}_{m.id}")]
+        
+        # PERBAIKAN: Keyboard layout yang benar - 6 emoji + Others
         keyboard = [
             reaction_buttons[:3],  # Baris pertama: 3 emoji
-            reaction_buttons[3:],  # Baris kedua: 2 emoji
-            reply_button,          # Baris ketiga: Reply as Mentioned
-            reply_all_button,      # Baris keempat: Reply From All
-            unreact_button,        # Baris kelima: Remove Reaction
-            link_button           # Baris keenam: Link
+            reaction_buttons[3:6], # Baris kedua: 3 emoji
+            others_button,         # Baris ketiga: Pilih emoji lain
+            log_button_press,      # Baris keempat: Save & Unsend
+            reply_button,          # Baris kelima: Reply as Mentioned
         ]
+        
+        if REPLY_FROM_ALL_ACCESSIBLE:
+            keyboard.append(reply_all_button)
+            
+        keyboard.extend([
+            unreact_button,        # Baris ketujuh: Remove Reaction
+            link_button           # Baris kedelapan: Link
+        ])
         
         msg_key = f"{m.chat.id}_{m.id}"
         
@@ -433,6 +473,93 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
         
     except Exception as e:
         logger.error(f"❌ Error in mention handler: {e}", exc_info=True)
+
+@Altruix.on_edited_message(
+    filters.group & ~filters.me, group=0
+)
+@log_errors
+async def send_mention_edit_handler(c: Client, m: RawMessage):
+    """Update log when a mentioned message is edited."""
+    try:
+        if not Altruix.log_chat:
+            return
+            
+        msg_key = f"{m.chat.id}_{m.id}"
+        cache = MENTION_LOG_CACHE.get(msg_key)
+        
+        if cache:
+            # Only the client that originally logged it should handle the update
+            if c.me.id != cache.get("client_id"):
+                return
+            log_msg_id = cache.get("log_msg_id")
+        else:
+            # If not in cache, check if it's now mentioned (new mention via edit)
+            if m.mentioned:
+                # Prevent multiple clients from logging the same new mention
+                if msg_key in MENTION_LOG_CACHE:
+                    return
+                MENTION_LOG_CACHE[msg_key] = {"status": "logging"}
+                try:
+                    return await send_mention_log_handler(c, m)
+                except:
+                    MENTION_LOG_CACHE.pop(msg_key, None)
+                    raise
+            return
+
+        if not log_msg_id or log_msg_id == "logging":
+            return
+
+        logger.info(f"✏️ Mention edited in {m.chat.title} ({msg_key})")
+
+        # Re-format text (limit to 500)
+        message_text = m.text or m.caption or "[No text content]"
+        message_text = html.escape(str(message_text))[:500]
+
+        # Use formatted HTML for updated content
+        mentioner = m.from_user
+        mentioner_id = mentioner.id if mentioner else 0
+        mentioner_name = (mentioner.first_name if mentioner else "Unknown") or "Unknown"
+        mentioner_hyperlink = f'<a href="tg://user?id={mentioner_id}">{html.escape(mentioner_name)}</a>'
+        
+        # Original time from cache if possible, or current message date
+        try:
+             mention_time = m.date.strftime("%Y-%m-%d %H:%M:%S")
+        except:
+             mention_time = "Unknown"
+
+        edit_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        log_content = (
+            f"🔔 <b>Mention Detected! [EDITED]</b>\n\n"
+            f"👤 <b>Mentioned By:</b> {mentioner_hyperlink} (<code>{mentioner_id}</code>)\n"
+            f"🤖 <b>My Account:</b> {c.me.mention(style=enums.ParseMode.HTML)}\n"
+            f"💬 <b>Group:</b> {html.escape(m.chat.title)} (<code>{m.chat.id}</code>)\n"
+            f"🕒 <b>Original:</b> <code>{mention_time}</code>\n"
+            f"🕒 <b>Edited:</b> <code>{edit_time}</code>\n"
+            f"📄 <b>New Message:</b>\n<blockquote>{message_text}</blockquote>"
+        )
+
+        # Preserve markup by fetching original msg
+        try:
+            old_msg = await Altruix.bot.get_messages(Altruix.log_chat, log_msg_id)
+            markup = old_msg.reply_markup if old_msg else None
+        except:
+            markup = None
+
+        await Altruix.bot.edit_message_text(
+            Altruix.log_chat,
+            log_msg_id,
+            log_content,
+            parse_mode=enums.ParseMode.HTML,
+            reply_markup=markup,
+            disable_web_page_preview=True
+        )
+        
+        # Update cache text
+        MENTION_LOG_CACHE[msg_key]["text"] = message_text
+        
+    except Exception as e:
+        logger.error(f"Error in mention edit handler: {e}")
 
 # 🔥 PERBAIKAN UTAMA: Handler untuk quick reaction - FIX EMOJI VALIDATION
 @Altruix.bot.on_callback_query(filters.regex(r"^mentions_react_"))
@@ -554,6 +681,11 @@ async def start_reply_from_all(c: Client, cb: CallbackQuery):
         # 1. Log Aktivitas
         BUTTON_STATS["reply_all"] += 1
         log_button_press("REPLY_ALL", cb.data, cb.from_user.id if cb.from_user else None)
+        
+        if not REPLY_FROM_ALL_ACCESSIBLE:
+            await cb.answer("❌ Fitur Reply From All sedang dinonaktifkan oleh Owner.", show_alert=True)
+            return
+
         logger.info(f"📊 Reply All button pressed. Total: {BUTTON_STATS['reply_all']}")
         
         # 2. Parse Data dengan Aman
@@ -912,14 +1044,28 @@ async def confirm_send_reply(c: Client, cb: CallbackQuery):
             return
         
         try:
-            # Kirim balasan
-            logger.info(f"📤 Sending message to {chat_id}...")
-            await mentioned_client.send_message(
+            # Simpan message ID balasan di cache untuk fungsi unsend
+            if "msg_key" in data:
+                m_key = data["msg_key"]
+                if m_key in MENTION_LOG_CACHE:
+                    # Kita asumsikan balasan terbaru adalah yang ingin di-unsend
+                    # Atau bisa buat list balasan
+                    MENTION_LOG_CACHE[m_key]["last_reply_id"] = chat_id # Salah, harusnya message_id dari sent_msg
+            
+            # Perbaikan kirim balasan untuk dapatkan sent_msg
+            sent_msg = await mentioned_client.send_message(
                 chat_id,
                 reply_text,
                 reply_to_message_id=message_id
             )
-            logger.info(f"✅ Reply sent successfully to {chat_id}")
+            
+            if "msg_key" in data:
+                m_key = data["msg_key"]
+                if m_key in MENTION_LOG_CACHE:
+                    MENTION_LOG_CACHE[m_key]["last_reply_id"] = sent_msg.id
+                    MENTION_LOG_CACHE[m_key]["last_reply_chat"] = chat_id
+            
+            logger.info(f"✅ Reply sent successfully to {chat_id}, message ID: {sent_msg.id}")
             
             # Update status pesan
             client_name = mentioned_client.me.first_name if mentioned_client.me else "Unknown"
@@ -1112,6 +1258,162 @@ async def quick_unreact_handler(c: Client, cb: CallbackQuery):
     except Exception as e:
         logger.error(f"❌ Unreact failed: {e}")
         await cb.answer(f"❌ Gagal: {str(e)[:50]}", show_alert=True)
+
+# 🔥 HANDLER BARU: Choose Others Emojis
+@Altruix.bot.on_callback_query(filters.regex(r"^mentions_others_(-?\d+)_(\d+)"))
+@log_errors
+async def others_emoji_handler(c: Client, cb: CallbackQuery):
+    """Tampilkan menu pilihan emoji lainnya."""
+    try:
+        chat_id = int(cb.matches[0].group(1))
+        message_id = int(cb.matches[0].group(2))
+        
+        # Daftar emoji tambahan yang populer
+        extra_emojis = ["👎", "👏", "😁", "🤔", "🤯", "😱", "🤬", "😢", "🤩", "🤮", "💩", "🙏"]
+        
+        keyboard = []
+        row = []
+        for i, emoji in enumerate(extra_emojis):
+            row.append(InlineKeyboardButton(emoji, callback_data=f"mentions_react_{chat_id}_{message_id}_{emoji}"))
+            if len(row) == 4:
+                keyboard.append(row)
+                row = []
+        if row:
+            keyboard.append(row)
+            
+        keyboard.append([InlineKeyboardButton("🔙 Back", callback_data=f"mentions_back_{chat_id}_{message_id}")])
+        
+        await cb.message.edit_reply_markup(InlineKeyboardMarkup(keyboard))
+        await cb.answer("Silakan pilih emoji lainnya")
+        
+    except Exception as e:
+        logger.error(f"❌ Others emoji handler failed: {e}")
+        await cb.answer("❌ Gagal memuat emoji", show_alert=True)
+
+# 🔥 HANDLER BARU: Back to Main Menu
+@Altruix.bot.on_callback_query(filters.regex(r"^mentions_back_(-?\d+)_(\d+)"))
+@log_errors
+async def back_to_main_handler(c: Client, cb: CallbackQuery):
+    """Kembali ke menu utama mention log."""
+    try:
+        chat_id = int(cb.matches[0].group(1))
+        message_id = int(cb.matches[0].group(2))
+        
+        # Ambil link asli jika mungkin, atau biarkan kosong
+        # Kita bisa coba cari url di keyboard lama
+        original_link = ""
+        if cb.message.reply_markup:
+            for row in cb.message.reply_markup.inline_keyboard:
+                for btn in row:
+                    if btn.url:
+                        original_link = btn.url
+                        break
+
+        reaction_buttons = [
+            InlineKeyboardButton(emoji, callback_data=f"mentions_react_{chat_id}_{message_id}_{emoji}")
+            for emoji in DEFAULT_REACTION_EMOJIS
+        ]
+        
+        log_button_press = [
+            InlineKeyboardButton("💾 Save to Log", callback_data=f"mentions_save_{chat_id}_{message_id}"),
+            InlineKeyboardButton("🗑️ Unsend Reply", callback_data=f"mentions_unsend_{chat_id}_{message_id}")
+        ]
+        
+        keyboard = [
+            reaction_buttons[:3],
+            reaction_buttons[3:6],
+            [InlineKeyboardButton("➕ Choose Others", callback_data=f"mentions_others_{chat_id}_{message_id}")],
+            log_button_press,
+            [InlineKeyboardButton("🗨️ Reply as Mentioned", callback_data=f"mentions_reply_{chat_id}_{message_id}")],
+            [InlineKeyboardButton("👥 Reply From All", callback_data=f"mentions_replyall_{chat_id}_{message_id}")],
+            [InlineKeyboardButton("🗑️ Remove Reaction", callback_data=f"mentions_unreact_{chat_id}_{message_id}")]
+        ]
+        
+        if original_link:
+            keyboard.append([InlineKeyboardButton("🔗 Go to Message", url=original_link)])
+        
+        await cb.message.edit_reply_markup(InlineKeyboardMarkup(keyboard))
+        await cb.answer()
+        
+    except Exception as e:
+        logger.error(f"❌ Back to main handler failed: {e}")
+
+# 🔥 HANDLER BARU: Save Mention to Log
+@Altruix.bot.on_callback_query(filters.regex(r"^mentions_save_(-?\d+)_(\d+)"))
+@log_errors
+async def save_mention_to_log(c: Client, cb: CallbackQuery):
+    """Simpan (forward) pesan mention ke log group."""
+    try:
+        BUTTON_STATS["save"] += 1
+        chat_id = int(cb.matches[0].group(1))
+        message_id = int(cb.matches[0].group(2))
+        msg_key = f"{chat_id}_{message_id}"
+        
+        if msg_key not in MENTION_LOG_CACHE:
+            await cb.answer("❌ Data mention tidak ditemukan di cache.", show_alert=True)
+            return
+            
+        cache_data = MENTION_LOG_CACHE[msg_key]
+        client_id = cache_data["client_id"]
+        userbot_client = await get_mention_client(client_id)
+        
+        if not userbot_client:
+            await cb.answer("❌ Akun tidak tersedia.", show_alert=True)
+            return
+            
+        # Forward pesan ke log chat
+        await userbot_client.forward_messages(Altruix.log_chat, chat_id, message_id)
+        
+        await cb.answer("✅ Pesan berhasil disimpan ke log!", show_alert=True)
+        logger.info(f"💾 Message {msg_key} saved to log by user {cb.from_user.id}")
+        
+    except Exception as e:
+        logger.error(f"❌ Save to log failed: {e}")
+        await cb.answer(f"❌ Gagal menyimpan: {str(e)[:50]}", show_alert=True)
+
+# 🔥 HANDLER BARU: Unsend Reply
+@Altruix.bot.on_callback_query(filters.regex(r"^mentions_unsend_(-?\d+)_(\d+)"))
+@log_errors
+async def unsend_reply_handler(c: Client, cb: CallbackQuery):
+    """Hapus balasan yang sebelumnya dikirim."""
+    try:
+        BUTTON_STATS["unsend"] += 1
+        chat_id = int(cb.matches[0].group(1))
+        message_id = int(cb.matches[0].group(2))
+        msg_key = f"{chat_id}_{message_id}"
+        
+        if msg_key not in MENTION_LOG_CACHE:
+            await cb.answer("❌ Data mention tidak ditemukan di cache.", show_alert=True)
+            return
+            
+        cache_data = MENTION_LOG_CACHE[msg_key]
+        last_reply_id = cache_data.get("last_reply_id")
+        last_reply_chat = cache_data.get("last_reply_chat")
+        
+        if not last_reply_id:
+            await cb.answer("❌ Tidak ada balasan yang terekam untuk di-unsend.", show_alert=True)
+            return
+            
+        client_id = cache_data["client_id"]
+        userbot_client = await get_mention_client(client_id)
+        
+        if not userbot_client:
+            await cb.answer("❌ Akun tidak tersedia.", show_alert=True)
+            return
+            
+        # Hapus balasan
+        await userbot_client.delete_messages(last_reply_chat or chat_id, last_reply_id)
+        
+        # Update cache
+        if msg_key in MENTION_LOG_CACHE:
+            MENTION_LOG_CACHE[msg_key].pop("last_reply_id", None)
+        
+        await cb.answer("🗑️ Balasan berhasil dihapus (unsend)!", show_alert=True)
+        logger.info(f"🗑️ Reply {last_reply_id} unsend for {msg_key}")
+        
+    except Exception as e:
+        logger.error(f"❌ Unsend failed: {e}")
+        await cb.answer(f"❌ Gagal unsend: {str(e)[:50]}", show_alert=True)
 
 # 🔥 Command untuk status
 @Altruix.register_on_cmd(
