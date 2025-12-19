@@ -35,7 +35,7 @@ logger = logging.getLogger("altruix.pm_logger_user")
 logger.setLevel(logging.INFO)
 
 PLUGIN_NAME = __plugin_name__ 
-PLUGIN_VERSION = "1.2.2"  # ✅ Isolated from Bot Mode
+PLUGIN_VERSION = "1.2.3"  # ✅ fix error var status
 STORAGE_FILE = Path("pm_logger_user_settings.json")
 
 # Settings Cache
@@ -124,6 +124,8 @@ async def pmlu_settings_handler(c: Client, m: AltruixMessage):
     
     if not user_input:
         is_enabled = PM_LOGGER_USER_DATA.get("enabled", False)
+        # PERBAIKAN: Definisikan variabel status berdasarkan is_enabled
+        status = "ENABLED ✅" if is_enabled else "DISABLED ❌"
         mode = PM_LOGGER_USER_DATA.get("mode", "both").upper()
         ra_status = "ENABLED ✅" if REPLY_FROM_ALL_ACCESSIBLE else "DISABLED ❌"
         log_chat = Altruix.log_chat or "Not Configured ⚠️"
