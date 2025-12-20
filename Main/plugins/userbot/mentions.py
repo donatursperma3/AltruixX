@@ -456,6 +456,7 @@ async def get_mention_client(user_id: int) -> Optional[Client]:
     """Dapatkan client yang sesuai berdasarkan user_id dengan caching."""
     try:
         user_id = int(user_id)
+        logger.info(f"🔄 get_mention_client called for user_id: {user_id}")
         
         # Cache key untuk client lookup
         cache_key = f"{CACHE_PREFIX_CLIENT}{user_id}"
@@ -470,13 +471,16 @@ async def get_mention_client(user_id: int) -> Optional[Client]:
         
         # 1. Cek di daftar userbot clients
         if hasattr(Altruix, 'clients') and Altruix.clients:
-            for client in Altruix.clients:
+            logger.info(f"📋 Found {len(Altruix.clients)} clients")
+            for i, client in enumerate(Altruix.clients):
                 try:
                     # Gunakan cache myself jika ada, atau get_me
                     me = getattr(client, "myself", None)
                     if not me and client.is_connected:
                         me = await client.get_me()
                         client.myself = me # Cache it
+
+                    logger.info(f"  Client {i}: ID={me.id if me else 'None'}, Name={me.first_name if me else 'None'}")
                     
                     if me and me.id == user_id:
                         logger.debug(f"Found userbot client {me.first_name} ({user_id})")
@@ -486,6 +490,8 @@ async def get_mention_client(user_id: int) -> Optional[Client]:
                 except Exception as e:
                     logger.debug(f"Error checking client {client}: {e}")
                     continue
+        else:
+            logger.warning("⚠️ No clients found in Altruix.clients")
 
         # 2. Cek apakah ini Bot Client
         if Altruix.bot:
@@ -1243,7 +1249,10 @@ async def start_reply_from_all(c: Client, cb: CallbackQuery):
                 f"Silakan ketik pesan balasan Anda di bawah ini.\n"
                 f"Pesan akan dikirim sebagai <b>{client_name}</b> ke grup asal.\n\n"
                 f"<i>Note: Maksimal {USER_REPLY_LIMIT}x reply per hari per mention</i>\n"
-                f"<i>Balas pesan ini dengan teks yang ingin dikirim.</i>",
+                f"<i>Balas pesan ini dengan teks yang ingin dikirim.</i>\n\n"
+                f"<b>Debug Info:</b>\n"
+                f"• Instruction ID: <code>{instruction_msg.id}</code>\n"  # 🔥 TAMBAHKAN INI
+                f"• Waiting ID: <code>{waiting_id}</code>",
                 parse_mode=enums.ParseMode.HTML,
                 reply_parameters=ReplyParameters(
                     message_id=cb.message.id,
@@ -1260,6 +1269,7 @@ async def start_reply_from_all(c: Client, cb: CallbackQuery):
                 REPLY_AS_MENTIONED_WAITING[waiting_id]["instruction_msg_id"] = instruction_msg.id
             
             logger.info(f"📤 Reply All instruction sent: {instruction_msg.id}")
+            logger.info(f"📝 Waiting ID: {waiting_id}, Instruction ID: {instruction_msg.id}")
             
             # Update counter - GUNAKAN CACHE FUNCTION
             await increment_user_reply_count(user_id, today)
@@ -1396,7 +1406,12 @@ async def start_reply_as_mentioned(c: Client, cb: CallbackQuery):
 # ============================================================================
 # 🔥 HANDLE REPLY INPUT - DIUPDATE DENGAN CACHE
 # ============================================================================
-@Altruix.bot.on_message(filters.chat(Altruix.log_chat) & filters.reply)
+@Altruix.bot.on_message(
+    filters.chat(Altruix.log_chat) & 
+    filters.reply & 
+    filters.text & 
+    ~filters.bot
+)
 @log_errors
 async def handle_reply_as_mentioned_input(c: Client, m: RawMessage):
     """Menangani input balasan untuk reply-as-mentioned."""
@@ -1407,38 +1422,49 @@ async def handle_reply_as_mentioned_input(c: Client, m: RawMessage):
         reply_msg_id = m.reply_to_message.id
         logger.info(f"🔍 Checking reply input for message {reply_msg_id}")
         
-        # Cari waiting_id berdasarkan instruction_msg_id - CEK DI CACHE PERSISTEN
+        # Cari waiting_id berdasarkan instruction_msg_id 
         waiting_id = None
         
-        # Note: Ini perlu dioptimasi jika banyak waiting entries
-        # Untuk skala kecil, bisa scan dengan pattern
-        
-        # Coba cari dengan pattern umum dulu
-        possible_patterns = [
-            f"reply_{reply_msg_id}",
-            f"replyall_{reply_msg_id}"
-        ]
-        
-        for pattern in possible_patterns:
-            # Coba dengan berbagai kombinasi
-            for suffix in ["", f"_{int(time.time()) - 300}", f"_{int(time.time()) - 600}"]:
-                test_id = f"{pattern}{suffix}"
-                data = await get_waiting_reply(test_id)
-                if data and data.get("instruction_msg_id") == reply_msg_id:
-                    waiting_id = test_id
-                    break
-            if waiting_id:
+        # 🔥 **PERBAIKAN KRITIS**: Cari di REPLY_AS_MENTIONED_WAITING terlebih dahulu
+        for wid, data in REPLY_AS_MENTIONED_WAITING.items():
+            if data.get("instruction_msg_id") == reply_msg_id:
+                waiting_id = wid
+                logger.info(f"✅ Found waiting_id {waiting_id} for instruction {reply_msg_id}")
                 break
         
-        # Jika tidak ditemukan di cache, coba di in-memory
-        if not waiting_id and reply_msg_id in [data.get("instruction_msg_id") for data in REPLY_AS_MENTIONED_WAITING.values()]:
-            for wid, data in REPLY_AS_MENTIONED_WAITING.items():
-                if data.get("instruction_msg_id") == reply_msg_id:
-                    waiting_id = wid
+        # Jika tidak ditemukan di in-memory, coba di cache persistent
+        if not waiting_id:
+            logger.info(f"🔍 Not found in memory, checking persistent cache...")
+            # Coba pattern matching untuk replyall
+            possible_patterns = [
+                f"replyall_",
+                f"reply_"
+            ]
+            
+            # Ini adalah workaround karena kita tidak bisa scan semua keys di cache
+            # Kita akan coba dengan timestamp sekitar waktu sekarang
+            current_time = int(time.time())
+            for offset in range(-300, 300, 60):  # Cek ±5 menit
+                for pattern in possible_patterns:
+                    test_id = f"{pattern}{current_time + offset}_{reply_msg_id}"
+                    data = await get_waiting_reply(test_id)
+                    if data and data.get("instruction_msg_id") == reply_msg_id:
+                        waiting_id = test_id
+                        break
+                if waiting_id:
                     break
         
-        if not waiting_id or waiting_id not in REPLY_AS_MENTIONED_WAITING:
-            logger.debug(f"⚠️ No waiting found for reply to {reply_msg_id}")
+        if not waiting_id:
+            logger.warning(f"⚠️ No waiting found for reply to message {reply_msg_id}")
+            # Coba kirim pesan debug
+            try:
+                await m.reply(
+                    "❌ <b>Tidak ada proses reply yang aktif untuk pesan ini.</b>\n\n"
+                    "<i>Silakan tekan tombol 'Reply From All' atau 'Reply as Mentioned' terlebih dahulu.</i>",
+                    parse_mode=enums.ParseMode.HTML
+                )
+            except:
+                pass
             return
         
         # DAPATKAN DATA DARI CACHE PERSISTEN (jika ada)
@@ -1446,6 +1472,7 @@ async def handle_reply_as_mentioned_input(c: Client, m: RawMessage):
         if not data:
             # Fallback ke in-memory
             if waiting_id not in REPLY_AS_MENTIONED_WAITING:
+                logger.error(f"❌ Waiting data not found for {waiting_id}")
                 return
             data = REPLY_AS_MENTIONED_WAITING[waiting_id]
             
