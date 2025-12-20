@@ -2752,9 +2752,9 @@ try:
 except Exception as e:
     logger.info(f"[DEBUG] ✅ Loaded → {__plugin_name__} {PLUGIN_VERSION}")
 
-logger.info(f"📋 Mentions plugin v{PLUGIN_VERSION} successfully loaded")
-logger.info(f"🔧 Cache system: {'Enabled with flexible backend' if CACHE_MANAGER_AVAILABLE else 'Fallback to in-memory cache'}")
-logger.info(f"🔧 Use /mentions_cache stats to check cache status")
-logger.info(f"🔧 Use /mentions_fix_cache to recover missing cache entries")
-logger.info(f"🔧 Use /mentions_test (via bot) to test all buttons")
-logger.info(f"⚠️  Note: Userbots cannot send inline buttons, only bot can!")
+# logger.info(f"📋 Mentions plugin v{PLUGIN_VERSION} successfully loaded")
+# logger.info(f"🔧 Cache system: {'Enabled with flexible backend' if CACHE_MANAGER_AVAILABLE else 'Fallback to in-memory cache'}")
+# logger.info(f"🔧 Use /mentions_cache stats to check cache status")
+# logger.info(f"🔧 Use /mentions_fix_cache to recover missing cache entries")
+# logger.info(f"🔧 Use /mentions_test (via bot) to test all buttons")
+# logger.info(f"⚠️  Note: Userbots cannot send inline buttons, only bot can!")
