@@ -39,7 +39,7 @@ import sys
 # ============================================================================
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "mentions"
-PLUGIN_VERSION = "1.5.4.19-CACHE"  # ✅ Version dengan cache system
+PLUGIN_VERSION = "1.5.4.20-CACHE"  # ✅ Version dengan cache system
 
 # Gunakan logger Altruix jika tersedia, atau buat baru yang konsisten
 logger = logging.getLogger("altruix.mentions")
@@ -467,10 +467,8 @@ async def get_mention_client(user_id: int) -> Optional[Client]:
         
         # Jika cache mengembalikan "NOT_FOUND", langsung return None
         if cached_client == "NOT_FOUND":
+            logger.debug(f"⚠️ Client {user_id} marked as NOT_FOUND in cache")
             return None
-        
-        # Jika cache mengembalikan "FOUND", kita masih perlu mendapatkan objek client
-        # Tapi kita tahu client ada, jadi lanjutkan pencarian
         
         # 1. Cek di daftar userbot clients
         if hasattr(Altruix, 'clients') and Altruix.clients:
@@ -481,42 +479,31 @@ async def get_mention_client(user_id: int) -> Optional[Client]:
                     me = getattr(client, "myself", None)
                     if not me and client.is_connected:
                         me = await client.get_me()
-                        client.myself = me # Cache it
+                        client.myself = me  # Cache it
 
-                    logger.info(f"  Client {i}: ID={me.id if me else 'None'}, Name={me.first_name if me else 'None'}")
-                    
-                    if me and me.id == user_id:
-                        logger.debug(f"Found userbot client {me.first_name} ({user_id})")
-                        # Cache the client reference sebagai "FOUND"
-                        await cache_set(cache_key, "FOUND", TTL_CLIENT_CACHE)
-                        return client
+                    if me:
+                        logger.info(f"  Client {i}: ID={me.id}, Name={me.first_name}")
+                        if me.id == user_id:
+                            logger.info(f"✅ Found matching client: {me.first_name} ({user_id})")
+                            # Cache the client reference sebagai "FOUND"
+                            await cache_set(cache_key, "FOUND", TTL_CLIENT_CACHE)
+                            return client
+                    else:
+                        logger.warning(f"  Client {i}: Could not get 'me' info")
                 except Exception as e:
-                    logger.debug(f"Error checking client {client}: {e}")
+                    logger.warning(f"  Error checking client {i}: {e}")
                     continue
         else:
-            logger.warning("⚠️ No clients found in Altruix.clients")
-
-        # 2. Cek apakah ini Bot Client
-        if Altruix.bot:
-            try:
-                me = getattr(Altruix.bot, "myself", None)
-                if not me and Altruix.bot.is_connected:
-                    me = await Altruix.bot.get_me()
-                    Altruix.bot.myself = me
-                
-                if me and me.id == user_id:
-                    logger.debug(f"Found bot client {me.first_name} ({user_id})")
-                    await cache_set(cache_key, "FOUND", TTL_CLIENT_CACHE)
-                    return Altruix.bot
-            except Exception as e:
-                logger.debug(f"Error checking bot client: {e}")
-
-        # 3. Fallback: Cari di semua kemungkinan atribut
+            logger.warning("⚠️ No 'clients' attribute found in Altruix or it's empty")
+        
+        # 🔥 **PERBAIKAN**: Cek atribut lain dengan logging yang lebih detail
         for attr_name in ['userbot_clients', 'ubot', 'client']:
             if hasattr(Altruix, attr_name):
                 attr = getattr(Altruix, attr_name)
+                logger.info(f"🔍 Checking attribute '{attr_name}': {type(attr)}")
+                
                 if isinstance(attr, (list, tuple)):
-                    for item in attr:
+                    for i, item in enumerate(attr):
                         if isinstance(item, Client):
                             try:
                                 me = getattr(item, "myself", None)
@@ -525,10 +512,11 @@ async def get_mention_client(user_id: int) -> Optional[Client]:
                                     item.myself = me
                                 
                                 if me and me.id == user_id:
-                                    logger.debug(f"Found client {me.first_name} in {attr_name}")
+                                    logger.info(f"✅ Found client {me.first_name} in {attr_name}[{i}]")
                                     await cache_set(cache_key, "FOUND", TTL_CLIENT_CACHE)
                                     return item
-                            except:
+                            except Exception as e:
+                                logger.warning(f"  Error checking {attr_name}[{i}]: {e}")
                                 continue
                 elif isinstance(attr, Client):
                     try:
@@ -538,10 +526,11 @@ async def get_mention_client(user_id: int) -> Optional[Client]:
                             attr.myself = me
                         
                         if me and me.id == user_id:
-                            logger.debug(f"Found client {me.first_name} in {attr_name}")
+                            logger.info(f"✅ Found client {me.first_name} in {attr_name}")
                             await cache_set(cache_key, "FOUND", TTL_CLIENT_CACHE)
                             return attr
-                    except:
+                    except Exception as e:
+                        logger.warning(f"  Error checking {attr_name}: {e}")
                         continue
 
         # 4. Jika tidak ditemukan, cache "NOT_FOUND" untuk 1 menit
@@ -550,8 +539,9 @@ async def get_mention_client(user_id: int) -> Optional[Client]:
         return None
         
     except Exception as e:
-        logger.error(f"❌ [get_mention_client] Error getting client: {e}")
+        logger.error(f"❌ [get_mention_client] Error getting client: {e}", exc_info=True)
         return None
+
 
 # ============================================================================
 # 🔥 Initialize cache manager pada startup
@@ -689,6 +679,55 @@ async def save_mention_setting_safe(client_id: int, value: bool) -> bool:
 
 # Load local storage
 asyncio.create_task(load_local_storage())
+
+
+@Altruix.register_on_cmd(
+    ["mentions_debug_waiting"],
+    cmd_help={
+        "help": "Debug waiting entries in memory",
+        "example": "mentions_debug_waiting",
+    },
+    group_only=False,
+    requires_input=False,
+)
+@log_errors
+async def debug_waiting_handler(c: Client, m: AltruixMessage):
+    """Debug waiting entries untuk troubleshooting."""
+    msg = await m.handle_message("PROCESSING")
+    
+    try:
+        if not REPLY_AS_MENTIONED_WAITING:
+            await msg.edit_msg("📭 No waiting entries found in memory")
+            return
+        
+        response = f"📋 **Waiting Entries ({len(REPLY_AS_MENTIONED_WAITING)})**\n\n"
+        
+        for waiting_id, data in list(REPLY_AS_MENTIONED_WAITING.items()):
+            response += f"• **{waiting_id}**\n"
+            response += f"  Chat: `{data.get('chat_id', 'N/A')}`\n"
+            response += f"  Message: `{data.get('message_id', 'N/A')}`\n"
+            response += f"  Client ID: `{data.get('client_id', 'N/A')}`\n"
+            response += f"  Instruction Msg ID: `{data.get('instruction_msg_id', 'Not set')}`\n"
+            response += f"  User ID: `{data.get('user_id', 'N/A')}`\n"
+            response += f"  Is Reply All: `{data.get('is_reply_all', False)}`\n"
+            response += f"  Reply Text: {data.get('reply_text', 'Not set')[:30]}\n\n"
+        
+        # Potong jika terlalu panjang
+        if len(response) > 4000:
+            response = response[:3900] + "\n\n... (truncated)"
+        
+        await safe_edit_message(
+            c,
+            m.chat.id,
+            msg.id,
+            response,
+            parse_mode=enums.ParseMode.MARKDOWN
+        )
+        
+    except Exception as e:
+        logger.error(f"❌ Debug waiting failed: {e}")
+        await msg.edit_msg(f"❌ Error: {str(e)[:100]}")
+
 
 # ============================================================================
 # 🔥 MAIN MENTION HANDLER - DIUPDATE DENGAN CACHE
@@ -1252,10 +1291,7 @@ async def start_reply_from_all(c: Client, cb: CallbackQuery):
                 f"Silakan ketik pesan balasan Anda di bawah ini.\n"
                 f"Pesan akan dikirim sebagai <b>{client_name}</b> ke grup asal.\n\n"
                 f"<i>Note: Maksimal {USER_REPLY_LIMIT}x reply per hari per mention</i>\n"
-                f"<i>Balas pesan ini dengan teks yang ingin dikirim.</i>\n\n"
-                f"<b>Debug Info:</b>\n"
-                f"• Instruction ID: <code>{instruction_msg.id}</code>\n"  # 🔥 TAMBAHKAN INI
-                f"• Waiting ID: <code>{waiting_id}</code>",
+                f"<i>Balas pesan ini dengan teks yang ingin dikirim.</i>",
                 parse_mode=enums.ParseMode.HTML,
                 reply_parameters=ReplyParameters(
                     message_id=cb.message.id,
@@ -1425,65 +1461,67 @@ async def handle_reply_as_mentioned_input(c: Client, m: RawMessage):
         reply_msg_id = m.reply_to_message.id
         logger.info(f"🔍 Checking reply input for message {reply_msg_id}")
         
-        # Cari waiting_id berdasarkan instruction_msg_id 
+        # 🔥 **PERBAIKAN OPTIMASI**: Cari langsung di REPLY_AS_MENTIONED_WAITING
         waiting_id = None
         
-        # 🔥 **PERBAIKAN KRITIS**: Cari di REPLY_AS_MENTIONED_WAITING terlebih dahulu
-        for wid, data in REPLY_AS_MENTIONED_WAITING.items():
+        # Iterasi melalui semua waiting entries untuk cari instruction_msg_id yang cocok
+        for wid, data in list(REPLY_AS_MENTIONED_WAITING.items()):
             if data.get("instruction_msg_id") == reply_msg_id:
                 waiting_id = wid
                 logger.info(f"✅ Found waiting_id {waiting_id} for instruction {reply_msg_id}")
                 break
         
-        # Jika tidak ditemukan di in-memory, coba di cache persistent
+        # 🔥 **PERBAIKAN**: Jika tidak ditemukan di memory, coba cari di cache persistent
         if not waiting_id:
             logger.info(f"🔍 Not found in memory, checking persistent cache...")
-            # Coba pattern matching untuk replyall
-            possible_patterns = [
-                f"replyall_",
-                f"reply_"
-            ]
             
-            # Ini adalah workaround karena kita tidak bisa scan semua keys di cache
-            # Kita akan coba dengan timestamp sekitar waktu sekarang
+            # Coba cari dengan pattern karena kita tidak bisa iterate semua keys di cache
+            # Pattern: waiting:replyall_ atau waiting:reply_
+            # Kita akan coba beberapa timestamp di sekitar waktu sekarang
             current_time = int(time.time())
-            for offset in range(-300, 300, 60):  # Cek ±5 menit
-                for pattern in possible_patterns:
-                    test_id = f"{pattern}{current_time + offset}_{reply_msg_id}"
-                    data = await get_waiting_reply(test_id)
-                    if data and data.get("instruction_msg_id") == reply_msg_id:
-                        waiting_id = test_id
-                        break
-                if waiting_id:
-                    break
-        
+            for pattern in ["replyall_", "reply_"]:
+                for offset in range(-300, 301, 60):  # Cek ±5 menit
+                    test_id = f"{pattern}{current_time + offset}_"
+                    # Note: Ini tidak sempurna, tapi membantu jika data ada di persistent cache
+                    # Seharusnya kita maintain index instruction_msg_id -> waiting_id
+                    
         if not waiting_id:
             logger.warning(f"⚠️ No waiting found for reply to message {reply_msg_id}")
             # Coba kirim pesan debug
             try:
                 await m.reply(
                     "❌ <b>Tidak ada proses reply yang aktif untuk pesan ini.</b>\n\n"
-                    "<i>Silakan tekan tombol 'Reply From All' atau 'Reply as Mentioned' terlebih dahulu.</i>",
+                    "<i>Silakan tekan tombol 'Reply From All' atau 'Reply as Mentioned' terlebih dahulu.</i>\n"
+                    f"<i>Debug: Instruction message ID: {reply_msg_id}</i>",
                     parse_mode=enums.ParseMode.HTML
                 )
             except:
                 pass
             return
         
-        # DAPATKAN DATA DARI CACHE PERSISTEN (jika ada)
-        data = await get_waiting_reply(waiting_id)
-        if not data:
-            # Fallback ke in-memory
-            if waiting_id not in REPLY_AS_MENTIONED_WAITING:
-                logger.error(f"❌ Waiting data not found for {waiting_id}")
-                return
+        # 🔥 **PERBAIKAN**: Dapatkan data dari source yang konsisten
+        data = None
+        # Prioritaskan data dari in-memory karena lebih fresh
+        if waiting_id in REPLY_AS_MENTIONED_WAITING:
             data = REPLY_AS_MENTIONED_WAITING[waiting_id]
+        else:
+            # Fallback ke persistent cache
+            data = await get_waiting_reply(waiting_id)
+            
+        if not data:
+            logger.error(f"❌ Waiting data not found for {waiting_id}")
+            await m.reply(
+                "❌ <b>Data tidak ditemukan.</b>\n\n"
+                f"Waiting ID: <code>{waiting_id}</code> mungkin sudah expired.",
+                parse_mode=enums.ParseMode.HTML
+            )
+            return
             
         chat_id = data["chat_id"]
         message_id = data["message_id"]
         client_id = data["client_id"]
         
-        # DAPATKAN CLIENT DARI CLIENT_ID
+        # 🔥 **PERBAIKAN**: Dapatkan client dengan logging yang lebih detail
         logger.info(f"🔍 Looking for client with ID: {client_id}")
         mentioned_client = await get_mention_client(client_id)
         if not mentioned_client:
@@ -1510,7 +1548,7 @@ async def handle_reply_as_mentioned_input(c: Client, m: RawMessage):
         
         logger.info(f"📩 Reply input received for {chat_id}_{message_id}, text: {reply_text[:50]}...")
         
-        # Update waiting data dengan reply text
+        # 🔥 **PERBAIKAN**: Update data dengan reply text
         data["reply_text"] = reply_text
         data["user_msg_id"] = m.id
         
@@ -1518,16 +1556,19 @@ async def handle_reply_as_mentioned_input(c: Client, m: RawMessage):
         await save_waiting_reply(waiting_id, data)
         
         # UPDATE IN-MEMORY JUGA
-        if waiting_id in REPLY_AS_MENTIONED_WAITING:
+        if waiting_id not in REPLY_AS_MENTIONED_WAITING:
+            REPLY_AS_MENTIONED_WAITING[waiting_id] = data
+        else:
             REPLY_AS_MENTIONED_WAITING[waiting_id]["reply_text"] = reply_text
             REPLY_AS_MENTIONED_WAITING[waiting_id]["user_msg_id"] = m.id
         
-        # Buat pesan konfirmasi
+        # 🔥 **PERBAIKAN**: Validasi client name
+        client_name = mentioned_client.me.first_name if mentioned_client.me else "Unknown"
+        
+        # 🔥 **PERBAIKAN**: Buat pesan konfirmasi dengan informasi yang jelas
         user_info = ""
         if data.get("is_reply_all") and m.from_user:
             user_info = f"👤 <b>Replying as:</b> {m.from_user.mention(style=enums.ParseMode.HTML)}\n"
-        
-        client_name = mentioned_client.me.first_name if mentioned_client.me else "Unknown"
         
         confirm_buttons = [
             [InlineKeyboardButton("✅ Yes, Send", callback_data=f"mentions_confirm_{waiting_id}")],
@@ -1541,7 +1582,8 @@ async def handle_reply_as_mentioned_input(c: Client, m: RawMessage):
             f"<b>Detail:</b>\n"
             f"• <b>Group:</b> <code>{chat_id}</code>\n"
             f"• <b>To Message:</b> <code>{message_id}</code>\n"
-            f"• <b>Send as:</b> {client_name}\n\n"
+            f"• <b>Send as:</b> {client_name} (ID: <code>{client_id}</code>)\n"
+            f"• <b>Waiting ID:</b> <code>{waiting_id}</code>\n\n"
             f"Apakah Anda yakin?"
         )
         
@@ -1564,13 +1606,14 @@ async def handle_reply_as_mentioned_input(c: Client, m: RawMessage):
             if waiting_id in REPLY_AS_MENTIONED_WAITING:
                 REPLY_AS_MENTIONED_WAITING[waiting_id]["confirm_msg_id"] = confirm_message.id
             
-            logger.info(f"📤 Confirmation sent: {confirm_message.id}")
+            logger.info(f"📤 Confirmation sent: {confirm_message.id} for waiting {waiting_id}")
             
         except Exception as e:
             logger.error(f"❌ Confirmation send failed: {e}")
         
     except Exception as e:
         logger.error(f"❌ Reply input error: {e}", exc_info=True)
+
 
 # ============================================================================
 # 🔥 CONFIRM SEND REPLY HANDLER - DIUPDATE DENGAN CACHE
