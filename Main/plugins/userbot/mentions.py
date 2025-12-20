@@ -47,7 +47,6 @@ logger.setLevel(logging.INFO)
 
 # 🔥 LOG STARTUP
 logger.info(f"🚀 Initializing mentions plugin v{PLUGIN_VERSION}")
-logger.info(logger_info)
 
 
 # ============================================================================
@@ -82,6 +81,7 @@ except ImportError as e:
         async def init_cache(config=None):
             return None
 
+logger.info(logger_info)
 
 # ============================================================================
 # 🔥 CACHE KEY PREFIXES DAN KONFIGURASI
