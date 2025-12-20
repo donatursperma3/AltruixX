@@ -33,6 +33,23 @@ from typing import Optional, Union, Dict, Any, List
 from collections import defaultdict
 import sys
 
+
+# ============================================================================
+# LOGGER KHUSUS PLUGIN
+# ============================================================================
+plugin_name = f"{os.path.basename(__file__)}"
+__plugin_name__ = plugin_name if plugin_name else "mentions"
+PLUGIN_VERSION = "1.5.4.19-CACHE"  # ✅ Version dengan cache system
+
+# Gunakan logger Altruix jika tersedia, atau buat baru yang konsisten
+logger = logging.getLogger("altruix.mentions")
+logger.setLevel(logging.INFO)
+
+# 🔥 LOG STARTUP
+logger.info(f"🚀 Initializing mentions plugin v{PLUGIN_VERSION}")
+logger.info(logger_info)
+
+
 # ============================================================================
 # 🔥 IMPORT CACHE MANAGER DARI Main.utils
 # ============================================================================
@@ -65,20 +82,6 @@ except ImportError as e:
         async def init_cache(config=None):
             return None
 
-# ============================================================================
-# LOGGER KHUSUS PLUGIN
-# ============================================================================
-plugin_name = f"{os.path.basename(__file__)}"
-__plugin_name__ = plugin_name if plugin_name else "mentions"
-PLUGIN_VERSION = "1.5.4.18-CACHE"  # ✅ Version dengan cache system
-
-# Gunakan logger Altruix jika tersedia, atau buat baru yang konsisten
-logger = logging.getLogger("altruix.mentions")
-logger.setLevel(logging.INFO)
-
-# 🔥 LOG STARTUP
-logger.info(f"🚀 Initializing mentions plugin v{PLUGIN_VERSION}")
-logger.info(logger_info)
 
 # ============================================================================
 # 🔥 CACHE KEY PREFIXES DAN KONFIGURASI
