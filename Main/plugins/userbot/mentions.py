@@ -1,4 +1,4 @@
-# mentions.py
+# Main/plugins/userbot/mentions.py
 # Copyright (C) 2021-present by Altruix@Github, < https://github.com/Altruix >.
 #
 # This file is part of < https://github.com/Altruix/Altruix > project,
@@ -29,25 +29,72 @@ import json
 import traceback
 from pathlib import Path
 import aiofiles
-from typing import Optional, Union, Dict, Any
+from typing import Optional, Union, Dict, Any, List
 from collections import defaultdict
+import sys
 
-# ─── LOGGER KHUSUS PLUGIN ───────────────────────────────────────────────
-import logging
+# ============================================================================
+# 🔥 IMPORT CACHE MANAGER DARI Main.utils
+# ============================================================================
+try:
+    from Main.utils.cache_manager import cache_manager, init_cache
+    CACHE_MANAGER_AVAILABLE = True
+    logger_info = "✅ Cache manager imported successfully from Main.utils"
+except ImportError as e:
+    # Coba cara alternatif jika gagal
+    try:
+        # Tambahkan path ke sys.path
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        root_dir = os.path.abspath(os.path.join(current_dir, '../../../'))
+        if root_dir not in sys.path:
+            sys.path.insert(0, root_dir)
+        
+        from Main.utils.cache_manager import cache_manager, init_cache
+        CACHE_MANAGER_AVAILABLE = True
+        logger_info = "✅ Cache manager imported with path adjustment"
+    except ImportError as e2:
+        CACHE_MANAGER_AVAILABLE = False
+        logger_info = f"⚠️ Cache manager import failed: {e2}"
+        
+        # Fallback definitions
+        cache_manager = None
+        
+        async def init_cache(config=None):
+            return None
 
+# ============================================================================
+# LOGGER KHUSUS PLUGIN
+# ============================================================================
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "mentions"
-PLUGIN_VERSION = "0.5.3"  # ✅ Fixed Duplicate Notifications
+PLUGIN_VERSION = "1.5.4.18-CACHE"  # ✅ Version dengan cache system
 
 # Gunakan logger Altruix jika tersedia, atau buat baru yang konsisten
 logger = logging.getLogger("altruix.mentions")
 logger.setLevel(logging.INFO)
-# Handler sudah dihandle oleh logging.basicConfig di client.py
 
 # 🔥 LOG STARTUP
 logger.info(f"🚀 Initializing mentions plugin v{PLUGIN_VERSION}")
+logger.info(logger_info)
 
+# ============================================================================
+# 🔥 CACHE KEY PREFIXES DAN KONFIGURASI
+# ============================================================================
+CACHE_PREFIX_MENTION = "mention:"
+CACHE_PREFIX_WAITING = "waiting:"
+CACHE_PREFIX_USER_COUNT = "user_count:"
+CACHE_PREFIX_SETTINGS = "settings:"
+CACHE_PREFIX_CLIENT = "client:"
+
+# 🔥 TTL SETTINGS (dalam detik)
+TTL_MENTION_CACHE = 7200  # 2 jam untuk mention cache
+TTL_WAITING_REPLY = 3600  # 1 jam untuk waiting replies
+TTL_USER_COUNTS = 86400   # 24 jam untuk rate limiting
+TTL_CLIENT_CACHE = 300    # 5 menit untuk client cache
+
+# ============================================================================
 # 🔥 PERBAIKAN: Helper functions
+# ============================================================================
 def log_button_press(button_name: str, data: str, user_id: Optional[int] = None):
     """Log setiap tombol yang ditekan."""
     user_info = f" by user {user_id}" if user_id else ""
@@ -112,26 +159,263 @@ async def safe_edit_message(
         logger.error(f"Edit message failed: {e}")
         return False
 
-# 🔥 PERBAIKAN: Local JSON storage
-LOCAL_STORAGE_FILE = Path("mentions_settings.json")
-MENTIONS_DATA = {}
+# ============================================================================
+# 🔥 CACHE HELPER FUNCTIONS - Interface ke cache_manager
+# ============================================================================
+async def cache_set(key: str, value: Any, ttl: int = None) -> bool:
+    """Set value ke cache dengan TTL."""
+    try:
+        if CACHE_MANAGER_AVAILABLE and cache_manager:
+            return await cache_manager.set(key, value, ttl or TTL_MENTION_CACHE)
+        else:
+            # Fallback ke in-memory dengan file backup
+            return await _fallback_cache_set(key, value, ttl)
+    except Exception as e:
+        logger.error(f"❌ Cache SET failed for {key}: {e}")
+        return False
 
-# 🔥 TAMBAHAN: Dictionary untuk melacak pesan mention yang sudah dikirim
+async def cache_get(key: str, default=None) -> Any:
+    """Get value dari cache."""
+    try:
+        if CACHE_MANAGER_AVAILABLE and cache_manager:
+            return await cache_manager.get(key, default)
+        else:
+            return await _fallback_cache_get(key, default)
+    except Exception as e:
+        logger.error(f"❌ Cache GET failed for {key}: {e}")
+        return default
+
+async def cache_delete(key: str) -> bool:
+    """Delete key dari cache."""
+    try:
+        if CACHE_MANAGER_AVAILABLE and cache_manager:
+            return await cache_manager.delete(key)
+        else:
+            return await _fallback_cache_delete(key)
+    except Exception as e:
+        logger.error(f"❌ Cache DELETE failed for {key}: {e}")
+        return False
+
+async def cache_exists(key: str) -> bool:
+    """Check jika key ada di cache."""
+    try:
+        if CACHE_MANAGER_AVAILABLE and cache_manager:
+            return await cache_manager.exists(key)
+        else:
+            return await _fallback_cache_exists(key)
+    except Exception as e:
+        logger.error(f"❌ Cache EXISTS failed for {key}: {e}")
+        return False
+
+# ============================================================================
+# 🔥 FALLBACK CACHE SYSTEM (In-memory dengan JSON backup)
+# ============================================================================
 MENTION_LOG_CACHE = {}
+REPLY_AS_MENTIONED_WAITING = {}
+USER_REPLY_COUNTS = defaultdict(lambda: defaultdict(int))
+MENTIONS_DATA = {}
+AUTO_REPLY_ENABLED = False
 
+async def _fallback_cache_set(key: str, value: Any, ttl: int = None) -> bool:
+    """Fallback in-memory cache dengan file persistence."""
+    try:
+        # In-memory storage
+        MENTION_LOG_CACHE[key] = {
+            "value": value,
+            "expires_at": time.time() + (ttl or TTL_MENTION_CACHE),
+            "created_at": time.time()
+        }
+        
+        # Backup ke file setiap 10 operasi write
+        if hasattr(_fallback_cache_set, 'write_count'):
+            _fallback_cache_set.write_count += 1
+        else:
+            _fallback_cache_set.write_count = 1
+            
+        if _fallback_cache_set.write_count % 10 == 0:
+            await _save_fallback_cache()
+            
+        return True
+    except Exception as e:
+        logger.error(f"❌ Fallback cache SET failed: {e}")
+        return False
+
+async def _fallback_cache_get(key: str, default=None) -> Any:
+    """Get dari fallback cache."""
+    try:
+        if key in MENTION_LOG_CACHE:
+            entry = MENTION_LOG_CACHE[key]
+            if entry["expires_at"] > time.time():
+                return entry["value"]
+            else:
+                del MENTION_LOG_CACHE[key]
+        return default
+    except:
+        return default
+
+async def _fallback_cache_delete(key: str) -> bool:
+    """Delete dari fallback cache."""
+    try:
+        if key in MENTION_LOG_CACHE:
+            del MENTION_LOG_CACHE[key]
+            return True
+        return False
+    except:
+        return False
+
+async def _fallback_cache_exists(key: str) -> bool:
+    """Check existence in fallback cache."""
+    try:
+        if key in MENTION_LOG_CACHE:
+            entry = MENTION_LOG_CACHE[key]
+            if entry["expires_at"] > time.time():
+                return True
+            else:
+                del MENTION_LOG_CACHE[key]
+        return False
+    except:
+        return False
+
+async def _save_fallback_cache():
+    """Save fallback cache to file."""
+    try:
+        file_path = Path("mentions_cache_fallback.json")
+        data = {
+            "cache": MENTION_LOG_CACHE,
+            "meta": {
+                "saved_at": time.time(),
+                "count": len(MENTION_LOG_CACHE)
+            }
+        }
+        async with aiofiles.open(file_path, 'w', encoding='utf-8') as f:
+            await f.write(json.dumps(data, indent=2, ensure_ascii=False))
+    except Exception as e:
+        logger.error(f"❌ Failed to save fallback cache: {e}")
+
+async def _load_fallback_cache():
+    """Load fallback cache from file."""
+    try:
+        file_path = Path("mentions_cache_fallback.json")
+        if file_path.exists():
+            async with aiofiles.open(file_path, 'r', encoding='utf-8') as f:
+                content = await f.read()
+                if content.strip():
+                    data = json.loads(content)
+                    # Filter expired entries
+                    now = time.time()
+                    for key, entry in data.get("cache", {}).items():
+                        if entry.get("expires_at", 0) > now:
+                            MENTION_LOG_CACHE[key] = entry
+                    
+            logger.info(f"Loaded {len(MENTION_LOG_CACHE)} entries from fallback cache")
+    except Exception as e:
+        logger.error(f"Failed to load fallback cache: {e}")
+
+# Initialize fallback cache
+asyncio.create_task(_load_fallback_cache())
+
+# ============================================================================
+# 🔥 SPECIFIC CACHE FUNCTIONS untuk mentions plugin
+# ============================================================================
+async def get_mention_from_cache(msg_key: str) -> Optional[Dict]:
+    """Get mention data from cache."""
+    cache_key = f"{CACHE_PREFIX_MENTION}{msg_key}"
+    return await cache_get(cache_key)
+
+async def save_mention_to_cache(msg_key: str, data: Dict) -> bool:
+    """Save mention data to cache."""
+    cache_key = f"{CACHE_PREFIX_MENTION}{msg_key}"
+    return await cache_set(cache_key, data, TTL_MENTION_CACHE)
+
+async def delete_mention_from_cache(msg_key: str) -> bool:
+    """Delete mention data from cache."""
+    cache_key = f"{CACHE_PREFIX_MENTION}{msg_key}"
+    return await cache_delete(cache_key)
+
+async def check_mention_in_cache(msg_key: str) -> bool:
+    """Check if mention exists in cache."""
+    cache_key = f"{CACHE_PREFIX_MENTION}{msg_key}"
+    return await cache_exists(cache_key)
+
+async def get_waiting_reply(waiting_id: str) -> Optional[Dict]:
+    """Get waiting reply data."""
+    cache_key = f"{CACHE_PREFIX_WAITING}{waiting_id}"
+    return await cache_get(cache_key)
+
+async def save_waiting_reply(waiting_id: str, data: Dict) -> bool:
+    """Save waiting reply data."""
+    cache_key = f"{CACHE_PREFIX_WAITING}{waiting_id}"
+    return await cache_set(cache_key, data, TTL_WAITING_REPLY)
+
+async def delete_waiting_reply(waiting_id: str) -> bool:
+    """Delete waiting reply data."""
+    cache_key = f"{CACHE_PREFIX_WAITING}{waiting_id}"
+    return await cache_delete(cache_key)
+
+async def get_user_reply_count(user_id: int, date_str: str = None) -> int:
+    """Get user's reply count for rate limiting."""
+    if not date_str:
+        date_str = datetime.now().strftime("%Y%m%d")
+    
+    cache_key = f"{CACHE_PREFIX_USER_COUNT}{user_id}:{date_str}"
+    
+    if CACHE_MANAGER_AVAILABLE:
+        return await cache_get(cache_key, 0)
+    else:
+        # Fallback ke in-memory
+        return USER_REPLY_COUNTS[user_id][date_str]
+
+async def increment_user_reply_count(user_id: int, date_str: str = None) -> int:
+    """Increment user's reply count."""
+    if not date_str:
+        date_str = datetime.now().strftime("%Y%m%d")
+    
+    cache_key = f"{CACHE_PREFIX_USER_COUNT}{user_id}:{date_str}"
+    
+    if CACHE_MANAGER_AVAILABLE:
+        current = await get_user_reply_count(user_id, date_str)
+        new_count = current + 1
+        await cache_set(cache_key, new_count, TTL_USER_COUNTS)
+        return new_count
+    else:
+        # Fallback ke in-memory
+        USER_REPLY_COUNTS[user_id][date_str] += 1
+        return USER_REPLY_COUNTS[user_id][date_str]
+
+async def decrement_user_reply_count(user_id: int, date_str: str = None) -> int:
+    """Decrement user's reply count."""
+    if not date_str:
+        date_str = datetime.now().strftime("%Y%m%d")
+    
+    cache_key = f"{CACHE_PREFIX_USER_COUNT}{user_id}:{date_str}"
+    
+    if CACHE_MANAGER_AVAILABLE:
+        current = await get_user_reply_count(user_id, date_str)
+        new_count = max(0, current - 1)
+        await cache_set(cache_key, new_count, TTL_USER_COUNTS)
+        return new_count
+    else:
+        # Fallback ke in-memory
+        USER_REPLY_COUNTS[user_id][date_str] = max(0, USER_REPLY_COUNTS[user_id][date_str] - 1)
+        return USER_REPLY_COUNTS[user_id][date_str]
+
+async def get_mention_setting(client_id: int) -> bool:
+    """Get mention setting for a client."""
+    cache_key = f"{CACHE_PREFIX_SETTINGS}{client_id}"
+    return await cache_get(cache_key, False)
+
+async def save_mention_setting(client_id: int, value: bool) -> bool:
+    """Save mention setting for a client."""
+    cache_key = f"{CACHE_PREFIX_SETTINGS}{client_id}"
+    return await cache_set(cache_key, bool(value), 86400 * 30)  # 30 days TTL
+
+# ============================================================================
+# 🔥 KONFIGURASI DEFAULT
+# ============================================================================
 # 🔥 PERBAIKAN CRITICAL: Emoji yang valid untuk Telegram Reaction API
-# Hanya emoji yang didukung oleh Telegram Reaction API
 DEFAULT_REACTION_EMOJIS = ["👍", "❤️", "🔥", "🥰", "👏", "🎉"]
 
-# 🔥 TAMBAHAN: Dictionary untuk menunggu konfirmasi reply-as-mentioned
-REPLY_AS_MENTIONED_WAITING = {}
-
-AUTO_REPLY_ENABLED = False
-REPLY_FROM_ALL_ACCESSIBLE = True # Global toggle for Reply From All button visibility
-
-# 🔥 PERBAIKAN: Rate limiting untuk Reply From All
-USER_REPLY_COUNTS = defaultdict(lambda: defaultdict(int))
-USER_REPLY_LIMIT = 3
+REPLY_FROM_ALL_ACCESSIBLE = True  # Global toggle for Reply From All button visibility
 
 # 🔥 BARU: Button press statistics
 BUTTON_STATS = {
@@ -143,6 +427,8 @@ BUTTON_STATS = {
     "save": 0,
     "unsend": 0
 }
+
+USER_REPLY_LIMIT = 9  # Rate limiting untuk Reply From All
 
 # 🔥 BARU: Valid emoji checker
 VALID_REACTION_EMOJIS = {
@@ -160,71 +446,24 @@ def is_valid_emoji(emoji: str) -> bool:
     """Cek apakah emoji valid untuk Telegram Reaction."""
     return emoji in VALID_REACTION_EMOJIS
 
-async def load_local_storage():
-    """Load data dari local JSON file."""
-    global MENTIONS_DATA, AUTO_REPLY_ENABLED
-    try:
-        if LOCAL_STORAGE_FILE.exists():
-            async with aiofiles.open(LOCAL_STORAGE_FILE, 'r', encoding='utf-8') as f:
-                content = await f.read()
-                if content.strip():
-                    data = json.loads(content)
-                    MENTIONS_DATA = data.get("settings", {})
-                    AUTO_REPLY_ENABLED = data.get("auto_reply", False)
-                    REPLY_FROM_ALL_ACCESSIBLE = data.get("reply_from_all_accessible", True)
-                    logger.info(f"Loaded {len(MENTIONS_DATA)} settings, auto_reply: {AUTO_REPLY_ENABLED}, reply_from_all: {REPLY_FROM_ALL_ACCESSIBLE}")
-        else:
-            MENTIONS_DATA = {}
-            AUTO_REPLY_ENABLED = False
-    except Exception as e:
-        logger.error(f"Failed to load local storage: {e}")
-        MENTIONS_DATA = {}
-        AUTO_REPLY_ENABLED = False
-
-async def save_local_storage():
-    """Save data ke local JSON file."""
-    try:
-        data = {
-            "settings": MENTIONS_DATA,
-            "auto_reply": AUTO_REPLY_ENABLED,
-            "reply_from_all_accessible": REPLY_FROM_ALL_ACCESSIBLE,
-            "last_saved": int(time.time()),
-            "version": PLUGIN_VERSION,
-            "button_stats": BUTTON_STATS
-        }
-        async with aiofiles.open(LOCAL_STORAGE_FILE, 'w', encoding='utf-8') as f:
-            await f.write(json.dumps(data, indent=2, ensure_ascii=False))
-    except Exception as e:
-        logger.error(f"Failed to save local storage: {e}")
-
-async def get_mention_setting_safe(client_id: int) -> bool:
-    """Safe method untuk membaca setting."""
-    client_id_str = str(client_id)
-    if client_id_str in MENTIONS_DATA:
-        setting_data = MENTIONS_DATA[client_id_str]
-        if isinstance(setting_data, dict) and "value" in setting_data:
-            return bool(setting_data["value"])
-    return False
-
-async def save_mention_setting(client_id: int, value: bool) -> bool:
-    """Safe method untuk menyimpan setting."""
-    client_id_str = str(client_id)
-    MENTIONS_DATA[client_id_str] = {
-        "value": bool(value),
-        "timestamp_int": int(time.time())
-    }
-    await save_local_storage()
-    logger.info(f"Saved setting for {client_id}: {value}")
-    return True
-
-# 🔥 BARU: Fungsi untuk mendapatkan client dari client_id - FIXED!
+# ============================================================================
+# 🔥 PERBAIKAN: get_mention_client dengan CACHING
+# ============================================================================
 async def get_mention_client(user_id: int) -> Optional[Client]:
-    """
-    Dapatkan client yang sesuai berdasarkan user_id.
-    Mencari di Altruix.clients dan Altruix.bot.
-    """
+    """Dapatkan client yang sesuai berdasarkan user_id dengan caching."""
     try:
         user_id = int(user_id)
+        
+        # Cache key untuk client lookup
+        cache_key = f"{CACHE_PREFIX_CLIENT}{user_id}"
+        cached_client = await cache_get(cache_key)
+        
+        # Jika cache mengembalikan "NOT_FOUND", langsung return None
+        if cached_client == "NOT_FOUND":
+            return None
+        
+        # Jika cache mengembalikan "FOUND", kita masih perlu mendapatkan objek client
+        # Tapi kita tahu client ada, jadi lanjutkan pencarian
         
         # 1. Cek di daftar userbot clients
         if hasattr(Altruix, 'clients') and Altruix.clients:
@@ -238,6 +477,8 @@ async def get_mention_client(user_id: int) -> Optional[Client]:
                     
                     if me and me.id == user_id:
                         logger.debug(f"Found userbot client {me.first_name} ({user_id})")
+                        # Cache the client reference sebagai "FOUND"
+                        await cache_set(cache_key, "FOUND", TTL_CLIENT_CACHE)
                         return client
                 except Exception as e:
                     logger.debug(f"Error checking client {client}: {e}")
@@ -253,24 +494,193 @@ async def get_mention_client(user_id: int) -> Optional[Client]:
                 
                 if me and me.id == user_id:
                     logger.debug(f"Found bot client {me.first_name} ({user_id})")
+                    await cache_set(cache_key, "FOUND", TTL_CLIENT_CACHE)
                     return Altruix.bot
             except Exception as e:
                 logger.debug(f"Error checking bot client: {e}")
 
-        # 3. Fallback: Jika user_id adalah OWNER_ID, bisa return Altruix.bot
-        if user_id == Altruix.config.OWNER_ID and Altruix.bot:
-            return Altruix.bot
+        # 3. Fallback: Cari di semua kemungkinan atribut
+        for attr_name in ['userbot_clients', 'ubot', 'client']:
+            if hasattr(Altruix, attr_name):
+                attr = getattr(Altruix, attr_name)
+                if isinstance(attr, (list, tuple)):
+                    for item in attr:
+                        if isinstance(item, Client):
+                            try:
+                                me = getattr(item, "myself", None)
+                                if not me and item.is_connected:
+                                    me = await item.get_me()
+                                    item.myself = me
+                                
+                                if me and me.id == user_id:
+                                    logger.debug(f"Found client {me.first_name} in {attr_name}")
+                                    await cache_set(cache_key, "FOUND", TTL_CLIENT_CACHE)
+                                    return item
+                            except:
+                                continue
+                elif isinstance(attr, Client):
+                    try:
+                        me = getattr(attr, "myself", None)
+                        if not me and attr.is_connected:
+                            me = await attr.get_me()
+                            attr.myself = me
+                        
+                        if me and me.id == user_id:
+                            logger.debug(f"Found client {me.first_name} in {attr_name}")
+                            await cache_set(cache_key, "FOUND", TTL_CLIENT_CACHE)
+                            return attr
+                    except:
+                        continue
 
-        logger.warning(f"❌ [get_mention_client] Client {user_id} not found in any active sessions")
+        # 4. Jika tidak ditemukan, cache "NOT_FOUND" untuk 1 menit
+        logger.warning(f"❌ Client {user_id} not found in any active sessions")
+        await cache_set(cache_key, "NOT_FOUND", 60)
         return None
+        
     except Exception as e:
         logger.error(f"❌ [get_mention_client] Error getting client: {e}")
         return None
 
-# 🔥 Load local storage
-asyncio.create_task(load_local_storage())
-logger.info("Local storage loaded")
+# ============================================================================
+# 🔥 Initialize cache manager pada startup
+# ============================================================================
+async def init_mentions_cache():
+    """Initialize cache manager for mentions plugin."""
+    try:
+        if not CACHE_MANAGER_AVAILABLE:
+            logger.warning("⚠️ Cache manager not available, using in-memory cache only")
+            return
+        
+        # Determine which backend to use from environment
+        cache_config = {
+            "cache_backend": "json",  # Default
+            "json_cache_path": "mentions_cache.json"
+        }
+        
+        # Cek environment variables
+        if os.environ.get("REDIS_URL"):
+            cache_config["cache_backend"] = "redis"
+            cache_config["redis_url"] = os.environ.get("REDIS_URL")
+            logger.info("Using Redis cache backend")
+        elif os.environ.get("MONGO_URI"):
+            cache_config["cache_backend"] = "mongodb"
+            cache_config["mongo_uri"] = os.environ.get("MONGO_URI")
+            cache_config["mongo_db"] = os.environ.get("MONGO_DB", "altruix")
+            cache_config["mongo_collection"] = os.environ.get("MONGO_COLLECTION", "mentions_cache")
+            logger.info("Using MongoDB cache backend")
+        
+        # Initialize cache manager
+        await init_cache(cache_config)
+        logger.info(f"✅ Mentions cache initialized with {cache_config['cache_backend']} backend")
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize cache: {e}")
+        logger.warning("⚠️ Using fallback memory cache only")
 
+# Start cache initialization
+asyncio.create_task(init_mentions_cache())
+
+# ============================================================================
+# 🔥 LOAD SETTINGS DARI CACHE PADA STARTUP
+# ============================================================================
+async def load_settings_on_startup():
+    """Load settings from cache on startup."""
+    try:
+        global REPLY_FROM_ALL_ACCESSIBLE, MENTIONS_DATA, AUTO_REPLY_ENABLED
+        
+        # Load REPLY_FROM_ALL_ACCESSIBLE dari cache
+        cached_value = await cache_get("reply_from_all_accessible")
+        if cached_value is not None:
+            REPLY_FROM_ALL_ACCESSIBLE = bool(cached_value)
+            logger.info(f"Loaded REPLY_FROM_ALL_ACCESSIBLE from cache: {REPLY_FROM_ALL_ACCESSIBLE}")
+        
+        # Load MENTIONS_DATA dari local JSON (fallback)
+        LOCAL_STORAGE_FILE = Path("mentions_settings.json")
+        if LOCAL_STORAGE_FILE.exists():
+            async with aiofiles.open(LOCAL_STORAGE_FILE, 'r', encoding='utf-8') as f:
+                content = await f.read()
+                if content.strip():
+                    data = json.loads(content)
+                    MENTIONS_DATA = data.get("settings", {})
+                    AUTO_REPLY_ENABLED = data.get("auto_reply", False)
+                    logger.info(f"Loaded {len(MENTIONS_DATA)} settings, auto_reply: {AUTO_REPLY_ENABLED}")
+    except Exception as e:
+        logger.error(f"Failed to load settings from cache: {e}")
+
+asyncio.create_task(load_settings_on_startup())
+
+# ============================================================================
+# 🔥 LOCAL JSON STORAGE (untuk backward compatibility)
+# ============================================================================
+LOCAL_STORAGE_FILE = Path("mentions_settings.json")
+
+async def load_local_storage():
+    """Load data dari local JSON file."""
+    global MENTIONS_DATA, AUTO_REPLY_ENABLED
+    try:
+        if LOCAL_STORAGE_FILE.exists():
+            async with aiofiles.open(LOCAL_STORAGE_FILE, 'r', encoding='utf-8') as f:
+                content = await f.read()
+                if content.strip():
+                    data = json.loads(content)
+                    MENTIONS_DATA = data.get("settings", {})
+                    AUTO_REPLY_ENABLED = data.get("auto_reply", False)
+                    logger.info(f"Loaded {len(MENTIONS_DATA)} settings from local storage")
+    except Exception as e:
+        logger.error(f"Failed to load local storage: {e}")
+
+async def save_local_storage():
+    """Save data ke local JSON file."""
+    try:
+        data = {
+            "settings": MENTIONS_DATA,
+            "auto_reply": AUTO_REPLY_ENABLED,
+            "last_saved": int(time.time()),
+            "version": PLUGIN_VERSION
+        }
+        async with aiofiles.open(LOCAL_STORAGE_FILE, 'w', encoding='utf-8') as f:
+            await f.write(json.dumps(data, indent=2, ensure_ascii=False))
+    except Exception as e:
+        logger.error(f"Failed to save local storage: {e}")
+
+async def get_mention_setting_safe(client_id: int) -> bool:
+    """Safe method untuk membaca setting - gabungkan cache dan local."""
+    # Coba dari cache terlebih dahulu
+    cache_setting = await get_mention_setting(client_id)
+    if cache_setting is not False:  # Jika ada di cache (bukan default False)
+        return cache_setting
+    
+    # Fallback ke local storage
+    client_id_str = str(client_id)
+    if client_id_str in MENTIONS_DATA:
+        setting_data = MENTIONS_DATA[client_id_str]
+        if isinstance(setting_data, dict) and "value" in setting_data:
+            return bool(setting_data["value"])
+    
+    return False
+
+async def save_mention_setting_safe(client_id: int, value: bool) -> bool:
+    """Safe method untuk menyimpan setting - simpan ke cache DAN local."""
+    # Simpan ke cache
+    cache_success = await save_mention_setting(client_id, value)
+    
+    # Simpan ke local storage untuk backward compatibility
+    client_id_str = str(client_id)
+    MENTIONS_DATA[client_id_str] = {
+        "value": bool(value),
+        "timestamp_int": int(time.time())
+    }
+    await save_local_storage()
+    
+    logger.info(f"Saved setting for {client_id}: {value} (cache: {cache_success})")
+    return cache_success
+
+# Load local storage
+asyncio.create_task(load_local_storage())
+
+# ============================================================================
+# 🔥 MAIN MENTION HANDLER - DIUPDATE DENGAN CACHE
+# ============================================================================
 @Altruix.register_on_cmd(
     ["mentions"],
     cmd_help={
@@ -298,6 +708,8 @@ async def mention_settings_handler(c: Client, m: AltruixMessage):
         else:
             return await msg.edit_msg("Usage: `.mentions replyall on/off`")
         
+        # Save to cache
+        await cache_set("reply_from_all_accessible", REPLY_FROM_ALL_ACCESSIBLE, 86400 * 30)
         await save_local_storage()
         return await safe_edit_message(c, m.chat.id, msg.id, msg_text, parse_mode=enums.ParseMode.MARKDOWN)
     
@@ -314,7 +726,7 @@ async def mention_settings_handler(c: Client, m: AltruixMessage):
     
     try:
         client_id = c.me.id
-        await save_mention_setting(client_id, value)
+        await save_mention_setting_safe(client_id, value)
         
         status_msg = f"{emoji} **Mention notifications {status_text}**"
         await safe_edit_message(c, m.chat.id, msg.id, status_msg, parse_mode=enums.ParseMode.MARKDOWN)
@@ -323,6 +735,9 @@ async def mention_settings_handler(c: Client, m: AltruixMessage):
         logger.error(f"Save failed: {e}")
         await msg.edit_msg(f"❌ Save error: {str(e)[:100]}")
 
+# ============================================================================
+# 🔥 MENTION DETECTION HANDLER - DIUPDATE DENGAN CACHE
+# ============================================================================
 @Altruix.on_message(
     filters.mentioned & filters.group & ~filters.user(Altruix.bot_info.id)
 )
@@ -331,7 +746,17 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
     """Handler utama untuk menangkap mention dan mengirim notifikasi ke LOG_CHAT."""
     try:
         msg_key = f"{m.chat.id}_{m.id}"
+        
+        # Cek apakah sudah ada di cache PERSISTEN
+        if await check_mention_in_cache(msg_key):
+            cache_data = await get_mention_from_cache(msg_key)
+            if cache_data and cache_data.get("log_msg_id"):
+                logger.debug(f"⚠️ Mention {msg_key} already processed (from persistent cache)")
+                return
+        
+        # Juga cek di in-memory cache (backward compatibility)
         if msg_key in MENTION_LOG_CACHE and MENTION_LOG_CACHE[msg_key].get("log_msg_id"):
+            logger.debug(f"⚠️ Mention {msg_key} already processed (from memory cache)")
             return
             
         # Cek apakah log_chat dikonfigurasi
@@ -439,8 +864,6 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
             link_button           # Baris kedelapan: Link
         ])
         
-        msg_key = f"{m.chat.id}_{m.id}"
-        
         # Kirim notifikasi
         try:
             sent_log_msg = await Altruix.bot.send_message(
@@ -456,17 +879,36 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
             logger.error(f"Send failed: {send_err}")
             return
         
-        # Cache untuk edit detection - SIMPAN client_id BUKAN objek Client
-        MENTION_LOG_CACHE[msg_key] = {
+        # SIMPAN KE CACHE PERSISTEN (priority)
+        cache_data = {
             "text": message_text,
             "log_msg_id": sent_log_msg.id,
-            "client_id": client_id,  # Simpan ID saja
+            "client_id": client_id,
             "chat_id": m.chat.id,
             "message_id": m.id,
             "timestamp_int": int(time.time()),
             "mentioned_by": mentioner_id,
             "group_name": m.chat.title,
-            "client_name": c.me.first_name if c.me else "Unknown"
+            "client_name": c.me.first_name if c.me else "Unknown",
+            "last_reply_id": None,
+            "last_reply_chat": None
+        }
+        
+        await save_mention_to_cache(msg_key, cache_data)
+        
+        # JUGA SIMPAN KE IN-MEMORY CACHE (backward compatibility)
+        MENTION_LOG_CACHE[msg_key] = {
+            "text": message_text,
+            "log_msg_id": sent_log_msg.id,
+            "client_id": client_id,
+            "chat_id": m.chat.id,
+            "message_id": m.id,
+            "timestamp_int": int(time.time()),
+            "mentioned_by": mentioner_id,
+            "group_name": m.chat.title,
+            "client_name": c.me.first_name if c.me else "Unknown",
+            "last_reply_id": None,
+            "last_reply_chat": None
         }
         
         logger.info(f"✅ Cached mention: {msg_key} for client {client_id} ({c.me.first_name})")
@@ -474,6 +916,9 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
     except Exception as e:
         logger.error(f"❌ Error in mention handler: {e}", exc_info=True)
 
+# ============================================================================
+# 🔥 EDITED MESSAGE HANDLER - DIUPDATE DENGAN CACHE
+# ============================================================================
 @Altruix.on_edited_message(
     filters.group & ~filters.me, group=0
 )
@@ -485,26 +930,35 @@ async def send_mention_edit_handler(c: Client, m: RawMessage):
             return
             
         msg_key = f"{m.chat.id}_{m.id}"
-        cache = MENTION_LOG_CACHE.get(msg_key)
         
-        if cache:
+        # Cek di cache PERSISTEN terlebih dahulu
+        cache_data = await get_mention_from_cache(msg_key)
+        
+        if cache_data:
             # Only the client that originally logged it should handle the update
-            if c.me.id != cache.get("client_id"):
+            if c.me.id != cache_data.get("client_id"):
                 return
-            log_msg_id = cache.get("log_msg_id")
+            log_msg_id = cache_data.get("log_msg_id")
         else:
-            # If not in cache, check if it's now mentioned (new mention via edit)
-            if m.mentioned:
-                # Prevent multiple clients from logging the same new mention
-                if msg_key in MENTION_LOG_CACHE:
+            # Fallback ke in-memory cache
+            cache = MENTION_LOG_CACHE.get(msg_key)
+            if cache:
+                if c.me.id != cache.get("client_id"):
                     return
-                MENTION_LOG_CACHE[msg_key] = {"status": "logging"}
-                try:
-                    return await send_mention_log_handler(c, m)
-                except:
-                    MENTION_LOG_CACHE.pop(msg_key, None)
-                    raise
-            return
+                log_msg_id = cache.get("log_msg_id")
+            else:
+                # If not in cache, check if it's now mentioned (new mention via edit)
+                if m.mentioned:
+                    # Prevent multiple clients from logging the same new mention
+                    if msg_key in MENTION_LOG_CACHE:
+                        return
+                    MENTION_LOG_CACHE[msg_key] = {"status": "logging"}
+                    try:
+                        return await send_mention_log_handler(c, m)
+                    except:
+                        MENTION_LOG_CACHE.pop(msg_key, None)
+                        raise
+                return
 
         if not log_msg_id or log_msg_id == "logging":
             return
@@ -555,13 +1009,21 @@ async def send_mention_edit_handler(c: Client, m: RawMessage):
             disable_web_page_preview=True
         )
         
-        # Update cache text
-        MENTION_LOG_CACHE[msg_key]["text"] = message_text
+        # Update cache text (PERSISTEN)
+        if cache_data:
+            cache_data["text"] = message_text
+            await save_mention_to_cache(msg_key, cache_data)
+        
+        # Update in-memory cache juga
+        if msg_key in MENTION_LOG_CACHE:
+            MENTION_LOG_CACHE[msg_key]["text"] = message_text
         
     except Exception as e:
         logger.error(f"Error in mention edit handler: {e}")
 
-# 🔥 PERBAIKAN UTAMA: Handler untuk quick reaction - FIX EMOJI VALIDATION
+# ============================================================================
+# 🔥 QUICK REACTION HANDLER - DIUPDATE DENGAN CACHE
+# ============================================================================
 @Altruix.bot.on_callback_query(filters.regex(r"^mentions_react_"))
 @log_errors
 async def quick_reaction_handler(c: Client, cb: CallbackQuery):
@@ -594,15 +1056,18 @@ async def quick_reaction_handler(c: Client, cb: CallbackQuery):
         msg_key = f"{chat_id}_{message_id}"
         logger.info(f"🔄 Processing reaction for {msg_key} with {emoji}")
         
-        if msg_key not in MENTION_LOG_CACHE:
-            logger.warning(f"❌ Mention not in cache: {msg_key}")
-            logger.debug(f"Current cache size: {len(MENTION_LOG_CACHE)}")
-            logger.debug(f"Available keys: {list(MENTION_LOG_CACHE.keys())[:10]}...")
-            await cb.answer(f"❌ Mention tidak ditemukan di cache ({msg_key}).", show_alert=True)
-            return
+        # CEK DI CACHE PERSISTEN TERLEBIH DAHULU
+        cache_data = await get_mention_from_cache(msg_key)
+        
+        if not cache_data:
+            # Fallback ke in-memory cache
+            if msg_key not in MENTION_LOG_CACHE:
+                logger.warning(f"❌ Mention not in cache: {msg_key}")
+                await cb.answer(f"❌ Mention tidak ditemukan di cache ({msg_key}).", show_alert=True)
+                return
+            cache_data = MENTION_LOG_CACHE[msg_key]
         
         # DAPATKAN CLIENT DARI CLIENT_ID
-        cache_data = MENTION_LOG_CACHE[msg_key]
         client_id = cache_data["client_id"]
         logger.info(f"🔍 Looking for client with ID: {client_id}")
         
@@ -610,8 +1075,6 @@ async def quick_reaction_handler(c: Client, cb: CallbackQuery):
         
         if not userbot_client:
             logger.warning(f"❌ Userbot client not available for ID: {client_id}")
-            # Coba tampilkan info cache untuk debug
-            logger.info(f"Cache data: {cache_data}")
             await cb.answer("❌ Akun yang disebut tidak tersedia atau tidak aktif.", show_alert=True)
             return
         
@@ -671,8 +1134,9 @@ async def quick_reaction_handler(c: Client, cb: CallbackQuery):
         logger.error(f"❌ Quick reaction error: {e}", exc_info=True)
         await cb.answer("❌ Terjadi kesalahan.", show_alert=True)
 
-# 🔥 PERBAIKAN: Handler untuk Reply From All - DIPINDAHKAN KE ATAS & FIXED
-# Menggunakan regex yang lebih spesifik dan urutan yang benar
+# ============================================================================
+# 🔥 REPLY FROM ALL HANDLER - DIUPDATE DENGAN CACHE
+# ============================================================================
 @Altruix.bot.on_callback_query(filters.regex(r"^mentions_replyall_"))
 @log_errors
 async def start_reply_from_all(c: Client, cb: CallbackQuery):
@@ -708,9 +1172,11 @@ async def start_reply_from_all(c: Client, cb: CallbackQuery):
             await cb.answer("❌ User tidak dikenal", show_alert=True)
             return
         
-        # 4. Cek Rate Limit (Anti-Spam)
+        # 4. Cek Rate Limit (Anti-Spam) - GUNAKAN CACHE
         today = datetime.now().strftime("%Y%m%d")
-        if USER_REPLY_COUNTS[user_id][today] >= USER_REPLY_LIMIT:
+        user_count = await get_user_reply_count(user_id, today)
+        
+        if user_count >= USER_REPLY_LIMIT:
             logger.warning(f"⚠️ User {user_id} hit rate limit for today")
             await cb.answer(
                 f"❌ Batas reply tercapai ({USER_REPLY_LIMIT}x per hari). Coba lagi besok.",
@@ -718,16 +1184,18 @@ async def start_reply_from_all(c: Client, cb: CallbackQuery):
             )
             return
         
-        # 5. Cek Ketersediaan Cache
-        if msg_key not in MENTION_LOG_CACHE:
-            logger.warning(f"❌ Mention not in cache: {msg_key}")
-            logger.debug(f"Current cache size: {len(MENTION_LOG_CACHE)}")
-            logger.debug(f"Available keys: {list(MENTION_LOG_CACHE.keys())[:10]}...")
-            await cb.answer(f"❌ Data mention kadaluarsa atau hilang ({msg_key}).", show_alert=True)
-            return
+        # 5. Cek Ketersediaan Cache - PERSISTEN CACHE DULU
+        cache_data = await get_mention_from_cache(msg_key)
+        
+        if not cache_data:
+            # Fallback ke in-memory cache
+            if msg_key not in MENTION_LOG_CACHE:
+                logger.warning(f"❌ Mention not in cache: {msg_key}")
+                await cb.answer(f"❌ Data mention kadaluarsa atau hilang ({msg_key}).", show_alert=True)
+                return
+            cache_data = MENTION_LOG_CACHE[msg_key]
         
         # 6. Dapatkan Client Userbot
-        cache_data = MENTION_LOG_CACHE[msg_key]
         client_id = cache_data["client_id"]
         logger.info(f"🔍 Looking for client with ID: {client_id}")
         
@@ -740,7 +1208,7 @@ async def start_reply_from_all(c: Client, cb: CallbackQuery):
         
         # 7. Generate Waiting ID unik
         waiting_id = f"replyall_{int(time.time())}_{cb.id}"
-        REPLY_AS_MENTIONED_WAITING[waiting_id] = {
+        waiting_data = {
             "chat_id": chat_id,
             "message_id": message_id,
             "client_id": client_id,
@@ -753,6 +1221,12 @@ async def start_reply_from_all(c: Client, cb: CallbackQuery):
             "msg_key": msg_key
         }
         
+        # SIMPAN KE CACHE PERSISTEN
+        await save_waiting_reply(waiting_id, waiting_data)
+        
+        # SIMPAN JUGA KE IN-MEMORY (backward compatibility)
+        REPLY_AS_MENTIONED_WAITING[waiting_id] = waiting_data
+        
         logger.info(f"⏳ Reply From All waiting for {msg_key}, user: {user_id}, waiting_id: {waiting_id}")
         
         # 8. Kirim Instruksi ke User
@@ -761,7 +1235,7 @@ async def start_reply_from_all(c: Client, cb: CallbackQuery):
             client_name = mentioned_client.me.first_name if mentioned_client.me else "Unknown"
             
             instruction_msg = await cb.message.reply(
-                f"� <b>Reply From All</b>\n\n"
+                f"✉️ <b>Reply From All</b>\n\n"
                 f"Halo {user_mention}!\n\n"
                 f"Silakan ketik pesan balasan Anda di bawah ini.\n"
                 f"Pesan akan dikirim sebagai <b>{client_name}</b> ke grup asal.\n\n"
@@ -774,18 +1248,28 @@ async def start_reply_from_all(c: Client, cb: CallbackQuery):
                 )
             )
             
-            REPLY_AS_MENTIONED_WAITING[waiting_id]["instruction_msg_id"] = instruction_msg.id
+            # Update waiting data dengan instruction message ID
+            waiting_data["instruction_msg_id"] = instruction_msg.id
+            await save_waiting_reply(waiting_id, waiting_data)
+            
+            # Update in-memory juga
+            if waiting_id in REPLY_AS_MENTIONED_WAITING:
+                REPLY_AS_MENTIONED_WAITING[waiting_id]["instruction_msg_id"] = instruction_msg.id
+            
             logger.info(f"📤 Reply All instruction sent: {instruction_msg.id}")
             
-            # Update counter hanya jika instruksi berhasil dikirim
-            USER_REPLY_COUNTS[user_id][today] += 1
+            # Update counter - GUNAKAN CACHE FUNCTION
+            await increment_user_reply_count(user_id, today)
             
             # FEEDBACK SUKSES KE USER
             await cb.answer("✅ Silakan ketik balasan Anda (Lihat pesan baru).", show_alert=False)
             
         except Exception as e:
             logger.error(f"❌ Reply All instruction failed: {e}")
-            REPLY_AS_MENTIONED_WAITING.pop(waiting_id, None) # Hapus jika gagal
+            # Hapus dari cache jika gagal
+            await delete_waiting_reply(waiting_id)
+            if waiting_id in REPLY_AS_MENTIONED_WAITING:
+                del REPLY_AS_MENTIONED_WAITING[waiting_id]
             await cb.answer("❌ Gagal mengirim pesan instruksi.", show_alert=True)
             return
 
@@ -793,9 +1277,9 @@ async def start_reply_from_all(c: Client, cb: CallbackQuery):
         logger.error(f"❌ Reply From All logic error: {e}", exc_info=True)
         await cb.answer(f"❌ Terjadi kesalahan sistem: {str(e)[:50]}", show_alert=True)
 
-
-# 🔥 PERBAIKAN: Handler untuk Reply as Mentioned - UPDATED REGEX
-# Regex updated matched ^mentions_reply_ followed by digits specifically
+# ============================================================================
+# 🔥 REPLY AS MENTIONED HANDLER - DIUPDATE DENGAN CACHE
+# ============================================================================
 @Altruix.bot.on_callback_query(filters.regex(r"^mentions_reply_(-?\d+)_"))
 @log_errors
 async def start_reply_as_mentioned(c: Client, cb: CallbackQuery):
@@ -822,15 +1306,16 @@ async def start_reply_as_mentioned(c: Client, cb: CallbackQuery):
         
         logger.info(f"🔄 Starting reply process for {msg_key}")
         
-        # 3. Cek Cache
-        if msg_key not in MENTION_LOG_CACHE:
-            logger.warning(f"❌ Mention not in cache: {msg_key}")
-            logger.debug(f"Current cache size: {len(MENTION_LOG_CACHE)}")
-            logger.debug(f"Available keys: {list(MENTION_LOG_CACHE.keys())[:10]}...")
-            await cb.answer(f"❌ Mention tidak ditemukan di cache ({msg_key}).", show_alert=True)
-            return
+        # 3. Cek Cache - PERSISTEN DULU
+        cache_data = await get_mention_from_cache(msg_key)
         
-        cache_data = MENTION_LOG_CACHE[msg_key]
+        if not cache_data:
+            # Fallback ke in-memory cache
+            if msg_key not in MENTION_LOG_CACHE:
+                logger.warning(f"❌ Mention not in cache: {msg_key}")
+                await cb.answer(f"❌ Mention tidak ditemukan di cache ({msg_key}).", show_alert=True)
+                return
+            cache_data = MENTION_LOG_CACHE[msg_key]
         
         # 4. Validasi Client
         client_id = cache_data["client_id"]
@@ -845,7 +1330,7 @@ async def start_reply_as_mentioned(c: Client, cb: CallbackQuery):
         
         # 5. Generate Waiting ID
         waiting_id = f"reply_{int(time.time())}_{cb.id}"
-        REPLY_AS_MENTIONED_WAITING[waiting_id] = {
+        waiting_data = {
             "chat_id": chat_id,
             "message_id": message_id,
             "client_id": client_id,
@@ -858,12 +1343,18 @@ async def start_reply_as_mentioned(c: Client, cb: CallbackQuery):
             "msg_key": msg_key
         }
         
+        # SIMPAN KE CACHE PERSISTEN
+        await save_waiting_reply(waiting_id, waiting_data)
+        
+        # SIMPAN JUGA KE IN-MEMORY
+        REPLY_AS_MENTIONED_WAITING[waiting_id] = waiting_data
+        
         logger.info(f"⏳ Waiting for reply input for {msg_key}, waiting_id: {waiting_id}")
         
         # 6. Kirim Instruksi
         try:
             instruction_msg = await cb.message.reply(
-                "�️ <b>Reply as Mentioned</b>\n\n"
+                "✉️ <b>Reply as Mentioned</b>\n\n"
                 "Silakan ketik pesan balasan Anda di bawah ini.\n"
                 "Pesan akan dikirim sebagai akun yang disebut di grup asal.\n\n"
                 "<i>Balas pesan ini dengan teks yang ingin dikirim.</i>",
@@ -874,7 +1365,13 @@ async def start_reply_as_mentioned(c: Client, cb: CallbackQuery):
                 )
             )
             
-            REPLY_AS_MENTIONED_WAITING[waiting_id]["instruction_msg_id"] = instruction_msg.id
+            waiting_data["instruction_msg_id"] = instruction_msg.id
+            await save_waiting_reply(waiting_id, waiting_data)
+            
+            # Update in-memory juga
+            if waiting_id in REPLY_AS_MENTIONED_WAITING:
+                REPLY_AS_MENTIONED_WAITING[waiting_id]["instruction_msg_id"] = instruction_msg.id
+            
             logger.info(f"📤 Instruction sent: {instruction_msg.id}")
             
             # FEEDBACK SUKSES
@@ -882,7 +1379,10 @@ async def start_reply_as_mentioned(c: Client, cb: CallbackQuery):
             
         except Exception as e:
             logger.error(f"❌ Instruction send failed: {e}")
-            REPLY_AS_MENTIONED_WAITING.pop(waiting_id, None) # Cleanup
+            # Hapus dari cache jika gagal
+            await delete_waiting_reply(waiting_id)
+            if waiting_id in REPLY_AS_MENTIONED_WAITING:
+                del REPLY_AS_MENTIONED_WAITING[waiting_id]
             await cb.answer("❌ Gagal mengirim instruksi reply.", show_alert=True)
             return
         
@@ -890,7 +1390,9 @@ async def start_reply_as_mentioned(c: Client, cb: CallbackQuery):
         logger.error(f"❌ Reply start error: {e}", exc_info=True)
         await cb.answer(f"❌ Error: {str(e)[:50]}", show_alert=True)
 
-# 🔥 PERBAIKAN: Handler untuk menerima input balasan
+# ============================================================================
+# 🔥 HANDLE REPLY INPUT - DIUPDATE DENGAN CACHE
+# ============================================================================
 @Altruix.bot.on_message(filters.chat(Altruix.log_chat) & filters.reply)
 @log_errors
 async def handle_reply_as_mentioned_input(c: Client, m: RawMessage):
@@ -902,18 +1404,48 @@ async def handle_reply_as_mentioned_input(c: Client, m: RawMessage):
         reply_msg_id = m.reply_to_message.id
         logger.info(f"🔍 Checking reply input for message {reply_msg_id}")
         
-        # Cari waiting_id berdasarkan instruction_msg_id
+        # Cari waiting_id berdasarkan instruction_msg_id - CEK DI CACHE PERSISTEN
         waiting_id = None
-        for wid, data in REPLY_AS_MENTIONED_WAITING.items():
-            if data.get("instruction_msg_id") == reply_msg_id:
-                waiting_id = wid
+        
+        # Note: Ini perlu dioptimasi jika banyak waiting entries
+        # Untuk skala kecil, bisa scan dengan pattern
+        
+        # Coba cari dengan pattern umum dulu
+        possible_patterns = [
+            f"reply_{reply_msg_id}",
+            f"replyall_{reply_msg_id}"
+        ]
+        
+        for pattern in possible_patterns:
+            # Coba dengan berbagai kombinasi
+            for suffix in ["", f"_{int(time.time()) - 300}", f"_{int(time.time()) - 600}"]:
+                test_id = f"{pattern}{suffix}"
+                data = await get_waiting_reply(test_id)
+                if data and data.get("instruction_msg_id") == reply_msg_id:
+                    waiting_id = test_id
+                    break
+            if waiting_id:
                 break
+        
+        # Jika tidak ditemukan di cache, coba di in-memory
+        if not waiting_id and reply_msg_id in [data.get("instruction_msg_id") for data in REPLY_AS_MENTIONED_WAITING.values()]:
+            for wid, data in REPLY_AS_MENTIONED_WAITING.items():
+                if data.get("instruction_msg_id") == reply_msg_id:
+                    waiting_id = wid
+                    break
         
         if not waiting_id or waiting_id not in REPLY_AS_MENTIONED_WAITING:
             logger.debug(f"⚠️ No waiting found for reply to {reply_msg_id}")
             return
         
-        data = REPLY_AS_MENTIONED_WAITING[waiting_id]
+        # DAPATKAN DATA DARI CACHE PERSISTEN (jika ada)
+        data = await get_waiting_reply(waiting_id)
+        if not data:
+            # Fallback ke in-memory
+            if waiting_id not in REPLY_AS_MENTIONED_WAITING:
+                return
+            data = REPLY_AS_MENTIONED_WAITING[waiting_id]
+            
         chat_id = data["chat_id"]
         message_id = data["message_id"]
         client_id = data["client_id"]
@@ -944,6 +1476,18 @@ async def handle_reply_as_mentioned_input(c: Client, m: RawMessage):
             return
         
         logger.info(f"📩 Reply input received for {chat_id}_{message_id}, text: {reply_text[:50]}...")
+        
+        # Update waiting data dengan reply text
+        data["reply_text"] = reply_text
+        data["user_msg_id"] = m.id
+        
+        # SIMPAN KE CACHE PERSISTEN
+        await save_waiting_reply(waiting_id, data)
+        
+        # UPDATE IN-MEMORY JUGA
+        if waiting_id in REPLY_AS_MENTIONED_WAITING:
+            REPLY_AS_MENTIONED_WAITING[waiting_id]["reply_text"] = reply_text
+            REPLY_AS_MENTIONED_WAITING[waiting_id]["user_msg_id"] = m.id
         
         # Buat pesan konfirmasi
         user_info = ""
@@ -979,10 +1523,13 @@ async def handle_reply_as_mentioned_input(c: Client, m: RawMessage):
                 )
             )
             
-            # Update data
-            REPLY_AS_MENTIONED_WAITING[waiting_id]["reply_text"] = reply_text
-            REPLY_AS_MENTIONED_WAITING[waiting_id]["user_msg_id"] = m.id
-            REPLY_AS_MENTIONED_WAITING[waiting_id]["confirm_msg_id"] = confirm_message.id
+            # Update data dengan confirm message ID
+            data["confirm_msg_id"] = confirm_message.id
+            await save_waiting_reply(waiting_id, data)
+            
+            # Update in-memory juga
+            if waiting_id in REPLY_AS_MENTIONED_WAITING:
+                REPLY_AS_MENTIONED_WAITING[waiting_id]["confirm_msg_id"] = confirm_message.id
             
             logger.info(f"📤 Confirmation sent: {confirm_message.id}")
             
@@ -992,7 +1539,9 @@ async def handle_reply_as_mentioned_input(c: Client, m: RawMessage):
     except Exception as e:
         logger.error(f"❌ Reply input error: {e}", exc_info=True)
 
-# 🔥 PERBAIKAN: Handler konfirmasi kirim
+# ============================================================================
+# 🔥 CONFIRM SEND REPLY HANDLER - DIUPDATE DENGAN CACHE
+# ============================================================================
 @Altruix.bot.on_callback_query(filters.regex(r"^mentions_confirm_"))
 @log_errors
 async def confirm_send_reply(c: Client, cb: CallbackQuery):
@@ -1014,12 +1563,16 @@ async def confirm_send_reply(c: Client, cb: CallbackQuery):
         waiting_id = match.group(1)
         logger.info(f"🔄 Confirm send for waiting_id: {waiting_id}")
         
-        if waiting_id not in REPLY_AS_MENTIONED_WAITING:
-            logger.warning(f"❌ Reply data not found: {waiting_id}")
-            await cb.answer("❌ Data tidak ditemukan.", show_alert=True)
-            return
+        # DAPATKAN DATA DARI CACHE PERSISTEN
+        data = await get_waiting_reply(waiting_id)
+        if not data:
+            # Fallback ke in-memory
+            if waiting_id not in REPLY_AS_MENTIONED_WAITING:
+                logger.warning(f"❌ Reply data not found: {waiting_id}")
+                await cb.answer("❌ Data tidak ditemukan.", show_alert=True)
+                return
+            data = REPLY_AS_MENTIONED_WAITING[waiting_id]
         
-        data = REPLY_AS_MENTIONED_WAITING[waiting_id]
         chat_id = data["chat_id"]
         message_id = data["message_id"]
         client_id = data["client_id"]
@@ -1047,20 +1600,22 @@ async def confirm_send_reply(c: Client, cb: CallbackQuery):
             # Simpan message ID balasan di cache untuk fungsi unsend
             if "msg_key" in data:
                 m_key = data["msg_key"]
-                if m_key in MENTION_LOG_CACHE:
-                    # Kita asumsikan balasan terbaru adalah yang ingin di-unsend
-                    # Atau bisa buat list balasan
-                    MENTION_LOG_CACHE[m_key]["last_reply_id"] = chat_id # Salah, harusnya message_id dari sent_msg
-            
-            # Perbaikan kirim balasan untuk dapatkan sent_msg
-            sent_msg = await mentioned_client.send_message(
-                chat_id,
-                reply_text,
-                reply_to_message_id=message_id
-            )
-            
-            if "msg_key" in data:
-                m_key = data["msg_key"]
+                
+                # Kirim balasan dan dapatkan sent_msg
+                sent_msg = await mentioned_client.send_message(
+                    chat_id,
+                    reply_text,
+                    reply_to_message_id=message_id
+                )
+                
+                # UPDATE CACHE PERSISTEN dengan last_reply_id
+                cache_data = await get_mention_from_cache(m_key)
+                if cache_data:
+                    cache_data["last_reply_id"] = sent_msg.id
+                    cache_data["last_reply_chat"] = chat_id
+                    await save_mention_to_cache(m_key, cache_data)
+                
+                # UPDATE IN-MEMORY CACHE JUGA
                 if m_key in MENTION_LOG_CACHE:
                     MENTION_LOG_CACHE[m_key]["last_reply_id"] = sent_msg.id
                     MENTION_LOG_CACHE[m_key]["last_reply_chat"] = chat_id
@@ -1079,8 +1634,6 @@ async def confirm_send_reply(c: Client, cb: CallbackQuery):
             
             # Hapus pesan terkait (KECUALI user_msg_id agar link/history tersisa)
             messages_to_delete = []
-            # if user_msg_id and user_msg_id != cb.message.id:
-            #     messages_to_delete.append(user_msg_id)
             if confirm_msg_id and confirm_msg_id != cb.message.id:
                 messages_to_delete.append(confirm_msg_id)
             if instruction_msg_id:
@@ -1106,8 +1659,13 @@ async def confirm_send_reply(c: Client, cb: CallbackQuery):
             await cb.answer("❌ Gagal mengirim.", show_alert=True)
             return
         
-        # Bersihkan waiting list
-        REPLY_AS_MENTIONED_WAITING.pop(waiting_id, None)
+        # Bersihkan waiting list dari CACHE PERSISTEN
+        await delete_waiting_reply(waiting_id)
+        
+        # Bersihkan dari in-memory juga
+        if waiting_id in REPLY_AS_MENTIONED_WAITING:
+            del REPLY_AS_MENTIONED_WAITING[waiting_id]
+        
         await cb.answer("✅ Balasan terkirim!", show_alert=False)
         
         # Save stats
@@ -1117,7 +1675,9 @@ async def confirm_send_reply(c: Client, cb: CallbackQuery):
         logger.error(f"❌ Confirm send error: {e}", exc_info=True)
         await cb.answer("❌ Terjadi kesalahan.", show_alert=True)
 
-# 🔥 PERBAIKAN: Handler pembatalan
+# ============================================================================
+# 🔥 CANCEL SEND REPLY HANDLER - DIUPDATE DENGAN CACHE
+# ============================================================================
 @Altruix.bot.on_callback_query(filters.regex(r"^mentions_cancel_"))
 @log_errors
 async def cancel_send_reply(c: Client, cb: CallbackQuery):
@@ -1139,9 +1699,10 @@ async def cancel_send_reply(c: Client, cb: CallbackQuery):
         waiting_id = match.group(1)
         logger.info(f"🔄 Cancel reply for waiting_id: {waiting_id}")
         
-        if waiting_id in REPLY_AS_MENTIONED_WAITING:
-            data = REPLY_AS_MENTIONED_WAITING[waiting_id]
-            
+        # DAPATKAN DATA DARI CACHE PERSISTEN
+        data = await get_waiting_reply(waiting_id)
+        
+        if data:
             # Hapus pesan terkait
             messages_to_delete = []
             if data.get("user_msg_id"):
@@ -1158,14 +1719,25 @@ async def cancel_send_reply(c: Client, cb: CallbackQuery):
                 except Exception as delete_err:
                     logger.warning(f"⚠️ Delete on cancel failed: {delete_err}")
             
-            # Refund reply count untuk Reply From All
+            # Refund reply count untuk Reply From All - GUNAKAN CACHE FUNCTION
+            if data.get("is_reply_all") and data.get("user_id"):
+                today = datetime.now().strftime("%Y%m%d")
+                await decrement_user_reply_count(data["user_id"], today)
+                logger.info(f"↩️ Refunded reply count for user {data['user_id']}")
+            
+            # Hapus dari cache persisten
+            await delete_waiting_reply(waiting_id)
+        
+        # Hapus dari in-memory juga
+        if waiting_id in REPLY_AS_MENTIONED_WAITING:
+            # Refund untuk in-memory juga
+            data = REPLY_AS_MENTIONED_WAITING[waiting_id]
             if data.get("is_reply_all") and data.get("user_id"):
                 today = datetime.now().strftime("%Y%m%d")
                 if USER_REPLY_COUNTS[data["user_id"]][today] > 0:
                     USER_REPLY_COUNTS[data["user_id"]][today] -= 1
-                    logger.info(f"↩️ Refunded reply count for user {data['user_id']}")
             
-            REPLY_AS_MENTIONED_WAITING.pop(waiting_id, None)
+            del REPLY_AS_MENTIONED_WAITING[waiting_id]
             
             await cb.message.edit_text(
                 "❌ <b>Pengiriman dibatalkan.</b>",
@@ -1179,7 +1751,9 @@ async def cancel_send_reply(c: Client, cb: CallbackQuery):
         logger.error(f"❌ Cancel error: {e}", exc_info=True)
         await cb.answer("❌ Terjadi kesalahan.", show_alert=True)
 
-# 🔥 Handler untuk reacted button
+# ============================================================================
+# 🔥 ALREADY REACTED HANDLER
+# ============================================================================
 @Altruix.bot.on_callback_query(filters.regex(r"^mentions_reacted$"))
 @log_errors
 async def already_reacted_handler(c: Client, cb: CallbackQuery):
@@ -1187,7 +1761,9 @@ async def already_reacted_handler(c: Client, cb: CallbackQuery):
     log_button_press("ALREADY_REACTED", cb.data, cb.from_user.id if cb.from_user else None)
     await cb.answer("✅ Sudah direaksi sebelumnya", show_alert=False)
 
-# 🔥 Handler untuk tombol test (dari perintah /mentions_test atau /test_mention)
+# ============================================================================
+# 🔥 TEST BUTTONS HANDLER
+# ============================================================================
 @Altruix.bot.on_callback_query(filters.regex(r"^test_mentions_"))
 @log_errors
 async def test_buttons_handler_bot(c: Client, cb: CallbackQuery):
@@ -1227,7 +1803,9 @@ async def test_buttons_handler_bot(c: Client, cb: CallbackQuery):
         logger.error(f"❌ Test button handler failed: {e}")
         await cb.answer("❌ Test failed", show_alert=True)
 
-# 🔥 HANDLER BARU: Remove Reaction
+# ============================================================================
+# 🔥 UNREACT HANDLER - DIUPDATE DENGAN CACHE
+# ============================================================================
 @Altruix.bot.on_callback_query(filters.regex(r"^mentions_unreact_(-?\d+)_(\d+)"))
 @log_errors
 async def quick_unreact_handler(c: Client, cb: CallbackQuery):
@@ -1237,11 +1815,16 @@ async def quick_unreact_handler(c: Client, cb: CallbackQuery):
         message_id = int(cb.matches[0].group(2))
         msg_key = f"{chat_id}_{message_id}"
         
-        if msg_key not in MENTION_LOG_CACHE:
-            await cb.answer("❌ Mention tidak ditemukan di cache.", show_alert=True)
-            return
+        # CEK DI CACHE PERSISTEN
+        cache_data = await get_mention_from_cache(msg_key)
+        
+        if not cache_data:
+            # Fallback ke in-memory
+            if msg_key not in MENTION_LOG_CACHE:
+                await cb.answer("❌ Mention tidak ditemukan di cache.", show_alert=True)
+                return
+            cache_data = MENTION_LOG_CACHE[msg_key]
             
-        cache_data = MENTION_LOG_CACHE[msg_key]
         client_id = cache_data["client_id"]
         userbot_client = await get_mention_client(client_id)
         
@@ -1250,7 +1833,7 @@ async def quick_unreact_handler(c: Client, cb: CallbackQuery):
             return
             
         # Hapus reaction dengan mengirim list kosong atau send_reaction tanpa emoji
-        await userbot_client.send_reaction(chat_id, message_id)
+        await userbot_client.send_reaction(chat_id, message_id, "")
         
         await cb.answer("✅ Reaction dihapus!", show_alert=False)
         logger.info(f"🗑️ Reaction removed for {msg_key}")
@@ -1259,7 +1842,9 @@ async def quick_unreact_handler(c: Client, cb: CallbackQuery):
         logger.error(f"❌ Unreact failed: {e}")
         await cb.answer(f"❌ Gagal: {str(e)[:50]}", show_alert=True)
 
-# 🔥 HANDLER BARU: Choose Others Emojis
+# ============================================================================
+# 🔥 OTHERS EMOJI HANDLER
+# ============================================================================
 @Altruix.bot.on_callback_query(filters.regex(r"^mentions_others_(-?\d+)_(\d+)"))
 @log_errors
 async def others_emoji_handler(c: Client, cb: CallbackQuery):
@@ -1290,7 +1875,9 @@ async def others_emoji_handler(c: Client, cb: CallbackQuery):
         logger.error(f"❌ Others emoji handler failed: {e}")
         await cb.answer("❌ Gagal memuat emoji", show_alert=True)
 
-# 🔥 HANDLER BARU: Back to Main Menu
+# ============================================================================
+# 🔥 BACK TO MAIN HANDLER
+# ============================================================================
 @Altruix.bot.on_callback_query(filters.regex(r"^mentions_back_(-?\d+)_(\d+)"))
 @log_errors
 async def back_to_main_handler(c: Client, cb: CallbackQuery):
@@ -1338,7 +1925,9 @@ async def back_to_main_handler(c: Client, cb: CallbackQuery):
     except Exception as e:
         logger.error(f"❌ Back to main handler failed: {e}")
 
-# 🔥 HANDLER BARU: Save Mention to Log
+# ============================================================================
+# 🔥 SAVE TO LOG HANDLER - DIUPDATE DENGAN CACHE
+# ============================================================================
 @Altruix.bot.on_callback_query(filters.regex(r"^mentions_save_(-?\d+)_(\d+)"))
 @log_errors
 async def save_mention_to_log(c: Client, cb: CallbackQuery):
@@ -1349,11 +1938,16 @@ async def save_mention_to_log(c: Client, cb: CallbackQuery):
         message_id = int(cb.matches[0].group(2))
         msg_key = f"{chat_id}_{message_id}"
         
-        if msg_key not in MENTION_LOG_CACHE:
-            await cb.answer("❌ Data mention tidak ditemukan di cache.", show_alert=True)
-            return
+        # CEK DI CACHE PERSISTEN
+        cache_data = await get_mention_from_cache(msg_key)
+        
+        if not cache_data:
+            # Fallback ke in-memory
+            if msg_key not in MENTION_LOG_CACHE:
+                await cb.answer("❌ Data mention tidak ditemukan di cache.", show_alert=True)
+                return
+            cache_data = MENTION_LOG_CACHE[msg_key]
             
-        cache_data = MENTION_LOG_CACHE[msg_key]
         client_id = cache_data["client_id"]
         userbot_client = await get_mention_client(client_id)
         
@@ -1371,7 +1965,9 @@ async def save_mention_to_log(c: Client, cb: CallbackQuery):
         logger.error(f"❌ Save to log failed: {e}")
         await cb.answer(f"❌ Gagal menyimpan: {str(e)[:50]}", show_alert=True)
 
-# 🔥 HANDLER BARU: Unsend Reply
+# ============================================================================
+# 🔥 UNSEND REPLY HANDLER - DIUPDATE DENGAN CACHE
+# ============================================================================
 @Altruix.bot.on_callback_query(filters.regex(r"^mentions_unsend_(-?\d+)_(\d+)"))
 @log_errors
 async def unsend_reply_handler(c: Client, cb: CallbackQuery):
@@ -1382,11 +1978,16 @@ async def unsend_reply_handler(c: Client, cb: CallbackQuery):
         message_id = int(cb.matches[0].group(2))
         msg_key = f"{chat_id}_{message_id}"
         
-        if msg_key not in MENTION_LOG_CACHE:
-            await cb.answer("❌ Data mention tidak ditemukan di cache.", show_alert=True)
-            return
+        # CEK DI CACHE PERSISTEN
+        cache_data = await get_mention_from_cache(msg_key)
+        
+        if not cache_data:
+            # Fallback ke in-memory
+            if msg_key not in MENTION_LOG_CACHE:
+                await cb.answer("❌ Data mention tidak ditemukan di cache.", show_alert=True)
+                return
+            cache_data = MENTION_LOG_CACHE[msg_key]
             
-        cache_data = MENTION_LOG_CACHE[msg_key]
         last_reply_id = cache_data.get("last_reply_id")
         last_reply_chat = cache_data.get("last_reply_chat")
         
@@ -1404,9 +2005,15 @@ async def unsend_reply_handler(c: Client, cb: CallbackQuery):
         # Hapus balasan
         await userbot_client.delete_messages(last_reply_chat or chat_id, last_reply_id)
         
-        # Update cache
+        # Update cache - PERSISTEN
+        cache_data.pop("last_reply_id", None)
+        cache_data.pop("last_reply_chat", None)
+        await save_mention_to_cache(msg_key, cache_data)
+        
+        # Update in-memory juga
         if msg_key in MENTION_LOG_CACHE:
             MENTION_LOG_CACHE[msg_key].pop("last_reply_id", None)
+            MENTION_LOG_CACHE[msg_key].pop("last_reply_chat", None)
         
         await cb.answer("🗑️ Balasan berhasil dihapus (unsend)!", show_alert=True)
         logger.info(f"🗑️ Reply {last_reply_id} unsend for {msg_key}")
@@ -1415,7 +2022,202 @@ async def unsend_reply_handler(c: Client, cb: CallbackQuery):
         logger.error(f"❌ Unsend failed: {e}")
         await cb.answer(f"❌ Gagal unsend: {str(e)[:50]}", show_alert=True)
 
-# 🔥 Command untuk status
+# ============================================================================
+# 🔥 CACHE MANAGEMENT COMMAND - BARU
+# ============================================================================
+@Altruix.register_on_cmd(
+    ["mentions_cache"],
+    cmd_help={
+        "help": "Manage mention cache system",
+        "example": "mentions_cache stats | mentions_cache clear | mentions_cache backend redis",
+    },
+    group_only=False,
+    requires_input=True,
+)
+@log_errors
+async def cache_management_handler(c: Client, m: AltruixMessage):
+    """Manage mention cache system."""
+    msg = await m.handle_message("PROCESSING")
+    user_input = m.user_input.lower().strip()
+    
+    try:
+        if user_input == "stats":
+            # Get cache statistics
+            if CACHE_MANAGER_AVAILABLE and cache_manager:
+                stats = await cache_manager.get_stats()
+                
+                stats_msg = (
+                    f"📊 <b>Cache Statistics v{PLUGIN_VERSION}</b>\n\n"
+                    f"<b>Backend:</b> {stats.get('backend', 'Unknown')}\n"
+                    f"<b>Memory Items:</b> {stats.get('memory_items', 0)}\n"
+                )
+                
+                if stats.get('redis_keys') is not None:
+                    stats_msg += f"<b>Redis Keys:</b> {stats['redis_keys']}\n"
+                elif stats.get('mongodb_count') is not None:
+                    stats_msg += f"<b>MongoDB Count:</b> {stats['mongodb_count']}\n"
+                elif stats.get('json_items') is not None:
+                    stats_msg += f"<b>JSON Items:</b> {stats['json_items']}\n"
+                    if stats.get('last_updated'):
+                        stats_msg += f"<b>Last Updated:</b> {stats['last_updated']}\n"
+                
+                stats_msg += f"\n<b>Cache Types:</b>\n"
+                stats_msg += f"• Mention Cache: {len(MENTION_LOG_CACHE)} (memory)\n"
+                stats_msg += f"• Waiting Replies: {len(REPLY_AS_MENTIONED_WAITING)} (memory)\n"
+                
+                await safe_edit_message(
+                    c,
+                    m.chat.id,
+                    msg.id,
+                    stats_msg,
+                    parse_mode=enums.ParseMode.HTML
+                )
+            else:
+                await msg.edit_msg("❌ Cache manager not available")
+                
+        elif user_input == "clear":
+            # Clear all cache
+            if CACHE_MANAGER_AVAILABLE and cache_manager:
+                await cache_manager.clear()
+                await msg.edit_msg("✅ All persistent cache cleared")
+            else:
+                # Clear fallback cache
+                MENTION_LOG_CACHE.clear()
+                REPLY_AS_MENTIONED_WAITING.clear()
+                await msg.edit_msg("✅ Fallback cache cleared")
+                
+        elif user_input.startswith("backend"):
+            # Change cache backend
+            backend = user_input.replace("backend", "").strip()
+            await msg.edit_msg(
+                f"⚠️ To change cache backend to {backend}, set environment variable:\n\n"
+                f"For Redis: <code>REDIS_URL=redis://your-redis-url</code>\n"
+                f"For MongoDB: <code>MONGO_URI=mongodb://your-mongo-url</code>\n\n"
+                f"Then restart Altruix.",
+                parse_mode=enums.ParseMode.HTML
+            )
+                
+        elif user_input == "cleanup":
+            # Cleanup expired entries
+            if CACHE_MANAGER_AVAILABLE and cache_manager:
+                cleaned = await cache_manager.cleanup_expired()
+                await msg.edit_msg(f"✅ Cleaned {cleaned} expired cache entries")
+            else:
+                await msg.edit_msg("❌ Cache cleanup not available for this backend")
+                
+        elif user_input == "fix":
+            # Fix cache issues
+            await fix_cache_command(c, m)
+            return
+                
+        else:
+            await msg.edit_msg(
+                "📚 <b>Cache Management Commands:</b>\n\n"
+                "• <code>mentions_cache stats</code> - Show cache statistics\n"
+                "• <code>mentions_cache clear</code> - Clear all cache\n"
+                "• <code>mentions_cache cleanup</code> - Cleanup expired entries\n"
+                "• <code>mentions_cache fix</code> - Fix missing cache entries\n"
+                "• <code>mentions_cache backend [name]</code> - Change backend\n\n"
+                "<b>Available Backends:</b>\n"
+                "• memory - In-memory (volatile)\n"
+                "• json - JSON file storage\n"
+                "• redis - Redis database\n"
+                "• mongodb - MongoDB database\n\n"
+                f"<b>Current:</b> {'Cache manager available' if CACHE_MANAGER_AVAILABLE else 'Using fallback memory cache'}",
+                parse_mode=enums.ParseMode.HTML
+            )
+            
+    except Exception as e:
+        logger.error(f"❌ Cache management error: {e}")
+        await msg.edit_msg(f"❌ Error: {str(e)[:100]}")
+
+# ============================================================================
+# 🔥 FIX CACHE COMMAND - BARU
+# ============================================================================
+@Altruix.register_on_cmd(
+    ["mentions_fix_cache"],
+    cmd_help={
+        "help": "Fix missing cache entries by reloading from log chat",
+        "example": "mentions_fix_cache",
+    },
+    group_only=False,
+    requires_input=False,
+)
+@log_errors
+async def fix_cache_command(c: Client, m: AltruixMessage):
+    """Fix missing cache entries by scanning log chat."""
+    msg = await m.handle_message("⏳ Scanning log chat for mentions...")
+    
+    try:
+        if not Altruix.log_chat:
+            await msg.edit_msg("❌ LOG_CHAT not configured")
+            return
+        
+        # Scan recent messages in log chat
+        found = 0
+        fixed = 0
+        
+        async for message in Altruix.bot.search_messages(
+            Altruix.log_chat,
+            query="Mention Detected",
+            limit=50
+        ):
+            try:
+                if message.text and "Mention Detected" in message.text:
+                    # Extract chat_id and message_id from buttons
+                    if message.reply_markup:
+                        for row in message.reply_markup.inline_keyboard:
+                            for button in row:
+                                if button.callback_data:
+                                    # Parse callback data
+                                    if button.callback_data.startswith("mentions_"):
+                                        parts = button.callback_data.split("_")
+                                        if len(parts) >= 3:
+                                            try:
+                                                chat_id = int(parts[1])
+                                                message_id = int(parts[2])
+                                                msg_key = f"{chat_id}_{message_id}"
+                                                
+                                                # Check if exists in cache
+                                                if not await check_mention_in_cache(msg_key):
+                                                    # Create cache entry
+                                                    cache_data = {
+                                                        "text": "Recovered from log",
+                                                        "log_msg_id": message.id,
+                                                        "client_id": c.me.id if c.me else 0,
+                                                        "chat_id": chat_id,
+                                                        "message_id": message_id,
+                                                        "timestamp_int": int(time.time()),
+                                                        "mentioned_by": 0,
+                                                        "group_name": "Unknown",
+                                                        "client_name": "Recovered"
+                                                    }
+                                                    
+                                                    await save_mention_to_cache(msg_key, cache_data)
+                                                    fixed += 1
+                                                    logger.info(f"✅ Fixed cache for {msg_key}")
+                                                
+                                                found += 1
+                                            except ValueError:
+                                                continue
+            except Exception as e:
+                logger.error(f"Error processing message {message.id}: {e}")
+        
+        await msg.edit_msg(
+            f"✅ <b>Cache Fix Complete</b>\n\n"
+            f"• Scanned messages: {found}\n"
+            f"• Fixed cache entries: {fixed}\n\n"
+            f"<i>Restart mentions plugin if issues persist.</i>",
+            parse_mode=enums.ParseMode.HTML
+        )
+        
+    except Exception as e:
+        logger.error(f"❌ Fix cache error: {e}")
+        await msg.edit_msg(f"❌ Error: {str(e)[:100]}")
+
+# ============================================================================
+# 🔥 STATUS COMMAND - DIUPDATE DENGAN INFO CACHE
+# ============================================================================
 @Altruix.register_on_cmd(
     ["mentions_status"],
     cmd_help={
@@ -1427,34 +2229,51 @@ async def unsend_reply_handler(c: Client, cb: CallbackQuery):
 )
 @log_errors
 async def status_command_handler(c: Client, m: AltruixMessage):
-    """Check plugin status."""
+    """Check plugin status with cache info."""
     msg = await m.handle_message("PROCESSING")
     
     client_id_str = str(c.me.id)
-    user_setting = MENTIONS_DATA.get(client_id_str, {}).get("value", False)
+    user_setting = await get_mention_setting_safe(c.me.id)
     
     # Hitung statistik user
     today = datetime.now().strftime("%Y%m%d")
-    total_users_today = sum(1 for counts in USER_REPLY_COUNTS.values() if counts.get(today, 0) > 0)
-    total_replies_today = sum(counts.get(today, 0) for counts in USER_REPLY_COUNTS.values())
+    total_users_today = 0
+    total_replies_today = 0
+    
+    # Get cache stats
+    cache_info = "Unknown"
+    if CACHE_MANAGER_AVAILABLE and cache_manager:
+        stats = await cache_manager.get_stats()
+        cache_info = f"{stats.get('backend', 'Unknown')}"
+        if stats.get('redis_keys'):
+            cache_info += f" ({stats['redis_keys']} keys)"
+        elif stats.get('mongodb_count'):
+            cache_info += f" ({stats['mongodb_count']} docs)"
+        elif stats.get('json_items'):
+            cache_info += f" ({stats['json_items']} items)"
     
     status_msg = (
         f"📊 <b>Mention Plugin Status v{PLUGIN_VERSION}</b>\n\n"
         f"<b>Settings:</b>\n"
         f"• Mentions: {'✅ ENABLED' if user_setting else '❌ DISABLED'}\n"
-        f"• Reply Limit: {USER_REPLY_LIMIT}/user/day\n\n"
+        f"• Reply Limit: {USER_REPLY_LIMIT}/user/day\n"
+        f"• Reply From All: {'✅ ENABLED' if REPLY_FROM_ALL_ACCESSIBLE else '❌ DISABLED'}\n\n"
+        f"<b>Cache System:</b>\n"
+        f"• Backend: {cache_info}\n"
+        f"• Memory Cache: {len(MENTION_LOG_CACHE)} items\n"
+        f"• Waiting Replies: {len(REPLY_AS_MENTIONED_WAITING)} items\n\n"
         f"<b>Statistics:</b>\n"
-        f"• Cache: {len(MENTION_LOG_CACHE)} mentions\n"
-        f"• Waiting: {len(REPLY_AS_MENTIONED_WAITING)} replies\n"
-        f"• Users today: {total_users_today}\n"
-        f"• Replies today: {total_replies_today}\n\n"
-        f"<b>Button Usage:</b>\n"
-        f"• React: {BUTTON_STATS['react']}\n"
-        f"• Reply: {BUTTON_STATS['reply']}\n"
-        f"• Reply All: {BUTTON_STATS['reply_all']}\n"
-        f"• Confirm: {BUTTON_STATS['confirm']}\n"
-        f"• Cancel: {BUTTON_STATS['cancel']}\n\n"
-        f"<b>Valid Emojis:</b> 👍 ❤️ 🔥 🥰 👏\n\n"
+        f"• Button React: {BUTTON_STATS['react']}\n"
+        f"• Button Reply: {BUTTON_STATS['reply']}\n"
+        f"• Button Reply All: {BUTTON_STATS['reply_all']}\n"
+        f"• Button Confirm: {BUTTON_STATS['confirm']}\n"
+        f"• Button Cancel: {BUTTON_STATS['cancel']}\n"
+        f"• Button Save: {BUTTON_STATS['save']}\n"
+        f"• Button Unsend: {BUTTON_STATS['unsend']}\n\n"
+        f"<b>Commands:</b>\n"
+        f"• <code>/mentions_cache stats</code> - Cache statistics\n"
+        f"• <code>/mentions_fix_cache</code> - Fix missing cache\n"
+        f"• <code>/mentions_test</code> - Test buttons\n\n"
         f"<i>Last update: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</i>"
     )
     
@@ -1466,7 +2285,9 @@ async def status_command_handler(c: Client, m: AltruixMessage):
         parse_mode=enums.ParseMode.HTML
     )
 
-# 🔥 PERBAIKAN: Command untuk debug tombol
+# ============================================================================
+# 🔥 DEBUG COMMAND
+# ============================================================================
 @Altruix.register_on_cmd(
     ["mentions_debug"],
     cmd_help={
@@ -1506,8 +2327,9 @@ async def debug_command_handler(c: Client, m: AltruixMessage):
         debug_msg += f"• LOG_CHAT: <code>{Altruix.log_chat}</code>\n"
         debug_msg += f"• Bot ID: <code>{Altruix.bot_info.id if Altruix.bot_info else 'None'}</code>\n"
         debug_msg += f"• Plugin: v{PLUGIN_VERSION}\n"
-        debug_msg += f"• Log Level: {logger.level} ({logging.getLevelName(logger.level)})\n"
-        debug_msg += f"• Cache Size: {len(MENTION_LOG_CACHE)}\n"
+        debug_msg += f"• Cache Manager: {'✅ Available' if CACHE_MANAGER_AVAILABLE else '❌ Not Available'}\n"
+        debug_msg += f"• Cache Backend: {cache_info if 'cache_info' in locals() else 'Unknown'}\n"
+        debug_msg += f"• Memory Cache Size: {len(MENTION_LOG_CACHE)}\n"
         debug_msg += f"• Waiting Size: {len(REPLY_AS_MENTIONED_WAITING)}\n\n"
         
         debug_msg += f"<b>Recent Cache Keys:</b>\n"
@@ -1519,12 +2341,14 @@ async def debug_command_handler(c: Client, m: AltruixMessage):
         debug_msg += f"\n<b>Common Issues:</b>\n"
         debug_msg += f"1. REACTION_INVALID: Emoji tidak didukung Telegram\n"
         debug_msg += f"2. Tombol tidak merespon: Cek log untuk 'Button pressed'\n"
-        debug_msg += f"3. Timeout errors: Network issue\n\n"
+        debug_msg += f"3. Timeout errors: Network issue\n"
+        debug_msg += f"4. Cache missing: Gunakan /mentions_fix_cache\n\n"
         
         debug_msg += f"<b>Test Commands:</b>\n"
         debug_msg += f"• <code>/mentions_test</code> - Test semua tombol\n"
         debug_msg += f"• <code>/mentions_status</code> - Status lengkap\n"
-        debug_msg += f"• <code>/mentions_clear</code> - Clear cache\n\n"
+        debug_msg += f"• <code>/mentions_clear</code> - Clear cache\n"
+        debug_msg += f"• <code>/mentions_cache stats</code> - Cache status\n\n"
         
         debug_msg += f"<i>Cek log file untuk detail error.</i>"
         
@@ -1540,7 +2364,9 @@ async def debug_command_handler(c: Client, m: AltruixMessage):
         logger.error(f"❌ Debug command failed: {e}")
         await msg.edit_msg(f"❌ Debug error: {str(e)[:100]}")
 
-# 🔥 PERBAIKAN: Command untuk test tombol - DIPERBAIKI!
+# ============================================================================
+# 🔥 TEST BUTTONS COMMAND
+# ============================================================================
 @Altruix.register_on_cmd(
     ["mentions_test"],
     cmd_help={
@@ -1596,6 +2422,7 @@ async def test_buttons_command(c: Client, m: AltruixMessage):
             f"<b>Status:</b>\n"
             f"• Plugin: v{PLUGIN_VERSION}\n"
             f"• Cache: {len(MENTION_LOG_CACHE)} entries\n"
+            f"• Cache Manager: {'✅ Available' if CACHE_MANAGER_AVAILABLE else '❌ Not Available'}\n"
             f"• Bot: {c.me.first_name if c.me else 'Unknown'}\n\n"
             f"<i>Tekan tombol di bawah untuk testing.</i>\n"
             f"<i>Cek log untuk debugging.</i>"
@@ -1612,7 +2439,7 @@ async def test_buttons_command(c: Client, m: AltruixMessage):
         
         # Tambahkan ke cache untuk testing
         test_key = f"{test_chat_id}_{test_message_id}"
-        MENTION_LOG_CACHE[test_key] = {
+        cache_data = {
             "text": "Test message",
             "log_msg_id": test_message.id,
             "client_id": c.me.id,  # Bot client ID
@@ -1624,13 +2451,21 @@ async def test_buttons_command(c: Client, m: AltruixMessage):
             "client_name": c.me.first_name if c.me else "Bot"
         }
         
+        # Simpan ke cache persisten
+        await save_mention_to_cache(test_key, cache_data)
+        
+        # Simpan ke in-memory juga
+        MENTION_LOG_CACHE[test_key] = cache_data
+        
         logger.info(f"✅ Test panel created with message ID: {test_message.id}")
         
     except Exception as e:
         logger.error(f"❌ Test command failed: {e}")
         await msg.edit_msg(f"❌ Test error: {str(e)[:100]}")
 
-# 🔥 Command untuk clear cache
+# ============================================================================
+# 🔥 CLEAR CACHE COMMAND
+# ============================================================================
 @Altruix.register_on_cmd(
     ["mentions_clear"],
     cmd_help={
@@ -1656,11 +2491,16 @@ async def clear_cache_handler(c: Client, m: AltruixMessage):
         REPLY_AS_MENTIONED_WAITING.clear()
         USER_REPLY_COUNTS.clear()
         
+        # Clear persistent cache juga jika available
+        if CACHE_MANAGER_AVAILABLE and cache_manager:
+            await cache_manager.clear()
+        
         clear_msg = (
             f"🧹 <b>Cache Cleared</b>\n\n"
             f"• Mention Cache: {cache_count} entries\n"
             f"• Waiting Replies: {waiting_count} entries\n"
-            f"• User Counts: {user_count} users\n\n"
+            f"• User Counts: {user_count} users\n"
+            f"• Persistent Cache: {'✅ Cleared' if CACHE_MANAGER_AVAILABLE else '❌ Not Available'}\n\n"
             f"✅ Semua cache telah dibersihkan."
         )
         
@@ -1676,7 +2516,9 @@ async def clear_cache_handler(c: Client, m: AltruixMessage):
         logger.error(f"❌ Clear cache failed: {e}")
         await msg.edit_msg(f"❌ Clear error: {str(e)[:100]}")
 
-# 🔥 BARU: Command untuk test mention system - DIPERBAKI
+# ============================================================================
+# 🔥 TEST MENTION SYSTEM COMMAND
+# ============================================================================
 @Altruix.register_on_cmd(
     ["test_mention"],
     cmd_help={"help": "Test mention system", "example": "test_mention"},
@@ -1703,7 +2545,7 @@ async def test_mention_system(c: Client, m: AltruixMessage):
             c,
             m.chat.id,
             msg.id,
-            "🔧 **Test Mention System**\n\nTekan tombol di bawah untuk testing:",
+            "🔧 **Test Mention System v{PLUGIN_VERSION}**\n\nTekan tombol di bawah untuk testing:",
             reply_markup=keyboard,
             parse_mode=enums.ParseMode.MARKDOWN
         )
@@ -1712,50 +2554,9 @@ async def test_mention_system(c: Client, m: AltruixMessage):
         logger.error(f"❌ Test mention failed: {e}")
         await msg.edit_msg(f"❌ Test error: {str(e)[:100]}")
 
-# 🔥 Cleanup task
-async def cleanup_old_entries():
-    """Bersihkan cache dan waiting list yang sudah lama."""
-    while True:
-        try:
-            current_time = time.time()
-            
-            # Clean old cache (2 hours)
-            expired_cache = []
-            for key, data in MENTION_LOG_CACHE.items():
-                if current_time - data.get("timestamp_int", 0) > 7200:
-                    expired_cache.append(key)
-            
-            for key in expired_cache[:50]:
-                try:
-                    del MENTION_LOG_CACHE[key]
-                except:
-                    pass
-            
-            # Clean old waiting (1 hour)
-            expired_waiting = []
-            for key, data in REPLY_AS_MENTIONED_WAITING.items():
-                if current_time - data.get("timestamp_int", 0) > 3600:
-                    expired_waiting.append(key)
-            
-            for key in expired_waiting[:20]:
-                try:
-                    del REPLY_AS_MENTIONED_WAITING[key]
-                except:
-                    pass
-                
-            if expired_cache or expired_waiting:
-                logger.info(f"🧹 Cleaned {len(expired_cache)} cache and {len(expired_waiting)} waiting entries")
-                
-        except Exception as e:
-            logger.error(f"❌ Cleanup error: {e}")
-        
-        await asyncio.sleep(600)
-
-# Start cleanup task
-asyncio.create_task(cleanup_old_entries())
-logger.info("Cleanup task started")
-
-# 🔥 BARU: Debug command untuk melihat struktur Altruix
+# ============================================================================
+# 🔥 DEBUG STRUCTURE COMMAND
+# ============================================================================
 @Altruix.register_on_cmd(
     ["mentions_debug_structure"],
     cmd_help={
@@ -1838,6 +2639,10 @@ async def debug_structure_handler(c: Client, m: AltruixMessage):
         else:
             debug_info += "• clients: NOT FOUND\n"
         
+        debug_info += f"\n<b>Cache Manager Status:</b>\n"
+        debug_info += f"• Available: {'✅ Yes' if CACHE_MANAGER_AVAILABLE else '❌ No'}\n"
+        debug_info += f"• Manager: {cache_manager}\n"
+        
         debug_info += f"\n<b>Current Client:</b>\n"
         debug_info += f"• ID: {c.me.id if c.me else 'N/A'}\n"
         debug_info += f"• Name: {c.me.first_name if c.me else 'N/A'}\n"
@@ -1859,18 +2664,97 @@ async def debug_structure_handler(c: Client, m: AltruixMessage):
         logger.error(f"❌ Debug structure failed: {e}")
         await msg.edit_msg(f"❌ Debug error: {str(e)[:100]}")
 
+# ============================================================================
+# 🔥 CLEANUP TASK untuk cache
+# ============================================================================
+async def cleanup_old_entries():
+    """Bersihkan cache dan waiting list yang sudah lama."""
+    while True:
+        try:
+            current_time = time.time()
+            
+            # Clean old in-memory cache (2 hours)
+            expired_cache = []
+            for key, data in MENTION_LOG_CACHE.items():
+                if current_time - data.get("timestamp_int", 0) > 7200:
+                    expired_cache.append(key)
+            
+            for key in expired_cache[:50]:
+                try:
+                    del MENTION_LOG_CACHE[key]
+                except:
+                    pass
+            
+            # Clean old waiting (1 hour)
+            expired_waiting = []
+            for key, data in REPLY_AS_MENTIONED_WAITING.items():
+                if current_time - data.get("timestamp_int", 0) > 3600:
+                    expired_waiting.append(key)
+            
+            for key in expired_waiting[:20]:
+                try:
+                    del REPLY_AS_MENTIONED_WAITING[key]
+                except:
+                    pass
+                
+            if expired_cache or expired_waiting:
+                logger.info(f"🧹 Cleaned {len(expired_cache)} cache and {len(expired_waiting)} waiting entries")
+                
+        except Exception as e:
+            logger.error(f"❌ Cleanup error: {e}")
+        
+        await asyncio.sleep(600)
+
+# Start cleanup task
+asyncio.create_task(cleanup_old_entries())
+logger.info("Cleanup task started")
+
+# ============================================================================
+# 🔥 CACHE CLEANUP TASK
+# ============================================================================
+async def cache_cleanup_task():
+    """Regular cache cleanup task."""
+    while True:
+        try:
+            # Cleanup expired waiting replies di cache persisten
+            if CACHE_MANAGER_AVAILABLE and cache_manager:
+                await cache_manager.cleanup_expired()
+            
+            # Juga cleanup fallback cache
+            now = time.time()
+            expired_keys = []
+            for key, entry in MENTION_LOG_CACHE.items():
+                if entry.get("expires_at", 0) < now:
+                    expired_keys.append(key)
+            
+            for key in expired_keys[:100]:  # Limit per cycle
+                del MENTION_LOG_CACHE[key]
+            
+            if expired_keys:
+                logger.info(f"🧹 Cleaned {len(expired_keys)} expired fallback cache entries")
+                await _save_fallback_cache()
+                
+        except Exception as e:
+            logger.error(f"❌ Cache cleanup task error: {e}")
+        
+        await asyncio.sleep(300)  # Run every 5 minutes
+
+# Start cache cleanup task
+asyncio.create_task(cache_cleanup_task())
+logger.info("Cache cleanup task started")
+
+# ============================================================================
+# 🔥 FINAL LOG
+# ============================================================================
 # Log sukses loading
 try:
     Altruix.log(f"[DEBUG] ✅ Loaded → {__plugin_name__} {PLUGIN_VERSION}", level=20)
 except Exception as e:
     logger.info(f"[DEBUG] ✅ Loaded → {__plugin_name__} {PLUGIN_VERSION}")
 
-# logger.info(f"📋 All issues fixed:")
-# logger.info(f"  1. Enhanced get_mention_client() with detailed logging")
-# logger.info(f"  2. Added cache data logging in reply handlers")
-# logger.info(f"  3. Added debug structure command (/mentions_debug_structure)")
-# logger.info(f"  4. Improved error handling and logging")
-# logger.info(f"🔧 Use /mentions_debug_structure to see Altruix structure")
-# logger.info(f"🔧 Use /mentions_test (via bot) to test all buttons")
-# logger.info(f"🔧 Use /test_mention (via bot) for quick testing")
-# logger.info(f"⚠️  Note: Userbots cannot send inline buttons, only bot can!")
+logger.info(f"📋 Mentions plugin v{PLUGIN_VERSION} successfully loaded")
+logger.info(f"🔧 Cache system: {'Enabled with flexible backend' if CACHE_MANAGER_AVAILABLE else 'Fallback to in-memory cache'}")
+logger.info(f"🔧 Use /mentions_cache stats to check cache status")
+logger.info(f"🔧 Use /mentions_fix_cache to recover missing cache entries")
+logger.info(f"🔧 Use /mentions_test (via bot) to test all buttons")
+logger.info(f"⚠️  Note: Userbots cannot send inline buttons, only bot can!")
