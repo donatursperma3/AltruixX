@@ -39,7 +39,7 @@ import sys
 # ============================================================================
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "mentions"
-PLUGIN_VERSION = "1.5.4.20-CACHE"  # ✅ Version dengan cache system
+PLUGIN_VERSION = "1.5.4.22-CACHE"  # ✅ Version dengan cache system
 
 # Gunakan logger Altruix jika tersedia, atau buat baru yang konsisten
 logger = logging.getLogger("altruix.mentions")
@@ -1442,61 +1442,90 @@ async def start_reply_as_mentioned(c: Client, cb: CallbackQuery):
         logger.error(f"❌ Reply start error: {e}", exc_info=True)
         await cb.answer(f"❌ Error: {str(e)[:50]}", show_alert=True)
 
+
 # ============================================================================
-# 🔥 HANDLE REPLY INPUT - DIUPDATE DENGAN CACHE
+# 🔥 HANDLE REPLY INPUT - DIUPDATE DENGAN CACHE DAN DEBUGGING
 # ============================================================================
 @Altruix.bot.on_message(
     filters.chat(Altruix.log_chat) & 
     filters.reply & 
-    filters.text & 
     ~filters.bot
 )
 @log_errors
 async def handle_reply_as_mentioned_input(c: Client, m: RawMessage):
     """Menangani input balasan untuk reply-as-mentioned."""
     try:
+        # 🔥 **DEBUG LOGGING**: Log semua pesan balasan di log_chat
+        logger.info(f"📨 [DEBUG] Received message in log chat: ID={m.id}, "
+                   f"Reply to={m.reply_to_message.id if m.reply_to_message else None}, "
+                   f"Text={m.text[:50] if m.text else 'No text'}, "
+                   f"Caption={m.caption[:50] if m.caption else 'No caption'}")
+        
         if not m.reply_to_message:
+            logger.debug("[DEBUG] No reply_to_message, skipping")
             return
         
         reply_msg_id = m.reply_to_message.id
-        logger.info(f"🔍 Checking reply input for message {reply_msg_id}")
+        logger.info(f"🔍 [DEBUG] Checking reply input for message {reply_msg_id}")
         
-        # 🔥 **PERBAIKAN OPTIMASI**: Cari langsung di REPLY_AS_MENTIONED_WAITING
+        # 🔥 **DEBUG**: Cek semua waiting entries
+        logger.info(f"📋 [DEBUG] Total waiting entries: {len(REPLY_AS_MENTIONED_WAITING)}")
+        for wid, data in list(REPLY_AS_MENTIONED_WAITING.items())[:3]:  # Log 3 pertama
+            logger.info(f"  - {wid}: instruction_msg_id={data.get('instruction_msg_id')}, "
+                       f"chat_id={data.get('chat_id')}")
+        
+        # Cari waiting_id berdasarkan instruction_msg_id 
         waiting_id = None
         
-        # Iterasi melalui semua waiting entries untuk cari instruction_msg_id yang cocok
+        # 🔥 **PERBAIKAN KRITIS**: Cari di REPLY_AS_MENTIONED_WAITING terlebih dahulu
         for wid, data in list(REPLY_AS_MENTIONED_WAITING.items()):
-            if data.get("instruction_msg_id") == reply_msg_id:
+            instruction_id = data.get("instruction_msg_id")
+            if instruction_id == reply_msg_id:
                 waiting_id = wid
-                logger.info(f"✅ Found waiting_id {waiting_id} for instruction {reply_msg_id}")
+                logger.info(f"✅ [DEBUG] Found waiting_id {waiting_id} for instruction {reply_msg_id}")
                 break
         
-        # 🔥 **PERBAIKAN**: Jika tidak ditemukan di memory, coba cari di cache persistent
+        # 🔥 **PERBAIKAN**: Jika tidak ditemukan, coba cari dengan pattern
         if not waiting_id:
-            logger.info(f"🔍 Not found in memory, checking persistent cache...")
-            
-            # Coba cari dengan pattern karena kita tidak bisa iterate semua keys di cache
-            # Pattern: waiting:replyall_ atau waiting:reply_
-            # Kita akan coba beberapa timestamp di sekitar waktu sekarang
-            current_time = int(time.time())
-            for pattern in ["replyall_", "reply_"]:
-                for offset in range(-300, 301, 60):  # Cek ±5 menit
-                    test_id = f"{pattern}{current_time + offset}_"
-                    # Note: Ini tidak sempurna, tapi membantu jika data ada di persistent cache
-                    # Seharusnya kita maintain index instruction_msg_id -> waiting_id
-                    
+            logger.info(f"🔍 [DEBUG] Not found in memory, checking patterns...")
+            # Coba pattern untuk replyall
+            if "replyall_" in str(reply_msg_id):
+                # Cari berdasarkan timestamp dalam waiting_id
+                current_time = int(time.time())
+                for wid in list(REPLY_AS_MENTIONED_WAITING.keys()):
+                    if wid.startswith("replyall_"):
+                        # Cek timestamp dalam 10 menit terakhir
+                        try:
+                            # Pattern: replyall_TIMESTAMP_RANDOM
+                            parts = wid.split("_")
+                            if len(parts) >= 2:
+                                timestamp = int(parts[1])
+                                if abs(current_time - timestamp) < 600:  # 10 menit
+                                    data = REPLY_AS_MENTIONED_WAITING[wid]
+                                    if data.get("callback_message_id") == m.reply_to_message.reply_to_message_id:
+                                        waiting_id = wid
+                                        logger.info(f"✅ [DEBUG] Found by pattern: {waiting_id}")
+                                        break
+                        except (ValueError, IndexError):
+                            continue
+        
         if not waiting_id:
-            logger.warning(f"⚠️ No waiting found for reply to message {reply_msg_id}")
+            logger.warning(f"⚠️ [DEBUG] No waiting found for reply to message {reply_msg_id}")
             # Coba kirim pesan debug
             try:
-                await m.reply(
-                    "❌ <b>Tidak ada proses reply yang aktif untuk pesan ini.</b>\n\n"
-                    "<i>Silakan tekan tombol 'Reply From All' atau 'Reply as Mentioned' terlebih dahulu.</i>\n"
-                    f"<i>Debug: Instruction message ID: {reply_msg_id}</i>",
+                debug_msg = await m.reply(
+                    "❌ <b>Debug: Tidak ada proses reply yang aktif untuk pesan ini.</b>\n\n"
+                    f"• Reply to ID: <code>{reply_msg_id}</code>\n"
+                    f"• Total waiting entries: {len(REPLY_AS_MENTIONED_WAITING)}\n"
+                    f"• Bot: {c.me.first_name if c.me else 'Unknown'}\n\n"
+                    "<i>Silakan tekan tombol 'Reply From All' atau 'Reply as Mentioned' terlebih dahulu.</i>",
                     parse_mode=enums.ParseMode.HTML
                 )
-            except:
-                pass
+                # Hapus pesan debug setelah 10 detik
+                await asyncio.sleep(10)
+                await debug_msg.delete()
+            except Exception as debug_err:
+                logger.error(f"[DEBUG] Debug message failed: {debug_err}")
             return
         
         # 🔥 **PERBAIKAN**: Dapatkan data dari source yang konsisten
@@ -1509,7 +1538,7 @@ async def handle_reply_as_mentioned_input(c: Client, m: RawMessage):
             data = await get_waiting_reply(waiting_id)
             
         if not data:
-            logger.error(f"❌ Waiting data not found for {waiting_id}")
+            logger.error(f"❌ [DEBUG] Waiting data not found for {waiting_id}")
             await m.reply(
                 "❌ <b>Data tidak ditemukan.</b>\n\n"
                 f"Waiting ID: <code>{waiting_id}</code> mungkin sudah expired.",
@@ -1522,10 +1551,10 @@ async def handle_reply_as_mentioned_input(c: Client, m: RawMessage):
         client_id = data["client_id"]
         
         # 🔥 **PERBAIKAN**: Dapatkan client dengan logging yang lebih detail
-        logger.info(f"🔍 Looking for client with ID: {client_id}")
+        logger.info(f"🔍 [DEBUG] Looking for client with ID: {client_id}")
         mentioned_client = await get_mention_client(client_id)
         if not mentioned_client:
-            logger.error(f"❌ Cannot find client {client_id} for reply")
+            logger.error(f"❌ [DEBUG] Cannot find client {client_id} for reply")
             await m.reply(
                 "❌ <b>Akun tidak ditemukan</b>\n\n"
                 "Akun yang disebut tidak tersedia atau session sudah berakhir.",
@@ -1533,9 +1562,10 @@ async def handle_reply_as_mentioned_input(c: Client, m: RawMessage):
             )
             return
         
+        # 🔥 **PERBAIKAN**: Ambil teks dari pesan, termasuk caption jika ada
         reply_text = m.text or m.caption or ""
         if not reply_text.strip():
-            logger.warning(f"⚠️ Empty reply text from message {m.id}")
+            logger.warning(f"⚠️ [DEBUG] Empty reply text from message {m.id}")
             await m.reply(
                 "❌ <b>Pesan kosong</b>\n\nSilakan ketik pesan yang ingin dikirim.",
                 parse_mode=enums.ParseMode.HTML,
@@ -1546,7 +1576,7 @@ async def handle_reply_as_mentioned_input(c: Client, m: RawMessage):
             )
             return
         
-        logger.info(f"📩 Reply input received for {chat_id}_{message_id}, text: {reply_text[:50]}...")
+        logger.info(f"📩 [DEBUG] Reply input received for {chat_id}_{message_id}, text: {reply_text[:50]}...")
         
         # 🔥 **PERBAIKAN**: Update data dengan reply text
         data["reply_text"] = reply_text
@@ -1606,13 +1636,13 @@ async def handle_reply_as_mentioned_input(c: Client, m: RawMessage):
             if waiting_id in REPLY_AS_MENTIONED_WAITING:
                 REPLY_AS_MENTIONED_WAITING[waiting_id]["confirm_msg_id"] = confirm_message.id
             
-            logger.info(f"📤 Confirmation sent: {confirm_message.id} for waiting {waiting_id}")
+            logger.info(f"📤 [DEBUG] Confirmation sent: {confirm_message.id} for waiting {waiting_id}")
             
         except Exception as e:
-            logger.error(f"❌ Confirmation send failed: {e}")
+            logger.error(f"❌ [DEBUG] Confirmation send failed: {e}")
         
     except Exception as e:
-        logger.error(f"❌ Reply input error: {e}", exc_info=True)
+        logger.error(f"❌ [DEBUG] Reply input error: {e}", exc_info=True)
 
 
 # ============================================================================
@@ -2741,6 +2771,74 @@ async def debug_structure_handler(c: Client, m: AltruixMessage):
         await msg.edit_msg(f"❌ Debug error: {str(e)[:100]}")
 
 # ============================================================================
+# 🔥 MENTION TEST HANDLER COMMAND
+# ============================================================================
+@Altruix.register_on_cmd(
+    ["mentions_test_handler"],
+    cmd_help={
+        "help": "Test reply handler functionality",
+        "example": "mentions_test_handler",
+    },
+    group_only=False,
+    requires_input=False,
+)
+@log_errors
+async def test_handler_command(c: Client, m: AltruixMessage):
+    """Test handler functionality."""
+    msg = await m.handle_message("PROCESSING")
+    
+    try:
+        # Hanya bot yang bisa testing
+        if c != Altruix.bot:
+            await msg.edit_msg("❌ Perintah ini hanya bisa dijalankan oleh bot!")
+            return
+        
+        # Buat pesan test
+        test_msg = await c.send_message(
+            m.chat.id,
+            "📝 **Test Handler**\n\n"
+            "1. Balas pesan ini dengan teks apapun\n"
+            "2. Cek log untuk melihat apakah handler terpicu\n"
+            "3. Handler seharusnya merespon dengan pesan ini",
+            parse_mode=enums.ParseMode.MARKDOWN
+        )
+        
+        # Buat waiting entry dummy untuk testing
+        waiting_id = f"test_handler_{int(time.time())}_{test_msg.id}"
+        waiting_data = {
+            "chat_id": m.chat.id,
+            "message_id": test_msg.id,
+            "client_id": c.me.id,
+            "log_msg_id": test_msg.id,
+            "user_id": m.from_user.id if m.from_user else None,
+            "timestamp_int": int(time.time()),
+            "callback_message_id": test_msg.id,
+            "is_reply_all": False,
+            "waiting_id": waiting_id,
+            "msg_key": f"{m.chat.id}_{test_msg.id}",
+            "instruction_msg_id": test_msg.id  # 🔥 INI PENTING: instruction_msg_id harus sama dengan ID pesan ini
+        }
+        
+        # Simpan ke memory
+        REPLY_AS_MENTIONED_WAITING[waiting_id] = waiting_data
+        
+        await msg.edit_msg(
+            f"✅ **Test Handler Created**\n\n"
+            f"• Test Message ID: `{test_msg.id}`\n"
+            f"• Waiting ID: `{waiting_id}`\n"
+            f"• Instruction Msg ID: `{test_msg.id}`\n\n"
+            f"**Silakan balas pesan test dengan teks apapun!**",
+            parse_mode=enums.ParseMode.MARKDOWN
+        )
+        
+        logger.info(f"✅ [TEST] Handler test created: waiting_id={waiting_id}, instruction_msg_id={test_msg.id}")
+        
+    except Exception as e:
+        logger.error(f"❌ [TEST] Handler test failed: {e}")
+        await msg.edit_msg(f"❌ Test error: {str(e)[:100]}")
+
+
+# ============================================================================
 # 🔥 CLEANUP TASK untuk cache
 # ============================================================================
 async def cleanup_old_entries():
@@ -2815,9 +2913,25 @@ async def cache_cleanup_task():
         
         await asyncio.sleep(300)  # Run every 5 minutes
 
+
 # Start cache cleanup task
 asyncio.create_task(cache_cleanup_task())
 logger.info("Cache cleanup task started")
+
+
+
+# Di akhir file, sebelum FINAL LOG
+logger.info(f"🔧 [DEBUG] Registering handle_reply_as_mentioned_input handler")
+logger.info(f"🔧 [DEBUG] Filter: filters.chat({Altruix.log_chat}) & filters.reply & ~filters.bot")
+logger.info(f"🔧 [DEBUG] Total waiting entries at startup: {len(REPLY_AS_MENTIONED_WAITING)}")
+
+@Altruix.bot.on_message(filters.chat(Altruix.log_chat))
+@log_errors
+async def debug_all_messages(c: Client, m: RawMessage):
+    """Debug semua pesan di log chat."""
+    logger.info(f"🔍 [DEBUG_ALL] Message in log_chat: ID={m.id}, "
+               f"Reply to={m.reply_to_message.id if m.reply_to_message else None}, "
+               f"Text={m.text[:50] if m.text else 'No text'}")
 
 # ============================================================================
 # 🔥 FINAL LOG
