@@ -40,6 +40,7 @@ try:
     from Main.utils.cache_manager import cache_manager, init_cache
     CACHE_MANAGER_AVAILABLE = True
     logger_info = "✅ Cache manager imported successfully from Main.utils"
+    logger.info(f"[DEBUG] ✅ {logger_info}")
 except ImportError as e:
     # Coba cara alternatif jika gagal
     try:
@@ -52,9 +53,11 @@ except ImportError as e:
         from Main.utils.cache_manager import cache_manager, init_cache
         CACHE_MANAGER_AVAILABLE = True
         logger_info = "✅ Cache manager imported with path adjustment"
+        logger.info(f"[DEBUG] ✅ {logger_info}")
     except ImportError as e2:
         CACHE_MANAGER_AVAILABLE = False
         logger_info = f"⚠️ Cache manager import failed: {e2}"
+        logger.info(f"[DEBUG] ✅ {logger_info}")
         
         # Fallback definitions
         cache_manager = None
