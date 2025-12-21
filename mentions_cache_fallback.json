@@ -1,0 +1,64 @@
+{
+  "cache": {
+    "mention:-1002658807247_2886": {
+      "value": {
+        "text": "@minigramdev gimana jadi kah?",
+        "log_msg_id": 1054,
+        "client_id": 7115438332,
+        "chat_id": -1002658807247,
+        "message_id": 2886,
+        "timestamp_int": 1766336183,
+        "mentioned_by": 1192566681,
+        "group_name": "X25 DRIVE",
+        "client_name": "sugar milk",
+        "last_reply_id": 2887,
+        "last_reply_chat": -1002658807247
+      },
+      "expires_at": 1766343400.8404377,
+      "created_at": 1766336200.840439
+    },
+    "user_count:1192566681:20251221": {
+      "value": 1,
+      "expires_at": 1766422588.7414513,
+      "created_at": 1766336188.7414536
+    },
+    "mention:-1001473548283_5359225": {
+      "value": {
+        "text": "ga ada",
+        "log_msg_id": 1102,
+        "client_id": 7115438332,
+        "chat_id": -1001473548283,
+        "message_id": 5359225,
+        "timestamp_int": 1766342951,
+        "mentioned_by": 1192566681,
+        "group_name": "𝗦𝗵𝗮𝗿𝗶𝗻𝗴 𝗕𝗼𝘁 𝗧𝗲𝗹𝗲𝗴𝗿𝗮𝗺 🇮🇩",
+        "client_name": "sugar milk",
+        "last_reply_id": null,
+        "last_reply_chat": null
+      },
+      "expires_at": 1766350151.7474198,
+      "created_at": 1766342951.7474215
+    },
+    "mention:-1001473548283_5359226": {
+      "value": {
+        "text": "pake @vid",
+        "log_msg_id": 1103,
+        "client_id": 7115438332,
+        "chat_id": -1001473548283,
+        "message_id": 5359226,
+        "timestamp_int": 1766343005,
+        "mentioned_by": 97429043,
+        "group_name": "𝗦𝗵𝗮𝗿𝗶𝗻𝗴 𝗕𝗼𝘁 𝗧𝗲𝗹𝗲𝗴𝗿𝗮𝗺 🇮🇩",
+        "client_name": "sugar milk",
+        "last_reply_id": null,
+        "last_reply_chat": null
+      },
+      "expires_at": 1766350205.5067985,
+      "created_at": 1766343005.5068004
+    }
+  },
+  "meta": {
+    "saved_at": 1766343079.088893,
+    "count": 4
+  }
+}

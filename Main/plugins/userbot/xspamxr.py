@@ -244,7 +244,7 @@ async def update_reaction_button(message: Message, chat_id: str, reaction_enable
     try:
         react_text = f"React: {'ON' if reaction_enabled else 'OFF'}"
         if reaction_enabled and emoji:
-            react_text = f"React: {emoji} ON"
+            react_text = f"React: ON {emoji}"
         react_data = f"toggle_react_{chat_id}"
         keyboard = message.reply_markup.inline_keyboard if message.reply_markup else []
         new_keyboard = []
@@ -476,6 +476,8 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
                         try:
                             sent_msg = await spam_client.send_message(target_chat.id, msg)
                             sent_count += 1
+                            if chat_id in TELAYSPAM_TASKS:
+                                TELAYSPAM_TASKS[chat_id]["sent_count"] = sent_count
                             react_status = "tidak ada"
                             current_react_enabled = TELAYSPAM_TASKS[chat_id]["config"].get("react_enabled", True)
                             current_emot_react = TELAYSPAM_TASKS[chat_id]["config"]["emot_react"]
@@ -804,9 +806,7 @@ async def preview_msglist_from_confirm(c: Client, cb):
 @log_errors
 async def telayspammer_cmd(c: Client, m: Message):
     try:
-        text = m.text.strip()
-        cmd_pattern = re.escape(HANDLER) + r'relayspam\s+'
-        args_str = re.sub(cmd_pattern, '', text, count=1)
+        args_str = m.raw_user_input
         if not args_str:
             await m.handle_message("INVALID_ARG_COUNT")
             return
@@ -1393,8 +1393,23 @@ async def cancel_adjust_purge_handler(c: Client, cb):
 @log_errors
 async def handle_task_control(c: Client, cb):
     data = cb.data
-    action, chat_id = data.rsplit("_", 1)
-    target_chat = await get_chat_safe(c, int(chat_id))
+    action, chat_id_str = data.rsplit("_", 1)
+    chat_id = str(chat_id_str)
+    
+    # 🔥 **PERBAIKAN**: Cari userbot client yang mengelola task ini
+    userbot_client = None
+    if chat_id in TELAYSPAM_TASKS:
+        userbot_client = TELAYSPAM_TASKS[chat_id].get("client")
+    elif chat_id in COMPLETED_TASKS:
+        userbot_client = COMPLETED_TASKS[chat_id].get("client")
+    
+    # Jika tidak ada di memory, coba cari di Altruix.clients (fallback)
+    if not userbot_client and Altruix.clients:
+        userbot_client = Altruix.clients[0]
+        
+    resolver_client = userbot_client or c
+    target_chat = await get_chat_safe(resolver_client, chat_id)
+    
     if not target_chat:
         if chat_id in TELAYSPAM_TASKS:
             TELAYSPAM_TASKS.pop(chat_id, None)
@@ -1429,16 +1444,18 @@ async def handle_task_control(c: Client, cb):
             await send_log_message(f"🟢 Task diresume di {chat_title}.", client=userbot_client)
         elif action == "cek":
             status = TELAYSPAM_TASKS[chat_id]
+            sent = status.get("sent_count", 0)
+            total = status["config"].get("count", 0)
             if status["running"]:
                 if status["pause_event"].is_set():
-                    status_text = f"🔵 Task dirunning di {chat_title} (running)."
+                    status_text = f"🔵 Task running di {chat_title}.\n📊 Sisa: {total - sent} pesan."
                 else:
-                    status_text = f"🟡 Task dipause di {chat_title} (paused)."
+                    status_text = f"🟡 Task paused di {chat_title}.\n📊 Sisa: {total - sent} pesan."
             else:
-                status_text = f"🔴 Task distop di {chat_title} (stopped)."
+                status_text = f"⚫️ Task stopped di {chat_title}.\n📊 Sisa: {total - sent} pesan."
             await safe_cb_answer(cb, status_text, show_alert=True)
-            userbot_client = TELAYSPAM_TASKS[chat_id]["client"]
-            await send_log_message(f"{status_text}.", client=userbot_client)
+            userbot_client = status["client"]
+            await send_log_message(status_text, client=userbot_client)
         elif action == "recurring":
             if chat_id in TELAYSPAM_TASKS:
                 await safe_cb_answer(cb, "⚠️ Task masih berjalan, hentikan dulu sebelum recurring.", show_alert=True)

@@ -10,16 +10,6 @@
     }
   },
   "auto_reply": false,
-  "reply_from_all_accessible": true,
-  "last_saved": 1766166726,
-  "version": "0.5.3",
-  "button_stats": {
-    "react": 0,
-    "reply": 0,
-    "reply_all": 2,
-    "confirm": 2,
-    "cancel": 0,
-    "save": 0,
-    "unsend": 0
-  }
+  "last_saved": 1766336201,
+  "version": "1.5.4.22-CACHE"
 }

@@ -65,6 +65,56 @@ except AttributeError:
 LAUCREATE_TASKS: Dict[str, Dict[str, Any]] = {}
 COMPLETED_LAUCREATE_TASKS: Dict[str, Dict[str, Any]] = {}
 CREATE_LOCK = asyncio.Lock()
+STORAGE_FILE = "xchatsanomlau_cache.json"
+
+async def save_laucreate_cache():
+    try:
+        # Konversi datetime dan event ke serializable
+        data = {
+            "tasks": {},
+            "completed": {}
+        }
+        for tid, task in LAUCREATE_TASKS.items():
+            task_copy = task.copy()
+            if "pause_event" in task_copy: del task_copy["pause_event"]
+            if "status_task" in task_copy: del task_copy["status_task"]
+            if "task" in task_copy: del task_copy["task"]
+            if "start_time" in task_copy: task_copy["start_time"] = task_copy["start_time"].isoformat()
+            data["tasks"][tid] = task_copy
+            
+        for tid, comp in COMPLETED_LAUCREATE_TASKS.items():
+            comp_copy = comp.copy()
+            if "end_time" in comp_copy: comp_copy["end_time"] = comp_copy["end_time"].isoformat()
+            data["completed"][tid] = comp_copy
+            
+        with open(STORAGE_FILE, "w") as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        logger.error(f"Error saving laucreate cache: {e}")
+
+async def load_laucreate_cache():
+    global LAUCREATE_TASKS, COMPLETED_LAUCREATE_TASKS
+    try:
+        if os.path.exists(STORAGE_FILE):
+            with open(STORAGE_FILE, "r") as f:
+                data = json.load(f)
+                
+            for tid, task_data in data.get("tasks", {}).items():
+                if "start_time" in task_data:
+                    task_data["start_time"] = datetime.fromisoformat(task_data["start_time"])
+                task_data["pause_event"] = asyncio.Event()
+                task_data["pause_event"].set()
+                LAUCREATE_TASKS[tid] = task_data
+                
+            for tid, comp_data in data.get("completed", {}).items():
+                if "end_time" in comp_data:
+                    comp_data["end_time"] = datetime.fromisoformat(comp_data["end_time"])
+                COMPLETED_LAUCREATE_TASKS[tid] = comp_data
+    except Exception as e:
+        logger.error(f"Error loading laucreate cache: {e}")
+
+# Load cache on startup
+asyncio.ensure_future(load_laucreate_cache())
 
 # Daftar kutipan cinta (sama seperti original)
 LOVE_QUOTES = [
@@ -273,9 +323,20 @@ async def laucreate_loop(
             "created_groups": [],
             "start_time": datetime.now(),
             "control_message_id": control_message.id,
-            "user_id": initial_message.from_user.id if initial_message.from_user else None
+            "user_id": initial_message.from_user.id if initial_message.from_user else None,
+            "params": {
+                "delay": delay,
+                "count": count,
+                "extra_delay_minutes": extra_delay_minutes,
+                "batch_size": batch_size,
+                "group_type": group_type,
+                "name_pattern": name_pattern,
+                "username_prefix": username_prefix,
+                "bot_identifiers": bot_identifiers
+            }
         }
         LAUCREATE_TASKS[task_id]["pause_event"].set()
+        await save_laucreate_cache()
         
         # Dapatkan info user
         user_info = await user_client.get_me()
@@ -790,6 +851,7 @@ async def laucreate_loop(
                         
                         LAUCREATE_TASKS[task_id]["created_groups"] = created_groups
                         LAUCREATE_TASKS[task_id]["current_index"] = i
+                        await save_laucreate_cache() # Save cache after group creation
                         
                         # Kirim update progress
                         progress_msg = (

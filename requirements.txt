@@ -28,3 +28,22 @@ natsort
 gitpython
 pillow
 ffmpeg-python
+
+# Dependencies for the Cache System (select according to your needs)
+
+# For the Redis backend (recommended for production)
+redis>=4.5.0
+
+# For MongoDB backend
+pymongo>=4.3.0
+motor>=3.1.0
+
+# Dependencies that may already exist in AltruixX:
+# pyrogram>=2.0.0
+# aiofiles>=0.8.0
+# python-dotenv>=0.19.0
+
+# Note: Install only what is required:
+# - For Redis: pip install redis
+# - For MongoDB: pip install pymongo motor
+# - No external database: no need to install anything (use default JSON)

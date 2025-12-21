@@ -151,3 +151,13 @@ eval_output
 cache/
 Main/plugins/userbot/.goutputstream-CIPMO1
 Main/assets/images/logo.jpg
+
+# extra
+pm_logger_user_settings.json
+pm_logger_bot_settings.json
+altruix_local_db.json
+mentions_settings.json
+pm_logger_settings.json
+xchatsanomlau_cache.json
+*localdb.json
+*.localdb

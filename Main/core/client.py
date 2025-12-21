@@ -121,7 +121,7 @@ class AltruixClient:
         self.clients: List[Client] = []
         self.cmd_list = {}
         self.all_lang_strings = {}
-        self.__version__ = "0.0.4.3"
+        self.__version__ = "0.0.4.6"
         self.selected_lang = "english"
         self.local_lang_file = "./Main/localization"
         self.cmd_list = {}
@@ -624,6 +624,60 @@ class AltruixClient:
             )
             self.bot.add_handler(handler_type(func_, filters=bot_f), group=group)
 
+    async def _resource_monitor_loop(self):
+        """Background loop to monitor system resources (CPU/RAM) and alert if > 90%."""
+        self.log("🚀 Resource monitor loop started.", level=logging.INFO)
+        alert_sent = False
+        while True:
+            try:
+                stats = self.get_system_stats()
+                cpu = stats.get("cpu", {}).get("percent", 0)
+                ram = stats.get("ram", {}).get("percent", 0)
+                
+                # Check thresholds
+                is_high_cpu = isinstance(cpu, (int, float)) and cpu > 90
+                is_high_ram = isinstance(ram, (int, float)) and ram > 90
+                
+                if is_high_cpu or is_high_ram:
+                    if not alert_sent:
+                        usage_info = ""
+                        if is_high_cpu: usage_info += f"🖥 <b>CPU Usage:</b> <code>{cpu}%</code>\n"
+                        if is_high_ram: usage_info += f"💾 <b>RAM Usage:</b> <code>{ram}%</code>\n"
+                        
+                        alert_msg = (
+                            "⚠️ <b>ALTRUIX RESOURCE WARNING</b>\n\n"
+                            f"{usage_info}\n"
+                            "‼️ <b>Tindakan diperlukan:</b>\n"
+                            "Server Anda hampir mencapai kapasitas maksimal. Mohon periksa proses yang berjalan untuk menghindari crash atau restart tak terduga."
+                        )
+                        
+                        # Kirim ke log group menggunakan bot client
+                        if hasattr(self, 'bot') and self.bot.is_connected and self.log_chat:
+                            try:
+                                from pyrogram import enums
+                                await self.bot.send_message(
+                                    chat_id=self.log_chat,
+                                    text=alert_msg,
+                                    parse_mode=enums.ParseMode.HTML
+                                )
+                                alert_sent = True
+                                self.log("‼️ High resource usage alert sent to log group.", level=logging.WARNING)
+                            except Exception as e:
+                                self.log(f"Failed to send resource alert: {e}", level=logging.ERROR)
+                else:
+                    # Reset alert status if usage drops below 85% for stability
+                    if alert_sent:
+                        cpu_safe = not isinstance(cpu, (int, float)) or cpu < 85
+                        ram_safe = not isinstance(ram, (int, float)) or ram < 85
+                        if cpu_safe and ram_safe:
+                            alert_sent = False
+                            self.log("✅ Resource levels normalized.", level=logging.INFO)
+                
+            except Exception as e:
+                self.log(f"Error in resource monitor: {e}", level=logging.ERROR)
+            
+            await asyncio.sleep(60) # Cek setiap 1 menit
+
     async def _setup(self, restart=False, *args, **kwargs):
         if not os.path.isdir("cache"):
             os.mkdir("cache")
@@ -858,6 +912,7 @@ class AltruixClient:
             # Buat task untuk monitoring
             monitor_task = asyncio.create_task(self._monitor_connections())
             health_task = asyncio.create_task(self._heartbeat_monitor())
+            res_monitor_task = asyncio.create_task(self._resource_monitor_loop())
             
             # Jalankan idle
             await idle()

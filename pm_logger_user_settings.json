@@ -1,7 +1,8 @@
 {
   "settings": {
     "enabled": true,
-    "mode": "user"
+    "mode": "user",
+    "7115438332": true
   },
   "reply_from_all_accessible": true,
   "version": "1.2.2"
