@@ -118,7 +118,7 @@ class _Essentials:
                     )
 
                 except FloodWait as e:
-                    await asyncio.sleep(e.x + 2)
+                    await asyncio.sleep(e.value + 2)
                     message._client.log(f"Sleeping for : {e.value} due to floodwaits!")
                 except MessageNotModified:
                     pass

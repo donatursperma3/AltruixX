@@ -9,7 +9,7 @@
 
 from Main import Altruix
 from typing import List, Tuple, Dict, Any, Union
-from pyrogram import Client, filters
+from pyrogram import Client, filters, raw
 from Main.core.decorators import log_errors
 from Main.core.types.message import Message
 from pyrogram.types import (
@@ -70,6 +70,11 @@ logger.info(f"🚀 Initializing settings plugin v{PLUGIN_VERSION}")
 user_confirmation_state = {}
 user_text_confirmation_state = {}
 user_bulk_join_state = {}  # State untuk bulk join
+user_dlphoto_state = {} # ✅ BARU: State untuk download foto profil
+user_purge_state = {}   # ✅ BARU: State untuk purge pesan
+user_eval_state = {}  # ✅ BARU
+user_exec_state = {} # ✅ BARU: State untuk exec terminal
+user_sys_ctrl_state = {} # ✅ BARU  # State untuk bulk join
 user_profile_edit_state = {}  # State untuk edit profil
 user_photo_delete_state = {}  # State untuk hapus foto profil
 user_edit_confirmation_state = {}  # State untuk konfirmasi edit profil
@@ -82,6 +87,7 @@ user_limit_check_state = {}  # {user_id: {'session_index': int, 'page': int}}
 user_dlstory_state = {} # ✅ BARU: State untuk download story
 user_purge_state = {}   # ✅ BARU: State untuk purge pesan
 user_dlphoto_state = {} # ✅ BARU: State untuk download foto profil
+user_privacy_state = {} # ✅ BARU: State untuk privacy settings
 
 # ✅ LOCALIZATION / TRANSLATION SYSTEM
 SETTINGS_LANG = getattr(Altruix.config, "UB_LANG", "english").lower()
@@ -473,8 +479,14 @@ async def sessions_menu_cb_handler(c: Client, cb: CallbackQuery):
         InlineKeyboardButton("📤 Export Sessions", "export_all_sessions_confirmation"),
         InlineKeyboardButton("📲 Export Phones", "export_all_phones_confirmation")
     ]
+
+    # Baris 6: Tombol System Control
+    system_control_buttons = [
+        InlineKeyboardButton("🔄 Force Restart", "sys_ctrl_restart"),
+        InlineKeyboardButton("❌ Force Shutdown", "sys_ctrl_shutdown")
+    ]
     
-    # Baris 6: Tombol navigasi [Previous][Back][Next]
+    # Baris 7: Tombol navigasi [Previous][Back][Next]
     nav_buttons = []
     if page > 1:
         nav_buttons.append(InlineKeyboardButton("⬅️ Previous", f"sessions_list_{page - 1}"))
@@ -494,8 +506,11 @@ async def sessions_menu_cb_handler(c: Client, cb: CallbackQuery):
     
     # Tambahkan export buttons sebagai baris kelima
     final_markup.append(export_buttons)
+
+    # Tambahkan system control buttons sebagai baris keenam
+    final_markup.append(system_control_buttons)
     
-    # Tambahkan navigation buttons sebagai baris keenam
+    # Tambahkan navigation buttons sebagai baris ketujuh
     final_markup.append(nav_buttons)
     
     total_sessions = len(Altruix.clients) if hasattr(Altruix, 'clients') else 0
@@ -604,6 +619,20 @@ async def user_text_handler(c: Client, m: Message):
     user_id = m.from_user.id
     text = m.text.strip()
     
+    # ✅ NEW: Handle Privacy State (Block/Unblock)
+    if user_id in user_privacy_state:
+        if text.lower() == "/cancel":
+            state = user_privacy_state[user_id]
+            del user_privacy_state[user_id]
+            await m.reply(
+                "❌ Dibatalkan.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Menu", callback_data=f"privacy_menu_{state['session_index']}_{state['page']}")]])
+            )
+            return
+
+        await execute_block_unblock(c, m, user_privacy_state[user_id])
+        return
+
     # ✅ PERUBAHAN: Cek jika user sedang dalam konfirmasi edit profil
     # (Sekarang menggunakan Inline Button, tapi kita handle jika user masih mengetik secara manual)
     if user_id in user_edit_confirmation_state:
@@ -1129,6 +1158,97 @@ async def user_text_handler(c: Client, m: Message):
             await execute_export_all_phones(c, m)
         else:
             await m.reply("❌ Unknown action. Please try again.")
+        return
+
+    # ✅ BARU: Handle Exec Terminal
+    elif user_id in user_exec_state:
+        state = user_exec_state[user_id]
+        if text.lower() == "/cancel":
+            del user_exec_state[user_id]
+            await m.reply("❌ Exec canceled.", quote=True)
+            return
+            
+        # Store command and confirm
+        user_exec_state[user_id]['command'] = text
+        
+        # Show confirmation
+        buttons = [
+            [InlineKeyboardButton("▶️ Run Command", f"exec_term_{user_id}")],
+            [InlineKeyboardButton("❌ Cancel", f"session_info_{state['session_index']}_{state['page']}")]
+        ]
+        
+        await m.reply(
+            f"🖥️ <b>Confirm Execution?</b>\n\nCommand:\n<pre>{html.escape(text)}</pre>",
+            reply_markup=InlineKeyboardMarkup(buttons),
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    # ✅ BARU: Handle System Control (Restart/Shutdown)
+    elif user_id in user_sys_ctrl_state:
+        state = user_sys_ctrl_state[user_id]
+        if text.lower() == "/cancel":
+            del user_sys_ctrl_state[user_id]
+            await m.reply("❌ System control dibatalkan.", quote=True)
+            return
+            
+        action = state['action']
+        required = "11" if action == "shutdown" else "ok"
+        
+        if text.strip().lower() == required:
+            # Execute
+            readable = "Restart" if action == "restart" else "Shutdown"
+            await m.reply(f"✅ Konfirmasi diterima. Melakukan {readable}...", quote=True)
+            
+            # Log to group
+            log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
+            try:
+                await Altruix.bot.send_message(
+                    log_chat_id,
+                    f"⚠️ <b>SYSTEM ALERT</b>\n"
+                    f"• Action: <b>Force {readable}</b>\n"
+                    f"• User: {m.from_user.mention}\n"
+                    f"• Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                    parse_mode=ParseMode.HTML
+                )
+            except: pass
+            
+            del user_sys_ctrl_state[user_id]
+            
+            if action == "restart":
+                # Restart logic
+                import sys
+                os.execl(sys.executable, sys.executable, "-m", "Main")
+            else:
+                # Shutdown logic
+                import sys
+                sys.exit(0)
+        else:
+            await m.reply("❌ Password salah. Silakan coba lagi atau /cancel.", quote=True)
+        return
+
+    # ✅ BARU: Handle Eval Session
+    elif user_id in user_eval_state:
+        state = user_eval_state[user_id]
+        if text.lower() == "/cancel":
+            del user_eval_state[user_id]
+            await m.reply("❌ Eval canceled.", quote=True)
+            return
+            
+        # Store code and confirm
+        user_eval_state[user_id]['code'] = text
+        
+        # Show confirmation
+        buttons = [
+            [InlineKeyboardButton("▶️ Run Code", f"eval_exec_{user_id}")],
+            [InlineKeyboardButton("❌ Cancel", f"session_info_{state['session_index']}_{state['page']}")]
+        ]
+        
+        await m.reply(
+            f"🐍 <b>Confirm Execution?</b>\n\nCode:\n<pre>{html.escape(text)}</pre>",
+            reply_markup=InlineKeyboardMarkup(buttons),
+            parse_mode=ParseMode.HTML
+        )
         return
 
 
@@ -2263,6 +2383,10 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery):
             InlineKeyboardButton(gt("leave_group"), f"gen_conf_leave_chat_input_{index}_{callback_page}"),
         ],
         [
+            InlineKeyboardButton("🔒 Privacy & Security", f"privacy_menu_{index}_{callback_page}"),
+            InlineKeyboardButton("📊 Chat Stats", f"chat_stats_scan_{index}_{callback_page}"),
+        ],
+        [
             InlineKeyboardButton(gt("send_message"), f"gen_conf_send_message_input_{index}_{callback_page}"),
         ],
         # Row 6: First & Last Name
@@ -2278,6 +2402,11 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery):
         [
             InlineKeyboardButton(gt("pm_logger_control"), f"pml_menu_{index}_{callback_page}"),
             InlineKeyboardButton(gt("mention_control"), f"mnt_menu_{index}_{callback_page}"),
+        ],
+        # Row 8: Advanced Tools (Eval & Exec)
+        [
+            InlineKeyboardButton("🐍 Eval Python", f"eval_session_{index}_{callback_page}"),
+            InlineKeyboardButton("🖥️ Exec Terminal", f"exec_session_{index}_{callback_page}"),
         ],
         # Back button
         [
@@ -2749,6 +2878,10 @@ async def leave_chat_confirm_handler(c: Client, cb: CallbackQuery):
     page = int(cb.matches[0].group(2))
     target = cb.matches[0].group(3)
     
+    # FIX: Convert to int if target is a chat ID (digits)
+    if target.lstrip('-').isdigit():
+        target = int(target)
+    
     if index >= len(Altruix.clients):
         await cb.answer("❌ Session tidak ditemukan.", show_alert=True)
         return
@@ -2881,6 +3014,10 @@ async def send_msg_confirm_handler(c: Client, cb: CallbackQuery):
         
     target = state['target']
     text = state['text']
+    
+    # FIX: Convert to int if target is a chat ID (digits)
+    if target.lstrip('-').isdigit():
+        target = int(target)
     
     if index >= len(Altruix.clients):
         await cb.answer("❌ Session tidak ditemukan.", show_alert=True)
@@ -3517,7 +3654,7 @@ async def export_phone_cb_handler(c: Client, cb: CallbackQuery):
         )
 
 
-@Altruix.bot.on_callback_query(filters.regex("export_session_(\\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^export_session_(\d+)$"))
 @log_errors
 async def export_session_cb_handler(c: Client, cb: CallbackQuery):
     user = cb.from_user
@@ -3583,7 +3720,7 @@ async def export_session_cb_handler(c: Client, cb: CallbackQuery):
         )
 
 
-@Altruix.bot.on_callback_query(filters.regex("refresh_session_info_(\\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^refresh_session_info_(\d+)$"))
 @log_errors
 async def refresh_session_info_cb_handler(c: Client, cb: CallbackQuery):
     index = int(cb.matches[0].group(1))
@@ -3606,7 +3743,7 @@ async def refresh_session_info_cb_handler(c: Client, cb: CallbackQuery):
     await sessions_info_cb_handler(c, cb)
 
 
-@Altruix.bot.on_callback_query(filters.regex("unlink_session_(\\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^unlink_session_(\d+)$"))
 @log_errors
 async def unlink_session_cb_handler(c: Client, cb: CallbackQuery):
     index = int(cb.matches[0].group(1))
@@ -3633,7 +3770,7 @@ async def unlink_session_cb_handler(c: Client, cb: CallbackQuery):
         parse_mode=ParseMode.HTML
     )
 
-@Altruix.bot.on_callback_query(filters.regex("unlink_confirm_(\\d+)"))
+@Altruix.bot.on_callback_query(filters.regex(r"^unlink_confirm_(\d+)$"))
 @log_errors
 async def unlink_confirm_handler(c: Client, cb: CallbackQuery):
     """Eksekusi unlink setelah konfirmasi tombol"""
@@ -3651,7 +3788,7 @@ async def unlink_confirm_handler(c: Client, cb: CallbackQuery):
 
 
 # ✅ HANDLER BARU: Lihat Semua Sesi Login
-@Altruix.bot.on_callback_query(filters.regex(r"view_all_sessions_(\d+)_(\d+)"))
+@Altruix.bot.on_callback_query(filters.regex(r"^view_all_sessions_(\d+)_(\d+)$"))
 @log_errors
 async def view_all_sessions_handler(c: Client, cb: CallbackQuery):
     await cb.answer("🔍 Mengambil data sesi...", show_alert=False)
@@ -3714,7 +3851,7 @@ async def view_all_sessions_handler(c: Client, cb: CallbackQuery):
 
 
 # ✅ HANDLER BARU: Join Group/Channel Input
-@Altruix.bot.on_callback_query(filters.regex(r"join_chat_input_(\d+)_(\d+)"))
+@Altruix.bot.on_callback_query(filters.regex(r"^join_chat_input_(\d+)_(\d+)$"))
 @log_errors
 async def join_chat_input_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
@@ -3821,8 +3958,112 @@ async def join_chat_confirm_handler(c: Client, cb: CallbackQuery):
     del user_bulk_join_state[user_id]
 
 
+# ✅ HANDLER BARU: PM Logger Filters Menu
+@Altruix.bot.on_callback_query(filters.regex(r"^pml_filters_menu_(\d+)_(\d+)$"))
+@log_errors
+async def pml_filters_menu_handler(c: Client, cb: CallbackQuery):
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    
+    # Load filter settings
+    filters_file = "pml_filters.json"
+    default_filters = {
+        "text": True,
+        "photo": True,
+        "video": True,
+        "voice": True,
+        "audio": True,
+        "sticker": False,
+        "document": True,
+        "others": True
+    }
+    
+    current_filters = default_filters.copy()
+    if os.path.exists(filters_file):
+        try:
+            with open(filters_file, "r") as f:
+                saved_filters = json.load(f)
+                current_filters.update(saved_filters)
+        except: pass
+        
+    def get_status(key):
+        return "✅" if current_filters.get(key, False) else "❌"
+        
+    text = (
+        "<b>⚙️ Logger Message Filters</b>\n\n"
+        "Pilih tipe pesan yang ingin dicatat (Logged) ke Log Group.\n"
+        "Klik tombol untuk mengubah status (ON/OFF).\n\n"
+        "<i>Setting ini berlaku untuk semua akun.</i>"
+    )
+    
+    buttons = [
+        [
+            InlineKeyboardButton(f"{get_status('text')} Text", f"pml_filter_toggle_text_{index}_{page}"),
+            InlineKeyboardButton(f"{get_status('photo')} Photo", f"pml_filter_toggle_photo_{index}_{page}")
+        ],
+        [
+            InlineKeyboardButton(f"{get_status('video')} Video", f"pml_filter_toggle_video_{index}_{page}"),
+            InlineKeyboardButton(f"{get_status('voice')} Voice", f"pml_filter_toggle_voice_{index}_{page}")
+        ],
+        [
+            InlineKeyboardButton(f"{get_status('audio')} Audio", f"pml_filter_toggle_audio_{index}_{page}"),
+            InlineKeyboardButton(f"{get_status('sticker')} Sticker", f"pml_filter_toggle_sticker_{index}_{page}")
+        ],
+        [
+            InlineKeyboardButton(f"{get_status('document')} Docs", f"pml_filter_toggle_document_{index}_{page}"),
+            InlineKeyboardButton(f"{get_status('others')} Others", f"pml_filter_toggle_others_{index}_{page}")
+        ],
+        [InlineKeyboardButton("🔙 Back to Logger Controls", f"pml_menu_{index}_{page}")]
+    ]
+    
+    await cb.message.edit(text=text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+
+
+# ✅ HANDLER BARU: Toggle Filter Item
+@Altruix.bot.on_callback_query(filters.regex(r"^pml_filter_toggle_([a-z]+)_(\d+)_(\d+)$"))
+@log_errors
+async def pml_filter_toggle_handler(c: Client, cb: CallbackQuery):
+    filter_type = cb.matches[0].group(1)
+    index = int(cb.matches[0].group(2))
+    page = int(cb.matches[0].group(3))
+    
+    filters_file = "pml_filters.json"
+    default_filters = {
+        "text": True, "photo": True, "video": True, "voice": True,
+        "audio": True, "sticker": False, "document": True, "others": True
+    }
+    
+    current_filters = default_filters.copy()
+    if os.path.exists(filters_file):
+        try:
+            with open(filters_file, "r") as f:
+                saved_filters = json.load(f)
+                current_filters.update(saved_filters)
+        except: pass
+        
+    # Toggle
+    new_state = not current_filters.get(filter_type, False)
+    current_filters[filter_type] = new_state
+    
+    try:
+        with open(filters_file, "w") as f:
+            json.dump(current_filters, f, indent=2)
+    except Exception as e:
+        await cb.answer(f"❌ Save failed: {e}", show_alert=True)
+        return
+        
+    # Refresh menu
+    await pml_filters_menu_handler(c, cb)
+    
+    # Kirim notifikasi log
+    await send_log_notification(
+        c, 'pml_toggle', index, cb.from_user,
+        True, None, {'Target': filter_type, 'Status': new_state}
+    )
+
+
 # ✅ HANDLER BARU: PM Logger Menu
-@Altruix.bot.on_callback_query(filters.regex(r"pml_menu_(\d+)_(\d+)"))
+@Altruix.bot.on_callback_query(filters.regex(r"^pml_menu_(\d+)_(\d+)$"))
 @log_errors
 async def pml_menu_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
@@ -3871,6 +4112,9 @@ async def pml_menu_handler(c: Client, cb: CallbackQuery):
         [
             InlineKeyboardButton(f"Reply All: {'DISABLE' if replyall_accessible else 'ENABLE'}", f"pml_toggle_replyall_{index}_{page}"),
         ],
+        [
+            InlineKeyboardButton("⚙️ Message Type Filters", f"pml_filters_menu_{index}_{page}")
+        ],
         [InlineKeyboardButton("🔙 Back to Session Info", f"session_info_{index}_{page}")]
     ]
     
@@ -3878,7 +4122,7 @@ async def pml_menu_handler(c: Client, cb: CallbackQuery):
 
 
 # ✅ HANDLER BARU: Toggle PM Logger Settings
-@Altruix.bot.on_callback_query(filters.regex(r"pml_toggle_(user|bot|replyall)_(\d+)_(\d+)"))
+@Altruix.bot.on_callback_query(filters.regex(r"^pml_toggle_(user|bot|replyall)_(\d+)_(\d+)$"))
 @log_errors
 async def pml_toggle_handler(c: Client, cb: CallbackQuery):
     target = cb.matches[0].group(1)
@@ -3935,7 +4179,7 @@ async def pml_toggle_handler(c: Client, cb: CallbackQuery):
 
 
 # ✅ HANDLER UNTUK ADD SESSION (PLACEHOLDER)
-@Altruix.bot.on_callback_query(filters.regex("add_session"))
+@Altruix.bot.on_callback_query(filters.regex(r"^add_session$"))
 @log_errors
 async def add_session_handler(c: Client, cb: CallbackQuery):
     """Handler untuk tombol Add a Session"""
@@ -3944,7 +4188,7 @@ async def add_session_handler(c: Client, cb: CallbackQuery):
 
 
 # ✅ HANDLER BARU: Mention Control Menu
-@Altruix.bot.on_callback_query(filters.regex(r"mnt_menu_(\d+)_(\d+)"))
+@Altruix.bot.on_callback_query(filters.regex(r"^mnt_menu_(\d+)_(\d+)$"))
 @log_errors
 async def mnt_menu_handler(c: Client, cb: CallbackQuery):
     """Mention Control Menu with toggles"""
@@ -3997,7 +4241,7 @@ async def mnt_menu_handler(c: Client, cb: CallbackQuery):
 
 
 # ✅ HANDLER BARU: Download Story session-targeted
-@Altruix.bot.on_callback_query(filters.regex(r"dlstory_session_input_(\d+)_(\d+)"))
+@Altruix.bot.on_callback_query(filters.regex(r"^dlstory_session_input_(\d+)_(\d+)$"))
 @log_errors
 async def dlstory_session_input_handler(c: Client, cb: CallbackQuery):
     """Menerima input link story untuk didownload sesi tertentu"""
@@ -4053,34 +4297,60 @@ async def dlstory_session_input_handler(c: Client, cb: CallbackQuery):
         
         try:
             # ✅ TRY COPY STORY FIRST
+            is_premium = session_client.me.is_premium if session_client.me else False
+            
             try:
+                # Prioritas 1: Copy jika Premium atau Non-Restricted
                 await session_client.copy_story(log_chat_id, target, story_id)
                 await cb.message.edit(f"✅ <b>Berhasil!</b> Story telah disalin ke Log Group.")
             except Exception as e:
-                if "PREMIUM_ACCOUNT_REQUIRED" in str(e):
-                    await cb.message.edit("🔄 <b>Copy memerlukan Premium. Mencoba Bypass (Download & Re-upload)...</b>")
-                    
-                    # ✅ BYPASS: Download and Re-upload
-                    story = await session_client.get_stories(target, story_id)
-                    if not story:
-                        await cb.message.edit("❌ <b>Story tidak ditemukan atau sudah kadaluarsa.</b>")
-                        return
-                    
-                    file_path = await session_client.download_media(story)
-                    if file_path:
-                        caption = f"📥 <b>Bypass Story Download</b>\nTarget: @{target}\nStory ID: {story_id}"
-                        if story.video:
-                            await session_client.send_video(log_chat_id, file_path, caption=caption)
-                        else:
-                            await session_client.send_photo(log_chat_id, file_path, caption=caption)
+                err_str = str(e)
+                # Check Bypass condition
+                bypass = "PREMIUM_ACCOUNT_REQUIRED" in err_str or "STORY_NOT_MODIFIED" in err_str or "bad request" in err_str.lower()
+                
+                if not bypass and isinstance(e, FloodWait):
+                     raise e
+                
+                await cb.message.edit(f"🔄 <b>Copy gagal ({err_str[:20]}...), mencoba Bypass (Download & Re-upload)...</b>")
+                
+                # ✅ BYPASS: Download and Re-upload
+                story = await session_client.get_stories(target, story_id)
+                if not story:
+                    await cb.message.edit("❌ <b>Story tidak ditemukan atau sudah kadaluarsa.</b>")
+                    return
+                
+                file_path = await session_client.download_media(story)
+                if file_path:
+                    try:
+                        # Clean Caption Logic
+                        from pyrogram import enums
+                        caption = story.caption or ""
+                        entities = story.caption_entities
                         
+                        final_entities = []
+                        if is_premium:
+                            final_entities = entities
+                        elif entities:
+                            for ent in entities:
+                                if ent.type != enums.MessageEntityType.CUSTOM_EMOJI:
+                                    final_entities.append(ent)
+                                    
+                        final_caption = caption
+                        if not final_caption:
+                             final_caption = f"📥 <b>Story from</b> @{target}" + (f" ({target})" if str(target).lstrip('-').isdigit() else "")
+                             final_entities = None
+
+                        if story.video:
+                            await session_client.send_video(log_chat_id, file_path, caption=final_caption, caption_entities=final_entities)
+                        else:
+                            await session_client.send_photo(log_chat_id, file_path, caption=final_caption, caption_entities=final_entities)
+                        
+                        await cb.message.edit("✅ <b>Bypass Berhasil!</b> Story telah diupload ke Log Group.")
+                    finally:
                         if os.path.exists(file_path):
                             os.remove(file_path)
-                        await cb.message.edit("✅ <b>Bypass Berhasil!</b> Story telah diupload ke Log Group.")
-                    else:
-                        await cb.message.edit("❌ <b>Gagal mendownload media story untuk bypass.</b>")
                 else:
-                    raise e
+                    await cb.message.edit("❌ <b>Gagal mendownload media story untuk bypass.</b>")
             
             # Notifikasi Log
             await send_log_notification(
@@ -4103,8 +4373,9 @@ async def dlstory_session_input_handler(c: Client, cb: CallbackQuery):
     except Exception as e:
         await cb.message.edit(f"❌ Error: {str(e)}")
 
+
 # ✅ HANDLER BARU: Toggle Mention Settings (RFA, MNT, ALOG)
-@Altruix.bot.on_callback_query(filters.regex(r"mnt_toggle_(rfa|mnt|alog)_(\d+)_(\d+)"))
+@Altruix.bot.on_callback_query(filters.regex(r"^mnt_toggle_(rfa|mnt|alog)_(\d+)_(\d+)$"))
 @log_errors
 async def mnt_toggle_handler(c: Client, cb: CallbackQuery):
     """Toggle mention settings (RFA, MNT, ALOG)"""
@@ -4144,7 +4415,7 @@ async def mnt_toggle_handler(c: Client, cb: CallbackQuery):
 
 
 # ✅ HANDLER BARU: Generic Confirmation Handler
-@Altruix.bot.on_callback_query(filters.regex(r"gen_conf_(.+)"))
+@Altruix.bot.on_callback_query(filters.regex(r"^gen_conf_(.+)$"))
 @log_errors
 async def gen_confirm_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
@@ -4179,7 +4450,7 @@ async def gen_confirm_handler(c: Client, cb: CallbackQuery):
 
 
 # ✅ HANDLER BARU: Download User Photo Start
-@Altruix.bot.on_callback_query(filters.regex(r"dl_uphoto_start_(\d+)_(\d+)"))
+@Altruix.bot.on_callback_query(filters.regex(r"^dl_uphoto_start_(\d+)_(\d+)$"))
 @log_errors
 async def dl_uphoto_start_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
@@ -4204,7 +4475,7 @@ async def dl_uphoto_start_handler(c: Client, cb: CallbackQuery):
     )
 
 # ✅ HANDLER BARU: Purge Amount Handler
-@Altruix.bot.on_callback_query(filters.regex(r"purge_amt_(\d+)_(.+)"))
+@Altruix.bot.on_callback_query(filters.regex(r"^purge_amt_(\d+)_(.+)$"))
 @log_errors
 async def purge_amt_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
@@ -4257,7 +4528,7 @@ async def purge_amt_handler(c: Client, cb: CallbackQuery):
     )
 
 # ✅ HANDLER BARU: Purge Delay Handler
-@Altruix.bot.on_callback_query(filters.regex(r"purge_del_(\d+)_(.+)"))
+@Altruix.bot.on_callback_query(filters.regex(r"^purge_del_(\d+)_(.+)$"))
 @log_errors
 async def purge_del_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
@@ -4293,7 +4564,7 @@ async def purge_del_handler(c: Client, cb: CallbackQuery):
     )
 
 # ✅ HANDLER BARU: Purge Mode Handler
-@Altruix.bot.on_callback_query(filters.regex(r"purge_mode_(\d+)_(.+)"))
+@Altruix.bot.on_callback_query(filters.regex(r"^purge_mode_(\d+)_(.+)$"))
 @log_errors
 async def purge_mode_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
@@ -4430,9 +4701,13 @@ async def dl_uphoto_exec_handler(c: Client, cb: CallbackQuery):
         return
         
     session_client = Altruix.clients[session_index]
-    await cb.message.edit(f"⏳ <b>Mendownload foto profil {html.escape(target)}...</b>")
+    await cb.message.edit(f"⏳ <b>Mendownload foto profil {html.escape(str(target))}...</b>")
     
     try:
+        # FIX: Convert to int if target is a chat ID (digits)
+        if str(target).lstrip('-').isdigit():
+             target = int(target)
+
         user = await session_client.get_chat(target)
         photo = await session_client.download_media(user.photo.big_file_id) if user.photo else None
         
@@ -4579,5 +4854,767 @@ async def rpm_exec_handler(c: Client, cb: CallbackQuery):
             False, str(e), {'Chat_ID': chat_id, 'Msg_ID': msg_id}
         )
 
+# ✅ HANDLER BARU: System Control Callback Handler (Restart/Shutdown)
+@Altruix.bot.on_callback_query(filters.regex(r"^sys_ctrl_(restart|shutdown)$"))
+@log_errors
+async def sys_ctrl_cb_handler(c: Client, cb: CallbackQuery):
+    action = cb.matches[0].group(1)
+    user_id = cb.from_user.id
+    
+    if user_id not in Altruix.auth_users and user_id != Altruix.config.OWNER_ID:
+        await cb.answer("⛔ Access Denied!", show_alert=True)
+        return
+
+    readable_action = "Restart" if action == "restart" else "Shutdown"
+    
+    await cb.message.edit(
+        f"⚠️ <b>Force {readable_action}</b>\n\n"
+        f"Anda yakin ingin melakukan paksa {readable_action.lower()} pada bot?\n"
+        f"Aksi ini akan menghentikan proses bot saat ini.\n\n"
+        f"<i>Pilih 'Ya' untuk lanjut ke konfirmasi keamanan.</i>",
+        reply_markup=InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(f"✅ Ya, {readable_action}", callback_data=f"sys_ctrl_confirm_{action}_1"),
+                InlineKeyboardButton("❌ Batal", callback_data="close_settings")
+            ]
+        ]),
+        parse_mode=ParseMode.HTML
+    )
+
+@Altruix.bot.on_callback_query(filters.regex(r"^sys_ctrl_confirm_(restart|shutdown)_1$"))
+@log_errors
+async def sys_ctrl_1_handler(c: Client, cb: CallbackQuery):
+    action = cb.matches[0].group(1)
+    user_id = cb.from_user.id
+    readable_action = "Restart" if action == "restart" else "Shutdown"
+    required_code = "11" if action == "shutdown" else "ok"
+    
+    # Save state
+    user_sys_ctrl_state[user_id] = {
+        "action": action,
+        "step": "waiting_code"
+    }
+    
+    await cb.message.edit(
+        f"🔒 <b>Keamanan Tingkat Lanjut</b>\n\n"
+        f"Untuk konfirmasi akhir <b>{readable_action}</b>, silakan ketik password berikut:\n\n"
+        f"👉 <code>{required_code}</code>\n\n"
+        f"Ketik /cancel untuk membatalkan.",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 Batal", callback_data="close_settings")]
+        ]),
+        parse_mode=ParseMode.HTML
+    )
+
+# ✅ HANDLER BARU: Menu Filter PM Logger
+@Altruix.bot.on_callback_query(filters.regex(r"^pml_filters_menu_(\d+)_(\d+)$"))
+@log_errors
+async def pml_filters_menu_handler(c: Client, cb: CallbackQuery):
+    await cb.answer()
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    
+    # Load filters configuration
+    filename = "pml_filters.json"
+    try:
+        if os.path.exists(filename):
+            with open(filename, "r") as f:
+                filters_data = json.load(f)
+        else:
+            # Default Settings (Most common types ON by default)
+            filters_data = {
+                "text": True, "photo": True, "video": True, 
+                "voice": True, "audio": True, "sticker": False, 
+                "document": False, "animation": False, "others": False
+            }
+    except Exception:
+        filters_data = {}
+
+    # Define filter keys with readable names
+    filter_keys = [
+        ("text", "📝 Text"),
+        ("photo", "📷 Photo"),
+        ("video", "🎥 Video"),
+        ("voice", "🎤 Voice"),
+        ("audio", "🎵 Audio"),
+        ("sticker", "😄 Sticker"),
+        ("document", "📄 Document"),
+        ("others", "📦 Others")
+    ]
+    
+    buttons = []
+    current_row = []
+    
+    for key, name in filter_keys:
+        status = filters_data.get(key, True) # Default True for common types if missing key
+        status_text = "✅" if status else "❌"
+        
+        current_row.append(
+            InlineKeyboardButton(
+                f"{name} {status_text}", 
+                callback_data=f"pml_filter_toggle_{key}_{index}_{page}"
+            )
+        )
+        
+        if len(current_row) == 2:
+            buttons.append(current_row)
+            current_row = []
+            
+    if current_row:
+        buttons.append(current_row)
+        
+    buttons.append([InlineKeyboardButton("🔙 Back to PML Menu", f"pml_menu_{index}_{page}")])
+    
+    await cb.message.edit(
+        text="<b>⚙️ PM Logger Message Filters</b>\n\n"
+             "Pilih tipe pesan yang ingin dicatat (logged) ke Log Group.\n"
+             "Klik tombol untuk mengubah status (✅/❌).",
+        reply_markup=InlineKeyboardMarkup(buttons),
+        parse_mode=ParseMode.HTML
+    )
+
+# ✅ HANDLER BARU: Toggle Filter PM Logger
+@Altruix.bot.on_callback_query(filters.regex(r"^pml_filter_toggle_(\w+)_(\d+)_(\d+)$"))
+@log_errors
+async def pml_filter_toggle_handler(c: Client, cb: CallbackQuery):
+    filter_type = cb.matches[0].group(1)
+    index = int(cb.matches[0].group(2))
+    page = int(cb.matches[0].group(3))
+    
+    filename = "pml_filters.json"
+    
+    try:
+        if os.path.exists(filename):
+            with open(filename, "r") as f:
+                data = json.load(f)
+        else:
+            data = {
+                "text": True, "photo": True, "video": True, 
+                "voice": True, "audio": True, "sticker": False, 
+                "document": False, "animation": False, "others": False
+            }
+            
+        # Toggle boolean value
+        current = data.get(filter_type, True)
+        new_state = not current
+        data[filter_type] = new_state
+        
+        with open(filename, "w") as f:
+            json.dump(data, f, indent=4)
+            
+        await cb.answer(f"Filter {filter_type} changed to {'ON' if new_state else 'OFF'}")
+        
+        # Refresh menu to show new state
+        await pml_filters_menu_handler(c, cb)
+        
+        # Kirim notifikasi log
+        await send_log_notification(
+            c, 'pml_filter_config', index, cb.from_user,
+            True, None, {'Type': filter_type, 'New State': new_state}
+        )
+        
+    except Exception as e:
+        await cb.answer(f"Error: {e}", show_alert=True)
+        Altruix.log(f"Error toggling filter: {e}", level=logging.ERROR)
+
+
+
+# ✅ HANDLER BARU: Eval Session Input
+@Altruix.bot.on_callback_query(filters.regex(r"^eval_session_(\d+)_(\d+)$"))
+@log_errors
+async def eval_session_start_handler(c: Client, cb: CallbackQuery):
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    user_id = cb.from_user.id
+    
+    user_eval_state[user_id] = {
+        "session_index": index,
+        "page": page,
+        "step": "waiting_code"
+    }
+    
+    await cb.message.edit(
+        f"🐍 <b>Eval Python (Session {index + 1})</b>\n\n"
+        f"Silakan kirim kode Python yang ingin dieksekusi.\n"
+        f"Kode akan dijalankan di dalam context session tersebut.\n\n"
+        f"⚠️ <b>Hati-hati!</b> Kode berbahaya dapat merusak sesi.\n\n"
+        f"Ketik /cancel untuk membatalkan.",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 Cancel", callback_data=f"session_info_{index}_{page}")]
+        ]),
+        parse_mode=ParseMode.HTML
+    )
+
+@Altruix.bot.on_callback_query(filters.regex(r"^eval_exec_(\d+)$"))
+@log_errors
+async def eval_exec_confirm_handler(c: Client, cb: CallbackQuery):
+    user_id = int(cb.matches[0].group(1))
+    
+    if user_id not in user_eval_state:
+         await cb.answer("Session expired.", show_alert=True)
+         return
+         
+    state = user_eval_state[user_id]
+    code = state.get("code")
+    index = state["session_index"]
+    
+    if not code:
+        await cb.answer("No code found.", show_alert=True)
+        return
+        
+    await cb.message.edit("⏳ <b>Executing...</b>")
+    
+    session_client = Altruix.clients[index]
+    
+    # Redirect output
+    import io
+    import sys
+    import traceback
+    
+    old_stdout = sys.stdout
+    redirected_output = io.StringIO()
+    sys.stdout = redirected_output
+    
+    result = None
+    status = "Success"
+    
+    try:
+        # Create context
+        # Handle async/await properly
+        reply_msg = getattr(cb.message, 'reply_to_message', None)
+        
+        exec_locals = {
+            "c": session_client,
+            "client": session_client,
+            "Altruix": Altruix,
+            "print": print,
+            "m": cb.message,
+            "message": cb.message,
+            "reply": reply_msg,
+            "chat": cb.message.chat,
+            "user": cb.message.from_user
+        }
+        
+        # Async exec wrapper if needed, but standard exec is blocking.
+        # Ideally we wrap in async function
+        exec(
+            f"async def __ex():\n" + "".join(f"    {l}\n" for l in code.split("\n")),
+            exec_locals
+        )
+        result = await exec_locals["__ex"]()
+        
+    except Exception as e:
+        traceback.print_exc(file=redirected_output)
+        status = "Error"
+        result = str(e)
+    finally:
+        sys.stdout = old_stdout
+        
+    output = redirected_output.getvalue()
+    
+    final_output = f"<b>Output:</b>\n<pre>{html.escape(str(output) or 'No output')}</pre>\n"
+    if result is not None:
+        final_output += f"<b>Result:</b>\n<pre>{html.escape(str(result))}</pre>"
+        
+    if len(final_output) > 4000:
+        final_output = final_output[:4000] + "... (truncated)"
+        
+    log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
+    try:
+         await Altruix.bot.send_message(
+             log_chat_id,
+             f"🐍 <b>Eval Execution Log</b>\n"
+             f"• User: {cb.from_user.mention}\n"
+             f"• Status: {status}\n\n"
+             f"<b>Code:</b>\n<pre>{html.escape(code)}</pre>\n\n"
+             f"{final_output}",
+             parse_mode=ParseMode.HTML
+         )
+    except: pass
+    
+    await cb.message.edit(
+        f"🐍 <b>Eval Result</b>\n\n{final_output}",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 Back", callback_data=f"session_info_{index}_{state['page']}")]
+        ]),
+        parse_mode=ParseMode.HTML
+    )
+    
+    del user_eval_state[user_id]
+
+
+# ✅ HANDLER BARU: Exec Session Input
+@Altruix.bot.on_callback_query(filters.regex(r"^exec_session_(\d+)_(\d+)$"))
+@log_errors
+async def exec_session_start_handler(c: Client, cb: CallbackQuery):
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    user_id = cb.from_user.id
+    
+    user_exec_state[user_id] = {
+        "session_index": index,
+        "page": page,
+        "step": "waiting_command"
+    }
+    
+    await cb.message.edit(
+        f"🖥️ <b>Exec Terminal (Session {index + 1})</b>\n\n"
+        f"Silakan kirim perintah terminal (shell) yang ingin dieksekusi.\n"
+        f"Perintah akan dijalankan di server host bot ini.\n\n"
+        f"⚠️ <b>WARNING:</b> Fitur ini sangat <b>BERBAHAYA</b>. Gunakan dengan bijak!\n\n"
+        f"Ketik /cancel untuk membatalkan.",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 Cancel", callback_data=f"session_info_{index}_{page}")]
+        ]),
+        parse_mode=ParseMode.HTML
+    )
+
+@Altruix.bot.on_callback_query(filters.regex(r"^exec_term_(\d+)$"))
+@log_errors
+async def exec_term_handler(c: Client, cb: CallbackQuery):
+    user_id = int(cb.matches[0].group(1))
+    
+    if user_id not in user_exec_state:
+         await cb.answer("Session expired.", show_alert=True)
+         return
+         
+    state = user_exec_state[user_id]
+    command = state.get("command")
+    index = state["session_index"]
+    
+    if not command:
+        await cb.answer("No command found.", show_alert=True)
+        return
+        
+    await cb.message.edit("⏳ <b>Executing...</b>")
+    
+    status = "Success"
+    output = ""
+    
+    try:
+        process = await asyncio.create_subprocess_shell(
+            command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await process.communicate()
+        
+        output = (stdout.decode() if stdout else "") + (stderr.decode() if stderr else "")
+        if not output:
+             output = "No output."
+             
+    except Exception as e:
+        status = "Error"
+        output = str(e)
+        
+    final_output = f"<b>Output:</b>\n<pre>{html.escape(str(output))}</pre>"
+        
+    if len(final_output) > 4000:
+        final_output = final_output[:4000] + "... (truncated)"
+        
+    log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
+    try:
+         await Altruix.bot.send_message(
+             log_chat_id,
+             f"🖥️ <b>Exec Terminal Log</b>\n"
+             f"• User: {cb.from_user.mention}\n"
+             f"• Status: {status}\n\n"
+             f"<b>Command:</b>\n<pre>{html.escape(command)}</pre>\n\n"
+             f"{final_output}",
+             parse_mode=ParseMode.HTML
+         )
+    except: pass
+    
+    await cb.message.edit(
+        f"🖥️ <b>Exec Result</b>\n\n{final_output}",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 Back", callback_data=f"session_info_{index}_{state['page']}")]
+        ]),
+        parse_mode=ParseMode.HTML
+    )
+    
+    del user_exec_state[user_id]
+
+
 # Log sukses loading
 logger.info(f"✅ Loaded → {__plugin_name__} v{PLUGIN_VERSION}")
+
+# ============================================================================
+# PRIVACY & SECURITY HANDLERS
+# ============================================================================
+
+@Altruix.bot.on_callback_query(filters.regex(r"^privacy_menu_(\d+)_(\d+)$"))
+@log_errors
+async def privacy_menu_handler(c: Client, cb: CallbackQuery):
+    await cb.answer()
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    
+    buttons = [
+        [
+            InlineKeyboardButton("🚫 Block User", callback_data=f"block_user_input_{index}_{page}"),
+            InlineKeyboardButton("✅ Unblock User", callback_data=f"unblock_user_input_{index}_{page}"),
+        ],
+        [
+            InlineKeyboardButton("📞 Phone Privacy", callback_data=f"phone_privacy_menu_{index}_{page}"),
+        ],
+        [
+            InlineKeyboardButton("👥 Group/Channel Privacy", callback_data=f"group_privacy_menu_{index}_{page}"),
+        ],
+        [
+            InlineKeyboardButton("🔙 Back to Session Info", callback_data=f"session_info_{index}_{page}"),
+        ]
+    ]
+    
+    await cb.message.edit(
+        text="<b>🔒 Privacy & Security Settings</b>\n\n"
+             "Kelola privasi dan keamanan akun Anda dari sini.\n"
+             "• <b>Block/Unblock:</b> Blokir atau buka blokir pengguna.\n"
+             "• <b>Phone Privacy:</b> Siapa yang bisa melihat/mencari nomor Anda.\n"
+             "• <b>Group Privacy:</b> Siapa yang bisa menambahkan Anda ke grup.",
+        reply_markup=InlineKeyboardMarkup(buttons),
+        parse_mode=ParseMode.HTML
+    )
+
+@Altruix.bot.on_callback_query(filters.regex(r"^(block|unblock)_user_input_(\d+)_(\d+)$"))
+@log_errors
+async def block_unblock_input_handler(c: Client, cb: CallbackQuery):
+    await cb.answer()
+    action = cb.matches[0].group(1) # block / unblock
+    index = int(cb.matches[0].group(2))
+    page = int(cb.matches[0].group(3))
+    user_id = cb.from_user.id
+    
+    user_privacy_state[user_id] = {
+        'action': f"{action}_user",
+        'session_index': index,
+        'page': page,
+        'step': 'waiting_target'
+    }
+    
+    readable_action = "Blokir (Block)" if action == "block" else "Buka Blokir (Unblock)"
+    
+    await cb.message.edit(
+        text=f"<b>🚫 {readable_action} User</b>\n\n"
+             "Silakan kirim <b>Username</b> atau <b>User ID</b> target.\n\n"
+             "Contoh: <code>@username</code> atau <code>123456789</code>\n\n"
+             "Kirim <code>/cancel</code> untuk membatalkan.",
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup([
+             [InlineKeyboardButton("🔙 Cancel", callback_data=f"privacy_menu_{index}_{page}")]
+        ])
+    )
+
+async def execute_block_unblock(c: Client, m: Message, state: dict):
+    """Eksekusi block/unblock dari text handler"""
+    user_id = m.from_user.id
+    target_input = m.text.strip()
+    session_index = state['session_index']
+    action = state['action'] # block_user / unblock_user
+    page = state['page']
+    
+    if session_index >= len(Altruix.clients):
+        await m.reply("❌ Session tidak ditemukan.")
+        return
+
+    session_client = Altruix.clients[session_index]
+    
+    status_msg = await m.reply(f"🔄 Processing {action.replace('_', ' ')}...")
+    
+    try:
+        # Resolve target
+        if target_input.lstrip('-').isdigit():
+             target = int(target_input)
+        else:
+             target = target_input
+             
+        target_user = await session_client.get_users(target)
+        
+        if action == "block_user":
+            await session_client.block_user(target_user.id)
+            log_text = f"🚫 <b>User Blocked</b>\nTarget: {target_user.mention} (`{target_user.id}`)"
+            reply_text = f"✅ Berhasil memblokir <b>{html.escape(target_user.first_name)}</b>."
+        else:
+            await session_client.unblock_user(target_user.id)
+            log_text = f"✅ <b>User Unblocked</b>\nTarget: {target_user.mention} (`{target_user.id}`)"
+            reply_text = f"✅ Berhasil membuka blokir <b>{html.escape(target_user.first_name)}</b>."
+
+        await status_msg.edit(reply_text, parse_mode=ParseMode.HTML)
+        
+        # Log Notification
+        await send_log_notification(
+            c, 'privacy_action', session_index, m.from_user,
+            True, None, {'Action': action, 'Target': f"{target_user.first_name} ({target_user.id})"}
+        )
+        
+        # Back to menu logic
+        if user_id in user_privacy_state:
+             del user_privacy_state[user_id]
+             
+    except Exception as e:
+        err_msg = str(e)
+        await status_msg.edit(f"❌ <b>Gagal:</b> {html.escape(err_msg)}")
+        await send_log_notification(
+            c, 'privacy_action', session_index, m.from_user,
+            False, err_msg, {'Action': action, 'Target input': target_input}
+        )
+
+# PHONE PRIVACY MENUS
+@Altruix.bot.on_callback_query(filters.regex(r"^phone_privacy_menu_(\d+)_(\d+)$"))
+@log_errors
+async def phone_privacy_menu_handler(c: Client, cb: CallbackQuery):
+    await cb.answer()
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    
+    buttons = [
+        [
+            InlineKeyboardButton("👀 Who can SEE my number?", callback_data="ignore"),
+        ],
+        [
+            InlineKeyboardButton("Everybody", callback_data=f"set_pp_see_{index}_{page}_all"),
+            InlineKeyboardButton("Contacts", callback_data=f"set_pp_see_{index}_{page}_contacts"),
+            InlineKeyboardButton("Nobody", callback_data=f"set_pp_see_{index}_{page}_nobody"),
+        ],
+        [
+            InlineKeyboardButton("🔍 Who can FIND by number?", callback_data="ignore"),
+        ],
+        [
+            InlineKeyboardButton("Everybody", callback_data=f"set_pp_find_{index}_{page}_all"),
+            InlineKeyboardButton("Contacts", callback_data=f"set_pp_find_{index}_{page}_contacts"),
+        ],
+        [
+            InlineKeyboardButton("🔙 Back", callback_data=f"privacy_menu_{index}_{page}"),
+        ]
+    ]
+    
+    await cb.message.edit(
+        text="<b>📞 Phone Number Privacy</b>\n\n"
+             "Atur siapa yang bisa melihat nomor telepon Anda dan siapa yang bisa menemukan Anda via nomor telepon.\n\n"
+             "⚠️ <i>Perubahan akan langsung diterapkan ke Telegram.</i>",
+        reply_markup=InlineKeyboardMarkup(buttons),
+        parse_mode=ParseMode.HTML
+    )
+
+@Altruix.bot.on_callback_query(filters.regex(r"^set_pp_(see|find)_(\d+)_(\d+)_(.+)$"))
+@log_errors
+async def set_phone_privacy_handler(c: Client, cb: CallbackQuery):
+    type_ = cb.matches[0].group(1) # see / find
+    index = int(cb.matches[0].group(2))
+    page = int(cb.matches[0].group(3))
+    value = cb.matches[0].group(4) # all / contacts / nobody
+    
+    if index >= len(Altruix.clients):
+        await cb.answer("Session unavailable", show_alert=True)
+        return
+        
+    session = Altruix.clients[index]
+    
+    try:
+        from pyrogram import raw
+        
+        # Mapping Value
+        rule = None
+        if value == "all":
+            rule = [raw.types.InputPrivacyValueAllowAll()]
+        elif value == "contacts":
+            rule = [raw.types.InputPrivacyValueAllowContacts()]
+        elif value == "nobody":
+             rule = [raw.types.InputPrivacyValueDisallowAll()]
+        
+        # Mapping Key
+        key = None
+        if type_ == "see":
+            key = raw.types.InputPrivacyKeyPhoneNumber()
+        elif type_ == "find":
+            key = raw.types.InputPrivacyKeyAddedByPhone()
+            # Find by phone doesn't support 'Nobody', mostly All or Contacts
+            if value == "nobody":
+                 await cb.answer("Option 'Nobody' not supported for 'Find by Number'", show_alert=True)
+                 return
+
+        await session.invoke(raw.functions.account.SetPrivacy(key=key, rules=rule))
+        
+        readable_type = "See Phone Number" if type_ == 'see' else "Find by Phone Number"
+        await cb.answer(f"✅ Privacy Updated: {readable_type} -> {value.title()}", show_alert=True)
+        
+        # Log
+        await send_log_notification(
+            c, 'privacy_setting', index, cb.from_user,
+            True, None, {'Setting': readable_type, 'Value': value.title()}
+        )
+        
+    except Exception as e:
+        await cb.answer(f"❌ Failed: {str(e)}", show_alert=True)
+        await send_log_notification(
+            c, 'privacy_setting', index, cb.from_user,
+            False, str(e), {'Setting': f"Phone {type_}", 'Value': value}
+        )
+
+# GROUP PRIVACY MENUS
+@Altruix.bot.on_callback_query(filters.regex(r"^group_privacy_menu_(\d+)_(\d+)$"))
+@log_errors
+async def group_privacy_menu_handler(c: Client, cb: CallbackQuery):
+    await cb.answer()
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    
+    buttons = [
+        [
+            InlineKeyboardButton("Everyone", callback_data=f"set_gp_{index}_{page}_all"),
+            InlineKeyboardButton("Contacts", callback_data=f"set_gp_{index}_{page}_contacts"),
+            InlineKeyboardButton("Nobody", callback_data=f"set_gp_{index}_{page}_nobody"),
+        ],
+        [
+            InlineKeyboardButton("🔙 Back", callback_data=f"privacy_menu_{index}_{page}"),
+        ]
+    ]
+    
+    await cb.message.edit(
+        text="<b>👥 Group & Channel Privacy</b>\n\n"
+             "<b>Who can add me to group chats?</b>\n"
+             "Atur siapa yang bisa menambahkan Anda ke grup dan channel secara otomatis.",
+        reply_markup=InlineKeyboardMarkup(buttons),
+        parse_mode=ParseMode.HTML
+    )
+
+@Altruix.bot.on_callback_query(filters.regex(r"^set_gp_(\d+)_(\d+)_(.+)$"))
+@log_errors
+async def set_group_privacy_handler(c: Client, cb: CallbackQuery):
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    value = cb.matches[0].group(3)
+    
+    if index >= len(Altruix.clients):
+        await cb.answer("Session unavailable", show_alert=True)
+        return
+        
+    session = Altruix.clients[index]
+    
+    try:
+        from pyrogram import raw
+        
+        rule = None
+        if value == "all":
+            rule = [raw.types.InputPrivacyValueAllowAll()]
+        elif value == "contacts":
+            rule = [raw.types.InputPrivacyValueAllowContacts()]
+        elif value == "nobody":
+             rule = [raw.types.InputPrivacyValueDisallowAll()]
+             
+        key = raw.types.InputPrivacyKeyChatInvite()
+        
+        await session.invoke(raw.functions.account.SetPrivacy(key=key, rules=rule))
+        
+        await cb.answer(f"✅ Group Privacy Updated: {value.title()}", show_alert=True)
+        
+        # Log
+        await send_log_notification(
+            c, 'privacy_setting', index, cb.from_user,
+            True, None, {'Setting': 'Who can add to group', 'Value': value.title()}
+        )
+        
+    except Exception as e:
+        await cb.answer(f"❌ Failed: {str(e)}", show_alert=True)
+        await send_log_notification(
+            c, 'privacy_setting', index, cb.from_user,
+            False, str(e), {'Setting': 'Group Add', 'Value': value}
+        )
+
+# ============================================================================
+# CHAT STATISTICS HANDLER
+# ============================================================================
+
+@Altruix.bot.on_callback_query(filters.regex(r"^chat_stats_scan_(\d+)_(\d+)$"))
+@log_errors
+async def chat_stats_scan_handler(c: Client, cb: CallbackQuery):
+    await cb.answer("🔍 Scanning chat statistics... This may take a moment.", show_alert=False)
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    
+    if index >= len(Altruix.clients):
+        await cb.answer("Session unavailable", show_alert=True)
+        return
+        
+    session = Altruix.clients[index]
+    
+    # Initialize Counters
+    stats = {
+        "created": {"group": 0, "supergroup": 0, "channel": 0},
+        "admin": {"group": 0, "supergroup": 0, "channel": 0},
+        "total": {"group": 0, "supergroup": 0, "channel": 0}
+    }
+    
+    scanning_msg = None
+    try:
+         scanning_msg = await cb.message.edit(f"🔍 <b>Scanning chats... (0 found)</b>")
+    except: pass
+
+    count = 0
+    try:
+        async for dialog in session.get_dialogs():
+            chat = dialog.chat
+            chat_type = chat.type
+            
+            # Simple Category Mapping
+            cat_key = None
+            if chat_type == ChatType.GROUP: cat_key = "group"
+            elif chat_type == ChatType.SUPERGROUP: cat_key = "supergroup"
+            elif chat_type == ChatType.CHANNEL: cat_key = "channel"
+            
+            if not cat_key: continue
+            
+            # Total Increment
+            stats["total"][cat_key] += 1
+            
+            # Check Creator
+            if getattr(chat, "is_creator", False):
+                stats["created"][cat_key] += 1
+                
+            # Check Admin (Creator is also admin usually, but we count specific admin privs if not creator)
+            if getattr(chat, "is_creator", False) or (getattr(chat, "privileges", None) and chat.privileges.can_manage_chat):
+                 stats["admin"][cat_key] += 1
+            
+            count += 1
+            if count % 100 == 0 and scanning_msg:
+                 try: await scanning_msg.edit(f"🔍 <b>Scanning chats... ({count} scanned)</b>")
+                 except: pass
+
+    except FloodWait as e:
+        await asyncio.sleep(e.value) # Blind wait or return error
+        if scanning_msg: await scanning_msg.edit(f"⏳ <b>FloodWait {e.value}s</b> during scan. Please try again later.")
+        return
+    except Exception as e:
+        if scanning_msg: await scanning_msg.edit(f"❌ <b>Error:</b> {str(e)}")
+        return
+
+    # Formatting Output
+    text = (
+        f"📊 <b>Chat Statistics</b>\n"
+        f"<i>Scan Result for Session {index + 1}</i>\n\n"
+        # CREATED SECTION
+        f"👑 <b>Created (Owner):</b>\n"
+        f"• Group: <code>{stats['created']['group']}</code>\n"
+        f"• Supergroup: <code>{stats['created']['supergroup']}</code>\n"
+        f"• Channel: <code>{stats['created']['channel']}</code>\n"
+        f"<b>Total Created:</b> {sum(stats['created'].values())}\n\n"
+        
+        # ADMIN SECTION
+        f"👮 <b>Admin (Inc. Creator):</b>\n"
+        f"• Group: <code>{stats['admin']['group']}</code>\n"
+        f"• Supergroup: <code>{stats['admin']['supergroup']}</code>\n"
+        f"• Channel: <code>{stats['admin']['channel']}</code>\n"
+        f"<b>Total Admin:</b> {sum(stats['admin'].values())}\n\n"
+        
+        # TOTAL JOINED
+        f"📈 <b>Total Joined:</b>\n"
+        f"• Group: <code>{stats['total']['group']}</code>\n"
+        f"• Supergroup: <code>{stats['total']['supergroup']}</code>\n"
+        f"• Channel: <code>{stats['total']['channel']}</code>\n"
+        f"<b>Grand Total:</b> {sum(stats['total'].values())}\n"
+    )
+    
+    buttons = [[InlineKeyboardButton("🔙 Back to Session Info", callback_data=f"session_info_{index}_{page}")]]
+    
+    if scanning_msg:
+         await scanning_msg.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)

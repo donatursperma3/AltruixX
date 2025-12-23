@@ -2,8 +2,9 @@
 # Copyright (C) 2021-present by Altruix@Github, < https://github.com/Altruix >.
 
 from Main import Altruix
-from pyrogram import Client, filters, enums
-from pyrogram.types import Message
+from pyrogram import Client, filters, enums, raw
+from pyrogram.types import Message, MessageEntity
+from pyrogram.errors import FloodWait, MessageNotModified
 from Main.core.decorators import log_errors
 import asyncio
 import os
@@ -12,16 +13,154 @@ import time
 # ============================================================================
 # SETTINGS & CONSTANTS
 # ============================================================================
-PLUGIN_VERSION = "1.0.1"
-FLOOD_PROTECTION_DELAY = 3  # Detik antar download/copy
+PLUGIN_VERSION = "1.0.4"
+FLOOD_PROTECTION_DELAY = 1.5  # Reduced default delay, will increase if hit flood
+MAX_RETRIES = 3
+
+async def safe_edit(msg: Message, text: str, parse_mode=enums.ParseMode.HTML):
+    """
+    Helper to safely edit message, ignoring MessageNotModified error.
+    Only edits if text is different (simple check) or just try-except.
+    """
+    if not msg: return
+    try:
+        # Simple optimization: check if text is same (if available)
+        if msg.text == text: return 
+        await msg.edit(text, parse_mode=parse_mode)
+    except MessageNotModified:
+        pass
+    except Exception as e:
+        # Fallback log
+        pass
+
+def clean_premium_cation(caption, entities, is_premium_session):
+    """
+    Remove premium emojis from caption/entities if session is not premium.
+    Returns: (cleaned_caption, cleaned_entities)
+    """
+    if is_premium_session:
+        return caption, entities
+    
+    if not entities:
+        return caption, None
+
+    # Filter out CUSTOM_EMOJI entities
+    new_entities = []
+    for entity in entities:
+        if entity.type != enums.MessageEntityType.CUSTOM_EMOJI:
+            new_entities.append(entity)
+            
+    # If we just drop the entity for custom emoji, the text remains as the fallback char (usually valid).
+    # So we don't need to modify caption text itself, just the metadata.
+    
+    return caption, new_entities
+
+async def process_story(c: Client, target_chat_id: int, target_user: str, story_id: int, status_msg: Message = None):
+    """
+    Helper function to process a single story:
+    1. Try copy_story (Preferred)
+    2. If fails/restricted, fallback to download_media + send_photo/video
+    3. Handles premium caption cleaning
+    """
+    is_premium = c.me.is_premium
+    retries = 0
+    
+    while retries < MAX_RETRIES:
+        try:
+            # ✅ PRIORITAS 1: Coba Copy Story (Tercepat & Hemat Bandwidth)
+            if is_premium:
+                 await c.copy_story(target_chat_id, target_user, story_id)
+                 return True
+            else:
+                # Non-premium try copy first
+                await c.copy_story(target_chat_id, target_user, story_id)
+                return True
+
+        except Exception as e:
+            # Check Error Message
+            err_str = str(e)
+            bypass_needed = "PREMIUM_ACCOUNT_REQUIRED" in err_str or "STORY_NOT_MODIFIED" in err_str or "bad request" in err_str.lower()
+            
+            if not bypass_needed:
+                 # Jika error bukan karena premium/restrict, mungkin floodwait
+                 if isinstance(e, FloodWait):
+                     wait_time = e.value + 1
+                     if status_msg: await safe_edit(status_msg, f"⏳ <b>FloodWait:</b> Tunggu {wait_time}s...")
+                     await asyncio.sleep(wait_time)
+                     retries += 1
+                     continue
+                 else:
+                     # Unknown error, log debug logic here if needed
+                     pass
+            
+            if status_msg and retries == 0:
+                 await safe_edit(status_msg, f"⚠️ <b>Copy gagal ({err_str[:30]}...), switch ke mode download...</b>")
+            
+            # ✅ PRIORITAS 2: Bypass (Download & Re-upload)
+            try:
+                story = await c.get_stories(target_user, story_id)
+                if not story:
+                    if status_msg: await safe_edit(status_msg, f"❌ <b>Story {story_id} tidak ditemukan.</b>")
+                    return False
+                    
+                # Use in_memory=False to save to disk safely
+                file_path = await c.download_media(story, in_memory=False)
+                
+                if not file_path:
+                    if status_msg: await safe_edit(status_msg, "❌ <b>Gagal download media story.</b>")
+                    return False
+                
+                try:
+                    # Clean caption if needed
+                    caption = story.caption or ""
+                    caption_entities = story.caption_entities
+                    
+                    final_caption, final_entities = clean_premium_cation(caption, caption_entities, is_premium)
+                    
+                    # Tambahkan credit kecil (jika caption kosong)
+                    if not final_caption:
+                         final_caption = f"📥 <b>Story from</b> @{target_user}"
+                    
+                    if story.video:
+                        await c.send_video(
+                            target_chat_id, 
+                            video=file_path, 
+                            caption=final_caption, 
+                            caption_entities=final_entities
+                        )
+                    else:
+                        await c.send_photo(
+                            target_chat_id, 
+                            photo=file_path, 
+                            caption=final_caption, 
+                            caption_entities=final_entities
+                        )
+                finally:
+                    # GUARANTEED CLEANUP
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                    
+                return True
+                
+            except FloodWait as fwe:
+                 wait_time = fwe.value + 1
+                 if status_msg: await safe_edit(status_msg, f"⏳ <b>FloodWait (Download):</b> Tunggu {wait_time}s...")
+                 await asyncio.sleep(wait_time)
+                 retries += 1
+                 continue
+            except Exception as bypass_e:
+                 if status_msg: await safe_edit(status_msg, f"❌ <b>Bypass Gagal:</b> {str(bypass_e)}")
+                 return False
+    
+    return False
 
 @Altruix.register_on_cmd(["dlstory"], bot_mode_unsupported=True)
 @log_errors
 async def download_story_cmd(c: Client, m: Message):
     """
     Download/Copy a story from a given link using Kurigram copy_story.
+    Support Bypass for Non-Premium Userbots.
     Usage: !dlstory <story_link>
-    Example: !dlstory https://t.me/username/s/1
     """
     input_ = m.user_input or m.raw_user_input
     if not input_:
@@ -29,52 +168,53 @@ async def download_story_cmd(c: Client, m: Message):
             "❌ <b>Silakan berikan link story aktif!</b>\n\n"
             "<b>Cara pakai:</b>\n"
             "<code>!dlstory https://t.me/username/s/ID</code>\n\n"
-            "<b>Contoh:</b>\n"
-            "<code>!dlstory https://t.me/durov/s/12</code>"
+            "<b>Output:</b> Pesan akan dikirim ke chat ini."
         )
 
     link = input_.split()[0]
-    await m.handle_message("🔄 <b>Mencoba memproses story link...</b>")
+    status_msg = await m.handle_message("🔄 <b>Mencoba memproses story link...</b>")
 
     try:
-        # Regex to extract username and story_id
-        # Format: https://t.me/username/s/1 or https://t.me/c/ID/s/1
         if "t.me/" not in link or "/s/" not in link:
-            return await m.handle_message("❌ <b>Format link tidak valid!</b> Gunakan format: <code>https://t.me/username/s/ID</code>")
+            return await safe_edit(status_msg, "❌ <b>Format link tidak valid!</b> Gunakan format: <code>https://t.me/username/s/ID</code>")
 
         parts = link.split("/")
-        # link format usually ends with /s/ID
-        story_id = int(parts[-1])
-        target = parts[-3] if "t.me/c/" not in link else f"-100{parts[-3]}"
+        # Trik parsing lazy: ambil integer terakhir sbg ID, dan part sebelum /s/ sebagai username/chatid
+        if parts[-2] == 's':
+             story_id = int(parts[-1])
+             target_raw = parts[-3]
+        elif parts[-2].isdigit(): # Case https://t.me/c/xxx/ID
+             story_id = int(parts[-1])
+             target_raw = parts[-3] # kemungkinan 'c' lalu ID
+             if parts[-4] == 'c':
+                 target_raw = f"-100{parts[-3]}"
+        else:
+             # Fallback parsing standar
+             story_id = int(parts[-1])
+             target_raw = parts[-3] if "t.me/c/" not in link else f"-100{parts[-3]}"
 
-        await m.handle_message(f"⏬ <b>Menyalin story {story_id} dari {target}...</b>")
+        # Fix target type (int/str)
+        if target_raw.lstrip('-').isdigit():
+             target = int(target_raw) # Chat ID
+        else:
+             target = target_raw # Username
+
+        await safe_edit(status_msg, f"⏬ <b>Mengambil story no {story_id} dari {target}...</b>")
         
-        # ✅ USE Kurigram copy_story method
-        # await client.copy_story(chat_id, from_chat_id, story_id)
-        try:
-            await c.copy_story(m.chat.id, target, story_id)
-            await m.delete_if_self()
-        except Exception as e:
-            # Fallback to download if copy fails
-            await m.handle_message(f"⚠️ <b>Copy gagal, mencoba download manual...</b>\n<i>Error: {str(e)}</i>")
-            story = await c.get_stories(target, story_id)
-            if not story:
-                return await m.handle_message("❌ <b>Story tidak ditemukan atau sudah kadaluarsa.</b>")
-            
-            file_path = await c.download_media(story)
-            if file_path:
-                if story.video:
-                    await c.send_video(m.chat.id, file_path, caption=f"🎬 <b>Story from @{target}</b>")
-                else:
-                    await c.send_photo(m.chat.id, file_path, caption=f"🖼️ <b>Story from @{target}</b>")
-                if os.path.exists(file_path):
-                    os.remove(file_path)
-                await m.delete_if_self()
-            else:
-                await m.handle_message("❌ <b>Gagal mendownload media story secara manual.</b>")
+        # PROCESS
+        success = await process_story(c, m.chat.id, target, story_id, status_msg)
+        
+        if success:
+              await status_msg.delete()
+              await m.delete_if_self()
+        else:
+              # Error message sudah dihandle di dalam func atau status_msg terakhir
+              pass
 
+    except FloodWait as e:
+        await safe_edit(status_msg, f"⏳ <b>FloodWait Detected:</b> Tunggu {e.value} detik.")
     except Exception as e:
-        await m.handle_message(f"❌ <b>Terjadi kesalahan:</b>\n<code>{str(e)}</code>")
+        await safe_edit(status_msg, f"❌ <b>Terjadi kesalahan:</b>\n<code>{str(e)}</code>")
 
 
 @Altruix.register_on_cmd(["stories"], bot_mode_unsupported=True)
@@ -83,60 +223,103 @@ async def list_stories_cmd(c: Client, m: Message):
     """
     Download all active stories from a user.
     Usage: !stories <username/ID>
+    Safe for floodwait & tries RAW method if standard fails.
     """
     input_ = m.user_input or m.raw_user_input
     if not input_:
         return await m.handle_message(
             "❌ <b>Silakan berikan username atau user ID!</b>\n\n"
             "<b>Cara pakai:</b>\n"
-            "<code>!stories @username</code> atau <code>!stories 12345678</code>"
+            "<code>!stories @username</code>"
         )
 
-    target = input_.split()[0]
-    await m.handle_message(f"🔍 <b>Mencari stories aktif dari {target}...</b>")
+    target_input = input_.split()[0]
+    
+    if target_input.lstrip('-').isdigit():
+             target = int(target_input)
+    else:
+             target = target_input
+
+    status_msg = await m.handle_message(f"🔍 <b>Mencari stories aktif dari {target}...</b>")
 
     try:
-        # Get active stories using get_chat_stories generator
         stories_count = 0
-        async for story in c.get_chat_stories(target):
+        failed_count = 0
+        
+        # 🟢 METODE 1: Standard Pyrogram get_chat_stories (High Level)
+        found_stories_ids = []
+        try:
+            async for story in c.get_chat_stories(target):
+                found_stories_ids.append(story.id)
+        except Exception:
+            # Fallback to Raw manual if this fails or returns empty
+            pass
+
+        # 🟢 METODE 2: RAW Fallback (Jika Metode 1 gagal/kosong)
+        if not found_stories_ids:
+             try:
+                 await safe_edit(status_msg, f"🔍 <b>Mencari via RAW method...</b>")
+                 peer = await c.resolve_peer(target)
+                 raw_stories = await c.invoke(raw.functions.stories.GetPeerStories(peer=peer))
+                 # Handle result type
+                 if isinstance(raw_stories, raw.types.stories.PeerStories):
+                      for s in raw_stories.stories:
+                           # Raw story object has 'id'
+                           found_stories_ids.append(s.id)
+             except Exception as e:
+                 # Log error but try to proceed if we have anything
+                 pass
+        
+        # 🟢 HASIL PENCARIAN
+        if not found_stories_ids:
+            return await safe_edit(status_msg, f"❌ <b>Tidak ada story aktif ditemukan (atau semua gagal) untuk {target}.</b>")
+
+        await safe_edit(status_msg, f"⬇️ <b>Ditemukan {len(found_stories_ids)} stories. Mulai proses download...</b>")
+        
+        # 🟢 PROSES DOWNLOAD
+        for story_id in found_stories_ids:
             try:
-                # Copy directly to current chat
-                await c.copy_story(m.chat.id, target, story.id)
-                stories_count += 1
-                await asyncio.sleep(FLOOD_PROTECTION_DELAY)
-            except Exception:
-                # Fallback to download
-                file_path = await c.download_media(story)
-                if file_path:
-                    if story.video:
-                        await c.send_video(m.chat.id, file_path, caption=f"🎬 Story {story.id} from {target}")
-                    else:
-                        await c.send_photo(m.chat.id, file_path, caption=f"🖼️ Story {story.id} from {target}")
-                    if os.path.exists(file_path):
-                        os.remove(file_path)
+                # Process sequentially 
+                success = await process_story(c, m.chat.id, target, story_id, status_msg)
+                
+                if success:
                     stories_count += 1
-                    await asyncio.sleep(FLOOD_PROTECTION_DELAY)
+                else:
+                    failed_count += 1
+                
+                # Smart delay update
+                await safe_edit(status_msg, f"⏳ <b>Proses:</b> {stories_count + failed_count}/{len(found_stories_ids)} (Success: {stories_count})")
+                await asyncio.sleep(FLOOD_PROTECTION_DELAY)
+                
+            except FloodWait as e:
+                await safe_edit(status_msg, f"⏳ <b>FloodWait Global:</b> Tidur {e.value}s...")
+                await asyncio.sleep(e.value)
+                # Retry once logic already in process_story, here we just continue loop
+            except Exception:
+                failed_count += 1
 
-        if stories_count == 0:
-            return await m.handle_message(f"❌ <b>Tidak ada story aktif ditemukan untuk {target}.</b>")
-
-        await m.handle_message(f"✅ <b>Berhasil menyalin {stories_count} stories dari {target}.</b>")
-        await asyncio.sleep(3)
+        await safe_edit(status_msg, f"✅ <b>Selesai!</b>\nBerhasil: {stories_count}\nGagal: {failed_count}")
+        await asyncio.sleep(5)
+        await status_msg.delete()
         await m.delete_if_self()
 
     except Exception as e:
-        await m.handle_message(f"❌ <b>Error:</b> <code>{str(e)}</code>")
+        await safe_edit(status_msg, f"❌ <b>Error:</b> <code>{str(e)}</code>")
+
 
 # Add help info
 Altruix._command_help_message_data["xstories"] = (
-    "<b>✨ Story Downloader (Kurigram Powered)</b>\n\n"
-    "Plugin ini memudahkan Anda mendownload atau menyalin story Telegram dari link atau username.\n\n"
+    "<b>✨ Story Downloader (Smart Bypass v2 + Raw)</b>\n\n"
+    "Plugin ini memudahkan Anda mendownload atau menyalin story Telegram.\n"
+    "Bot akan <b>otomatis bypass restriction</b> jika akun Anda non-premium atau story diproteksi.\n\n"
     "<b>Perintah Tersedia:</b>\n"
     "• <code>!dlstory &lt;link&gt;</code>\n"
-    "  Menyalin story spesifik dari link t.me.\n"
-    "  Contoh: <code>!dlstory https://t.me/durov/s/12</code>\n\n"
+    "  Menyalin story spesifik ke chat ini.\n"
+    "  Contoh: <code>!dlstory https://t.me/username/s/12</code>\n\n"
     "• <code>!stories &lt;username/ID&gt;</code>\n"
-    "  Mengambil SEMUA story aktif dari user tersebut.\n"
+    "  Mengambil SEMUA story aktif dari target.\n"
     "  Contoh: <code>!stories @username</code>\n\n"
-    "<i>Fitur ini mendukung proteksi Anti-Flood otomatis.</i>"
+    "⚠️ <b>Catatan:</b>\n"
+    "• System otomatis retry & aman dari FloodWait.\n"
+    "• Output dikirim ke chat tempat perintah dijalankan."
 )

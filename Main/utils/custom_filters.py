@@ -39,6 +39,7 @@ def parse_(client, message: Message, cmd, disable_sudo=False):
             and message.text
             and reg[1] == sudo_cmd_handler
             and reg[2] in cmd
+            and not message.from_user.is_self # ✅ Fix: Owner cannot use sudo prefix
         ):
             return True
         else:

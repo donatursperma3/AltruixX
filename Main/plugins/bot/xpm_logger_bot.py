@@ -249,11 +249,43 @@ async def pm_logger_bot_handler(c: Client, m: RawMessage):
         sender_username = f"@{sender.username}" if sender.username else "No Username"
         sender_hyperlink = f'<a href="tg://user?id={sender_id}">{html.escape(sender_name)}</a>'
         
-        msg_text = m.text or m.caption or "[No text/media caption]"
-        msg_type = m.media.value if m.media else "text"
-        
+        msg_type_str = "text"
+        if m.media:
+            if msg_type_str == "animation": msg_type_str = "video"
+            
         log_time = m.date.strftime("%Y-%m-%d %H:%M:%S")
-        
+        msg_text = m.text or m.caption or "[Media]"
+
+        # ✅ Filter Check
+        filters_file = "pml_filters.json"
+        allowed = True
+        try:
+            current_filters = {
+                "text": True, "photo": True, "video": True, "voice": True,
+                "audio": True, "sticker": False, "document": True, "others": True
+            }
+            if os.path.exists(filters_file):
+                with open(filters_file, "r") as f:
+                    saved_filters = json.load(f)
+                    current_filters.update(saved_filters)
+            
+            check_key = "others"
+            if not m.media: check_key = "text"
+            elif msg_type_str == "photo": check_key = "photo"
+            elif msg_type_str == "video": check_key = "video"
+            elif msg_type_str == "voice": check_key = "voice"
+            elif msg_type_str == "audio": check_key = "audio"
+            elif msg_type_str == "sticker": check_key = "sticker"
+            elif msg_type_str == "document": check_key = "document"
+            
+            if not current_filters.get(check_key, True):
+                allowed = False
+        except Exception as e:
+            logger.error(f"Filter check error: {e}")
+            
+        if not allowed:
+            return
+
         log_content = (
             f"👤 <b>New PM Received (Bot)</b>\n\n"
             f"• <b>From:</b> {sender_hyperlink}\n"
@@ -261,7 +293,7 @@ async def pm_logger_bot_handler(c: Client, m: RawMessage):
             f"• <b>Username:</b> {sender_username}\n"
             f"• <b>To Bot:</b> {c.me.mention}\n"
             f"• <b>Time:</b> <code>{log_time}</code>\n"
-            f"• <b>Type:</b> <code>{msg_type}</code>\n"
+            f"• <b>Type:</b> <code>{msg_type_str}</code>\n"
             f"• <b>Message:</b>\n<blockquote>{html.escape(str(msg_text)[:1000])}</blockquote>"
         )
         

@@ -161,3 +161,5 @@ pm_logger_settings.json
 xchatsanomlau_cache.json
 *localdb.json
 *.localdb
+mentions_cache.json
+mentions_cache_fallback.json

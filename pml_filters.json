@@ -1,0 +1,10 @@
+{
+  "text": true,
+  "photo": true,
+  "video": true,
+  "voice": true,
+  "audio": true,
+  "sticker": true,
+  "document": true,
+  "others": true
+}

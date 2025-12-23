@@ -46,7 +46,7 @@ logger = logging.getLogger("altruix.mentions")
 logger.setLevel(logging.INFO)
 
 # 🔥 LOG STARTUP
-logger.info(f"🚀 Initializing mentions plugin v{PLUGIN_VERSION}")
+logger.info(f"🚀 Initializing mentions plugin {PLUGIN_VERSION}")
 
 
 # ============================================================================
@@ -2871,21 +2871,42 @@ logger.info("Cleanup task started")
 # ============================================================================
 async def cache_cleanup_task():
     """Regular cache cleanup task."""
+    logger.info("♻️ Starting cache cleanup task loop...")
     while True:
         try:
             # Cleanup expired waiting replies di cache persisten
             if CACHE_MANAGER_AVAILABLE and cache_manager:
-                await cache_manager.cleanup_expired()
+                try:
+                    # Check if method exists before calling (backward compatibility/safety)
+                    if hasattr(cache_manager, 'cleanup_expired'):
+                        cleaned = await cache_manager.cleanup_expired()
+                        if cleaned > 0:
+                            logger.info(f"🧹 CacheManager cleaned {cleaned} expired entries")
+                    else:
+                        logger.warning("⚠️ CacheManager missing cleanup_expired method")
+                except Exception as e:
+                    logger.error(f"❌ Error calling cache_manager.cleanup_expired: {e}")
             
             # Juga cleanup fallback cache
             now = time.time()
             expired_keys = []
-            for key, entry in MENTION_LOG_CACHE.items():
-                if entry.get("expires_at", 0) < now:
-                    expired_keys.append(key)
+            
+            # Use list(keys) to avoid dictionary changed size during iteration
+            for key, entry in list(MENTION_LOG_CACHE.items()):
+                try:
+                    # Parse expires_at if it's string
+                    expires_at = entry.get("expires_at", 0)
+                    if isinstance(expires_at, str):
+                        # Simple check, assumes isoformat or similar if string
+                        # For simplicity in fallback, maybe skip string parsing if complex
+                        pass 
+                    elif isinstance(expires_at, (int, float)):
+                        if expires_at < now and expires_at > 0:
+                            expired_keys.append(key)
+                except: continue
             
             for key in expired_keys[:100]:  # Limit per cycle
-                del MENTION_LOG_CACHE[key]
+                MENTION_LOG_CACHE.pop(key, None)
             
             if expired_keys:
                 logger.info(f"🧹 Cleaned {len(expired_keys)} expired fallback cache entries")

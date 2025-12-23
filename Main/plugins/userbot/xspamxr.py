@@ -123,6 +123,12 @@ def USER_CLIENT():
 async def get_chat_safe(client: Client, identifier, timeout: int = 10) -> object:
     """Mengembalikan objek chat jika valid, atau None jika tidak valid/timeout."""
     try:
+        # 🔥 FIX: Force convert string ID to int to avoid PHONE_NOT_OCCUPIED error
+        if isinstance(identifier, str):
+            # Check for negative ID (e.g. "-100123") or positive ("123")
+            if identifier.lstrip("-").isdigit():
+                identifier = int(identifier)
+                
         return await asyncio.wait_for(client.get_chat(identifier), timeout=timeout)
     except FloodWait as fwe:
         Altruix.log(f"[CHAT_ERROR] FloodWait saat resolve chat {identifier}: {fwe}", level=40)
@@ -419,13 +425,20 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
         total_del_ggl = 0
         spam_client = client
 
-        if not await get_chat_safe(client, target_chat.id):
-            error_msg = "❌ **TASK DIBATALKAN**\nUserbot kehilangan akses ke channel/grup."
-            Altruix.log(f"[SPAM_LOOP_ERROR] {error_msg}", level=40)
-            await send_log_message(error_msg, client=client)
-            if chat_id in TELAYSPAM_TASKS:
-                TELAYSPAM_TASKS.pop(chat_id, None)
-            return
+        # ❌ REMOVED: Redundant get_chat check that caused PHONE_NOT_OCCUPIED errors.
+        # Reliability is handled by try-except blocks inside the loop.
+        # if not await get_chat_safe(client, target_chat.id):
+        #     error_msg = "❌ **TASK DIBATALKAN**\nUserbot kehilangan akses ke channel/grup."
+        #     Altruix.log(f"[SPAM_LOOP_ERROR] {error_msg}", level=40)
+        #     await send_log_message(error_msg, client=client)
+        #     if chat_id in TELAYSPAM_TASKS:
+        #         TELAYSPAM_TASKS.pop(chat_id, None)
+        #     return
+        
+        # Ensure target_chat has id if it was lost (sanity check)
+        if not hasattr(target_chat, 'id'):
+             Altruix.log("[CRITICAL] target_chat object lost attributes", level=40)
+             return
 
         if is_batch:
             for msg, b_count in msg_list:

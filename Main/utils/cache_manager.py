@@ -228,6 +228,64 @@ class CacheManager:
         except:
             return False
     
+    async def cleanup_expired(self) -> int:
+        """Cleanup expired entries from all backends."""
+        count = 0
+        try:
+            now = datetime.now()
+            
+            # 1. Cleanup Memory Cache
+            expired_keys = [
+                k for k, t in self.memory_ttl.items() 
+                if now.timestamp() > t
+            ]
+            for k in expired_keys:
+                self.memory_cache.pop(k, None)
+                self.memory_ttl.pop(k, None)
+                count += 1
+            
+            # 2. Cleanup JSON Cache
+            if self.backend == "json" and self.json_file.exists():
+                async with aiofiles.open(self.json_file, 'r', encoding='utf-8') as f:
+                    content = await f.read()
+                    data = json.loads(content) if content.strip() else {"cache": {}}
+                
+                initial_len = len(data.get("cache", {}))
+                
+                # Filter expired
+                new_cache = {}
+                for k, v in data.get("cache", {}).items():
+                    try:
+                        expires_at = v.get("expires_at")
+                        if expires_at:
+                            if isinstance(expires_at, str):
+                                expires_dt = datetime.fromisoformat(expires_at)
+                            else:
+                                expires_dt = expires_at
+                            
+                            if now <= expires_dt:
+                                new_cache[k] = v
+                        else:
+                            new_cache[k] = v
+                    except:
+                        pass
+                
+                if len(new_cache) < initial_len:
+                    data["cache"] = new_cache
+                    data["meta"]["last_cleanup"] = now.isoformat()
+                    async with aiofiles.open(self.json_file, 'w', encoding='utf-8') as f:
+                        await f.write(json.dumps(data, indent=2, ensure_ascii=False))
+                    count += (initial_len - len(new_cache))
+
+            # 3. Redis & Mongo usually handle their own TTL, but we can verify if needed
+            # For this implementation, we rely on their native TTL mechanisms.
+            
+            return count
+            
+        except Exception as e:
+            logger.error(f"❌ Cache cleanup failed: {e}")
+            return 0
+
     async def clear(self) -> bool:
         """Clear all cache."""
         try:

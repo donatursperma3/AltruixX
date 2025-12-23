@@ -16,6 +16,7 @@ from time import perf_counter as pc
 from Main.core.config import TGLIMITS
 from Main.core.types.message import Message
 from Main.utils.dev_func import eval_py, exec_terminal
+from Main.core.decorators import log_errors
 
 
 @Altruix.register_on_cmd(
@@ -42,6 +43,7 @@ from Main.utils.dev_func import eval_py, exec_terminal
         ],
     },
 )
+@log_errors
 async def get_json_message_handler(c: Client, m: Message):
     user_args = m.user_args
     msg_id = m.id
@@ -82,6 +84,7 @@ async def get_json_message_handler(c: Client, m: Message):
     },
     just_exc=True,
 )
+@log_errors
 async def evaluate_command_handler(c: Client, m: Message):
     msg_id = m.id
     m_ = await m.handle_message("PROCESSING")
@@ -148,6 +151,7 @@ async def evaluate_command_handler(c: Client, m: Message):
         ],
     },
 )
+@log_errors
 async def terminal(c: Client, m: Message):
     user_args = m.user_args
     bash_code = m.raw_user_input
@@ -218,6 +222,7 @@ async def paste_logs(log_path):
         ],
     },
 )
+@log_errors
 async def logs(c: Client, m: Message):
     log_file_ = "altruix.log"
     start = pc()

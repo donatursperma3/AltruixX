@@ -39,7 +39,7 @@ class CustomClientMethods:
             except (FloodWait, SlowmodeWait) as e:
                 if max_count > mmax_:
                     raise e
-                Altruix.log(f"[{e.__class__.__name__}]: sleeping for - {e.x + 3}s.")
+                Altruix.log(f"[{e.__class__.__name__}]: sleeping for - {e.value + 3}s.")
                 await asyncio.sleep(e.value + 3)
                 max_count += 1
 
