@@ -159,7 +159,12 @@ altruix_local_db.json
 mentions_settings.json
 pm_logger_settings.json
 xchatsanomlau_cache.json
-*localdb.json
-*.localdb
 mentions_cache.json
 mentions_cache_fallback.json
+chat_stats_cache.json
+*localdb.json
+*.localdb
+
+# Semua file JSON yang berakhiran _cache atau _settings
+*_cache.json
+*_settings.json

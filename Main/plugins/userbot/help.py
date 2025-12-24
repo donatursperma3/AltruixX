@@ -65,10 +65,18 @@ async def help_normal(c: Client, m):
         )
     elif not user_input:
         plugin_count = len(Altruix.cmd_list)
+        # Hitung total command dari semua plugin
+        total_commands = 0
+        for plugin_cmds in Altruix.cmd_list.values():
+            for cmd_info in plugin_cmds:
+                total_commands += len(cmd_info.get("commands", []))
+
         cmd_list = f"<i><b>Plugins Available ({plugin_count})</i></b>\n\n"
         for plugins in sorted(Altruix.cmd_list.keys()):
             cmd_list += f"<code>{plugins}</code>  "
         cmd_list = cmd_list[:-2]
+        cmd_list += f"\n\n<b>Total Plugins:</b> <code>{plugin_count}</code>"
+        cmd_list += f"\n<b>Total Commands:</b> <code>{total_commands}</code>"
         cmd_list += f"\n\n<i>Use</i> <code>{Altruix.user_command_handler}help <plugin name></code> <i>to know more!</i>"
         await m.handle_message(cmd_list)
     elif user_input and not cmd_lists.get(user_input):

@@ -201,3 +201,7 @@ YANDEX_RESULT: "<b><i><a href='{}'>Berhasil mencari gambar ini di Yandex.</a></i
 YOU_SHOULD_DIE: "<i>Anda tidak bisa melakukan ini.</i>"
 TURNED_ON_MENTIONS_GLOBALLY: "Berhasil <b>mengaktifkan</b> log mention, Anda akan di-ping lagi di log chat."
 TURNED_OFF_MENTIONS_GLOBALLY: "Berhasil <b>menonaktifkan</b> log mention, mention Anda tidak akan dicatat lagi"
+DOWNLOAD_MY_PHOTO: "🖼️ Download My Photo"
+DOWNLOAD_USER_PHOTO: "📥 Download User Photo"
+DOWNLOAD_CONTENT: "📥 Download Konten"
+DLCONTENT_USAGE: "Gunakan <code>!dlcontent [link]</code> untuk mengunduh konten dari pesan ke Log Group."

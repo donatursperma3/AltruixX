@@ -245,34 +245,42 @@ async def list_stories_cmd(c: Client, m: Message):
     try:
         stories_count = 0
         failed_count = 0
-        
-        # 🟢 METODE 1: Standard Pyrogram get_chat_stories (High Level)
         found_stories_ids = []
+        
+        # Resolve target to get ID for better API compatibility
         try:
-            async for story in c.get_chat_stories(target):
-                found_stories_ids.append(story.id)
-        except Exception:
-            # Fallback to Raw manual if this fails or returns empty
-            pass
+            target_peer = await c.get_chat(target)
+            target_id = target_peer.id
+        except Exception as e:
+            return await safe_edit(status_msg, f"❌ <b>Gagal mendapatkan info target:</b> {str(e)}")
+
+        # 🟢 METODE 1: Standard Pyrogram get_chat_stories
+        try:
+            async for story in c.get_chat_stories(target_id):
+                if story.id not in found_stories_ids:
+                    found_stories_ids.append(story.id)
+        except Exception as e:
+            Altruix.log(f"Metode 1 Stories failed: {e}", level=logging.WARNING)
 
         # 🟢 METODE 2: RAW Fallback (Jika Metode 1 gagal/kosong)
         if not found_stories_ids:
              try:
                  await safe_edit(status_msg, f"🔍 <b>Mencari via RAW method...</b>")
-                 peer = await c.resolve_peer(target)
-                 raw_stories = await c.invoke(raw.functions.stories.GetPeerStories(peer=peer))
-                 # Handle result type
-                 if isinstance(raw_stories, raw.types.stories.PeerStories):
-                      for s in raw_stories.stories:
-                           # Raw story object has 'id'
-                           found_stories_ids.append(s.id)
+                 peer = await c.resolve_peer(target_id)
+                 raw_result = await c.invoke(raw.functions.stories.GetPeerStories(peer=peer))
+                 
+                 if hasattr(raw_result, "stories"):
+                      for s in raw_result.stories:
+                           if hasattr(s, "id") and s.id not in found_stories_ids:
+                                found_stories_ids.append(s.id)
              except Exception as e:
-                 # Log error but try to proceed if we have anything
-                 pass
+                 Altruix.log(f"Metode 2 Stories failed: {e}", level=logging.ERROR)
         
         # 🟢 HASIL PENCARIAN
         if not found_stories_ids:
-            return await safe_edit(status_msg, f"❌ <b>Tidak ada story aktif ditemukan (atau semua gagal) untuk {target}.</b>")
+            # Last resort: Try common range of IDs if it's a known active user (Experimental)
+            # But let's stick to the current methods for now and maybe just improve error reporting
+            return await safe_edit(status_msg, f"❌ <b>Tidak ada story aktif ditemukan untuk {target}.</b>\n\nTips: Pastikan user tersebut memiliki story aktif yang bisa Anda lihat.")
 
         await safe_edit(status_msg, f"⬇️ <b>Ditemukan {len(found_stories_ids)} stories. Mulai proses download...</b>")
         

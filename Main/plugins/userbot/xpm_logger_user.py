@@ -23,6 +23,7 @@ import aiofiles
 from datetime import datetime
 import re
 from collections import defaultdict
+import psutil
 
 # ─── LOGGER KHUSUS PLUGIN ───────────────────────────────────────────────
 
@@ -60,8 +61,6 @@ VALID_REACTION_EMOJIS = {
 
 def is_valid_emoji(emoji: str) -> bool:
     return emoji in VALID_REACTION_EMOJIS
-
-from collections import defaultdict
 
 async def load_settings():
     global PM_LOGGER_USER_DATA
@@ -269,12 +268,18 @@ async def pm_logger_user_handler(c: Client, m: RawMessage):
         sender_hyperlink = f'<a href="tg://user?id={sender_id}">{html.escape(sender_name)}</a>'
         
         msg_type_str = "text"
-        if m.media:
+        if m.service:
+            if m.service == enums.MessageServiceType.PHONE_CALL_ENDED:
+                msg_type_str = "phone_call"
+                msg_text = "📞 Phone Call Ended"
+            else:
+                return # Skip other service messages
+        elif m.media:
             msg_type_str = m.media.value
             if msg_type_str == "animation": msg_type_str = "video"
             
         log_time = m.date.strftime("%Y-%m-%d %H:%M:%S")
-        msg_text = m.text or m.caption or "[Media]"
+        msg_text = m.text or m.caption or msg_text or "[Media]"
 
         # ✅ Filter Check
         filters_file = "pml_filters.json"
@@ -313,35 +318,17 @@ async def pm_logger_user_handler(c: Client, m: RawMessage):
             f"• <b>Username:</b> {sender_username}\n"
             f"• <b>To Account:</b> {c.me.mention}\n"
             f"• <b>Time:</b> <code>{log_time}</code>\n"
-            f"• <b>Type:</b> <code>{msg_type_str}</code>\n"
+            f"• <b>Type:</b> <code>{msg_type_str.upper()}</code>\n"
             f"• <b>Message:</b>\n<blockquote>{html.escape(str(msg_text)[:1000])}</blockquote>"
         )
 
         # ─── BUTTONS ───
-        reaction_btns = [
-            InlineKeyboardButton(emoji, callback_data=f"pmlu_react_{m.chat.id}_{m.id}_{c.me.id}_{emoji}")
-            for emoji in DEFAULT_REACTION_EMOJIS
-        ]
-        
-        row1 = reaction_btns[:3]
-        row2 = reaction_btns[3:6]
-        
+        # Menu Ringkas/Kompak secara default
         keyboard = [
-            row1,
-            row2,
             [
-                InlineKeyboardButton("➕ Others", callback_data=f"pmlu_others_{m.chat.id}_{m.id}_{c.me.id}"),
-                InlineKeyboardButton("🗑️ Remove React", callback_data=f"pmlu_unreact_{m.chat.id}_{m.id}_{c.me.id}")
-            ],
-            [
-                InlineKeyboardButton("🗨️ Reply", callback_data=f"pmlu_reply_{m.chat.id}_{m.id}_{c.me.id}"),
-                InlineKeyboardButton("💾 Save to Log", callback_data=f"pmlu_save_{m.chat.id}_{m.id}_{c.me.id}")
-            ],
-            [
-                InlineKeyboardButton("👥 Reply From All", callback_data=f"pmlu_replyall_{m.chat.id}_{m.id}_{c.me.id}"),
-                InlineKeyboardButton("🗑️ Unsend", callback_data=f"pmlu_unsend_{m.chat.id}_{m.id}_{c.me.id}")
-            ],
-            [InlineKeyboardButton("🔗 Chat with User", url=f"tg://user?id={sender_id}")]
+                InlineKeyboardButton("⚙️ Show Settings Menu", callback_data=f"pmlu_toggle_full_{m.chat.id}_{m.id}_{c.me.id}"),
+                InlineKeyboardButton("🔗 Chat with User", url=f"tg://user?id={sender_id}")
+            ]
         ]
 
         if not REPLY_FROM_ALL_ACCESSIBLE:
@@ -674,6 +661,80 @@ async def pmlu_unsend_callback(c: Client, cb: CallbackQuery):
     except Exception as e:
         await cb.answer(f"❌ Error: {e}", show_alert=True)
 
+@Altruix.bot.on_callback_query(filters.regex(r"^pmlu_toggle_(full|compact)_"))
+@log_errors
+async def pmlu_toggle_callback(c: Client, cb: CallbackQuery):
+    try:
+        data = cb.data.split("_")
+        mode, chat_id, msg_id, client_id = data[2], int(data[3]), int(data[4]), int(data[5])
+        
+        if mode == "full":
+            reaction_btns = [
+                InlineKeyboardButton(emoji, callback_data=f"pmlu_react_{chat_id}_{msg_id}_{client_id}_{emoji}")
+                for emoji in DEFAULT_REACTION_EMOJIS
+            ]
+            keyboard = [
+                reaction_btns[:3],
+                reaction_btns[3:6],
+                [
+                    InlineKeyboardButton("➕ Others", callback_data=f"pmlu_others_{chat_id}_{msg_id}_{client_id}"),
+                    InlineKeyboardButton("🗑️ Remove React", callback_data=f"pmlu_unreact_{chat_id}_{msg_id}_{client_id}")
+                ],
+                [
+                    InlineKeyboardButton("🗨️ Reply", callback_data=f"pmlu_reply_{chat_id}_{msg_id}_{client_id}"),
+                    InlineKeyboardButton("💾 Save", callback_data=f"pmlu_save_{chat_id}_{msg_id}_{client_id}")
+                ],
+                [
+                    InlineKeyboardButton("🚫 Block", callback_data=f"pmlu_block_{chat_id}_{client_id}"),
+                    InlineKeyboardButton("✅ Unblock", callback_data=f"pmlu_unblock_{chat_id}_{client_id}")
+                ],
+                [
+                    InlineKeyboardButton("👥 Reply All", callback_data=f"pmlu_replyall_{chat_id}_{msg_id}_{client_id}"),
+                    InlineKeyboardButton("🗑️ Unsend", callback_data=f"pmlu_unsend_{chat_id}_{msg_id}_{client_id}")
+                ],
+                [
+                    InlineKeyboardButton("⚙️ Hide Settings Menu", callback_data=f"pmlu_toggle_compact_{chat_id}_{msg_id}_{client_id}"),
+                    InlineKeyboardButton("🔗 Chat", url=f"tg://user?id={chat_id}")
+                ]
+            ]
+            if not REPLY_FROM_ALL_ACCESSIBLE:
+                keyboard = [r for r in keyboard if not any(b.text == "👥 Reply All" for b in r)]
+        else:
+            keyboard = [[
+                InlineKeyboardButton("⚙️ Show Settings Menu", callback_data=f"pmlu_toggle_full_{chat_id}_{msg_id}_{client_id}"),
+                InlineKeyboardButton("🔗 Chat with User", url=f"tg://user?id={chat_id}")
+            ]]
+            
+        await cb.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
+        await cb.answer()
+    except Exception as e:
+        await cb.answer(f"❌ Error: {e}", show_alert=True)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^pmlu_(block|unblock)_"))
+@log_errors
+async def pmlu_block_unblock_callback(c: Client, cb: CallbackQuery):
+    try:
+        data = cb.data.split("_")
+        action, chat_id, client_id = data[1], int(data[2]), int(data[3])
+        
+        target_client = None
+        for client in Altruix.clients:
+            if client.me and client.me.id == client_id:
+                target_client = client
+                break
+        
+        if not target_client:
+            return await cb.answer("❌ Client session not found.", show_alert=True)
+            
+        if action == "block":
+            await target_client.block_user(chat_id)
+            await cb.answer("🚫 User blocked successfully.", show_alert=True)
+        else:
+            await target_client.unblock_user(chat_id)
+            await cb.answer("✅ User unblocked successfully.", show_alert=True)
+    except Exception as e:
+        await cb.answer(f"❌ Error: {e}", show_alert=True)
+
 @Altruix.bot.on_message(filters.chat(Altruix.log_chat) & filters.reply, group=3)
 @log_errors
 async def handle_pmlu_input(c: Client, m: RawMessage):
@@ -758,6 +819,37 @@ async def cleanup_pmlu_cache():
         await asyncio.sleep(3600)
 
 asyncio.create_task(cleanup_pmlu_cache())
+
+# ==================== RESOURCE MONITOR ====================
+async def resource_monitor():
+    """Monitor system resources and alert if usage exceeds 90%."""
+    alert_triggered = False
+    while True:
+        try:
+            cpu_usage = psutil.cpu_percent(interval=1)
+            ram_usage = psutil.virtual_memory().percent
+            
+            if (cpu_usage > 90 or ram_usage > 90) and not alert_triggered:
+                log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
+                alert_text = (
+                    "🚨 <b>SYSTEM OVERLOAD ALERT</b> 🚨\n\n"
+                    f"⚠️ <b>CPU Usage:</b> <code>{cpu_usage}%</code>\n"
+                    f"⚠️ <b>RAM Usage:</b> <code>{ram_usage}%</code>\n\n"
+                    "Please check your server immediately to prevent crashes."
+                )
+                try:
+                    await Altruix.bot.send_message(log_chat_id, alert_text)
+                    alert_triggered = True
+                except: pass
+            elif cpu_usage < 80 and ram_usage < 80:
+                alert_triggered = False
+                
+        except Exception as e:
+            logger.error(f"Resource monitor error: {e}")
+            
+        await asyncio.sleep(60)
+
+asyncio.create_task(resource_monitor())
 
 # ==================== LOG SUKSES LOADING ====================
 try:

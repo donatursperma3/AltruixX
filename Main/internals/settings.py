@@ -137,6 +137,9 @@ STRINGS = {
         "confirm_purge": "Konfirmasi Hapus",
         "confirm_action": "Konfirmasi Aksi",
         "confirm_msg": "Apakah Anda yakin ingin melakukan aksi ini?",
+        "download_content": "📥 Download Konten",
+        "download_my_photo": "🖼️ Download My Photo",
+        "download_user_photo": "📥 Download User Photo",
     },
     "english": {
         "sessions": "Sessions",
@@ -182,6 +185,9 @@ STRINGS = {
         "confirm_purge": "Confirm Purge",
         "confirm_action": "Confirm Action",
         "confirm_msg": "Are you sure you want to perform this action?",
+        "download_content": "📥 Download Content",
+        "download_my_photo": "🖼️ Download My Photo",
+        "download_user_photo": "📥 Download User Photo",
     }
 }
 
@@ -2285,13 +2291,18 @@ async def test_ping_all_execute_handler(c: Client, cb: CallbackQuery):
 
 @Altruix.bot.on_callback_query(filters.regex("session_info_(\\d+)_(\\d+)$"))
 @log_errors
-async def sessions_info_cb_handler(c: Client, cb: CallbackQuery):
+async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = None, callback_page: int = None):
     try:
         await cb.answer()
     except:
         pass
-    index = int(cb.matches[0].group(1))
-    callback_page = int(cb.matches[0].group(2))
+    
+    if index is None or callback_page is None:
+        if not cb.matches:
+            await cb.message.edit("Invalid callback.")
+            return
+        index = int(cb.matches[0].group(1))
+        callback_page = int(cb.matches[0].group(2))
 
     if index >= len(Altruix.clients):
         await cb.message.edit("Session not found.")
@@ -2346,14 +2357,23 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery):
             InlineKeyboardButton(gt("refresh_data"), f"gen_conf_refresh_session_info_{index}_{callback_page}"),
             InlineKeyboardButton(gt("unlink_session"), f"unlink_session_{index}"),
         ],
-        # Row 2: Profile related (Purge, Bio, Username)
+        # Row 2: Profile Management (GROUPED)
         [
-            InlineKeyboardButton(gt("purge_my_msg"), f"gen_conf_purge_msg_start_{index}_{callback_page}"),
-            InlineKeyboardButton(gt("change_bio"), f"gen_conf_edit_profile_bio_{index}_{callback_page}"),
+             InlineKeyboardButton("✏️ Change Name", f"change_name_menu_{index}_{callback_page}"),
+             InlineKeyboardButton(gt("change_bio"), f"gen_conf_change_bio_{index}_{callback_page}"),
         ],
         [
-            InlineKeyboardButton(gt("change_username"), f"gen_conf_edit_profile_username_{index}_{callback_page}"),
+             InlineKeyboardButton(gt("change_username"), f"gen_conf_change_username_{index}_{callback_page}"),
+             InlineKeyboardButton(gt("change_profile_photo"), f"gen_conf_change_profile_photo_{index}_{callback_page}"),
+        ],
+        # Row 2: Media & Downloads
+        [
+            InlineKeyboardButton(gt("download_story"), f"gen_conf_dlstory_session_input_{index}_{callback_page}"),
+            InlineKeyboardButton(gt("download_content"), f"gen_conf_dl_content_input_{index}_{callback_page}"),
+        ],
+        [
             InlineKeyboardButton(gt("download_user_photo"), f"gen_conf_dl_uphoto_start_{index}_{callback_page}"),
+            InlineKeyboardButton(gt("download_my_photo"), f"gen_conf_send_profile_photo_{index}_{callback_page}"),
         ],
         # Row 3: Account Security & Utility
         [
@@ -2362,48 +2382,35 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery):
         ],
         [
             InlineKeyboardButton(gt("test_ping"), f"gen_conf_test_ping_{index}_{callback_page}"),
-            InlineKeyboardButton(gt("join_log_group"), f"gen_conf_join_log_group_{index}_{callback_page}"),
-        ],
-        # Row 4: Account Actions
-        [
-            InlineKeyboardButton(gt("send_profile_photo"), f"gen_conf_send_profile_photo_{index}_{callback_page}"),
             InlineKeyboardButton(gt("check_limit"), f"check_limit_confirm_{index}_{callback_page}"),
-        ],
-        [
-            InlineKeyboardButton(gt("change_profile_photo"), f"gen_conf_change_profile_photo_{index}_{callback_page}"),
-            InlineKeyboardButton(gt("download_story"), f"gen_conf_dlstory_session_input_{index}_{callback_page}"),
         ],
         [
             InlineKeyboardButton(gt("view_sessions"), f"gen_conf_view_all_sessions_{index}_{callback_page}"),
             InlineKeyboardButton(gt("delete_all_photos"), f"delete_all_profile_photos_{index}_{callback_page}"),
         ],
-        # Row 5: Group & Message Management
+        # Row 4: Group & Message Management
         [
             InlineKeyboardButton(gt("join_group"), f"gen_conf_join_chat_input_{index}_{callback_page}"),
             InlineKeyboardButton(gt("leave_group"), f"gen_conf_leave_chat_input_{index}_{callback_page}"),
         ],
         [
-            InlineKeyboardButton("🔒 Privacy & Security", f"privacy_menu_{index}_{callback_page}"),
-            InlineKeyboardButton("📊 Chat Stats", f"chat_stats_scan_{index}_{callback_page}"),
-        ],
-        [
+            InlineKeyboardButton(gt("purge_my_msg"), f"gen_conf_purge_msg_start_{index}_{callback_page}"),
             InlineKeyboardButton(gt("send_message"), f"gen_conf_send_message_input_{index}_{callback_page}"),
         ],
-        # Row 6: First & Last Name
+        # Row 5: Logs & Controls
         [
-             InlineKeyboardButton(gt("first_name"), f"change_first_name_{index}_{callback_page}"),
-             InlineKeyboardButton(gt("last_name"), f"change_last_name_{index}_{callback_page}"),
-        ],
-        # Row 7: Logs & Mentions
-        [
-            InlineKeyboardButton(gt("recent_messages"), f"gen_conf_recent_messages_menu_{index}_{callback_page}"),
-            InlineKeyboardButton(gt("view_mentions"), f"gen_conf_view_mentions_menu_{index}_{callback_page}"),
+            InlineKeyboardButton("🔒 Privacy & Security", f"privacy_menu_{index}_{callback_page}"),
+            InlineKeyboardButton("📊 Chat Stats", f"gen_conf_chat_stats_scan_{index}_{callback_page}"),
         ],
         [
             InlineKeyboardButton(gt("pm_logger_control"), f"pml_menu_{index}_{callback_page}"),
             InlineKeyboardButton(gt("mention_control"), f"mnt_menu_{index}_{callback_page}"),
         ],
-        # Row 8: Advanced Tools (Eval & Exec)
+        [
+            InlineKeyboardButton(gt("recent_messages"), f"gen_conf_recent_messages_menu_{index}_{callback_page}"),
+            InlineKeyboardButton(gt("view_mentions"), f"gen_conf_view_mentions_menu_{index}_{callback_page}"),
+        ],
+        # Row 6: Advanced Tools
         [
             InlineKeyboardButton("🐍 Eval Python", f"eval_session_{index}_{callback_page}"),
             InlineKeyboardButton("🖥️ Exec Terminal", f"exec_session_{index}_{callback_page}"),
@@ -2425,6 +2432,158 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery):
         reply_markup=InlineKeyboardMarkup(buttons),
         parse_mode=ParseMode.HTML
     )
+
+
+# ✅ HANDLER BARU: Menu Ganti Nama
+@Altruix.bot.on_callback_query(filters.regex(r"change_name_menu_(\d+)_(\d+)"))
+@log_errors
+async def change_name_menu_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk menu ganti nama (First/Last)"""
+    await cb.answer()
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    
+    buttons = [
+        [
+            InlineKeyboardButton(gt("first_name"), f"gen_conf_change_first_name_{index}_{page}"),
+            InlineKeyboardButton(gt("last_name"), f"gen_conf_change_last_name_{index}_{page}"),
+        ],
+        [
+            InlineKeyboardButton("🔙 Back", callback_data=f"session_info_{index}_{page}"),
+        ]
+    ]
+    
+    await cb.message.edit(
+        text="<b>✏️ Ganti Nama</b>\n\n"
+             "Pilih bagian nama yang ingin Anda ubah:",
+        reply_markup=InlineKeyboardMarkup(buttons),
+        parse_mode=ParseMode.HTML
+    )
+
+
+# ✅ HANDLER BARU: Download Content Input
+@Altruix.bot.on_callback_query(filters.regex(r"^dl_content_input_(\d+)_(\d+)$"))
+@log_errors
+async def dl_content_input_handler(c: Client, cb: CallbackQuery):
+    """Menerima input link pesan untuk didownload/forward"""
+    await cb.answer()
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    
+    if index >= len(Altruix.clients):
+        await cb.answer("❌ Session tidak ditemukan.", show_alert=True)
+        return
+
+    session_client = Altruix.clients[index]
+    session_info = getattr(session_client, 'myself', None) or await session_client.get_me()
+    
+    await cb.message.edit(
+        f"📥 <b>Download Konten</b>\n\n"
+        f"Akun pengeksekusi: <b>{html.escape(session_info.first_name)}</b>\n\n"
+        f"Silakan kirim <b>Link Pesan</b> (misal: <code>https://t.me/username/123</code>).\n"
+        f"Konten akan dikirim ke <b>Altruix Log Group</b>.\n\n"
+        f"Ketik <code>cancel</code> untuk membatalkan.",
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("cancel"), f"session_info_{index}_{page}")]])
+    )
+    
+    try:
+        user_id = cb.from_user.id
+        msg = await c.listen(filters.chat(user_id) & filters.text, timeout=120)
+        
+        if msg.text.lower() == 'cancel':
+            await msg.delete()
+            await cb.message.edit("❌ Dibatalkan.")
+            await asyncio.sleep(2)
+            await sessions_info_cb_handler(c, cb)
+            return
+            
+        link = msg.text.strip()
+        await msg.delete()
+        
+        await cb.message.edit("🔄 <b>Sedang memproses...</b>")
+        await process_download_content(c, cb, session_client, link, index, page)
+        
+    except asyncio.TimeoutError:
+        await cb.message.edit("⏳ Waktu habis. Silakan coba lagi.")
+    except Exception as e:
+        await cb.message.edit(f"❌ Error: {str(e)}")
+
+
+async def process_download_content(c, cb, session_client, link, index, page):
+    """Helper untuk memproses download konten dari link"""
+    try:
+        # Simple link parsing
+        if "t.me/" not in link:
+            await cb.message.edit("❌ <b>Link tidak valid!</b>")
+            return
+
+        parts = link.split("/")
+        msg_id = int(parts[-1])
+        target = parts[-2]
+        if parts[-3] == 'c':
+             target = int(f"-100{parts[-2]}")
+             msg_id = int(parts[-1])
+        
+        log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
+        
+        # Try to get message
+        msg = await session_client.get_messages(target, msg_id)
+        if not msg:
+            await cb.message.edit("❌ <b>Pesan tidak ditemukan!</b>")
+            return
+
+        # Attempt to copy first
+        try:
+            await msg.copy(log_chat_id)
+            await cb.message.edit("✅ <b>Berhasil!</b> Konten telah disalin ke Log Group.")
+        except Exception:
+            # Fallback for restricted: Download and Upload
+            await cb.message.edit("🔄 <b>Copy gagal, mencoba Bypass (Download & Upload)...</b>")
+            file_path = await session_client.download_media(msg)
+            if file_path:
+                try:
+                    caption = msg.caption or f"📥 Content from {link}"
+                    if msg.photo:
+                        await c.send_photo(log_chat_id, file_path, caption=caption)
+                    elif msg.video:
+                        await c.send_video(log_chat_id, file_path, caption=caption)
+                    elif msg.document:
+                        await c.send_document(log_chat_id, file_path, caption=caption)
+                    elif msg.audio:
+                        await c.send_audio(log_chat_id, file_path, caption=caption)
+                    elif msg.voice:
+                        await c.send_voice(log_chat_id, file_path, caption=caption)
+                    elif msg.animation:
+                        await c.send_animation(log_chat_id, file_path, caption=caption)
+                    
+                    await cb.message.edit("✅ <b>Bypass Berhasil!</b> Konten telah diupload ke Log Group.")
+                finally:
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+            else:
+                # Text only?
+                if msg.text:
+                    await c.send_message(log_chat_id, f"📥 <b>Text Content:</b>\n\n{msg.text}")
+                    await cb.message.edit("✅ <b>Berhasil!</b> Teks telah disalin ke Log Group.")
+                else:
+                    await cb.message.edit("❌ <b>Gagal mendownload media.</b>")
+
+        # Log
+        await send_log_notification(
+            c, 'download_content', index, cb.from_user,
+            True, None, {'Link': link}
+        )
+
+    except Exception as e:
+        await cb.message.edit(f"❌ <b>Gagal:</b> {str(e)}")
+        await send_log_notification(
+            c, 'download_content', index, cb.from_user,
+            False, str(e), {'Link': link}
+        )
+    
+    await asyncio.sleep(3)
+    await sessions_info_cb_handler(c, cb)
 
 
 # ✅ HANDLER BARU: Menu Pesan Terbaru
@@ -3740,7 +3899,7 @@ async def refresh_session_info_cb_handler(c: Client, cb: CallbackQuery):
         return
 
     await cb.answer("Data refreshed!")
-    await sessions_info_cb_handler(c, cb)
+    await sessions_info_cb_handler(c, cb, index=index, callback_page=1)
 
 
 @Altruix.bot.on_callback_query(filters.regex(r"^unlink_session_(\d+)$"))
@@ -3961,9 +4120,11 @@ async def join_chat_confirm_handler(c: Client, cb: CallbackQuery):
 # ✅ HANDLER BARU: PM Logger Filters Menu
 @Altruix.bot.on_callback_query(filters.regex(r"^pml_filters_menu_(\d+)_(\d+)$"))
 @log_errors
-async def pml_filters_menu_handler(c: Client, cb: CallbackQuery):
-    index = int(cb.matches[0].group(1))
-    page = int(cb.matches[0].group(2))
+async def pml_filters_menu_handler(c: Client, cb: CallbackQuery, index: int = None, page: int = None):
+    if index is None:
+        index = int(cb.matches[0].group(1))
+    if page is None:
+        page = int(cb.matches[0].group(2))
     
     # Load filter settings
     filters_file = "pml_filters.json"
@@ -4053,7 +4214,7 @@ async def pml_filter_toggle_handler(c: Client, cb: CallbackQuery):
         return
         
     # Refresh menu
-    await pml_filters_menu_handler(c, cb)
+    await pml_filters_menu_handler(c, cb, index=index, page=page)
     
     # Kirim notifikasi log
     await send_log_notification(
@@ -4065,10 +4226,15 @@ async def pml_filter_toggle_handler(c: Client, cb: CallbackQuery):
 # ✅ HANDLER BARU: PM Logger Menu
 @Altruix.bot.on_callback_query(filters.regex(r"^pml_menu_(\d+)_(\d+)$"))
 @log_errors
-async def pml_menu_handler(c: Client, cb: CallbackQuery):
-    await cb.answer()
-    index = int(cb.matches[0].group(1))
-    page = int(cb.matches[0].group(2))
+async def pml_menu_handler(c: Client, cb: CallbackQuery, index: int = None, page: int = None):
+    try:
+        await cb.answer()
+    except: pass
+    
+    if index is None:
+        index = int(cb.matches[0].group(1))
+    if page is None:
+        page = int(cb.matches[0].group(2))
     
     # Load settings (dari file JSON plugins)
     try:
@@ -4163,7 +4329,7 @@ async def pml_toggle_handler(c: Client, cb: CallbackQuery):
             with open(filename, "w") as f:
                 json.dump(data, f, indent=2)
             await cb.answer("Settings updated!")
-            await pml_menu_handler(c, cb)
+            await pml_menu_handler(c, cb, index=index, page=page)
             
             # Notifikasi log
             await send_log_notification(
@@ -4190,11 +4356,16 @@ async def add_session_handler(c: Client, cb: CallbackQuery):
 # ✅ HANDLER BARU: Mention Control Menu
 @Altruix.bot.on_callback_query(filters.regex(r"^mnt_menu_(\d+)_(\d+)$"))
 @log_errors
-async def mnt_menu_handler(c: Client, cb: CallbackQuery):
+async def mnt_menu_handler(c: Client, cb: CallbackQuery, index: int = None, page: int = None):
     """Mention Control Menu with toggles"""
-    await cb.answer()
-    index = int(cb.matches[0].group(1))
-    page = int(cb.matches[0].group(2))
+    try:
+        await cb.answer()
+    except: pass
+    
+    if index is None:
+        index = int(cb.matches[0].group(1))
+    if page is None:
+        page = int(cb.matches[0].group(2))
     
     # Check current states (mock logic - ideally stored in a shared settings file)
     from Main.plugins.userbot.mentions import MENTION_LOG_CACHE # Assuming it exists or use common settings
@@ -4274,7 +4445,7 @@ async def dlstory_session_input_handler(c: Client, cb: CallbackQuery):
             await msg.delete()
             await cb.message.edit("❌ Dibatalkan.")
             await asyncio.sleep(2)
-            await sessions_info_cb_handler(c, cb)
+            await sessions_info_cb_handler(c, cb, index=index, callback_page=page)
             return
             
         link = msg.text.strip()
@@ -4286,7 +4457,7 @@ async def dlstory_session_input_handler(c: Client, cb: CallbackQuery):
         if "t.me/" not in link or "/s/" not in link:
             await cb.message.edit("❌ <b>Format link tidak valid!</b>")
             await asyncio.sleep(3)
-            await sessions_info_cb_handler(c, cb)
+            await sessions_info_cb_handler(c, cb, index=index, callback_page=page)
             return
 
         parts = link.split("/")
@@ -4366,7 +4537,7 @@ async def dlstory_session_input_handler(c: Client, cb: CallbackQuery):
             )
             
         await asyncio.sleep(3)
-        await sessions_info_cb_handler(c, cb)
+        await sessions_info_cb_handler(c, cb, index=index, callback_page=page)
         
     except asyncio.TimeoutError:
         await cb.message.edit("⏳ Waktu habis. Silakan coba lagi.")
@@ -4409,7 +4580,7 @@ async def mnt_toggle_handler(c: Client, cb: CallbackQuery):
         readable_name = key.replace('_', ' ').title()
         status_text = "ON" if m_settings[key] else "OFF"
         await cb.answer(f"✅ {readable_name} turned {status_text}", show_alert=False)
-        await mnt_menu_handler(c, cb)
+        await mnt_menu_handler(c, cb, index=index, page=page)
     else:
         await cb.answer("❌ Invalid action", show_alert=True)
 
@@ -4623,8 +4794,12 @@ async def purge_exec_handler(c: Client, cb: CallbackQuery):
     await cb.message.edit(f"⏳ <b>Memulai Purge pada {html.escape(chat_id)}...</b>", parse_mode=ParseMode.HTML)
     
     try:
-        # Resolve chat
-        target = await session_client.get_chat(chat_id)
+        # Resolve chat properly (handle numerical strings)
+        chat_to_resolve = chat_id
+        if isinstance(chat_id, str) and chat_id.lstrip('-').isdigit():
+            chat_to_resolve = int(chat_id)
+            
+        target = await session_client.get_chat(chat_to_resolve)
         me = await session_client.get_me()
         
         count = 0
@@ -4906,116 +5081,6 @@ async def sys_ctrl_1_handler(c: Client, cb: CallbackQuery):
         parse_mode=ParseMode.HTML
     )
 
-# ✅ HANDLER BARU: Menu Filter PM Logger
-@Altruix.bot.on_callback_query(filters.regex(r"^pml_filters_menu_(\d+)_(\d+)$"))
-@log_errors
-async def pml_filters_menu_handler(c: Client, cb: CallbackQuery):
-    await cb.answer()
-    index = int(cb.matches[0].group(1))
-    page = int(cb.matches[0].group(2))
-    
-    # Load filters configuration
-    filename = "pml_filters.json"
-    try:
-        if os.path.exists(filename):
-            with open(filename, "r") as f:
-                filters_data = json.load(f)
-        else:
-            # Default Settings (Most common types ON by default)
-            filters_data = {
-                "text": True, "photo": True, "video": True, 
-                "voice": True, "audio": True, "sticker": False, 
-                "document": False, "animation": False, "others": False
-            }
-    except Exception:
-        filters_data = {}
-
-    # Define filter keys with readable names
-    filter_keys = [
-        ("text", "📝 Text"),
-        ("photo", "📷 Photo"),
-        ("video", "🎥 Video"),
-        ("voice", "🎤 Voice"),
-        ("audio", "🎵 Audio"),
-        ("sticker", "😄 Sticker"),
-        ("document", "📄 Document"),
-        ("others", "📦 Others")
-    ]
-    
-    buttons = []
-    current_row = []
-    
-    for key, name in filter_keys:
-        status = filters_data.get(key, True) # Default True for common types if missing key
-        status_text = "✅" if status else "❌"
-        
-        current_row.append(
-            InlineKeyboardButton(
-                f"{name} {status_text}", 
-                callback_data=f"pml_filter_toggle_{key}_{index}_{page}"
-            )
-        )
-        
-        if len(current_row) == 2:
-            buttons.append(current_row)
-            current_row = []
-            
-    if current_row:
-        buttons.append(current_row)
-        
-    buttons.append([InlineKeyboardButton("🔙 Back to PML Menu", f"pml_menu_{index}_{page}")])
-    
-    await cb.message.edit(
-        text="<b>⚙️ PM Logger Message Filters</b>\n\n"
-             "Pilih tipe pesan yang ingin dicatat (logged) ke Log Group.\n"
-             "Klik tombol untuk mengubah status (✅/❌).",
-        reply_markup=InlineKeyboardMarkup(buttons),
-        parse_mode=ParseMode.HTML
-    )
-
-# ✅ HANDLER BARU: Toggle Filter PM Logger
-@Altruix.bot.on_callback_query(filters.regex(r"^pml_filter_toggle_(\w+)_(\d+)_(\d+)$"))
-@log_errors
-async def pml_filter_toggle_handler(c: Client, cb: CallbackQuery):
-    filter_type = cb.matches[0].group(1)
-    index = int(cb.matches[0].group(2))
-    page = int(cb.matches[0].group(3))
-    
-    filename = "pml_filters.json"
-    
-    try:
-        if os.path.exists(filename):
-            with open(filename, "r") as f:
-                data = json.load(f)
-        else:
-            data = {
-                "text": True, "photo": True, "video": True, 
-                "voice": True, "audio": True, "sticker": False, 
-                "document": False, "animation": False, "others": False
-            }
-            
-        # Toggle boolean value
-        current = data.get(filter_type, True)
-        new_state = not current
-        data[filter_type] = new_state
-        
-        with open(filename, "w") as f:
-            json.dump(data, f, indent=4)
-            
-        await cb.answer(f"Filter {filter_type} changed to {'ON' if new_state else 'OFF'}")
-        
-        # Refresh menu to show new state
-        await pml_filters_menu_handler(c, cb)
-        
-        # Kirim notifikasi log
-        await send_log_notification(
-            c, 'pml_filter_config', index, cb.from_user,
-            True, None, {'Type': filter_type, 'New State': new_state}
-        )
-        
-    except Exception as e:
-        await cb.answer(f"Error: {e}", show_alert=True)
-        Altruix.log(f"Error toggling filter: {e}", level=logging.ERROR)
 
 
 
@@ -5528,21 +5593,47 @@ async def set_group_privacy_handler(c: Client, cb: CallbackQuery):
 @Altruix.bot.on_callback_query(filters.regex(r"^chat_stats_scan_(\d+)_(\d+)$"))
 @log_errors
 async def chat_stats_scan_handler(c: Client, cb: CallbackQuery):
-    await cb.answer("🔍 Scanning chat statistics... This may take a moment.", show_alert=False)
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    user_id = cb.from_user.id
     
     if index >= len(Altruix.clients):
         await cb.answer("Session unavailable", show_alert=True)
         return
         
     session = Altruix.clients[index]
+    session_info = getattr(session, 'myself', None) or await session.get_me()
+    
+    # Caching Logic
+    cache_file = "chat_stats_cache.json"
+    cache_data = {}
+    if os.path.exists(cache_file):
+        try:
+            with open(cache_file, "r") as f:
+                cache_data = json.load(f)
+        except: pass
+    
+    session_id_str = str(session_info.id)
+    now = datetime.now().timestamp()
+    
+    # Check if cache exists and is fresh (e.g., 1 hour)
+    if session_id_str in cache_data:
+        entry = cache_data[session_id_str]
+        if now - entry.get("timestamp", 0) < 3600: # 1 hour cache
+            stats = entry.get("stats")
+            await cb.answer("📊 Loading from cache...")
+            await display_chat_stats(c, cb, session_info, stats, index, page, cached=True)
+            return
+
+    await cb.answer("🔍 Scanning chat statistics... This may take a moment.", show_alert=False)
     
     # Initialize Counters
     stats = {
         "created": {"group": 0, "supergroup": 0, "channel": 0},
         "admin": {"group": 0, "supergroup": 0, "channel": 0},
-        "total": {"group": 0, "supergroup": 0, "channel": 0}
+        "total": {"group": 0, "supergroup": 0, "channel": 0},
+        "private_chat": 0,
+        "bot": 0
     }
     
     scanning_msg = None
@@ -5561,6 +5652,12 @@ async def chat_stats_scan_handler(c: Client, cb: CallbackQuery):
             if chat_type == ChatType.GROUP: cat_key = "group"
             elif chat_type == ChatType.SUPERGROUP: cat_key = "supergroup"
             elif chat_type == ChatType.CHANNEL: cat_key = "channel"
+            elif chat_type == ChatType.BOT:
+                 stats["bot"] += 1
+                 continue
+            elif chat_type == ChatType.PRIVATE:
+                 stats["private_chat"] += 1
+                 continue
             
             if not cat_key: continue
             
@@ -5571,8 +5668,8 @@ async def chat_stats_scan_handler(c: Client, cb: CallbackQuery):
             if getattr(chat, "is_creator", False):
                 stats["created"][cat_key] += 1
                 
-            # Check Admin (Creator is also admin usually, but we count specific admin privs if not creator)
-            if getattr(chat, "is_creator", False) or (getattr(chat, "privileges", None) and chat.privileges.can_manage_chat):
+            # Check Admin (Non-Creator)
+            elif (getattr(chat, "privileges", None) and chat.privileges.can_manage_chat):
                  stats["admin"][cat_key] += 1
             
             count += 1
@@ -5581,40 +5678,55 @@ async def chat_stats_scan_handler(c: Client, cb: CallbackQuery):
                  except: pass
 
     except FloodWait as e:
-        await asyncio.sleep(e.value) # Blind wait or return error
+        await asyncio.sleep(e.value)
         if scanning_msg: await scanning_msg.edit(f"⏳ <b>FloodWait {e.value}s</b> during scan. Please try again later.")
         return
     except Exception as e:
         if scanning_msg: await scanning_msg.edit(f"❌ <b>Error:</b> {str(e)}")
         return
 
+    # Update Cache
+    cache_data[session_id_str] = {
+        "timestamp": now,
+        "stats": stats
+    }
+    try:
+        with open(cache_file, "w") as f:
+            json.dump(cache_data, f, indent=4)
+    except: pass
+
+    await display_chat_stats(c, cb, session_info, stats, index, page)
+
+async def display_chat_stats(c, cb, session_info, stats, index, page, cached=False):
     # Formatting Output
     text = (
-        f"📊 <b>Chat Statistics</b>\n"
-        f"<i>Scan Result for Session {index + 1}</i>\n\n"
-        # CREATED SECTION
+        f"📊 <b>Chat Statistics</b> {'(CACHED)' if cached else ''}\n"
+        f"👤 <b>Account:</b> {html.escape(session_info.first_name or '')}\n"
+        f"🆔 <b>ID:</b> <code>{session_info.id}</code>\n\n"
+        
         f"👑 <b>Created (Owner):</b>\n"
         f"• Group: <code>{stats['created']['group']}</code>\n"
         f"• Supergroup: <code>{stats['created']['supergroup']}</code>\n"
         f"• Channel: <code>{stats['created']['channel']}</code>\n"
         f"<b>Total Created:</b> {sum(stats['created'].values())}\n\n"
         
-        # ADMIN SECTION
-        f"👮 <b>Admin (Inc. Creator):</b>\n"
+        f"👮 <b>Admin (Excl. Creator):</b>\n"
         f"• Group: <code>{stats['admin']['group']}</code>\n"
         f"• Supergroup: <code>{stats['admin']['supergroup']}</code>\n"
         f"• Channel: <code>{stats['admin']['channel']}</code>\n"
         f"<b>Total Admin:</b> {sum(stats['admin'].values())}\n\n"
         
-        # TOTAL JOINED
         f"📈 <b>Total Joined:</b>\n"
         f"• Group: <code>{stats['total']['group']}</code>\n"
         f"• Supergroup: <code>{stats['total']['supergroup']}</code>\n"
         f"• Channel: <code>{stats['total']['channel']}</code>\n"
-        f"<b>Grand Total:</b> {sum(stats['total'].values())}\n"
+        f"<b>Grand Total Groups:</b> {sum(stats['total'].values())}\n\n"
+        
+        f"👤 <b>Other Chats:</b>\n"
+        f"• Private User Chats: <code>{stats['private_chat']}</code>\n"
+        f"• Bot Chats: <code>{stats['bot']}</code>\n"
     )
     
     buttons = [[InlineKeyboardButton("🔙 Back to Session Info", callback_data=f"session_info_{index}_{page}")]]
     
-    if scanning_msg:
-         await scanning_msg.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)

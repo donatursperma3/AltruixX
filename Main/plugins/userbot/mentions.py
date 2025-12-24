@@ -2924,18 +2924,18 @@ logger.info("Cache cleanup task started")
 
 
 
-# Di akhir file, sebelum FINAL LOG
-logger.info(f"🔧 [DEBUG] Registering handle_reply_as_mentioned_input handler")
-logger.info(f"🔧 [DEBUG] Filter: filters.chat({Altruix.log_chat}) & filters.reply & ~filters.bot")
-logger.info(f"🔧 [DEBUG] Total waiting entries at startup: {len(REPLY_AS_MENTIONED_WAITING)}")
+# # Di akhir file, sebelum FINAL LOG
+# logger.info(f"🔧 [DEBUG] Registering handle_reply_as_mentioned_input handler")
+# logger.info(f"🔧 [DEBUG] Filter: filters.chat({Altruix.log_chat}) & filters.reply & ~filters.bot")
+# logger.info(f"🔧 [DEBUG] Total waiting entries at startup: {len(REPLY_AS_MENTIONED_WAITING)}")
 
-@Altruix.bot.on_message(filters.chat(Altruix.log_chat))
-@log_errors
-async def debug_all_messages(c: Client, m: RawMessage):
-    """Debug semua pesan di log chat."""
-    logger.info(f"🔍 [DEBUG_ALL] Message in log_chat: ID={m.id}, "
-               f"Reply to={m.reply_to_message.id if m.reply_to_message else None}, "
-               f"Text={m.text[:50] if m.text else 'No text'}")
+# @Altruix.bot.on_message(filters.chat(Altruix.log_chat))
+# @log_errors
+# async def debug_all_messages(c: Client, m: RawMessage):
+#     """Debug semua pesan di log chat."""
+#     logger.info(f"🔍 [DEBUG_ALL] Message in log_chat: ID={m.id}, "
+#                f"Reply to={m.reply_to_message.id if m.reply_to_message else None}, "
+#                f"Text={m.text[:50] if m.text else 'No text'}")
 
 # ============================================================================
 # 🔥 FINAL LOG
@@ -2952,3 +2952,4 @@ except Exception as e:
 # logger.info(f"🔧 Use /mentions_fix_cache to recover missing cache entries")
 # logger.info(f"🔧 Use /mentions_test (via bot) to test all buttons")
 # logger.info(f"⚠️  Note: Userbots cannot send inline buttons, only bot can!")
+
