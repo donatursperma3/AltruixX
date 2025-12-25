@@ -162,9 +162,15 @@ xchatsanomlau_cache.json
 mentions_cache.json
 mentions_cache_fallback.json
 chat_stats_cache.json
+pml_filters.json
+topic_cache.json
 *localdb.json
 *.localdb
 
 # Semua file JSON yang berakhiran _cache atau _settings
 *_cache.json
 *_settings.json
+join_logger_settings.json
+cmd_logger_settings.json
+*_settings.json
+*.json

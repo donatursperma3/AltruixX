@@ -32,14 +32,15 @@ import aiofiles
 from typing import Optional, Union, Dict, Any, List
 from collections import defaultdict
 import sys
+from Main.utils.topic_utils import get_or_create_topic
 
 
 # ============================================================================
 # LOGGER KHUSUS PLUGIN
 # ============================================================================
 plugin_name = f"{os.path.basename(__file__)}"
-__plugin_name__ = plugin_name if plugin_name else "mentions"
-PLUGIN_VERSION = "1.5.4.22-CACHE"  # ✅ Version dengan cache system
+__plugin_name__ = plugin_name if plugin_name else "tags"  # Renamed from mentions
+PLUGIN_VERSION = "1.7.0-TAG"  # ✅ Added block/unblock, send message features
 
 # Gunakan logger Altruix jika tersedia, atau buat baru yang konsisten
 logger = logging.getLogger("altruix.mentions")
@@ -855,66 +856,59 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
         except:
             mention_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
+        # Check for media and restricted content
+        has_media = bool(m.media)
+        is_restricted = getattr(m, "has_protected_content", False)
+        media_size = 0
+        size_str = ""
+        
+        if has_media:
+            if m.document: media_size = m.document.file_size
+            elif m.photo: media_size = m.photo.file_size
+            elif m.video: media_size = m.video.file_size
+            elif m.audio: media_size = m.audio.file_size
+            elif m.voice: media_size = m.voice.file_size
+            elif m.video_note: media_size = m.video_note.file_size
+            elif m.animation: media_size = m.animation.file_size
+            
+            if media_size > 0:
+                if media_size < 1024: size_str = f"{media_size} B"
+                elif media_size < 1024*1024: size_str = f"{media_size/1024:.2f} KB"
+                else: size_str = f"{media_size/(1024*1024):.2f} MB"
+        
         # Bangun pesan notifikasi
         log_message = (
-            f"🔔 <b>Mention Detected!</b>\n\n"
-            f"👤 <b>Mentioned By:</b> {mentioner_hyperlink} (<code>{mentioner_id}</code>)\n"
+            f"🔔 <b>Tag Detected!</b>\n\n"
+            f"👤 <b>Tagged By:</b> <a href='tg://user?id={mentioner_id}'>{html.escape(mentioner_name)}</a> (<code>{mentioner_id}</code>)\n"
             f"🤖 <b>My Account:</b> {c.me.mention(style=enums.ParseMode.HTML)}\n"
             f"💬 <b>Group:</b> {html.escape(m.chat.title)} (<code>{m.chat.id}</code>)\n"
             f"🕒 <b>Time:</b> <code>{mention_time}</code>\n"
-            f"📄 <b>Message:</b>\n<blockquote>{message_text}</blockquote>"
         )
         
-        # PERBAIKAN: Tombol dengan callback data yang benar
-        reaction_buttons = [
-            InlineKeyboardButton(
-                emoji,
-                callback_data=f"mentions_react_{m.chat.id}_{m.id}_{emoji}"
-            )
-            for emoji in DEFAULT_REACTION_EMOJIS
-        ]
+        if has_media:
+            media_type = m.media.value if m.media else "Unknown"
+            log_message += f"📎 <b>Media:</b> <code>{media_type}</code>\n"
+            if media_size > 0:
+                log_message += f"📏 <b>Size:</b> <code>{size_str}</code>\n"
+            if is_restricted:
+                log_message += f"⚠️ <b>Restricted Content</b>\n"
         
-        reply_button = [InlineKeyboardButton(
-            "🗨️ Reply as Mentioned",
-            callback_data=f"mentions_reply_{m.chat.id}_{m.id}"
-        )]
+        log_message += f"📄 <b>Message:</b>\n<blockquote>{message_text}</blockquote>"
         
-        reply_all_button = [InlineKeyboardButton(
-            "👥 Reply From All",
-            callback_data=f"mentions_replyall_{m.chat.id}_{m.id}"
-        )]
+        # Add Chat with User button
+        chat_user_button = [InlineKeyboardButton("💬 Chat with User", url=f"tg://user?id={mentioner_id}")]
         
-        unreact_button = [InlineKeyboardButton(
-            "🗑️ Remove Reaction",
-            callback_data=f"mentions_unreact_{m.chat.id}_{m.id}"
-        )]
-        
-        link_button = [InlineKeyboardButton("🔗 Go to Message", url=m.link)]
-        
-        log_button_press = [
-            InlineKeyboardButton("💾 Save to Log", callback_data=f"mentions_save_{m.chat.id}_{m.id}"),
-            InlineKeyboardButton("🗑️ Unsend Reply", callback_data=f"mentions_unsend_{m.chat.id}_{m.id}")
-        ]
-        
-        others_button = [InlineKeyboardButton("➕ Choose Others", callback_data=f"mentions_others_{m.chat.id}_{m.id}")]
-        
-        # PERBAIKAN: Keyboard layout yang benar - 6 emoji + Others
+        # COMPACT MENU - Only toggle button
         keyboard = [
-            reaction_buttons[:3],  # Baris pertama: 3 emoji
-            reaction_buttons[3:6], # Baris kedua: 3 emoji
-            others_button,         # Baris ketiga: Pilih emoji lain
-            log_button_press,      # Baris keempat: Save & Unsend
-            reply_button,          # Baris kelima: Reply as Mentioned
+            [
+                InlineKeyboardButton("⚙️ Show Full Menu", callback_data=f"tags_toggle_full_{m.chat.id}_{m.id}"),
+                InlineKeyboardButton("🔗 Go to Message", url=m.link)
+            ]
         ]
         
-        if REPLY_FROM_ALL_ACCESSIBLE:
-            keyboard.append(reply_all_button)
-            
-        keyboard.extend([
-            unreact_button,        # Baris ketujuh: Remove Reaction
-            link_button           # Baris kedelapan: Link
-        ])
-        
+        # Get topic if any (use userbot to create if needed)
+        topic_id = await get_or_create_topic(Altruix.bot, Altruix.log_chat, "tag logger", userbot_client=c)
+
         # Kirim notifikasi
         try:
             sent_log_msg = await Altruix.bot.send_message(
@@ -922,7 +916,8 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
                 log_message,
                 parse_mode=enums.ParseMode.HTML,
                 disable_web_page_preview=True,
-                reply_markup=InlineKeyboardMarkup(keyboard)
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                message_thread_id=topic_id
             )
             logger.info(f"📤 Notification sent for {msg_key}, message_id: {sent_log_msg.id}")
             
@@ -2044,10 +2039,18 @@ async def save_mention_to_log(c: Client, cb: CallbackQuery):
             await cb.answer("❌ Akun tidak tersedia.", show_alert=True)
             return
             
-        # Forward pesan ke log chat
-        await userbot_client.forward_messages(Altruix.log_chat, chat_id, message_id)
+        # Get topic for tag logger
+        topic_id = await get_or_create_topic(Altruix.bot, Altruix.log_chat, "tag logger", userbot_client=userbot_client)
         
-        await cb.answer("✅ Pesan berhasil disimpan ke log!", show_alert=True)
+        # Forward pesan ke log chat dengan topic
+        await userbot_client.forward_messages(
+            Altruix.log_chat, 
+            chat_id, 
+            message_id,
+            message_thread_id=topic_id
+        )
+        
+        await cb.answer("✅ Pesan berhasil disimpan ke Tag Logger topic!", show_alert=True)
         logger.info(f"💾 Message {msg_key} saved to log by user {cb.from_user.id}")
         
     except Exception as e:
@@ -2916,6 +2919,394 @@ async def cache_cleanup_task():
             logger.error(f"❌ Cache cleanup task error: {e}")
         
         await asyncio.sleep(300)  # Run every 5 minutes
+
+
+# ============================================================================
+# 🔥 TOGGLE MENU HANDLER - NEW
+# ============================================================================
+@Altruix.bot.on_callback_query(filters.regex(r"^tags_toggle_(full|compact)_"))
+@log_errors
+async def tags_toggle_menu_callback(c: Client, cb: CallbackQuery):
+    """Toggle between compact and full menu for tag notifications."""
+    try:
+        data = cb.data.split("_")
+        mode, chat_id, msg_id = data[2], int(data[3]), int(data[4])
+        
+        # Get cache to retrieve user_id and check for media
+        msg_key = f"{chat_id}_{msg_id}"
+        cache_data = await get_mention_from_cache(msg_key)
+        
+        if mode == "full":
+            # Get user_id from cache
+            mentioner_id = cache_data.get("mentioner_id") if cache_data else 0
+            
+            # Build full menu with all buttons
+            reaction_buttons = [
+                InlineKeyboardButton(emoji, callback_data=f"mentions_react_{chat_id}_{msg_id}_{emoji}")
+                for emoji in DEFAULT_REACTION_EMOJIS
+            ]
+            
+            keyboard = [
+                reaction_buttons[:3],
+                reaction_buttons[3:6],
+                [
+                    InlineKeyboardButton("➕ Others", callback_data=f"mentions_others_{chat_id}_{msg_id}"),
+                    InlineKeyboardButton("🗑️ Remove React", callback_data=f"mentions_unreact_{chat_id}_{msg_id}")
+                ],
+                [
+                    InlineKeyboardButton("🗨️ Reply", callback_data=f"mentions_reply_{chat_id}_{msg_id}"),
+                    InlineKeyboardButton("💾 Save", callback_data=f"mentions_save_{chat_id}_{msg_id}")
+                ],
+                [
+                    InlineKeyboardButton("👥 Reply All", callback_data=f"mentions_replyall_{chat_id}_{msg_id}"),
+                    InlineKeyboardButton("🗑️ Unsend", callback_data=f"mentions_unsend_{chat_id}_{msg_id}")
+                ],
+                [
+                    InlineKeyboardButton("💬 Chat with User", url=f"tg://user?id={mentioner_id}"),
+                ],
+                [
+                    InlineKeyboardButton("📤 Send Message", callback_data=f"tags_send_msg_{chat_id}_{msg_id}_{mentioner_id}"),
+                    InlineKeyboardButton("🚫 Block User", callback_data=f"tags_block_{chat_id}_{msg_id}_{mentioner_id}")
+                ],
+                [
+                    InlineKeyboardButton("⚙️ Hide Full Menu", callback_data=f"tags_toggle_compact_{chat_id}_{msg_id}"),
+                    InlineKeyboardButton("🔗 Go to Message", url=f"https://t.me/c/{str(chat_id)[4:]}/{msg_id}")
+                ]
+            ]
+        else:
+            # Compact menu
+            keyboard = [
+                [
+                    InlineKeyboardButton("⚙️ Show Full Menu", callback_data=f"tags_toggle_full_{chat_id}_{msg_id}"),
+                    InlineKeyboardButton("🔗 Go to Message", url=f"https://t.me/c/{str(chat_id)[4:]}/{msg_id}")
+                ]
+            ]
+            
+        await cb.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
+        await cb.answer()
+    except Exception as e:
+        logger.error(f"❌ Toggle menu error: {e}")
+        await cb.answer(f"❌ Error: {e}", show_alert=True)
+
+# ============================================================================
+# 🔥 MEDIA FORWARD CONFIRMATION HANDLER - NEW
+# ============================================================================
+@Altruix.bot.on_callback_query(filters.regex(r"^tags_fwd_confirm_"))
+@log_errors
+async def tags_forward_confirm_callback(c: Client, cb: CallbackQuery):
+    """Show confirmation before forwarding large/restricted media."""
+    try:
+        data = cb.data.split("_")
+        chat_id, msg_id = int(data[3]), int(data[4])
+        
+        # Show confirmation
+        await cb.answer("⚠️ This will download and re-upload the media. Continue?", show_alert=True)
+        
+        # Update button to execute
+        keyboard = [
+            [InlineKeyboardButton("✅ Yes, Forward", callback_data=f"tags_fwd_media_{chat_id}_{msg_id}")],
+            [InlineKeyboardButton("❌ Cancel", callback_data=f"tags_fwd_cancel_{chat_id}_{msg_id}")]
+        ]
+        
+        await cb.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
+    except Exception as e:
+        logger.error(f"❌ Forward confirm error: {e}")
+        await cb.answer(f"❌ Error: {e}", show_alert=True)
+
+# ============================================================================
+# 🔥 MEDIA FORWARD HANDLER - NEW
+# ============================================================================
+@Altruix.bot.on_callback_query(filters.regex(r"^tags_fwd_media_"))
+@log_errors
+async def tags_forward_media_callback(c: Client, cb: CallbackQuery):
+    """Download and forward media to tag logger topic."""
+    try:
+        data = cb.data.split("_")
+        chat_id, msg_id = int(data[3]), int(data[4])
+        
+        # Get client
+        msg_key = f"{chat_id}_{msg_id}"
+        cache_data = await get_mention_from_cache(msg_key)
+        
+        if not cache_data:
+            return await cb.answer("❌ Cache not found", show_alert=True)
+            
+        client_id = cache_data["client_id"]
+        userbot_client = await get_mention_client(client_id)
+        
+        if not userbot_client:
+            return await cb.answer("❌ Client not found", show_alert=True)
+            
+        await cb.answer("📥 Downloading media...", show_alert=False)
+        
+        # Download
+        msg = await userbot_client.get_messages(chat_id, msg_id)
+        if not msg or not msg.media:
+            return await cb.answer("❌ Media not found", show_alert=True)
+            
+        file_path = await userbot_client.download_media(msg)
+        
+        if not file_path:
+            return await cb.answer("❌ Download failed", show_alert=True)
+            
+        # Get topic
+        topic_id = await get_or_create_topic(Altruix.bot, Altruix.log_chat, "tag logger", userbot_client=userbot_client)
+        
+        # Upload
+        caption = f"✅ **Forwarded Tag Media**\nFrom: {userbot_client.me.mention}"
+        if msg.caption:
+            caption += f"\n\n**Original Caption:**\n{msg.caption}"
+            
+        await userbot_client.send_document(
+            Altruix.log_chat,
+            file_path,
+            caption=caption,
+            message_thread_id=topic_id
+        )
+        
+        # Cleanup
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            
+        await cb.answer("✅ Media forwarded!", show_alert=True)
+    except Exception as e:
+        logger.error(f"❌ Forward media error: {e}")
+        await cb.answer(f"❌ Error: {e}", show_alert=True)
+
+# ============================================================================
+# 🔥 MEDIA FORWARD CANCEL HANDLER - NEW
+# ============================================================================
+@Altruix.bot.on_callback_query(filters.regex(r"^tags_fwd_cancel_"))
+@log_errors
+async def tags_forward_cancel_callback(c: Client, cb: CallbackQuery):
+    """Cancel media forward and restore original buttons."""
+    try:
+        data = cb.data.split("_")
+        chat_id, msg_id = int(data[3]), int(data[4])
+        
+        # Restore compact menu
+        keyboard = [
+            [
+                InlineKeyboardButton("⚙️ Show Full Menu", callback_data=f"tags_toggle_full_{chat_id}_{msg_id}"),
+                InlineKeyboardButton("🔗 Go to Message", url=f"https://t.me/c/{str(chat_id)[4:]}/{msg_id}")
+            ]
+        ]
+        
+        await cb.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
+        await cb.answer("❌ Cancelled", show_alert=False)
+    except Exception as e:
+        logger.error(f"❌ Cancel forward error: {e}")
+        await cb.answer(f"❌ Error: {e}", show_alert=True)
+
+# ============================================================================
+# 🔥 BLOCK USER HANDLER - NEW
+# ============================================================================
+@Altruix.bot.on_callback_query(filters.regex(r"^tags_block_"))
+@log_errors
+async def tags_block_user_callback(c: Client, cb: CallbackQuery):
+    """Block user who tagged."""
+    try:
+        # Parse: tags_block_CHATID_MSGID_USERID
+        parts = cb.data.split("_")
+        chat_id, msg_id, user_id = int(parts[2]), int(parts[3]), int(parts[4])
+        
+        # Get client
+        msg_key = f"{chat_id}_{msg_id}"
+        cache_data = await get_mention_from_cache(msg_key)
+        
+        if not cache_data:
+            return await cb.answer("❌ Cache not found", show_alert=True)
+            
+        client_id = cache_data["client_id"]
+        userbot_client = await get_mention_client(client_id)
+        
+        if not userbot_client:
+            return await cb.answer("❌ Client not found", show_alert=True)
+            
+        # Block user
+        await userbot_client.block_user(user_id)
+        
+        # Update button to unblock
+        keyboard = cb.message.reply_markup.inline_keyboard
+        for row in keyboard:
+            for button in row:
+                if button.callback_data and "tags_block_" in button.callback_data:
+                    button.text = "✅ Unblock User"
+                    button.callback_data = f"tags_unblock_{chat_id}_{msg_id}_{user_id}"
+        
+        await cb.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
+        await cb.answer("🚫 User blocked!", show_alert=True)
+    except Exception as e:
+        logger.error(f"❌ Block user error: {e}")
+        await cb.answer(f"❌ Error: {e}", show_alert=True)
+
+# ============================================================================
+# 🔥 UNBLOCK USER HANDLER - NEW
+# ============================================================================
+@Altruix.bot.on_callback_query(filters.regex(r"^tags_unblock_"))
+@log_errors
+async def tags_unblock_user_callback(c: Client, cb: CallbackQuery):
+    """Unblock user who tagged."""
+    try:
+        # Parse: tags_unblock_CHATID_MSGID_USERID
+        parts = cb.data.split("_")
+        chat_id, msg_id, user_id = int(parts[2]), int(parts[3]), int(parts[4])
+        
+        # Get client
+        msg_key = f"{chat_id}_{msg_id}"
+        cache_data = await get_mention_from_cache(msg_key)
+        
+        if not cache_data:
+            return await cb.answer("❌ Cache not found", show_alert=True)
+            
+        client_id = cache_data["client_id"]
+        userbot_client = await get_mention_client(client_id)
+        
+        if not userbot_client:
+            return await cb.answer("❌ Client not found", show_alert=True)
+            
+        # Unblock user
+        await userbot_client.unblock_user(user_id)
+        
+        # Update button to block
+        keyboard = cb.message.reply_markup.inline_keyboard
+        for row in keyboard:
+            for button in row:
+                if button.callback_data and "tags_unblock_" in button.callback_data:
+                    button.text = "🚫 Block User"
+                    button.callback_data = f"tags_block_{chat_id}_{msg_id}_{user_id}"
+        
+        await cb.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
+        await cb.answer("✅ User unblocked!", show_alert=True)
+    except Exception as e:
+        logger.error(f"❌ Unblock user error: {e}")
+        await cb.answer(f"❌ Error: {e}", show_alert=True)
+
+# ============================================================================
+# 🔥 SEND MESSAGE TO USER HANDLER - NEW
+# ============================================================================
+@Altruix.bot.on_callback_query(filters.regex(r"^tags_send_msg_"))
+@log_errors
+async def tags_send_message_callback(c: Client, cb: CallbackQuery):
+    """Start process to send message to user who tagged."""
+    try:
+        # Parse: tags_send_msg_CHATID_MSGID_USERID
+        parts = cb.data.split("_")
+        chat_id, msg_id, user_id = int(parts[3]), int(parts[4]), int(parts[5])
+        
+        # Get client
+        msg_key = f"{chat_id}_{msg_id}"
+        cache_data = await get_mention_from_cache(msg_key)
+        
+        if not cache_data:
+            return await cb.answer("❌ Cache not found", show_alert=True)
+            
+        client_id = cache_data["client_id"]
+        userbot_client = await get_mention_client(client_id)
+        
+        if not userbot_client:
+            return await cb.answer("❌ Client not found", show_alert=True)
+        
+        # Create waiting entry
+        waiting_id = f"tags_send_{cb.from_user.id}_{int(time.time())}"
+        waiting_data = {
+            "user_id": user_id,
+            "client_id": client_id,
+            "log_msg_id": cb.message.id,
+            "timestamp": int(time.time())
+        }
+        
+        await save_waiting_reply(waiting_id, waiting_data)
+        REPLY_AS_MENTIONED_WAITING[waiting_id] = waiting_data
+        
+        # Send instruction
+        instruction_msg = await Altruix.bot.send_message(
+            Altruix.log_chat,
+            f"📤 **Send Message to User**\n\n"
+            f"Reply to this message with the text you want to send to user <code>{user_id}</code>\n\n"
+            f"⏱️ Waiting for your message...",
+            parse_mode=enums.ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("❌ Cancel", callback_data=f"tags_send_cancel_{waiting_id}")
+            ]])
+        )
+        
+        # Update waiting data with instruction message
+        waiting_data["instruction_msg_id"] = instruction_msg.id
+        await save_waiting_reply(waiting_id, waiting_data)
+        REPLY_AS_MENTIONED_WAITING[waiting_id] = waiting_data
+        
+        await cb.answer("✅ Reply to the instruction message", show_alert=False)
+    except Exception as e:
+        logger.error(f"❌ Send message init error: {e}")
+        await cb.answer(f"❌ Error: {e}", show_alert=True)
+
+# ============================================================================
+# 🔥 HANDLE SEND MESSAGE INPUT - NEW
+# ============================================================================
+@Altruix.bot.on_message(
+    filters.chat(Altruix.log_chat) & filters.reply & ~filters.bot
+)
+@log_errors
+async def handle_tags_send_message_input(c: Client, m: RawMessage):
+    """Handle user input for sending message to tagger."""
+    try:
+        if not m.reply_to_message or not m.reply_to_message.text:
+            return
+            
+        # Check if this is a reply to send message instruction
+        if "Send Message to User" not in m.reply_to_message.text:
+            return
+            
+        # Find matching waiting entry
+        waiting_entry = None
+        waiting_id_match = None
+        
+        for waiting_id, data in list(REPLY_AS_MENTIONED_WAITING.items()):
+            if data.get("instruction_msg_id") == m.reply_to_message.id:
+                waiting_entry = data
+                waiting_id_match = waiting_id
+                break
+        
+        if not waiting_entry:
+            return
+            
+        user_id = waiting_entry["user_id"]
+        client_id = waiting_entry["client_id"]
+        
+        # Get client
+        userbot_client = await get_mention_client(client_id)
+        if not userbot_client:
+            await m.reply("❌ Client not found")
+            return
+            
+        # Send message to user
+        if m.media:
+            sent = await userbot_client.copy_message(user_id, m.chat.id, m.id)
+        else:
+            sent = await userbot_client.send_message(user_id, m.text or m.caption)
+        
+        # Confirmation
+        await m.reply(
+            f"✅ **Message sent successfully!**\n\n"
+            f"• To: <code>{user_id}</code>\n"
+            f"• Via: {userbot_client.me.mention}\n"
+            f"• Time: {datetime.now().strftime('%H:%M:%S')}",
+            parse_mode=enums.ParseMode.HTML
+        )
+        
+        # Cleanup
+        await delete_waiting_reply(waiting_id_match)
+        REPLY_AS_MENTIONED_WAITING.pop(waiting_id_match, None)
+        
+        # Delete instruction message
+        try:
+            await m.reply_to_message.delete()
+        except: pass
+        
+    except Exception as e:
+        logger.error(f"❌ Send message input error: {e}")
+        await m.reply(f"❌ Error: {str(e)[:100]}")
 
 
 # Start cache cleanup task

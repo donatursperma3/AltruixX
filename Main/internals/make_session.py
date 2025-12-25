@@ -272,6 +272,10 @@ async def _start_add_session_process(cb: CallbackQuery):
         await app.send_message("me", f"✅ **Session Berhasil!**\n\n`{app_session}`\n\n⚠️ **JANGAN DIBAGIKAN!**")
         await app.disconnect()
         await Altruix.add_session(app_session, process_msg)
+        await log_to_group(
+            f"✅ <b>BERHASIL TAMBAH SESSION</b>\n"
+            f"• User ID: <code>{user_id}</code>\n"
+        )
     except Exception as e:
         await process_msg.edit("❌ Gagal tambahkan session ke bot.")
         Altruix.log(f"Add session error: {e}", level=logging.ERROR)

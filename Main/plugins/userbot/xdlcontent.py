@@ -28,22 +28,19 @@ __usage__ = """
 
 Gunakan perintah ini untuk mengunduh konten dari link pesan (public/private).
 Konten akan dikirimkan ke Log Group Anda.
-
-<b>Commands:</b>
-• <code>!dlcontent [link]</code> - Download konten dari link pesan.
-
-<b>Contoh:</b>
-• <code>!dlcontent https://t.me/c/12345/678</code>
-• <code>!dlcontent https://t.me/username/123</code>
-
-<b>Fitur:</b>
-- Bypass restriksi forward (mencoba download & re-upload).
-- Multi-client support (mencoba semua session untuk akses chat).
-- Proteksi FloodWait.
-- Notifikasi log ke Log Group.
 """
 
-@Altruix.register_on_cmd(["dlcontent"], bot_mode_unsupported=True)
+@Altruix.register_on_cmd(
+    ["dlcontent"],
+    bot_mode_unsupported=True,
+    cmd_help={
+        "help": "Download content from telegram message link (public/private).",
+        "example": "!dlcontent https://t.me/c/12345/678",
+        "user_args": {
+            "link": "The telegram message link to download content from."
+        }
+    }
+)
 @log_errors
 async def dl_content_cmd_handler(c: Client, m: Message):
     input_ = m.user_input or m.raw_user_input

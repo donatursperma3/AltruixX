@@ -811,9 +811,29 @@ async def preview_msglist_from_confirm(c: Client, cb):
 @Altruix.register_on_cmd(
     ["relayspam"],
     cmd_help={
-        "help": "Memulai spam relay dengan delay acak",
-        "example": "relayspam -1001234567890 1.0 5.0 0.5 10 2 👍 [\"Pesan 1\", \"Pesan 2\"]",
-        "user_args": [],
+        "help": "Start a sophisticated relay spam task with random delays and message rotation.",
+        "usage": ".relayspam <chat_id> <start_delay> <stop_delay> <step> <count> <delete_after> <emoji_react> [\"msg1\", \"msg2\", ...]",
+        "example": ".relayspam -1001234567890 1.0 5.0 0.5 10 2 👍 [\"Hi\", \"Hello\"]",
+        "user_args": {
+            "chat_id": "Target chat ID (e.g., -100...).",
+            "start_delay": "Starting delay in seconds.",
+            "stop_delay": "Max delay in seconds.",
+            "step": "Increment step for delay randomization.",
+            "count": "Total number of messages to send.",
+            "delete_after": "Seconds after which to delete sent message (0 to disable).",
+            "emoji_react": "Emoji to react with (optional, use 'None' to skip).",
+            "msg_list": "List of messages in JSON format."
+        },
+        "detail": (
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "🚀 **RELAY SPAM ADVANCED**\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "• **Random Delay:** Delay akan diacak antara start_delay dan stop_delay.\n"
+            "• **Rotation:** Pesan diambil secara acak dari list pesan yang diberikan.\n"
+            "• **Auto-Delete:** Pesan dapat dihapus otomatis setelah beberapa detik.\n"
+            "• **Reactions:** Menambahkan reaksi emoji otomatis jika didukung.\n"
+            "• **Multi-Session:** Mendukung eksekusi via akun userbot manapun."
+        )
     },
 )
 @log_errors

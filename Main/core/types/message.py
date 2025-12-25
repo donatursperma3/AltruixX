@@ -143,13 +143,15 @@ class Message:
         text,
         force_paste=False,
         force_file=None,
-        reply_to_message_id=None,  # 🔄 Parameter lama (untuk kompatibilitas)
+        reply_to_message_id=None,
+        message_thread_id=None,  # ✅ ADDED
         ttwp=None,
         del_in=None,
         **args,
     ):
         headers = ttwp or "<b>OUTPUT</b>"
         reply_to_message_id = reply_to_message_id or self.id
+        message_thread_id = message_thread_id or self.message_thread_id # ✅ Preserve thread
         
         # ✅ KONVERSI reply_to_message_id KE reply_parameters
         reply_params = None
@@ -177,6 +179,10 @@ class Message:
                 edit_kwargs['reply_parameters'] = reply_params
             else:
                 edit_kwargs['reply_to_message_id'] = reply_to_message_id
+            
+            if message_thread_id: # ✅ Passing thread id
+                edit_kwargs['message_thread_id'] = message_thread_id
+
             return await self.edit(_p, disable_web_page_preview=True, **args, **edit_kwargs)
         if force_file:
             if ";" in force_file:
@@ -200,6 +206,7 @@ class Message:
                         self.chat.id,
                         file_,
                         caption=caption,
+                        message_thread_id=message_thread_id, # ✅ Passing thread id
                         **args,
                         **doc_kwargs
                     ),
@@ -220,6 +227,10 @@ class Message:
                 edit_kwargs['reply_parameters'] = reply_params
             else:
                 edit_kwargs['reply_to_message_id'] = reply_to_message_id
+            
+            if message_thread_id: # ✅ Passing thread id
+                edit_kwargs['message_thread_id'] = message_thread_id
+
             msg_ = await self.edit(_p, disable_web_page_preview=True, **args, **edit_kwargs)
         except Exception as e:
             Altruix.log(f"Failed to edit message: {e}", level=40)
@@ -240,10 +251,12 @@ class Message:
         text,
         force_paste=False,
         force_file=None,
+        message_thread_id=None, # ✅ ADDED
         ttwp=None,
         del_in=None,
         **args,
     ):
+        message_thread_id = message_thread_id or self.message_thread_id # ✅ Preserve thread
         headers = ttwp or "<b>OUTPUT</b>"
         if txt := Altruix.get_string(text):
             if "string_args" in args:
@@ -259,7 +272,11 @@ class Message:
             # ✅ GUNAKAN quote=True (bawaan reply)
             try:
                 return await self.reply(
-                    _p, quote=True, disable_web_page_preview=True, **args
+                    _p, 
+                    quote=True, 
+                    disable_web_page_preview=True, 
+                    message_thread_id=message_thread_id, # ✅ Pass thread id
+                    **args
                 )
             except Exception as e:
                 Altruix.log(f"Failed to reply with paste: {e}", level=40)
@@ -273,18 +290,34 @@ class Message:
                 text, file_name=force_file, file_suffix=file_suffix
             )
             try:
-                return await self.reply_document(file_, quote=True, caption=caption, **args)
+                return await self.reply_document(
+                    file_, 
+                    quote=True, 
+                    caption=caption, 
+                    message_thread_id=message_thread_id, # ✅ Pass thread id
+                    **args
+                )
             except Exception as e:
                 Altruix.log(f"Failed to reply with document: {e}", level=40)
                 return await self.reply(text, quote=True, **args)
         try:
-            msg_ = await self.reply(text, quote=True, **args)
+            msg_ = await self.reply(
+                text, 
+                quote=True, 
+                message_thread_id=message_thread_id, # ✅ Pass thread id
+                **args
+            )
         except MessageTooLong:
             text = Essentials.md_to_text(text)
             service, paste_link = await Paste(text).paste()
             _p = f"{headers.format(service.title())} : <b><a href='{paste_link}'>PREVIEW</a></b>"
             try:
-                msg_ = await self.reply(_p, disable_web_page_preview=True, **args)
+                msg_ = await self.reply(
+                    _p, 
+                    disable_web_page_preview=True, 
+                    message_thread_id=message_thread_id, # ✅ Pass thread id
+                    **args
+                )
             except Exception as e:
                 Altruix.log(f"Failed to reply with long text: {e}", level=40)
                 msg_ = await self.reply("Text too long to display.", **args)
@@ -306,8 +339,12 @@ class Message:
             sudo_users = Altruix.config.SUDO_USERS
             
             # ✅ AMBIL ID CLIENT DENGAN AMAN
-            # Coba .myself dulu (cache Altruix), jika tidak ada, gunakan .me (bawaan Pyrogram)
             client_id = (getattr(self._client, 'myself', None) or self._client.me).id
+            
+            # ✅ PRESERVE THREAD ID
+            thread_id = self.message_thread_id
+            if 'message_thread_id' not in kwargs:
+                kwargs['message_thread_id'] = thread_id
 
             if client_id == Altruix.bot_info.id:
                 return await self.reply_msg(text_, **kwargs)

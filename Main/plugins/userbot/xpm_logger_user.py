@@ -24,6 +24,7 @@ from datetime import datetime
 import re
 from collections import defaultdict
 import psutil
+from Main.utils.topic_utils import get_or_create_topic
 
 # ─── LOGGER KHUSUS PLUGIN ───────────────────────────────────────────────
 
@@ -36,7 +37,7 @@ logger = logging.getLogger("altruix.pm_logger_user")
 logger.setLevel(logging.INFO)
 
 PLUGIN_NAME = __plugin_name__ 
-PLUGIN_VERSION = "1.2.3"  # ✅ fix error var status
+PLUGIN_VERSION = "1.3.0"  # ✅ Added message type filters
 STORAGE_FILE = Path("pm_logger_user_settings.json")
 
 # Settings Cache
@@ -46,6 +47,32 @@ REPLY_AS_MENTIONED_WAITING = {}
 REPLY_FROM_ALL_ACCESSIBLE = True
 USER_REPLY_COUNTS = defaultdict(lambda: defaultdict(int))
 USER_REPLY_LIMIT = 5
+
+# Message Type Filters
+PM_LOGGER_FILTERS = {
+    "from_user": {
+        "text": True,
+        "photo": True,
+        "video": True,
+        "document": True,
+        "audio": True,
+        "voice": True,
+        "sticker": True,
+        "animation": True,
+        "video_note": True,
+    },
+    "from_bot": {
+        "text": False,  # Don't log text from bots by default
+        "photo": True,
+        "video": True,
+        "document": True,
+        "audio": True,
+        "voice": True,
+        "sticker": True,
+        "animation": True,
+        "video_note": True,
+    }
+}
 
 DEFAULT_REACTION_EMOJIS = ["👍", "❤️", "🔥", "🥰", "👏", "🎉"]
 VALID_REACTION_EMOJIS = {
@@ -63,7 +90,7 @@ def is_valid_emoji(emoji: str) -> bool:
     return emoji in VALID_REACTION_EMOJIS
 
 async def load_settings():
-    global PM_LOGGER_USER_DATA
+    global PM_LOGGER_USER_DATA, PM_LOGGER_FILTERS, REPLY_FROM_ALL_ACCESSIBLE
     try:
         if STORAGE_FILE.exists():
             async with aiofiles.open(STORAGE_FILE, 'r', encoding='utf-8') as f:
@@ -71,7 +98,7 @@ async def load_settings():
                 if content.strip():
                     data = json.loads(content)
                     PM_LOGGER_USER_DATA = data.get("settings", {})
-                    global REPLY_FROM_ALL_ACCESSIBLE
+                    PM_LOGGER_FILTERS = data.get("filters", PM_LOGGER_FILTERS)
                     REPLY_FROM_ALL_ACCESSIBLE = data.get("reply_from_all_accessible", True)
     except Exception as e:
         logger.error(f"Failed to load PM Logger User settings: {e}")
@@ -80,6 +107,7 @@ async def save_settings():
     try:
         data = {
             "settings": PM_LOGGER_USER_DATA,
+            "filters": PM_LOGGER_FILTERS,
             "reply_from_all_accessible": REPLY_FROM_ALL_ACCESSIBLE,
             "version": PLUGIN_VERSION
         }
@@ -94,8 +122,16 @@ asyncio.create_task(load_settings())
     ["pmlu"],
     cmd_help={
         "help": "Manage PM Logger settings and modes.",
-        "usage": ".pmlu [on/off/mode/replyall]",
+        "usage": ".pmlu [on/off/mode/replyall/filter]",
         "example": ".pmlu on | .pmlu mode bot | .pmlu replyall off",
+        "user_args": {
+            "on": "Enable PM Logger User",
+            "off": "Disable PM Logger User",
+            "mode <bot/user/both>": "Set logging mode (bot only, user only, or both)",
+            "replyall <on/off>": "Enable/disable reply from all feature",
+            "filter": "Show current message type filters",
+            "filter <source> <type> <on/off>": "Toggle specific filter (e.g., .pmlu filter bot text off)",
+        },
         "detail": (
             "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "💬 **PM LOGGER USER COMMANDS**\n"
@@ -105,12 +141,15 @@ asyncio.create_task(load_settings())
             "🛠 **Logger Mode:**\n"
             "• `.pmlu mode user`: Catat PM masuk ke User saja.\n"
             "• `.pmlu mode bot` : Catat PM masuk ke Bot saja.\n"
-            "• `.pmlu mode both`: Catat PM dari keduanya (Default).\n\n"
+            "• `.pmlu mode both `: Catat PM dari keduanya (Default).\n\n"
             "👥 **Interactive Tools:**\n"
             "• `.pmlu replyall on` : Izinkan tombol 'Reply From All'.\n"
             "• `.pmlu replyall off`: Sembunyikan tombol 'Reply From All'.\n\n"
+            "📊 **Filter Type Pesan:**\n"
+            "• `.pmlu filter`: Lihat filter tipe pesan saat ini.\n"
+            "• `.pmlu filter <user/bot> <tipe> <on/off>`: Atur filter spesifik.\n\n"
             "📊 **General Status:**\n"
-            "• `.pmlstatus`: Lihat detail status seluruh logger."
+            "• `.pmlstatus`: Lihat detail status seluruh logger (User & Bot)."
         )
     },
     group_only=False,
@@ -150,9 +189,48 @@ async def pmlu_settings_handler(c: Client, m: AltruixMessage):
             f"Commands:\n"
             f"• `.pmlu on/off` - Global Toggle\n"
             f"• `.pmlu mode user/bot/both` - Set Mode\n"
-            f"• `.pmlu replyall on/off` - Toggle ReplyAll"
+            f"• `.pmlu replyall on/off` - Toggle ReplyAll\n"
+            f"• `.pmlu filter` - View Filters"
         )
         return await m.reply_msg(res)
+
+    if user_input.startswith("filter"):
+        args = user_input.split()
+        if len(args) == 1:
+            # Show current filters
+            res = "📑 **PM Logger Message Type Filters**\n\n"
+            for source in ["from_user", "from_bot"]:
+                label = "👤 **User Messages**" if source == "from_user" else "🤖 **Bot Messages**"
+                res += f"{label}:\n"
+                for m_type, allowed in PM_LOGGER_FILTERS[source].items():
+                    status_icon = "✅" if allowed else "❌"
+                    res += f"  {status_icon} `{m_type}`\n"
+                res += "\n"
+            res += "Usage: `.pmlu filter <user/bot> <type> <on/off>`"
+            return await m.reply_msg(res)
+        
+        if len(args) == 4:
+            source_arg = args[1].lower()
+            type_arg = args[2].lower()
+            state_arg = args[3].lower()
+            
+            source_key = "from_user" if source_arg == "user" else "from_bot" if source_arg == "bot" else None
+            if not source_key:
+                return await m.reply_msg("❌ **Invalid Source!** Use `user` or `bot`.")
+                
+            if type_arg not in PM_LOGGER_FILTERS[source_key]:
+                return await m.reply_msg(f"❌ **Invalid Type!** Valid types: `{', '.join(PM_LOGGER_FILTERS[source_key].keys())}`")
+                
+            new_state = True if state_arg in ["on", "yes", "true"] else False if state_arg in ["off", "no", "false"] else None
+            if new_state is None:
+                return await m.reply_msg("❌ **Invalid State!** Use `on` or `off`.")
+                
+            PM_LOGGER_FILTERS[source_key][type_arg] = new_state
+            await save_settings()
+            status_icon = "✅" if new_state else "❌"
+            return await m.reply_msg(f"{status_icon} **Filter Updated:** `{type_arg}` from `{source_arg}` is now **{'ENABLED' if new_state else 'DISABLED'}**")
+            
+        return await m.reply_msg("❌ **Invalid Arguments!**\nUsage: `.pmlu filter <user/bot> <type> <on/off>`")
 
     if user_input.startswith("mode"):
         arg = user_input.replace("mode", "").strip()
@@ -192,7 +270,9 @@ async def pmlu_settings_handler(c: Client, m: AltruixMessage):
     ["pmlstatus", "pmlustatus"],
     cmd_help={
         "help": "Check status of PM Logger User and Bot.",
-        "example": "pmlstatus",
+        "usage": ".pmlstatus",
+        "example": ".pmlstatus",
+        "detail": "Lihat status aktif/nonaktif dan konfigurasi dari PM Logger User serta PM Logger Bot secara bersamaan."
     },
     group_only=False,
     requires_input=False,
@@ -281,38 +361,63 @@ async def pm_logger_user_handler(c: Client, m: RawMessage):
         log_time = m.date.strftime("%Y-%m-%d %H:%M:%S")
         msg_text = m.text or m.caption or msg_text or "[Media]"
 
-        # ✅ Filter Check
-        filters_file = "pml_filters.json"
-        allowed = True
-        try:
-            current_filters = {
-                "text": True, "photo": True, "video": True, "voice": True,
-                "audio": True, "sticker": False, "document": True, "others": True
-            }
-            if os.path.exists(filters_file):
-                with open(filters_file, "r") as f:
-                    saved_filters = json.load(f)
-                    current_filters.update(saved_filters)
+        # ✅ NEW: Message Type Filter Check (Bot vs User)
+        is_bot = m.from_user.is_bot if m.from_user else False
+        filter_key = "from_bot" if is_bot else "from_user"
+        
+        # Determine message type for filtering
+        filter_msg_type = None
+        if not m.media and m.text:
+            filter_msg_type = "text"
+        elif m.photo:
+            filter_msg_type = "photo"
+        elif m.video:
+            filter_msg_type = "video"
+        elif m.document:
+            filter_msg_type = "document"
+        elif m.audio:
+            filter_msg_type = "audio"
+        elif m.voice:
+            filter_msg_type = "voice"
+        elif m.sticker:
+            filter_msg_type = "sticker"
+        elif m.animation:
+            filter_msg_type = "animation"
+        elif m.video_note:
+            filter_msg_type = "video_note"
+        
+        # Check if this message type is allowed
+        if filter_msg_type and not PM_LOGGER_FILTERS.get(filter_key, {}).get(filter_msg_type, True):
+            return  # Skip logging this message type
+
+        is_restricted = getattr(m, "has_protected_content", False)
+        
+        # Get file size if restricted
+        size_str = ""
+        if is_restricted:
+            size = 0
+            if m.document: size = m.document.file_size
+            elif m.photo: size = m.photo.file_size
+            elif m.video: size = m.video.file_size
+            elif m.audio: size = m.audio.file_size
+            elif m.voice: size = m.voice.file_size
+            elif m.video_note: size = m.video_note.file_size
+            elif m.animation: size = m.animation.file_size
             
-            check_key = "others"
-            if not m.media: check_key = "text"
-            elif msg_type_str == "photo": check_key = "photo"
-            elif msg_type_str == "video": check_key = "video"
-            elif msg_type_str == "voice": check_key = "voice"
-            elif msg_type_str == "audio": check_key = "audio"
-            elif msg_type_str == "sticker": check_key = "sticker"
-            elif msg_type_str == "document": check_key = "document"
-            
-            if not current_filters.get(check_key, True):
-                allowed = False
-        except Exception as e:
-            logger.error(f"Filter check error: {e}")
-            
-        if not allowed:
-            return
+            if size > 0:
+                if size < 1024: size_str = f" ({size} B)"
+                elif size < 1024*1024: size_str = f" ({size/1024:.2f} KB)"
+                else: size_str = f" ({size/(1024*1024):.2f} MB)"
 
         log_content = (
-            f"👤 <b>New PM Received (User)</b>\n\n"
+            f"👤 <b>New PM Received (User)</b>\n"
+        )
+        if is_restricted:
+            log_content += f"⚠️ <b>ini adalah restrict content dengan ukuran{size_str}</b>\n\n"
+        else:
+            log_content += "\n"
+
+        log_content += (
             f"• <b>From:</b> {sender_hyperlink}\n"
             f"• <b>User ID:</b> <code>{sender_id}</code>\n"
             f"• <b>Username:</b> {sender_username}\n"
@@ -330,13 +435,23 @@ async def pm_logger_user_handler(c: Client, m: RawMessage):
                 InlineKeyboardButton("🔗 Chat with User", url=f"tg://user?id={sender_id}")
             ]
         ]
+        
+        if is_restricted:
+            keyboard[0].insert(0, InlineKeyboardButton("🚀 Force/Bypass Forward", callback_data=f"pmlu_force_fwd_{m.chat.id}_{m.id}_{c.me.id}"))
 
         if not REPLY_FROM_ALL_ACCESSIBLE:
             # Remove Reply From All button row or just that button
             keyboard = [r for r in keyboard if not any(b.text == "👥 Reply From All" for b in r)]
 
+        # Get topic if any (use userbot to create if needed)
+        topic_id = await get_or_create_topic(Altruix.bot, Altruix.log_chat, "pm logger", userbot_client=c)
+
         # Forward message
-        fwd_msg = await c.forward_messages(Altruix.log_chat, m.chat.id, m.id)
+        try:
+            fwd_msg = await c.forward_messages(Altruix.log_chat, m.chat.id, m.id, message_thread_id=topic_id)
+        except Exception as e:
+            logger.debug(f"PMLU Forward failed: {e}")
+            fwd_msg = None
         
         # Send Detailed Info as a reply to the forwarded message
         sent_log = await Altruix.bot.send_message(
@@ -344,7 +459,8 @@ async def pm_logger_user_handler(c: Client, m: RawMessage):
             log_content,
             parse_mode=enums.ParseMode.HTML,
             reply_markup=InlineKeyboardMarkup(keyboard),
-            reply_to_message_id=fwd_msg.id if fwd_msg else None
+            reply_to_message_id=fwd_msg.id if fwd_msg else None,
+            message_thread_id=topic_id
         )
         
         # Cache for recovery
@@ -490,6 +606,66 @@ async def pmlu_save_callback(c: Client, cb: CallbackQuery):
         await cb.answer("✅ Message forwarded again to log group!", show_alert=True)
     except Exception as e:
         logger.error(f"PMLU Save callback error: {e}")
+
+@Altruix.bot.on_callback_query(filters.regex(r"^pmlu_force_fwd_"))
+@log_errors
+async def pmlu_force_fwd_callback(c: Client, cb: CallbackQuery):
+    try:
+        data = cb.data.split("_")
+        # pmlu_force_fwd_{chat_id}_{msg_id}_{client_id}
+        chat_id, msg_id, client_id = int(data[3]), int(data[4]), int(data[5])
+        
+        target_client = None
+        for client in Altruix.clients:
+            if client.me and client.me.id == client_id:
+                target_client = client
+                break
+        
+        if not target_client:
+            return await cb.answer("❌ Account not connected/found.", show_alert=True)
+            
+        await cb.answer("📥 Mendownload content...", show_alert=False)
+        
+        # Download using the specific account that received it
+        # Restricted content often requires the specific account to download
+        try:
+            msg = await target_client.get_messages(chat_id, msg_id)
+            if not msg or not msg.media:
+                return await cb.answer("❌ Media tidak ditemukan.", show_alert=True)
+            
+            file_path = await target_client.download_media(msg)
+        except Exception as e:
+            logger.error(f"PMLU Download failed: {e}")
+            return await cb.answer(f"❌ Gagal download: {str(e)[:50]}", show_alert=True)
+
+        if not file_path:
+            return await cb.answer("❌ Gagal mendownload content (file_path empty).", show_alert=True)
+            
+        # Update text to show uploading
+        try:
+            old_text = cb.message.text.html
+            await cb.edit_message_text(f"{old_text}\n\n📤 **Uploading bypassed content...**", parse_mode=enums.ParseMode.HTML)
+        except: pass
+        
+        # Get topic
+        topic_id = await get_or_create_topic(Altruix.bot, Altruix.log_chat, "pm logger", userbot_client=target_client)
+        
+        # Upload using the userbot to the log group
+        await target_client.send_document(
+            Altruix.log_chat, 
+            file_path, 
+            caption=f"✅ **Bypassed Restrict Content**\nFrom account: {target_client.me.mention}",
+            message_thread_id=topic_id
+        )
+        
+        # Cleanup
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            
+        await cb.answer("✅ Berhasil mendownload dan mengupload ulang ke group log!", show_alert=True)
+    except Exception as e:
+        logger.error(f"PMLU Force Forward error: {e}")
+        await cb.answer(f"❌ Error: {e}", show_alert=True)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^pmlu_others_"))
 @log_errors

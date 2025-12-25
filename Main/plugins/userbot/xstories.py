@@ -15,7 +15,7 @@ import time
 # ============================================================================
 PLUGIN_VERSION = "1.0.4"
 FLOOD_PROTECTION_DELAY = 1.5  # Reduced default delay, will increase if hit flood
-MAX_RETRIES = 3
+MAX_RETRIES = 2
 
 async def safe_edit(msg: Message, text: str, parse_mode=enums.ParseMode.HTML):
     """
@@ -154,7 +154,16 @@ async def process_story(c: Client, target_chat_id: int, target_user: str, story_
     
     return False
 
-@Altruix.register_on_cmd(["dlstory"], bot_mode_unsupported=True)
+@Altruix.register_on_cmd(
+    ["dlstory"], 
+    bot_mode_unsupported=True,
+    cmd_help={
+        "help": "Download or copy a Telegram story from a link.",
+        "usage": ".dlstory <story_link>",
+        "example": ".dlstory https://t.me/username/s/123",
+        "detail": "Support bypass for non-premium accounts by downloading and re-uploading the story automatically."
+    }
+)
 @log_errors
 async def download_story_cmd(c: Client, m: Message):
     """
@@ -217,7 +226,16 @@ async def download_story_cmd(c: Client, m: Message):
         await safe_edit(status_msg, f"❌ <b>Terjadi kesalahan:</b>\n<code>{str(e)}</code>")
 
 
-@Altruix.register_on_cmd(["stories"], bot_mode_unsupported=True)
+@Altruix.register_on_cmd(
+    ["stories"], 
+    bot_mode_unsupported=True,
+    cmd_help={
+        "help": "Download all active stories from a user or chat.",
+        "usage": ".stories <username/ID>",
+        "example": ".stories @username",
+        "detail": "Fetches all currently active stories. Handles floodwait and restricted content automatically."
+    }
+)
 @log_errors
 async def list_stories_cmd(c: Client, m: Message):
     """

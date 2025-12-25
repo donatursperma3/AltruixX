@@ -1088,8 +1088,29 @@ async def send_completion_report(
 @Altruix.register_on_cmd(
     ["laucreate"],
     cmd_help={
-        "help": "Advanced group creation tool.",
-        "example": "laucreate <delay> <jumlah> <delay_batch> <ukuran_batch> <tipe> <pola_nama> ; <username> <bot_list>",
+        "help": "Advanced automated group and channel creation suite.",
+        "usage": ".laucreate <delay> <count> <batch_delay> <batch_size> <type> <pattern> ; <username> <bots>",
+        "example": ".laucreate 5 25 30 5 a \"🔰 X(tahun)-B(bulan)\" ; myuser @bot1 @bot2",
+        "user_args": {
+            "delay": "Delay between each group creation (seconds).",
+            "count": "Total number of groups/channels to create.",
+            "batch_delay": "Extra delay between batches (minutes).",
+            "batch_size": "Number of groups per batch.",
+            "type": "Creation type (b: basic, g: mega, c: channel, a: anonymous, i: invite bots).",
+            "pattern": "Name pattern (supports (tahun), (bulan), (tanggal), (index)).",
+            "; username": "Optional username prefix for the groups.",
+            "bots": "Optional bot list to invite (for type 'i' only)."
+        },
+        "detail": (
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "🏗️ **LAUCREATE AUTOMATION**\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "• **Custom Patterns:** Automate naming with time and index tags.\n"
+            "• **Full Setup (a/i):** Auto-set profile photos, bio, anonymous admin, and forward content.\n"
+            "• **Bot Integration:** Auto-invite bots and execute setup commands (/help, /id).\n"
+            "• **Batching:** Safe creation with distributed delays to avoid Telegram limits.\n"
+            "• **Monitoring:** Real-time log notifications to the log group."
+        )
     },
     group_only=False,
 )

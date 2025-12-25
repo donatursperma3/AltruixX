@@ -23,6 +23,7 @@ import aiofiles
 from datetime import datetime
 import re
 from collections import defaultdict
+from Main.utils.topic_utils import get_or_create_topic
 
 # ─── LOGGER KHUSUS PLUGIN ───────────────────────────────────────────────
 
@@ -35,7 +36,7 @@ logger = logging.getLogger("altruix.pm_logger_bot")
 logger.setLevel(logging.INFO)
 
 PLUGIN_NAME = __plugin_name__ 
-PLUGIN_VERSION = "1.2.3" # ✅ Added Debug Logs
+PLUGIN_VERSION = "1.3.0"  # ✅ Added message type filters
 STORAGE_FILE = Path("pm_logger_bot_settings.json")
 
 # Settings Cache
@@ -43,6 +44,32 @@ PM_LOGGER_BOT_DATA = {}
 REPLY_FROM_ALL_ACCESSIBLE = True
 USER_REPLY_COUNTS = defaultdict(lambda: defaultdict(int))
 USER_REPLY_LIMIT = 5
+
+# Message Type Filters (same as user logger)
+PM_LOGGER_FILTERS = {
+    "from_user": {
+        "text": True,
+        "photo": True,
+        "video": True,
+        "document": True,
+        "audio": True,
+        "voice": True,
+        "sticker": True,
+        "animation": True,
+        "video_note": True,
+    },
+    "from_bot": {
+        "text": False,
+        "photo": True,
+        "video": True,
+        "document": True,
+        "audio": True,
+        "voice": True,
+        "sticker": True,
+        "animation": True,
+        "video_note": True,
+    }
+}
 
 DEFAULT_REACTION_EMOJIS = ["👍", "❤️", "🔥", "🥰", "👏", "🎉"]
 VALID_REACTION_EMOJIS = {
@@ -60,7 +87,7 @@ def is_valid_emoji(emoji: str) -> bool:
     return emoji in VALID_REACTION_EMOJIS
 
 async def load_settings():
-    global PM_LOGGER_BOT_DATA
+    global PM_LOGGER_BOT_DATA, PM_LOGGER_FILTERS, REPLY_FROM_ALL_ACCESSIBLE
     try:
         if STORAGE_FILE.exists():
             async with aiofiles.open(STORAGE_FILE, 'r', encoding='utf-8') as f:
@@ -68,7 +95,7 @@ async def load_settings():
                 if content.strip():
                     data = json.loads(content)
                     PM_LOGGER_BOT_DATA = data.get("settings", {})
-                    global REPLY_FROM_ALL_ACCESSIBLE
+                    PM_LOGGER_FILTERS = data.get("filters", PM_LOGGER_FILTERS)
                     REPLY_FROM_ALL_ACCESSIBLE = data.get("reply_from_all_accessible", True)
     except Exception as e:
         logger.error(f"Failed to load PM Logger Bot settings: {e}")
@@ -77,6 +104,7 @@ async def save_settings():
     try:
         data = {
             "settings": PM_LOGGER_BOT_DATA,
+            "filters": PM_LOGGER_FILTERS,
             "reply_from_all_accessible": REPLY_FROM_ALL_ACCESSIBLE,
             "version": PLUGIN_VERSION
         }
@@ -257,28 +285,48 @@ async def pm_logger_bot_handler(c: Client, m: RawMessage):
         msg_text = m.text or m.caption or "[Media]"
 
         # ✅ Filter Check
-        filters_file = "pml_filters.json"
-        allowed = True
-        try:
-            current_filters = {
-                "text": True, "photo": True, "video": True, "voice": True,
-                "audio": True, "sticker": False, "document": True, "others": True
-            }
-            if os.path.exists(filters_file):
-                with open(filters_file, "r") as f:
-                    saved_filters = json.load(f)
-                    current_filters.update(saved_filters)
+        filter_key = "from_bot" if sender.is_bot else "from_user"
+        
+        # Determine message type for filtering
+        filter_msg_type = None
+        if not m.media and m.text:
+            filter_msg_type = "text"
+        elif m.photo:
+            filter_msg_type = "photo"
+        elif m.video:
+            filter_msg_type = "video"
+        elif m.document:
+            filter_msg_type = "document"
+        elif m.audio:
+            filter_msg_type = "audio"
+        elif m.voice:
+            filter_msg_type = "voice"
+        elif m.sticker:
+            filter_msg_type = "sticker"
+        elif m.animation:
+            filter_msg_type = "animation"
+        elif m.video_note:
+            filter_msg_type = "video_note"
+        
+        # Check if this message type is allowed
+        if filter_msg_type and not PM_LOGGER_FILTERS.get(filter_key, {}).get(filter_msg_type, True):
+            return  # Skip logging this message type
+                        if "filters" in data and filter_key in data["filters"]:
+                            current_filters.update(data["filters"][filter_key])
             
-            check_key = "others"
-            if not m.media: check_key = "text"
-            elif msg_type_str == "photo": check_key = "photo"
-            elif msg_type_str == "video": check_key = "video"
-            elif msg_type_str == "voice": check_key = "voice"
-            elif msg_type_str == "audio": check_key = "audio"
-            elif msg_type_str == "sticker": check_key = "sticker"
-            elif msg_type_str == "document": check_key = "document"
+            # Determine filter message type
+            filter_msg_type = None
+            if not m.media and m.text: filter_msg_type = "text"
+            elif m.photo: filter_msg_type = "photo"
+            elif m.video: filter_msg_type = "video"
+            elif m.document: filter_msg_type = "document"
+            elif m.audio: filter_msg_type = "audio"
+            elif m.voice: filter_msg_type = "voice"
+            elif m.sticker: filter_msg_type = "sticker"
+            elif m.animation: filter_msg_type = "animation"
+            elif m.video_note: filter_msg_type = "video_note"
             
-            if not current_filters.get(check_key, True):
+            if filter_msg_type and not current_filters.get(filter_msg_type, True):
                 allowed = False
         except Exception as e:
             logger.error(f"Filter check error: {e}")
@@ -327,8 +375,15 @@ async def pm_logger_bot_handler(c: Client, m: RawMessage):
         if not REPLY_FROM_ALL_ACCESSIBLE:
             keyboard = [r for r in keyboard if not any(b.text == "👥 Reply From All" for b in r)]
 
+        # Get topic if any (bot will search, but won't create if no permission)
+        topic_id = await get_or_create_topic(Altruix.bot, Altruix.log_chat, "pm logger")
+
         # Forward message to log chat using Bot
-        fwd_msg = await Altruix.bot.forward_messages(Altruix.log_chat, m.chat.id, m.id)
+        try:
+            fwd_msg = await Altruix.bot.forward_messages(Altruix.log_chat, m.chat.id, m.id, message_thread_id=topic_id)
+        except Exception as e:
+            logger.debug(f"PMLB Forward failed: {e}")
+            fwd_msg = None
         
         # Send Detailed Info as a reply to the forwarded message
         sent_log = await Altruix.bot.send_message(
@@ -336,7 +391,8 @@ async def pm_logger_bot_handler(c: Client, m: RawMessage):
             log_content,
             parse_mode=enums.ParseMode.HTML,
             reply_markup=InlineKeyboardMarkup(keyboard),
-            reply_to_message_id=fwd_msg.id if fwd_msg else None
+            reply_to_message_id=fwd_msg.id if fwd_msg else None,
+            message_thread_id=topic_id
         )
         
         # Cache for recovery

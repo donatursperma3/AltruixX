@@ -88,6 +88,8 @@ user_dlstory_state = {} # ✅ BARU: State untuk download story
 user_purge_state = {}   # ✅ BARU: State untuk purge pesan
 user_dlphoto_state = {} # ✅ BARU: State untuk download foto profil
 user_privacy_state = {} # ✅ BARU: State untuk privacy settings
+user_bulk_leave_state = {} # ✅ BARU: State untuk bulk leave
+user_bulk_report_state = {} # ✅ BARU: State untuk bulk report
 
 # ✅ LOCALIZATION / TRANSLATION SYSTEM
 SETTINGS_LANG = getattr(Altruix.config, "UB_LANG", "english").lower()
@@ -140,6 +142,18 @@ STRINGS = {
         "download_content": "📥 Download Konten",
         "download_my_photo": "🖼️ Download My Photo",
         "download_user_photo": "📥 Download User Photo",
+        "join_logger_control": "🚪 Join Logger",
+        "cmd_logger_control": "⌨️ Command Logger",
+        "filter_message_control": "🔍 Filter Message",
+        "bio": "✍️ Bio",
+        "premium": "💠 Premium",
+        "session_number": "🔢 Session",
+        "bulk_leave": "🏃 Keluar Massal",
+        "bulk_report": "🚩 Lapor Massal",
+        "export_sessions": "📤 Ekspor Semua Sesi",
+        "export_phones": "📲 Ekspor Semua No. HP",
+        "refresh_session_info": "🔄 Segarkan Info Sesi",
+        "settings_text": "<b>🛠️ Pengaturan Altruix</b>"
     },
     "english": {
         "sessions": "Sessions",
@@ -188,6 +202,18 @@ STRINGS = {
         "download_content": "📥 Download Content",
         "download_my_photo": "🖼️ Download My Photo",
         "download_user_photo": "📥 Download User Photo",
+        "join_logger_control": "🚪 Join Logger",
+        "cmd_logger_control": "⌨️ Command Logger",
+        "filter_message_control": "🔍 Filter Message",
+        "bio": "✍️ Bio",
+        "premium": "💠 Premium",
+        "session_number": "🔢 Session",
+        "bulk_leave": "🏃 Bulk Leave",
+        "bulk_report": "🚩 Bulk Report",
+        "export_sessions": "📤 Export All Sessions",
+        "export_phones": "📲 Export All Phones",
+        "refresh_session_info": "🔄 Refresh Session Info",
+        "settings_text": "<b>🛠️ Altruix Settings</b>"
     }
 }
 
@@ -367,7 +393,7 @@ async def settings_command_handler(c: Client, m: Message):
     """Handler untuk command /settings"""
     try:
         total_sessions = len(Altruix.clients) if hasattr(Altruix, 'clients') else 0
-        settings_text = Altruix.get_string("SETTINGS_TEXT") or "<b>🛠️ Settings</b>"
+        settings_text = gt("settings_text")
         full_text = f"{settings_text}\n\n<b>Total Sessions:</b> <code>{total_sessions}</code>"
         
         await m.reply(
@@ -473,11 +499,17 @@ async def sessions_menu_cb_handler(c: Client, cb: CallbackQuery):
     # Dapatkan LOG_CHAT_ID dengan benar
     LOG_CHAT_ID = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
 
-    # Baris 4: Tombol aksi [Test Ping All][Bulk Join][Add a Session]
+    # Baris 4: Tombol aksi
     action_buttons = [
-        InlineKeyboardButton("🏓 Tes Ping All", "test_ping_all_confirmation"),
-        InlineKeyboardButton("👥 Bulk Join", "bulk_join_menu"),
-        InlineKeyboardButton("➕ Add a Session", "add_session")
+        [
+            InlineKeyboardButton("👥 Bulk Join", "bulk_join_menu"),
+            InlineKeyboardButton("🏃 Bulk Leave", "bulk_leave_menu"),
+            InlineKeyboardButton("🚩 Bulk Report", "bulk_report_menu")
+        ],
+        [
+            InlineKeyboardButton("🏓 Test Ping All", "test_ping_all_confirmation"),
+            InlineKeyboardButton("➕ Add a Session", "add_session")
+        ]
     ]
     
     # Baris 5: Tombol export [Export Sessions][Export Phones]
@@ -507,8 +539,9 @@ async def sessions_menu_cb_handler(c: Client, cb: CallbackQuery):
     for row in session_buttons:
         final_markup.append(row)
     
-    # Tambahkan action buttons sebagai baris keempat
-    final_markup.append(action_buttons)
+    # Tambahkan action buttons sebagai baris keempat dan kelima
+    for row in action_buttons:
+        final_markup.append(row)
     
     # Tambahkan export buttons sebagai baris kelima
     final_markup.append(export_buttons)
@@ -584,6 +617,122 @@ async def bulk_join_menu_handler(c: Client, cb: CallbackQuery):
              "• Delay yang lebih besar mengurangi risiko flood wait\n"
              "• Delay yang lebih kecil lebih cepat tapi berisiko",
         reply_markup=InlineKeyboardMarkup(delay_buttons)
+    )
+
+
+@Altruix.bot.on_callback_query(filters.regex("bulk_leave_menu"))
+@log_errors
+async def bulk_leave_menu_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk menu bulk leave"""
+    await cb.answer()
+    
+    # Tampilkan pilihan delay
+    delay_buttons = [
+        [
+            InlineKeyboardButton("2 detik", callback_data="bulk_leave_delay_2"),
+            InlineKeyboardButton("4 detik", callback_data="bulk_leave_delay_4"),
+            InlineKeyboardButton("6 detik", callback_data="bulk_leave_delay_6"),
+        ],
+        [
+            InlineKeyboardButton("8 detik", callback_data="bulk_leave_delay_8"),
+            InlineKeyboardButton("10 detik", callback_data="bulk_leave_delay_10"),
+            InlineKeyboardButton("15 detik", callback_data="bulk_leave_delay_15"),
+        ],
+        [
+            InlineKeyboardButton("🔙 Back", callback_data="sessions_list_1"),
+        ]
+    ]
+    
+    await cb.message.edit(
+        text="<b>🏃 Bulk Leave Settings</b>\n\n"
+             "Pilih jeda waktu antara keluar dari chat:\n\n"
+             "⚠️ <b>Note:</b>\n"
+             "• Delay penting untuk menghindari limit Telegram.",
+        reply_markup=InlineKeyboardMarkup(delay_buttons)
+    )
+
+
+@Altruix.bot.on_callback_query(filters.regex("bulk_leave_delay_(\\d+)"))
+@log_errors
+async def bulk_leave_delay_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk memilih delay bulk leave"""
+    await cb.answer()
+    
+    try:
+        delay = int(cb.matches[0].group(1))
+    except (ValueError, IndexError):
+        delay = 5
+    
+    user_id = cb.from_user.id
+    user_bulk_leave_state[user_id] = {
+        'delay': delay,
+        'chat_id': None,
+        'step': 'waiting_chat'
+    }
+    
+    await cb.message.edit(
+        text=f"<b>🏃 Bulk Leave - Delay {delay} detik</b>\n\n"
+             "Silakan kirim Chat ID atau Username grup/channel yang akan ditinggalkan:\n\n"
+             "❌ <b>Cancel:</b> Ketik /cancel",
+        parse_mode=ParseMode.HTML
+    )
+
+
+@Altruix.bot.on_callback_query(filters.regex("bulk_report_menu"))
+@log_errors
+async def bulk_report_menu_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk menu bulk report"""
+    await cb.answer()
+    
+    # Tampilkan pilihan delay
+    delay_buttons = [
+        [
+            InlineKeyboardButton("2 detik", callback_data="bulk_report_delay_2"),
+            InlineKeyboardButton("4 detik", callback_data="bulk_report_delay_4"),
+            InlineKeyboardButton("6 detik", callback_data="bulk_report_delay_6"),
+        ],
+        [
+            InlineKeyboardButton("8 detik", callback_data="bulk_report_delay_8"),
+            InlineKeyboardButton("10 detik", callback_data="bulk_report_delay_10"),
+            InlineKeyboardButton("15 detik", callback_data="bulk_report_delay_15"),
+        ],
+        [
+            InlineKeyboardButton("🔙 Back", callback_data="sessions_list_1"),
+        ]
+    ]
+    
+    await cb.message.edit(
+        text="<b>🚩 Bulk Report Settings</b>\n\n"
+             "Pilih jeda waktu antar report:\n\n"
+             "⚠️ <b>Note:</b>\n"
+             "• Delay membantu akun anda tetap aman.",
+        reply_markup=InlineKeyboardMarkup(delay_buttons)
+    )
+
+
+@Altruix.bot.on_callback_query(filters.regex("bulk_report_delay_(\\d+)"))
+@log_errors
+async def bulk_report_delay_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk memilih delay bulk report"""
+    await cb.answer()
+    
+    try:
+        delay = int(cb.matches[0].group(1))
+    except (ValueError, IndexError):
+        delay = 5
+    
+    user_id = cb.from_user.id
+    user_bulk_report_state[user_id] = {
+        'delay': delay,
+        'target': None,
+        'step': 'waiting_target'
+    }
+    
+    await cb.message.edit(
+        text=f"<b>🚩 Bulk Report - Delay {delay} detik</b>\n\n"
+             "Silakan kirim Chat ID atau Username target yang akan di-report:\n\n"
+             "❌ <b>Cancel:</b> Ketik /cancel",
+        parse_mode=ParseMode.HTML
     )
 
 
@@ -1008,7 +1157,7 @@ async def user_text_handler(c: Client, m: Message):
                 parse_mode=ParseMode.HTML
             )
         return
-    
+
     # ✅ BARU: Cek jika user sedang dalam proses lihat mention
     elif user_id in user_mentions_state and user_mentions_state[user_id]['step'] == 'waiting_group':
         if text.lower() == "/cancel":
@@ -1040,6 +1189,112 @@ async def user_text_handler(c: Client, m: Message):
                  f"Group: <code>{html.escape(text)}</code>\n\n"
                  "Pilih jumlah pesan yang akan diperiksa (semakin banyak, semakin lama):",
             reply_markup=InlineKeyboardMarkup(buttons),
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    # ✅ BARU: Cek jika user sedang dalam proses bulk leave
+    elif user_id in user_bulk_leave_state and user_bulk_leave_state[user_id]['step'] == 'waiting_chat':
+        if text.lower() == "/cancel":
+            del user_bulk_leave_state[user_id]
+            await m.reply("❌ Bulk leave dibatalkan.")
+            return
+        
+        # Simpan chat_id
+        user_bulk_leave_state[user_id]['chat_id'] = text
+        user_bulk_leave_state[user_id]['step'] = 'confirming'
+        
+        delay = user_bulk_leave_state[user_id]['delay']
+        total_sessions = len(Altruix.clients) if hasattr(Altruix, 'clients') else 0
+        
+        confirmation_buttons = [
+            [
+                InlineKeyboardButton("✅ Yes, Leave All", callback_data="bulk_leave_confirm_yes"),
+                InlineKeyboardButton("❌ No, Cancel", callback_data="bulk_leave_confirm_no")
+            ]
+        ]
+        
+        await m.reply(
+            text=f"<b>🏃 Confirm Bulk Leave</b>\n\n"
+                 f"• <b>Target Chat:</b> <code>{html.escape(text)}</code>\n"
+                 f"• <b>Delay:</b> <code>{delay} detik</code>\n"
+                 f"• <b>Total Sessions:</b> <code>{total_sessions}</code>\n\n"
+                 f"⚠️ <b>WARNING:</b>\n"
+                 f"• Semua session akan keluar dari chat tersebut\n"
+                 f"• Aksi ini tidak dapat dibatalkan setelah dimulai",
+            reply_markup=InlineKeyboardMarkup(confirmation_buttons),
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    # ✅ BARU: Cek jika user sedang dalam proses bulk report
+    elif user_id in user_bulk_report_state and user_bulk_report_state[user_id]['step'] == 'waiting_target':
+        if text.lower() == "/cancel":
+            del user_bulk_report_state[user_id]
+            await m.reply("❌ Bulk report dibatalkan.")
+            return
+        
+        # Simpan target
+        user_bulk_report_state[user_id]['target'] = text
+        user_bulk_report_state[user_id]['step'] = 'selecting_reason'
+        
+        reason_buttons = [
+            [
+                InlineKeyboardButton("SPAM", callback_data=f"bulk_report_reason_{user_id}_spam"),
+                InlineKeyboardButton("VIOLENCE", callback_data=f"bulk_report_reason_{user_id}_violence"),
+            ],
+            [
+                InlineKeyboardButton("PORNOGRAPHY", callback_data=f"bulk_report_reason_{user_id}_pornography"),
+                InlineKeyboardButton("CHILD ABUSE", callback_data=f"bulk_report_reason_{user_id}_child_abuse"),
+            ],
+            [
+                InlineKeyboardButton("OTHER", callback_data=f"bulk_report_reason_{user_id}_other"),
+                InlineKeyboardButton("Custom Text", callback_data=f"bulk_report_reason_{user_id}_custom"),
+            ],
+            [
+                InlineKeyboardButton("🔙 Cancel", callback_data=f"sessions_list_1"),
+            ]
+        ]
+        
+        await m.reply(
+            text=f"<b>🚩 Bulk Report</b>\n\n"
+                 f"Target: <code>{html.escape(text)}</code>\n\n"
+                 f"Pilih alasan report:",
+            reply_markup=InlineKeyboardMarkup(reason_buttons),
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    # ✅ BARU: Cek jika user sedang mengetik alasan custom untuk report
+    elif user_id in user_bulk_report_state and user_bulk_report_state[user_id]['step'] == 'waiting_custom_reason':
+        if text.lower() == "/cancel":
+            del user_bulk_report_state[user_id]
+            await m.reply("❌ Bulk report dibatalkan.")
+            return
+        
+        user_bulk_report_state[user_id]['reason'] = text
+        user_bulk_report_state[user_id]['step'] = 'confirming'
+        
+        state = user_bulk_report_state[user_id]
+        delay = state['delay']
+        total_sessions = len(Altruix.clients) if hasattr(Altruix, 'clients') else 0
+        
+        confirmation_buttons = [
+            [
+                InlineKeyboardButton("✅ Yes, Report All", callback_data="bulk_report_confirm_yes"),
+                InlineKeyboardButton("❌ No, Cancel", callback_data="bulk_report_confirm_no")
+            ]
+        ]
+        
+        await m.reply(
+            text=f"<b>🚩 Confirm Bulk Report</b>\n\n"
+                 f"• <b>Target:</b> <code>{html.escape(state['target'])}</code>\n"
+                 f"• <b>Reason:</b> <code>{html.escape(text)}</code>\n"
+                 f"• <b>Delay:</b> <code>{delay} detik</code>\n"
+                 f"• <b>Total Sessions:</b> <code>{total_sessions}</code>\n\n"
+                 f"⚠️ <b>WARNING:</b>\n"
+                 f"• Semua session akan melaporkan target tersebut",
+            reply_markup=InlineKeyboardMarkup(confirmation_buttons),
             parse_mode=ParseMode.HTML
         )
         return
@@ -1619,6 +1874,147 @@ async def execute_bulk_join(c: Client, cb: CallbackQuery, delay: int, link: str)
         ]),
         parse_mode=ParseMode.HTML
     )
+
+
+@Altruix.bot.on_callback_query(filters.regex("bulk_leave_confirm_(yes|no)"))
+@log_errors
+async def bulk_leave_confirm_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk konfirmasi bulk leave"""
+    await cb.answer()
+    choice = cb.matches[0].group(1)
+    user_id = cb.from_user.id
+    
+    if choice == "no":
+        if user_id in user_bulk_leave_state:
+            del user_bulk_leave_state[user_id]
+        await cb.message.edit("❌ Bulk leave dibatalkan.", 
+                             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="sessions_list_1")]]))
+        return
+    
+    if user_id not in user_bulk_leave_state:
+        await cb.message.edit("❌ Data tidak ditemukan.")
+        return
+    
+    state = user_bulk_leave_state[user_id]
+    del user_bulk_leave_state[user_id]
+    
+    await execute_bulk_leave(c, cb, state['delay'], state['chat_id'])
+
+
+@Altruix.bot.on_callback_query(filters.regex("bulk_report_reason_(\\d+)_(.*)"))
+@log_errors
+async def bulk_report_reason_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk memilih alasan bulk report"""
+    await cb.answer()
+    user_id = int(cb.matches[0].group(1))
+    reason = cb.matches[0].group(2)
+    
+    if user_id not in user_bulk_report_state:
+        await cb.message.edit("❌ Session expired. Silakan ulangi.")
+        return
+    
+    if reason == "custom":
+        user_bulk_report_state[user_id]['step'] = 'waiting_custom_reason'
+        await cb.message.edit("✍️ Silakan ketik alasan report custom Anda:", 
+                             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancel", callback_data="sessions_list_1")]]))
+        return
+    
+    user_bulk_report_state[user_id]['reason'] = reason
+    user_bulk_report_state[user_id]['step'] = 'confirming'
+    
+    state = user_bulk_report_state[user_id]
+    delay = state['delay']
+    total_sessions = len(Altruix.clients)
+    
+    confirmation_buttons = [
+        [
+            InlineKeyboardButton("✅ Yes, Report All", callback_data="bulk_report_confirm_yes"),
+            InlineKeyboardButton("❌ No, Cancel", callback_data="bulk_report_confirm_no")
+        ]
+    ]
+    
+    await cb.message.edit(
+        text=f"<b>🚩 Confirm Bulk Report</b>\n\n"
+             f"• <b>Target:</b> <code>{html.escape(state['target'])}</code>\n"
+             f"• <b>Reason:</b> <code>{reason.upper()}</code>\n"
+             f"• <b>Delay:</b> <code>{delay} detik</code>\n"
+             f"• <b>Total Sessions:</b> <code>{total_sessions}</code>\n\n"
+             f"⚠️ <b>WARNING:</b>\n"
+             f"• Semua session akan melaporkan target tersebut",
+        reply_markup=InlineKeyboardMarkup(confirmation_buttons),
+        parse_mode=ParseMode.HTML
+    )
+
+
+@Altruix.bot.on_callback_query(filters.regex("bulk_report_confirm_(yes|no)"))
+@log_errors
+async def bulk_report_confirm_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk konfirmasi bulk report"""
+    await cb.answer()
+    choice = cb.matches[0].group(1)
+    user_id = cb.from_user.id
+    
+    if choice == "no":
+        if user_id in user_bulk_report_state:
+            del user_bulk_report_state[user_id]
+        await cb.message.edit("❌ Bulk report dibatalkan.", 
+                             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="sessions_list_1")]]))
+        return
+    
+    if user_id not in user_bulk_report_state:
+        await cb.message.edit("❌ Data tidak ditemukan.")
+        return
+    
+    state = user_bulk_report_state[user_id]
+    del user_bulk_report_state[user_id]
+    
+    await execute_bulk_report(c, cb, state['delay'], state['target'], state['reason'])
+
+
+async def execute_bulk_leave(c: Client, cb: CallbackQuery, delay: float, chat_id: str):
+    """Esekusi bulk leave"""
+    total = len(Altruix.clients)
+    success = 0
+    failed = 0
+    
+    await cb.message.edit(f"🔄 <b>Bulk Leave in progress...</b>\nTarget: <code>{chat_id}</code>\nTotal: <code>{total}</code> sessions")
+    
+    for i, client in enumerate(Altruix.clients):
+        try:
+            await client.leave_chat(chat_id)
+            success += 1
+        except Exception:
+            failed += 1
+        
+        if i < total - 1:
+            await asyncio.sleep(delay)
+            await cb.message.edit(f"🔄 <b>Bulk Leave in progress...</b>\nSuccess: <code>{success}</code>\nFailed: <code>{failed}</code>\nRemaining: <code>{total - (i+1)}</code>")
+
+    await cb.message.edit(f"✅ <b>Bulk Leave Completed</b>\n\nTarget: <code>{chat_id}</code>\nSuccess: <code>{success}</code>\nFailed: <code>{failed}</code>", 
+                         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="sessions_list_1")]]))
+
+
+async def execute_bulk_report(c: Client, cb: CallbackQuery, delay: float, target: str, reason: str):
+    """Esekusi bulk report"""
+    total = len(Altruix.clients)
+    success = 0
+    failed = 0
+    
+    await cb.message.edit(f"🔄 <b>Bulk Report in progress...</b>\nTarget: <code>{target}</code>\nTotal: <code>{total}</code> sessions")
+    
+    for i, client in enumerate(Altruix.clients):
+        try:
+            await client.report_peer(target, reason)
+            success += 1
+        except Exception:
+            failed += 1
+        
+        if i < total - 1:
+            await asyncio.sleep(delay)
+            await cb.message.edit(f"🔄 <b>Bulk Report in progress...</b>\nSuccess: <code>{success}</code>\nFailed: <code>{failed}</code>\nRemaining: <code>{total - (i+1)}</code>")
+
+    await cb.message.edit(f"✅ <b>Bulk Report Completed</b>\n\nTarget: <code>{target}</code>\nSuccess: <code>{success}</code>\nFailed: <code>{failed}</code>", 
+                         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="sessions_list_1")]]))
 
 
 # ====================== JOIN LOG GROUP FEATURE ======================
@@ -2318,46 +2714,29 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
             await cb.message.edit(f"Error getting session info: {str(e)}")
             return
 
-    is_scam = getattr(
-        getattr(session_info, 'verification_status', session_info),
-        'is_scam',
-        False
-    )
-
-    first_name = getattr(session_info, 'first_name', 'None')
-    last_name = getattr(session_info, 'last_name', 'None')
-    dc_id = getattr(session_info, 'dc_id', 'Unknown')
-    username = getattr(session_info, 'username', 'None')
-    user_id = getattr(session_info, 'id', 'Unknown')
+    is_premium = getattr(session_info, 'is_premium', False)
     bio = getattr(session_info, 'bio', 'None')
-
-    txt = (
-        "<b>📋 Session Info</b>\n\n"
-        f"<b>👤 First name:</b> <code>{html.escape(first_name or 'None')}</code>\n"
-        f"<b>👤 Last name:</b> <code>{html.escape(last_name or 'None')}</code>\n"
-        f"<b>📝 Bio:</b> <code>{html.escape(bio or 'None')}</code>\n"
-        f"<b>🌐 DC ID:</b> <code>{dc_id or 'Unknown'}</code>\n"
-        f"<b>🔗 Username:</b> @{username or 'None'}\n"
-        f"<b>🆔 User ID:</b> <code>{user_id}</code>\n"
-        f"<b>⚠️ Is SCAM:</b> <code>{'Yes' if is_scam else 'No'}</code>"
-    )
     
-    # ✅ PERUBAHAN: Tambahkan tombol-tombol edit profil sesuai permintaan
+    txt = (
+        "ℹ️ <b>SESSION INFO</b>\n\n"
+        f"👤 <b>User:</b> <code>{html.escape(session_info.first_name or '')}</code>\n"
+        f"🆔 <b>ID:</b> <spoiler>{session_info.id}</spoiler>\n"
+        f"✍️ <b>Bio:</b> <code>{html.escape(bio or 'None')}</code>\n"
+        f"💠 <b>DC:</b> <code>{session_info.dc_id or 'N/A'}</code>\n"
+        f"<b>Premium:</b> <code>{'Yes' if is_premium else 'No'}</code>\n"
+        f"<b>Session List:</b> <code>{index + 1}</code>\n"
+        f"🏷 <b>Username:</b> @{session_info.username or 'None'}\n\n"
+        f"<i>Manage this session using the buttons below:</i>"
+    )
+
+    # Susun buttons
     buttons = [
         # Baris 1: Refresh dan Unlink
-        [
-            InlineKeyboardButton("🔄 Refresh data", f"refresh_session_info_{index}"),
-            InlineKeyboardButton("🔗 Unlink (Remove)", f"unlink_session_{index}"),
-        ]
-    ]
-    # ✅ REFACTORED BUTTONS WITH LOCALIZATION & CONFIRMATION
-    buttons = [
-        # Row 1: Refresh and Unlink
         [
             InlineKeyboardButton(gt("refresh_data"), f"gen_conf_refresh_session_info_{index}_{callback_page}"),
             InlineKeyboardButton(gt("unlink_session"), f"unlink_session_{index}"),
         ],
-        # Row 2: Profile Management (GROUPED)
+        # Baris 2: Profile Management
         [
              InlineKeyboardButton("✏️ Change Name", f"change_name_menu_{index}_{callback_page}"),
              InlineKeyboardButton(gt("change_bio"), f"gen_conf_change_bio_{index}_{callback_page}"),
@@ -2407,7 +2786,13 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
             InlineKeyboardButton(gt("mention_control"), f"mnt_menu_{index}_{callback_page}"),
         ],
         [
+            InlineKeyboardButton(gt("join_logger_control"), f"joinl_menu_{index}_{callback_page}"),
+            InlineKeyboardButton(gt("cmd_logger_control"), f"cmdl_menu_{index}_{callback_page}"),
+        ],
+        [
             InlineKeyboardButton(gt("recent_messages"), f"gen_conf_recent_messages_menu_{index}_{callback_page}"),
+        ],
+        [
             InlineKeyboardButton(gt("view_mentions"), f"gen_conf_view_mentions_menu_{index}_{callback_page}"),
         ],
         # Row 6: Advanced Tools
@@ -2422,13 +2807,7 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
     ]
 
     await cb.message.edit(
-        text=f"{gt('session_info_title')}\n\n"
-             f"👤 <b>User:</b> <code>{html.escape(session_info.first_name or '')}</code>\n"
-             f"🆔 <b>ID:</b> <code>{session_info.id}</code>\n"
-             f"📞 <b>Phone:</b> <code>+{session_info.phone_number or 'N/A'}</code>\n"
-             f"💠 <b>DC:</b> <code>{session_info.dc_id or 'N/A'}</code>\n"
-             f"🏷 <b>Username:</b> @{session_info.username or 'None'}\n\n"
-             f"<i>Manage this session using the buttons below:</i>",
+        text=txt,
         reply_markup=InlineKeyboardMarkup(buttons),
         parse_mode=ParseMode.HTML
     )
@@ -4117,110 +4496,6 @@ async def join_chat_confirm_handler(c: Client, cb: CallbackQuery):
     del user_bulk_join_state[user_id]
 
 
-# ✅ HANDLER BARU: PM Logger Filters Menu
-@Altruix.bot.on_callback_query(filters.regex(r"^pml_filters_menu_(\d+)_(\d+)$"))
-@log_errors
-async def pml_filters_menu_handler(c: Client, cb: CallbackQuery, index: int = None, page: int = None):
-    if index is None:
-        index = int(cb.matches[0].group(1))
-    if page is None:
-        page = int(cb.matches[0].group(2))
-    
-    # Load filter settings
-    filters_file = "pml_filters.json"
-    default_filters = {
-        "text": True,
-        "photo": True,
-        "video": True,
-        "voice": True,
-        "audio": True,
-        "sticker": False,
-        "document": True,
-        "others": True
-    }
-    
-    current_filters = default_filters.copy()
-    if os.path.exists(filters_file):
-        try:
-            with open(filters_file, "r") as f:
-                saved_filters = json.load(f)
-                current_filters.update(saved_filters)
-        except: pass
-        
-    def get_status(key):
-        return "✅" if current_filters.get(key, False) else "❌"
-        
-    text = (
-        "<b>⚙️ Logger Message Filters</b>\n\n"
-        "Pilih tipe pesan yang ingin dicatat (Logged) ke Log Group.\n"
-        "Klik tombol untuk mengubah status (ON/OFF).\n\n"
-        "<i>Setting ini berlaku untuk semua akun.</i>"
-    )
-    
-    buttons = [
-        [
-            InlineKeyboardButton(f"{get_status('text')} Text", f"pml_filter_toggle_text_{index}_{page}"),
-            InlineKeyboardButton(f"{get_status('photo')} Photo", f"pml_filter_toggle_photo_{index}_{page}")
-        ],
-        [
-            InlineKeyboardButton(f"{get_status('video')} Video", f"pml_filter_toggle_video_{index}_{page}"),
-            InlineKeyboardButton(f"{get_status('voice')} Voice", f"pml_filter_toggle_voice_{index}_{page}")
-        ],
-        [
-            InlineKeyboardButton(f"{get_status('audio')} Audio", f"pml_filter_toggle_audio_{index}_{page}"),
-            InlineKeyboardButton(f"{get_status('sticker')} Sticker", f"pml_filter_toggle_sticker_{index}_{page}")
-        ],
-        [
-            InlineKeyboardButton(f"{get_status('document')} Docs", f"pml_filter_toggle_document_{index}_{page}"),
-            InlineKeyboardButton(f"{get_status('others')} Others", f"pml_filter_toggle_others_{index}_{page}")
-        ],
-        [InlineKeyboardButton("🔙 Back to Logger Controls", f"pml_menu_{index}_{page}")]
-    ]
-    
-    await cb.message.edit(text=text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
-
-
-# ✅ HANDLER BARU: Toggle Filter Item
-@Altruix.bot.on_callback_query(filters.regex(r"^pml_filter_toggle_([a-z]+)_(\d+)_(\d+)$"))
-@log_errors
-async def pml_filter_toggle_handler(c: Client, cb: CallbackQuery):
-    filter_type = cb.matches[0].group(1)
-    index = int(cb.matches[0].group(2))
-    page = int(cb.matches[0].group(3))
-    
-    filters_file = "pml_filters.json"
-    default_filters = {
-        "text": True, "photo": True, "video": True, "voice": True,
-        "audio": True, "sticker": False, "document": True, "others": True
-    }
-    
-    current_filters = default_filters.copy()
-    if os.path.exists(filters_file):
-        try:
-            with open(filters_file, "r") as f:
-                saved_filters = json.load(f)
-                current_filters.update(saved_filters)
-        except: pass
-        
-    # Toggle
-    new_state = not current_filters.get(filter_type, False)
-    current_filters[filter_type] = new_state
-    
-    try:
-        with open(filters_file, "w") as f:
-            json.dump(current_filters, f, indent=2)
-    except Exception as e:
-        await cb.answer(f"❌ Save failed: {e}", show_alert=True)
-        return
-        
-    # Refresh menu
-    await pml_filters_menu_handler(c, cb, index=index, page=page)
-    
-    # Kirim notifikasi log
-    await send_log_notification(
-        c, 'pml_toggle', index, cb.from_user,
-        True, None, {'Target': filter_type, 'Status': new_state}
-    )
 
 
 # ✅ HANDLER BARU: PM Logger Menu
@@ -4264,10 +4539,14 @@ async def pml_menu_handler(c: Client, cb: CallbackQuery, index: int = None, page
     
     text = (
         "<b>📟 PM Logger Controls</b>\n\n"
+        "Fitur ini memungkinkan Anda mencatat pesan yang masuk ke PV/PM Anda ke Log Group.\n\n"
         f"• <b>Userbot Logger:</b> {'✅ ON' if pmlu_enabled else '❌ OFF'}\n"
+        "<i>Mencatat pesan dari User biasa (Non-Bot).</i>\n\n"
         f"• <b>Bot Logger:</b> {'✅ ON' if pmlb_enabled else '❌ OFF'}\n"
-        f"• <b>Reply All Accessible:</b> {'✅ YES' if replyall_accessible else '❌ NO'}\n\n"
-        "Gunakan tombol di bawah untuk toggle settings."
+        "<i>Mencatat pesan dari akun Bot.</i>\n\n"
+        f"• <b>Reply All Accessible:</b> {'✅ YES' if replyall_accessible else '❌ NO'}\n"
+        "<i>Izinkan akses reply dari semua session.</i>\n\n"
+        "Klik <b>⚙️ Message Type Filters</b> untuk mengatur tipe pesan apa saja yang ingin Anda log."
     )
     
     buttons = [
@@ -4279,7 +4558,8 @@ async def pml_menu_handler(c: Client, cb: CallbackQuery, index: int = None, page
             InlineKeyboardButton(f"Reply All: {'DISABLE' if replyall_accessible else 'ENABLE'}", f"pml_toggle_replyall_{index}_{page}"),
         ],
         [
-            InlineKeyboardButton("⚙️ Message Type Filters", f"pml_filters_menu_{index}_{page}")
+            InlineKeyboardButton("👤 Userbot Filter Settings", f"pmlf_menu_user_{index}_{page}"),
+            InlineKeyboardButton("🤖 Bot Logger Filter Settings", f"pmlf_menu_bot_{index}_{page}")
         ],
         [InlineKeyboardButton("🔙 Back to Session Info", f"session_info_{index}_{page}")]
     ]
@@ -4329,7 +4609,11 @@ async def pml_toggle_handler(c: Client, cb: CallbackQuery):
             with open(filename, "w") as f:
                 json.dump(data, f, indent=2)
             await cb.answer("Settings updated!")
-            await pml_menu_handler(c, cb, index=index, page=page)
+            # Refresh menu
+            if "filter" in target:
+                await pml_filters_menu_handler(c, cb, index=index, page=page)
+            else:
+                await pml_menu_handler(c, cb, index=index, page=page)
             
             # Notifikasi log
             await send_log_notification(
@@ -4342,6 +4626,185 @@ async def pml_toggle_handler(c: Client, cb: CallbackQuery):
     except Exception as e:
         await cb.answer(f"Error: {e}", show_alert=True)
         logger.error(f"Error toggling PML settings: {e}")
+
+
+# ✅ HANDLER BARU: Join Logger Menu
+@Altruix.bot.on_callback_query(filters.regex(r"^joinl_menu_(\d+)_(\d+)$"))
+@log_errors
+async def joinl_menu_handler(c: Client, cb: CallbackQuery, index: int = None, page: int = None):
+    try: await cb.answer()
+    except: pass
+    if index is None: index = int(cb.matches[0].group(1))
+    if page is None: page = int(cb.matches[0].group(2))
+    
+    filename = "join_logger_settings.json"
+    if os.path.exists(filename):
+        with open(filename, "r") as f: data = json.load(f)
+    else: data = {"enabled": True}
+    
+    enabled = data.get("enabled", True)
+    text = (
+        "<b>🚪 Join Logger Settings</b>\n\n"
+        f"Mendeteksi saat akun Anda join atau diundang ke group/channel.\n\n"
+        f"• **Status:** {'✅ ENABLED' if enabled else '❌ DISABLED'}"
+    )
+    buttons = [
+        [InlineKeyboardButton(f"{'Disable' if enabled else 'Enable'} Join Logger", f"joinl_toggle_{index}_{page}")],
+        [InlineKeyboardButton("🔙 Back to Session Info", f"session_info_{index}_{page}")]
+    ]
+    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^joinl_toggle_(\d+)_(\d+)$"))
+@log_errors
+async def joinl_toggle_handler(c: Client, cb: CallbackQuery):
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    filename = "join_logger_settings.json"
+    if os.path.exists(filename):
+        with open(filename, "r") as f: data = json.load(f)
+    else: data = {"enabled": True}
+    data["enabled"] = not data.get("enabled", True)
+    with open(filename, "w") as f: json.dump(data, f, indent=2)
+    await cb.answer(f"Join Logger: {'Enabled' if data['enabled'] else 'Disabled'}")
+    await joinl_menu_handler(c, cb, index=index, page=page)
+
+# ✅ HANDLER BARU: Command Logger Menu
+@Altruix.bot.on_callback_query(filters.regex(r"^cmdl_menu_(\d+)_(\d+)$"))
+@log_errors
+async def cmdl_menu_handler(c: Client, cb: CallbackQuery, index: int = None, page: int = None):
+    try: await cb.answer()
+    except: pass
+    if index is None: index = int(cb.matches[0].group(1))
+    if page is None: page = int(cb.matches[0].group(2))
+    
+    filename = "cmd_logger_settings.json"
+    if os.path.exists(filename):
+        with open(filename, "r") as f: data = json.load(f)
+    else: data = {"enabled": False}
+    
+    enabled = data.get("enabled", False)
+    text = (
+        "<b>⌨️ Command Logger Settings</b>\n\n"
+        f"Mencatat seluruh perintah yang Anda jalankan.\n\n"
+        f"• **Status:** {'✅ ENABLED' if enabled else '❌ DISABLED'}"
+    )
+    buttons = [
+        [InlineKeyboardButton(f"{'Disable' if enabled else 'Enable'} Cmd Logger", f"cmdl_toggle_{index}_{page}")],
+        [InlineKeyboardButton("🔙 Back to Session Info", f"session_info_{index}_{page}")]
+    ]
+    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^cmdl_toggle_(\d+)_(\d+)$"))
+@log_errors
+async def cmdl_toggle_handler(c: Client, cb: CallbackQuery):
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    filename = "cmd_logger_settings.json"
+    if os.path.exists(filename):
+        with open(filename, "r") as f: data = json.load(f)
+    else: data = {"enabled": False}
+    data["enabled"] = not data.get("enabled", False)
+    with open(filename, "w") as f: json.dump(data, f, indent=2)
+    await cb.answer(f"Command Logger: {'Enabled' if data['enabled'] else 'Disabled'}")
+    await cmdl_menu_handler(c, cb, index=index, page=page)
+
+# ✅ HANDLER BARU: PM Filters Menu
+@Altruix.bot.on_callback_query(filters.regex(r"^pmlf_menu_(user|bot)_(\d+)_(\d+)$"))
+@log_errors
+async def pml_filters_menu_handler(c: Client, cb: CallbackQuery):
+    try: await cb.answer()
+    except: pass
+    logger_type = cb.matches[0].group(1)
+    index = int(cb.matches[0].group(2))
+    page = int(cb.matches[0].group(3))
+    
+    text = (
+        f"<b>🔍 {'Userbot' if logger_type == 'user' else 'Bot'} Logger Message Filters</b>\n\n"
+        "Pilih kategori di bawah untuk mengatur jenis pesan yang akan dicatat:\n\n"
+        "👤 <b>User Filters:</b> Filter pesan dari pengguna (Text, Photo, Video, Sticker, dll).\n"
+        "🤖 <b>Bot Filters:</b> Filter pesan dari Bot (Sangat berguna untuk menghindari spam log dari bot)."
+    )
+    buttons = [
+        [
+            InlineKeyboardButton("👤 From User", f"pmlfl_{logger_type}_user_{index}_{page}"),
+            InlineKeyboardButton("🤖 From Bot", f"pmlfl_{logger_type}_bot_{index}_{page}"),
+        ],
+        [InlineKeyboardButton("🔙 Back to PM Logger", f"pml_menu_{index}_{page}")]
+    ]
+    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^pmlfl_(user|bot)_(user|bot)_(\d+)_(\d+)$"))
+@log_errors
+async def pmlf_list_handler(c: Client, cb: CallbackQuery):
+    logger_type = cb.matches[0].group(1)
+    source = cb.matches[0].group(2)
+    index = int(cb.matches[0].group(3))
+    page = int(cb.matches[0].group(4))
+    source_key = f"from_{source}"
+    
+    filename = "pm_logger_user_settings.json" if logger_type == "user" else "pm_logger_bot_settings.json"
+    
+    if os.path.exists(filename):
+        with open(filename, "r") as f: data = json.load(f)
+        filters = data.get("filters", {}).get(source_key, {})
+    else: filters = {}
+    
+    text = f"<b>🔍 {'User' if source == 'user' else 'Bot'} Message Filters ({'Userbot' if logger_type == 'user' else 'Bot Account'})</b>\n\nKlik untuk toggle filter:"
+    buttons = []
+    row = []
+    for m_type in ["text", "photo", "video", "document", "audio", "voice", "sticker", "animation", "video_note"]:
+        val = filters.get(m_type, True if m_type != "text" or source != "bot" else False)
+        status = "✅" if val else "❌"
+        row.append(InlineKeyboardButton(f"{status} {m_type.capitalize()}", f"pmlft_{logger_type}_{source}_{m_type}_{index}_{page}"))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row: buttons.append(row)
+    buttons.append([InlineKeyboardButton("🔙 Back to Filters Menu", f"pmlf_menu_{logger_type}_{index}_{page}")])
+    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^pmlft_(user|bot)_(user|bot)_(.+)_(\d+)_(\d+)$"))
+@log_errors
+async def pmlf_toggle_handler(c: Client, cb: CallbackQuery):
+    logger_type = cb.matches[0].group(1)
+    source = cb.matches[0].group(2)
+    m_type = cb.matches[0].group(3)
+    index = int(cb.matches[0].group(4))
+    page = int(cb.matches[0].group(5))
+    source_key = f"from_{source}"
+    filename = "pm_logger_user_settings.json" if logger_type == "user" else "pm_logger_bot_settings.json"
+    
+    if os.path.exists(filename):
+        with open(filename, "r") as f: data = json.load(f)
+        if "filters" not in data: data["filters"] = {}
+        if source_key not in data["filters"]: 
+            # Use defaults if missing in file
+            if logger_type == "user":
+                from Main.plugins.userbot.xpm_logger_user import PM_LOGGER_FILTERS as DEFAULTS
+            else:
+                from Main.plugins.bot.xpm_logger_bot import PM_LOGGER_FILTERS as DEFAULTS
+            data["filters"][source_key] = DEFAULTS.get(source_key, {}).copy()
+        
+        if m_type in data["filters"][source_key]:
+            data["filters"][source_key][m_type] = not data["filters"][source_key][m_type]
+        else:
+            # Type not in existing dict, add it (toggle it)
+            data["filters"][source_key][m_type] = True
+            
+        with open(filename, "w") as f: json.dump(data, f, indent=2)
+        await cb.answer(f"Filter {m_type} {source}: {'Enabled' if data['filters'][source_key][m_type] else 'Disabled'}")
+    
+    # Refresh list
+    # Manual mock cb for list
+    class MockMatch:
+        def group(self, i):
+            if i == 1: return logger_type
+            if i == 2: return source
+            if i == 3: return index
+            if i == 4: return page
+            return None
+    cb.matches = [MockMatch()]
+    await pmlf_list_handler(c, cb)
 
 
 # ✅ HANDLER UNTUK ADD SESSION (PLACEHOLDER)
@@ -5668,9 +6131,29 @@ async def chat_stats_scan_handler(c: Client, cb: CallbackQuery):
             if getattr(chat, "is_creator", False):
                 stats["created"][cat_key] += 1
                 
-            # Check Admin (Non-Creator)
-            elif (getattr(chat, "privileges", None) and chat.privileges.can_manage_chat):
-                 stats["admin"][cat_key] += 1
+            # Check Admin (Non-Creator) - improved detection
+            else:
+                # Method 1: Check is_admin attribute
+                is_admin = getattr(chat, "is_admin", False)
+                
+                # Method 2: Check privileges
+                has_privileges = False
+                privileges = getattr(chat, "privileges", None)
+                if privileges:
+                    # Check if has any admin privilege
+                    has_privileges = (
+                        getattr(privileges, "can_manage_chat", False) or
+                        getattr(privileges, "can_delete_messages", False) or
+                        getattr(privileges, "can_manage_video_chats", False) or
+                        getattr(privileges, "can_restrict_members", False) or
+                        getattr(privileges, "can_promote_members", False) or
+                        getattr(privileges, "can_change_info", False) or
+                        getattr(privileges, "can_invite_users", False) or
+                        getattr(privileges, "can_pin_messages", False)
+                    )
+                
+                if is_admin or has_privileges:
+                    stats["admin"][cat_key] += 1
             
             count += 1
             if count % 100 == 0 and scanning_msg:
@@ -5727,6 +6210,11 @@ async def display_chat_stats(c, cb, session_info, stats, index, page, cached=Fal
         f"• Bot Chats: <code>{stats['bot']}</code>\n"
     )
     
-    buttons = [[InlineKeyboardButton("🔙 Back to Session Info", callback_data=f"session_info_{index}_{page}")]]
+    buttons = [
+        [
+            InlineKeyboardButton("🔄 Refresh", callback_data=f"chat_stats_scan_{index}_{page}"),
+            InlineKeyboardButton("🔙 Back to Session Info", callback_data=f"session_info_{index}_{page}")
+        ]
+    ]
     
     await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)

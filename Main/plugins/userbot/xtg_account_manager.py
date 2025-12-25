@@ -25,7 +25,7 @@ logger.setLevel(logging.INFO)
 
 __plugin_name__ = "xtg_account_manager"
 PLUGIN_VERSION = "1.2.6"  # ✅ REFACTORED: Unified logging
-logger.info(f"{__plugin_name__} v{PLUGIN_VERSION} berhasil dimuat")
+# logger.info(f"{__plugin_name__} v{PLUGIN_VERSION} berhasil dimuat")
 
 # =============================================================================
 class CustomMsg:
@@ -74,6 +74,12 @@ async def safe_edit_or_reply(msg: Message, text: str, **kwargs) -> Message:
             "-delp": "Hapus semua foto profil",
             "-limit": "Cek status limit/spam akun (via @SpamBot)",  # ✅ ARG BARU DI HELP
         },
+        "detail": (
+            "⚙️ **Advanced Account Manager**\n"
+            "• **Profile:** Change name, bio, and username with safety checks.\n"
+            "• **Privacy:** Check active sessions and clear profile photos.\n"
+            "• **Anti-Spam:** Check your account limit status via @SpamBot automatically."
+        )
     },
 )
 @log_errors

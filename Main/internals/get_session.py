@@ -127,5 +127,8 @@ async def add_session_cb_handler(_, cb: CallbackQuery):
 
     await new_session.send_message(
         Altruix.bot.me.id,
-        "<b>Altruix have been successfully connected with your account!</b> \nPlease visit @AltruixUB for any support or help!",
+        "<b>🎉 Account Successfully added!</b>\n\n"
+        "Your account has been successfully linked to <b>AltruixX</b>. "
+        "You can now manage your sessions and use enhanced features via the bot settings.\n\n"
+        "Support: @AltruixUB",
     )

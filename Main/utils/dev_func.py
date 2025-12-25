@@ -23,6 +23,7 @@ pp = pprint
 
 
 async def execute_py(c: Client, code: str, m: Message):
+    scope = {}
     exec(
         "async def __exec_py(c, m):"
         + "\n rm = m.reply_to_message"
@@ -30,9 +31,10 @@ async def execute_py(c: Client, code: str, m: Message):
         + "\n client = Client = c"
         + "\n chat = m.chat"
         + "\n user = m.from_user"
-        + "".join(f"\n {l}" for l in code.split("\n"))
+        + "".join(f"\n {l}" for l in code.split("\n")),
+        scope
     )
-    return await locals()["__exec_py"](c, m)
+    return await scope["__exec_py"](c, m)
 
 
 async def eval_py(client: Client, code: str, m: Message):

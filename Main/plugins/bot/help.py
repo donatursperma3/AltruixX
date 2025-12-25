@@ -19,22 +19,30 @@ from pyrogram.types import (
     InputTextMessageContent, InlineQueryResultArticle)
 
 
-help_text = f"""<b><u>Altruix Help Menu</u></b>
-<b>Userbot version :</b> <code>V{Altruix.__version__}</code>
-<b>Pyrogram version :</b> <code>V{pyrogram.__version__} </code>
-<b>Python version :</b> <code>V{python_version()}</code>"""
+def get_total_plugins():
+    import glob
+    ub_plugins = len(glob.glob("Main/plugins/userbot/*.py"))
+    bot_plugins = len(glob.glob("Main/plugins/bot/*.py"))
+    return ub_plugins + bot_plugins
+
 cache_help_menu = None
 multi_pages = False
 
 
 @log_errors
 async def get_help_menu(return_all: bool = False):
-    global cache_help_menu
-    global multi_pages
+    global cache_help_menu, multi_pages
+    total_plugins = get_total_plugins()
+    help_msg = f"<b><u>Altruix Help Menu</u></b>\n" \
+               f"<b>Userbot version :</b> <code>V{Altruix.__version__}</code>\n" \
+               f"<b>Pyrogram version :</b> <code>V{pyrogram.__version__} </code>\n" \
+               f"<b>Python version :</b> <code>V{python_version()}</code>\n" \
+               f"<b>Total Plugins :</b> <code>{total_plugins}</code>"
+
     if cache_help_menu:
         if multi_pages and not return_all:
-            return cache_help_menu[0]
-        return cache_help_menu
+             return help_msg, cache_help_menu[0]
+        return help_msg, cache_help_menu
     plugins = sorted(list(Altruix._command_help_message_data.keys()))
     ikb = [
         InlineKeyboardButton(
@@ -65,8 +73,8 @@ async def get_help_menu(return_all: bool = False):
             page.append([InlineKeyboardButton("Close", "close_help")])
     cache_help_menu = buttons
     if multi_pages and not return_all:
-        return cache_help_menu[0]
-    return cache_help_menu
+        return help_msg, buttons[0]
+    return help_msg, buttons
 
 
 @log_errors
@@ -138,12 +146,12 @@ async def change_lang(c: Client, cb: CallbackQuery):
 async def help(_: Client, iq: InlineQuery):
     plugin: Optional[str] = iq.matches[0].group(1)
     if not plugin:
-        buttons = await get_help_menu()
+        help_msg, buttons = await get_help_menu()
         await iq.answer(
             results=[
                 InlineQueryResultArticle(
                     title="Help Menu",
-                    input_message_content=InputTextMessageContent(help_text),
+                    input_message_content=InputTextMessageContent(help_msg),
                     reply_markup=InlineKeyboardMarkup(buttons),
                 )
             ]
@@ -178,8 +186,8 @@ async def help(_: Client, iq: InlineQuery):
 @log_errors
 @iuser_check
 async def re_help(c: Client, cq: CallbackQuery):
-    buttons = await get_help_menu()
-    await cq.edit_message_text(help_text, reply_markup=InlineKeyboardMarkup(buttons))
+    help_msg, buttons = await get_help_menu()
+    await cq.edit_message_text(help_msg, reply_markup=InlineKeyboardMarkup(buttons))
 
 
 @Altruix.bot.on_callback_query(filters.regex(r"^help(?:#(\w+)\?page=(\d+))?$"))
@@ -188,18 +196,26 @@ async def re_help(c: Client, cq: CallbackQuery):
 async def help_callback(_: Client, cq: CallbackQuery):
     data = cq.matches[0]
     if not data.group(1):
-        buttons = await get_help_menu()
+        help_msg, buttons = await get_help_menu()
         return await cq.edit_message_text(
-            help_text, reply_markup=InlineKeyboardMarkup(buttons)
+            help_msg, reply_markup=InlineKeyboardMarkup(buttons)
         )
     text = data.group(1)
     number = int(data.group(2))
     if text == "_page":
-        buttons = await get_help_menu(return_all=True)
+        help_msg, buttons = await get_help_menu(return_all=True)
         return await cq.edit_message_text(
-            help_text, reply_markup=InlineKeyboardMarkup(buttons[number])
+            help_msg, reply_markup=InlineKeyboardMarkup(buttons[number])
         )
     if text.lower() not in Altruix._command_help_message_data.keys():
         return await cq.answer(Altruix.get_string("PLUGIN_404"))
     text, buttons = await get_plugin_data(text, number)
     await cq.edit_message_text(text, reply_markup=buttons)
+
+
+@Altruix.bot.on_message(filters.command("bothelp", ["/"]))
+@log_errors
+async def bot_help_handler(c: Client, m: pyrogram.types.Message):
+    """Handler for bot help command"""
+    text, markup = await get_help_menu(return_all=False)
+    await m.reply(text, reply_markup=InlineKeyboardMarkup(markup))

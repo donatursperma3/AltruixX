@@ -8,7 +8,9 @@
 
 from Main import Altruix
 from pyrogram import Client, filters
-from pyrogram.types import Message, ChatPrivileges
+from pyrogram.types import Message
+from pyrogram.types import ChatAdministratorRights, ChatPermissions
+from Main.utils.helpers import ChatPrivileges
 from Main.core.decorators import log_errors
 import html
 
@@ -17,7 +19,8 @@ import html
     cmd_help={
         "help": "Set the chat owner to be anonymous.",
         "usage": ".setowneranon",
-        "detail": "Make the creator (owner) of the group appear as 'Anonymous' when they send messages."
+        "example": ".setowneranon",
+        "detail": "Make the creator (owner) of the group appear as 'Anonymous' when they send messages. This will enable 'is_anonymous' privilege for the owner account."
     },
     group_only=True
 )
@@ -30,7 +33,7 @@ async def set_owner_anon_handler(c: Client, m: Message):
         if not me.status.value == "owner":
             return await m.reply_msg("❌ **Anda harus menjadi OWNER (Creator) grup ini untuk menggunakan command ini.**")
 
-        await c.set_administrator_privileges(
+        await c.promote_chat_member(
             chat_id, 
             me.user.id,
             ChatPrivileges(
@@ -54,6 +57,8 @@ async def set_owner_anon_handler(c: Client, m: Message):
     cmd_help={
         "help": "Set the chat owner to NOT be anonymous.",
         "usage": ".unsetowneranon",
+        "example": ".unsetowneranon",
+        "detail": "Disables the 'is_anonymous' privilege for the group owner, revealing their identity in group messages."
     },
     group_only=True
 )
@@ -65,7 +70,7 @@ async def unset_owner_anon_handler(c: Client, m: Message):
         if not me.status.value == "owner":
             return await m.reply_msg("❌ **Anda harus menjadi OWNER (Creator) grup ini.**")
 
-        await c.set_administrator_privileges(
+        await c.promote_chat_member(
             chat_id, 
             me.user.id,
             ChatPrivileges(
@@ -88,7 +93,14 @@ async def unset_owner_anon_handler(c: Client, m: Message):
     ["setadminanon"],
     cmd_help={
         "help": "Set an administrator to be anonymous.",
-        "usage": ".setadminanon (reply/mention/id)",
+        "usage": ".setadminanon [reply/user_id/username]",
+        "example": ".setadminanon @username",
+        "user_args": {
+            "reply": "Reply to an administrator's message to make them anonymous.",
+            "user_id": "Target administrator's numerical user ID.",
+            "username": "Target administrator's @username."
+        },
+        "detail": "Enables 'is_anonymous' privilege for the specified administrator. You must be the group owner to perform this action."
     },
     group_only=True
 )
@@ -111,7 +123,7 @@ async def set_admin_anon_handler(c: Client, m: Message):
             return await m.reply_msg("❌ **Target bukan merupakan Administrator.**")
 
         # Copy existing privileges and set is_anonymous=True
-        await c.set_administrator_privileges(
+        await c.promote_chat_member(
             chat_id,
             target.user.id,
             ChatPrivileges(
@@ -136,7 +148,14 @@ async def set_admin_anon_handler(c: Client, m: Message):
     ["unsetadminanon"],
     cmd_help={
         "help": "Set an administrator to NOT be anonymous.",
-        "usage": ".unsetadminanon (reply/mention/id)",
+        "usage": ".unsetadminanon [reply/user_id/username]",
+        "example": ".unsetadminanon @username",
+        "user_args": {
+            "reply": "Reply to an administrator's message to reveal their identity.",
+            "user_id": "Target administrator's numerical user ID.",
+            "username": "Target administrator's @username."
+        },
+        "detail": "Disables 'is_anonymous' privilege for the specified administrator. You must be the group owner to perform this action."
     },
     group_only=True
 )
@@ -157,7 +176,7 @@ async def unset_admin_anon_handler(c: Client, m: Message):
         if target.status.value != "administrator":
             return await m.reply_msg("❌ **Target bukan merupakan Administrator.**")
 
-        await c.set_administrator_privileges(
+        await c.promote_chat_member(
             chat_id,
             target.user.id,
             ChatPrivileges(

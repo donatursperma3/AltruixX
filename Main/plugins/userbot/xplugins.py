@@ -24,8 +24,13 @@ logger.setLevel(logging.INFO)
 @Altruix.register_on_cmd(
     ["plugup"],
     cmd_help={
-        "help": "Upload plugin file from server to chat.",
-        "example": "plugup xspamxr",
+        "help": "Upload a plugin file from the server's userbot or bot directory to the current chat.",
+        "usage": ".plugup <plugin_name>",
+        "example": ".plugup xspamxr",
+        "user_args": {
+            "plugin_name": "The name of the plugin file (with or without .py extension) to upload."
+        },
+        "detail": "This allows you to quickly share or backup your local plugin files directly through the userbot."
     }
 )
 @log_errors
@@ -67,8 +72,10 @@ async def plugup_cmd(c: Client, m: Message):
 @Altruix.register_on_cmd(
     ["pluglist"],
     cmd_help={
-        "help": "List all installed plugins (Userbot & Bot).",
-        "example": "pluglist",
+        "help": "List all installed userbot and bot plugins currently loaded.",
+        "usage": ".pluglist",
+        "example": ".pluglist",
+        "detail": "Displays a complete list of all .py files in the Main/plugins/userbot and Main/plugins/bot directories."
     }
 )
 @log_errors

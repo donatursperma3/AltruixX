@@ -64,6 +64,9 @@ async def help_normal(c: Client, m):
             f"<b>Help for</b> <code>{user_input}</code>\n\n{help_text.strip()}"
         )
     elif not user_input:
+        import sys
+        import pyrogram
+        
         plugin_count = len(Altruix.cmd_list)
         # Hitung total command dari semua plugin
         total_commands = 0
@@ -71,7 +74,16 @@ async def help_normal(c: Client, m):
             for cmd_info in plugin_cmds:
                 total_commands += len(cmd_info.get("commands", []))
 
-        cmd_list = f"<i><b>Plugins Available ({plugin_count})</i></b>\n\n"
+        # Header dengan versi info
+        version_header = (
+            f"<b>Altruix Help Menu</b>\n"
+            f"<b>Userbot version :</b> <code>V{Altruix.__version__}</code>\n"
+            f"<b>Pyrogram version :</b> <code>V{pyrogram.__version__}</code>\n"
+            f"<b>Python version :</b> <code>V{sys.version.split()[0]}</code>\n"
+            f"<b>Total plugin:</b> <code>{plugin_count}</code>\n\n"
+        )
+        
+        cmd_list = f"{version_header}<i><b>Plugins Available ({plugin_count})</i></b>\n\n"
         for plugins in sorted(Altruix.cmd_list.keys()):
             cmd_list += f"<code>{plugins}</code>  "
         cmd_list = cmd_list[:-2]
