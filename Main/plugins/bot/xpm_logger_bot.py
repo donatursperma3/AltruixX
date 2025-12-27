@@ -36,12 +36,13 @@ logger = logging.getLogger("altruix.pm_logger_bot")
 logger.setLevel(logging.INFO)
 
 PLUGIN_NAME = __plugin_name__ 
-PLUGIN_VERSION = "1.3.0"  # ✅ Added message type filters
+PLUGIN_VERSION = "1.3.2"  # ✅ Added message type filters
 STORAGE_FILE = Path("pm_logger_bot_settings.json")
 
 # Settings Cache
 PM_LOGGER_BOT_DATA = {}
 REPLY_FROM_ALL_ACCESSIBLE = True
+REPLY_ACCESS_MODE = "sudo"  # Default: sudo users + owner
 USER_REPLY_COUNTS = defaultdict(lambda: defaultdict(int))
 USER_REPLY_LIMIT = 5
 
@@ -87,16 +88,17 @@ def is_valid_emoji(emoji: str) -> bool:
     return emoji in VALID_REACTION_EMOJIS
 
 async def load_settings():
-    global PM_LOGGER_BOT_DATA, PM_LOGGER_FILTERS, REPLY_FROM_ALL_ACCESSIBLE
+    global PM_LOGGER_BOT_DATA, PM_LOGGER_FILTERS, REPLY_FROM_ALL_ACCESSIBLE, REPLY_ACCESS_MODE
     try:
         if STORAGE_FILE.exists():
             async with aiofiles.open(STORAGE_FILE, 'r', encoding='utf-8') as f:
                 content = await f.read()
                 if content.strip():
                     data = json.loads(content)
-                    PM_LOGGER_BOT_DATA = data.get("settings", {})
+                    PM_LOGGER_BOT_DATA = data.get("settings", {"enabled": False})
                     PM_LOGGER_FILTERS = data.get("filters", PM_LOGGER_FILTERS)
                     REPLY_FROM_ALL_ACCESSIBLE = data.get("reply_from_all_accessible", True)
+                    REPLY_ACCESS_MODE = data.get("reply_access_mode", "sudo")
     except Exception as e:
         logger.error(f"Failed to load PM Logger Bot settings: {e}")
 
@@ -254,25 +256,27 @@ async def pml_status_bot_handler(c: Client, m: AltruixMessage):
 async def pm_logger_bot_handler(c: Client, m: RawMessage):
     """Log incoming private messages to the bot."""
     try:
+        # ✅ Dynamic Reload: Catch UI updates from settings.py
+        await load_settings()
+
         if not PM_LOGGER_BOT_DATA.get("enabled", False):
             return
 
-        from Main.plugins.userbot.xpm_logger_user import PM_LOGGER_USER_DATA as U_DATA
-        mode = U_DATA.get("mode", "both")
-        if mode == "user":
-            return
+        # Bot PM Logger is independent - no need to check User PM Logger mode
             
-        logger.info(f"🤖 Bot Logger triggered for PM from {sender_id if 'sender' in locals() else m.from_user.id}")
-
-        if not Altruix.log_chat:
-            logger.warning("🤖 PMLB: log_chat is not configured!")
-            return
-
+        # Optional: Check if at least one session has bot logging enabled 
+        # (Though usually bot logger is global for the bot assistant anyway)
+            
         sender = m.from_user
         if not sender:
             return
 
         sender_id = sender.id
+        logger.info(f"🤖 Bot Logger triggered for PM from {sender_id}")
+
+        if not Altruix.log_chat:
+            logger.warning("🤖 PMLB: log_chat is not configured!")
+            return
         sender_name = f"{sender.first_name or ''} {sender.last_name or ''}".strip() or "Unknown"
         sender_username = f"@{sender.username}" if sender.username else "No Username"
         sender_hyperlink = f'<a href="tg://user?id={sender_id}">{html.escape(sender_name)}</a>'
@@ -309,30 +313,13 @@ async def pm_logger_bot_handler(c: Client, m: RawMessage):
             filter_msg_type = "video_note"
         
         # Check if this message type is allowed
+        logger.info(f"🔍 [DEBUG] Filter key: {filter_key}, Message type: {filter_msg_type}")
+        logger.info(f"🔍 [DEBUG] PM_LOGGER_FILTERS: {PM_LOGGER_FILTERS.get(filter_key, {})}")
         if filter_msg_type and not PM_LOGGER_FILTERS.get(filter_key, {}).get(filter_msg_type, True):
+            logger.warning(f"🤖 PMLB: Message type {filter_msg_type} from {filter_key} is filtered out")
             return  # Skip logging this message type
-                        if "filters" in data and filter_key in data["filters"]:
-                            current_filters.update(data["filters"][filter_key])
-            
-            # Determine filter message type
-            filter_msg_type = None
-            if not m.media and m.text: filter_msg_type = "text"
-            elif m.photo: filter_msg_type = "photo"
-            elif m.video: filter_msg_type = "video"
-            elif m.document: filter_msg_type = "document"
-            elif m.audio: filter_msg_type = "audio"
-            elif m.voice: filter_msg_type = "voice"
-            elif m.sticker: filter_msg_type = "sticker"
-            elif m.animation: filter_msg_type = "animation"
-            elif m.video_note: filter_msg_type = "video_note"
-            
-            if filter_msg_type and not current_filters.get(filter_msg_type, True):
-                allowed = False
-        except Exception as e:
-            logger.error(f"Filter check error: {e}")
-            
-        if not allowed:
-            return
+        
+        logger.info("✅ [DEBUG] Passed all checks, preparing to send log...")
 
         log_content = (
             f"👤 <b>New PM Received (Bot)</b>\n\n"
@@ -414,6 +401,9 @@ async def pm_logger_bot_handler(c: Client, m: RawMessage):
 async def pm_logger_bot_edit_handler(c: Client, m: RawMessage):
     """Update log when a bot message is edited."""
     try:
+        # ✅ Dynamic Reload
+        await load_settings()
+
         if not PM_LOGGER_BOT_DATA.get("enabled", False):
             return
 

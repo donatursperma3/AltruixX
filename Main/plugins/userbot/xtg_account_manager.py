@@ -250,5 +250,5 @@ async def advanced_set_command(c: Client, m: Message):
         print(f"[SET PLUGIN ERROR] {str(e)}")
         await safe_edit_or_reply(proc, f"❌ Terjadi kesalahan:\n<code>{html.escape(str(e))}</code>")
 
-# Log sukses loading
-logger.info(f"✅ Loaded → {__plugin_name__} v{PLUGIN_VERSION}")
+# # Log sukses loading
+# logger.info(f"✅ Loaded → {__plugin_name__} v{PLUGIN_VERSION}")

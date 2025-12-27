@@ -80,6 +80,10 @@ async def start_command_handler(_, m: Message):
 @Altruix.bot.on_callback_query(filters.regex("^add_session"))
 @log_errors
 async def add_session_menu_cb_handler(_, cb: CallbackQuery):
+    # CRITICAL: Authorization check - only auth_users can add sessions
+    if cb.from_user.id not in Altruix.auth_users:
+        return await cb.answer("⛔ Akses Ditolak - Anda tidak diizinkan menambah session", show_alert=True)
+    
     await cb.message.edit(
         "Alright, let's get started.", reply_markup=ReplyKeyboardRemove()
     )
@@ -100,6 +104,10 @@ async def add_session_menu_cb_handler(_, cb: CallbackQuery):
 @Altruix.bot.on_callback_query(filters.regex("^session_yes"))
 @log_errors
 async def add_session_cb_handler(_, cb: CallbackQuery):
+    # CRITICAL: Authorization check - only auth_users can add sessions
+    if cb.from_user.id not in Altruix.auth_users:
+        return await cb.answer("⛔ Akses Ditolak - Anda tidak diizinkan menambah session", show_alert=True)
+    
     with contextlib.suppress(Exception):
         await cb.message.delete()
     await cb.message.reply(

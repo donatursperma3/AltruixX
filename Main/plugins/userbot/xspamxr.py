@@ -1912,8 +1912,8 @@ async def handle_msg_list_input(c: Client, m: Message):
                 await m.reply(f"⚠️ **Error:** {err}")
 
 
-# ==================== LOG SUKSES LOADING ====================
-try:
-    Altruix.log(f"[DEBUG] Loaded → {__plugin_name__} {PLUGIN_VERSION}", level=20)
-except Exception as e:
-    logger.info(f"[DEBUG] Loaded → {__plugin_name__} {PLUGIN_VERSION}")
+# # ==================== LOG SUKSES LOADING ====================
+# try:
+#     Altruix.log(f"[DEBUG] Loaded → {__plugin_name__} {PLUGIN_VERSION}", level=20)
+# except Exception as e:
+#     logger.info(f"[DEBUG] Loaded → {__plugin_name__} {PLUGIN_VERSION}")

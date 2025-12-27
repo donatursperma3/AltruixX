@@ -121,7 +121,7 @@ class AltruixClient:
         self.clients: List[Client] = []
         self.cmd_list = {}
         self.all_lang_strings = {}
-        self.__version__ = "0.0.4.26"
+        self.__version__ = "0.0.4.36"
         self.selected_lang = "english"
         self.local_lang_file = "./Main/localization"
         self.cmd_list = {}
@@ -176,6 +176,7 @@ class AltruixClient:
  /_/   \\_\\_|\\__|_|   \\__,_|_/_/\\_\\
 
  (C) Project-Altruix 2021-{datetime.today().year}
+ Version: {self.__version__} - [ Altruix Assistant ]
         """
 
     @property
@@ -563,6 +564,7 @@ class AltruixClient:
             help_map.get("help", "Sorry, No help available for this command")
         )
         user_args = help_map.get("user_args")
+        detail = help_map.get("detail")
         if isinstance(commands, str):
             commands = [commands]
         if file_name not in self.cmd_list:
@@ -577,6 +579,7 @@ class AltruixClient:
                     "group_only": group_only,
                     "channel_only": channel_only,
                     "private_only": private_only,
+                    "detail": detail,
                 }
             ]
         elif commands[0] not in [
@@ -593,6 +596,7 @@ class AltruixClient:
                     "group_only": group_only,
                     "channel_only": channel_only,
                     "private_only": private_only,
+                    "detail": detail,
                 }
             )
 
@@ -1168,13 +1172,13 @@ class AltruixClient:
             # =============================================
             # SEMUA CLIENT (BOT + USER SESSION) KIRIM PESAN STARTUP KE LOG_CHAT_ID
             # =============================================
-            if BaseConfig.LOG_CHAT_ID:
-                # ✅ PERBAIKAN 3: Validasi LOG_CHAT_ID sebelum digunakan
+            if self.log_chat:
+                # ✅ PERBAIKAN 3: Validasi log_chat sebelum digunakan
                 try:
-                    log_chat_id = int(BaseConfig.LOG_CHAT_ID)
+                    log_chat_id = int(self.log_chat)
                     await self.bot.get_chat(log_chat_id) # Pastikan bot bisa akses
-                except (PeerIdInvalid, UserNotParticipant, ValueError) as ve:
-                    self.log(f"LOG_CHAT_ID tidak valid atau bot tidak bisa akses: {ve}", level=40)
+                except (PeerIdInvalid, UserNotParticipant, ValueError, RPCError) as ve:
+                    self.log(f"log_chat tidak valid atau bot tidak bisa akses: {ve}", level=40)
                     log_chat_id = None
                 else:
                     from datetime import datetime
@@ -1194,16 +1198,58 @@ class AltruixClient:
                             total_user_sessions = len(self.clients)
                             if client == self.bot:
                                 base_text = f"<b>✅ Altruix Bot Assistant is alive!</b>"
+                                final_message = (
+                                    f"{base_text}\n"
+                                    f"<b>{client_type}: {mention_user}</b> [ <code>{user_id}</code> ]\n"
+                                )
                             else:
-                                user_index = self.clients.index(client) + 1
-                                base_text = f"<b>✅ Altruix Userbot [{user_index}/{total_user_sessions}] is alive!</b>"
-                            personal_message = (
-                                f"{base_text}\n"
-                                f"<b>{client_type}: {mention_user}</b> [ <code>{user_id}</code> ]\n"
-                            )
+                                user_index = self.clients.index(client)
+                                user_display_index = user_index + 1
+                                
+                                # ✅ CHECK STARTUP STATE (OFF/DEFAULT/CUSTOM)
+                                startup_key = f"STARTUP_MSG_{user_index}"
+                                state = await self.config.get_env(startup_key)
+                                state = str(state).lower() if state else "default"
+                                
+                                if state in ["off", "false", "no", "0"]:
+                                    self.log(f"SKIP: [{client_type}] {name} startup log (OFF)")
+                                    continue
+                                
+                                if state == "custom":
+                                    custom_msg = await self.config.get_env(f"STARTUP_CUSTOM_MSG_{user_index}")
+                                    if custom_msg:
+                                        try:
+                                            # Placeholders
+                                            p_first = me.first_name or ""
+                                            p_last = me.last_name or ""
+                                            p_mention_first = f'<a href="tg://user?id={user_id}">{html.escape(p_first)}</a>'
+                                            p_mention_last = f'<a href="tg://user?id={user_id}">{html.escape(p_last)}</a>'
+                                            p_username = f"@{me.username}" if me.username else ""
+                                            
+                                            final_message = custom_msg.format(
+                                                first_name=p_first,
+                                                last_name=p_last,
+                                                mention_first_name=p_mention_first,
+                                                mention_last_name=p_mention_last,
+                                                user_name=p_username,
+                                                user_id=user_id
+                                            )
+                                        except Exception as fe:
+                                            self.log(f"Error formatting custom startup msg: {fe}", level=30)
+                                            state = "default" # Fallback
+                                    else:
+                                        state = "default" # Fallback
+                                
+                                if state == "default":
+                                    base_text = f"<b>✅ Altruix Userbot [{user_display_index}/{total_user_sessions}] is alive!</b>"
+                                    final_message = (
+                                        f"{base_text}\n"
+                                        f"<b>{client_type}: {mention_user}</b> [ <code>{user_id}</code> ]\n"
+                                    )
+
                             await client.send_message(
-                                chat_id=log_chat_id,
-                                text=personal_message,
+                                log_chat_id,
+                                final_message,
                                 link_preview_options=LinkPreviewOptions(is_disabled=True)
                             )
                             await asyncio.sleep(3)
@@ -1593,6 +1639,12 @@ class AltruixClient:
                     self._command_help_message_data[
                         plugin_name
                     ] += f"<b>Example :</b> <code>{self.user_command_handler}{example_text}</code>\n"
+                    
+                    # ✅ Support for 'detail' key
+                    if detail_text := each_command_data.get("detail"):
+                        self._command_help_message_data[
+                            plugin_name
+                        ] += f"\n{detail_text}\n"
                     if user_args:
                         self._command_help_message_data[plugin_name] += "<b>Arguments:</b>\n"
                         if isinstance(user_args, list):

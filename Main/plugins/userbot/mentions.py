@@ -57,7 +57,7 @@ try:
     from Main.utils.cache_manager import cache_manager, init_cache
     CACHE_MANAGER_AVAILABLE = True
     logger_info = "✅ Cache manager imported successfully from Main.utils"
-    logger.info(f"[DEBUG] ✅ {logger_info}")
+    logger.info(f"[DEBUG] {logger_info}")
 except ImportError as e:
     # Coba cara alternatif jika gagal
     try:
@@ -828,8 +828,37 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
         # Cek apakah mention notifications enabled
         is_enabled = await get_mention_setting_safe(client_id)
         if not is_enabled:
-            logger.debug(f"Mentions disabled for {client_id}")
+            logger.debug(f"Mention logic disabled for {client_id}")
             return
+
+        # Check auto_log and filters from mentions_settings.json
+        try:
+            settings_file = "mentions_settings.json"
+            if os.path.exists(settings_file):
+                with open(settings_file, "r") as f:
+                    m_settings = json.load(f)
+                
+                if not m_settings.get("auto_log", True):
+                    logger.debug(f"Mention auto-log disabled globally")
+                    return
+                
+                # Filter check
+                m_filters = m_settings.get("filters", {})
+                m_type = "text"
+                if m.photo: m_type = "photo"
+                elif m.video: m_type = "video"
+                elif m.document: m_type = "document"
+                elif m.audio: m_type = "audio"
+                elif m.voice: m_type = "voice"
+                elif m.sticker: m_type = "sticker"
+                elif m.animation: m_type = "animation"
+                elif m.video_note: m_type = "video_note"
+                
+                if not m_filters.get(m_type, True):
+                    logger.debug(f"Mention filter BLOCKED message type: {m_type}")
+                    return
+        except Exception as e:
+            logger.error(f"Error checking mention filters: {e}")
 
         logger.info(f"📩 Processing mention for {c.me.first_name} ({client_id})")
         
@@ -3332,10 +3361,10 @@ logger.info("Cache cleanup task started")
 # 🔥 FINAL LOG
 # ============================================================================
 # Log sukses loading
-try:
-    Altruix.log(f"[DEBUG] ✅ Loaded → {__plugin_name__} {PLUGIN_VERSION}", level=20)
-except Exception as e:
-    logger.info(f"[DEBUG] ✅ Loaded → {__plugin_name__} {PLUGIN_VERSION}")
+# try:
+#     Altruix.log(f"[DEBUG] ✅ Loaded → {__plugin_name__} {PLUGIN_VERSION}", level=20)
+# except Exception as e:
+#     logger.info(f"[DEBUG] ✅ Loaded → {__plugin_name__} {PLUGIN_VERSION}")
 
 # logger.info(f"📋 Mentions plugin v{PLUGIN_VERSION} successfully loaded")
 # logger.info(f"🔧 Cache system: {'Enabled with flexible backend' if CACHE_MANAGER_AVAILABLE else 'Fallback to in-memory cache'}")

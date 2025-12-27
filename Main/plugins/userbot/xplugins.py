@@ -120,7 +120,7 @@ async def pluglist_cmd(c: Client, m: Message):
             await m.reply(f"❌ Error displaying list: {e}")
 
 # Log loaded
-try:
-    Altruix.log(f"[DEBUG] Loaded → {__plugin_name__} {PLUGIN_VERSION}", level=20)
-except Exception:
-    pass
+# try:
+#     Altruix.log(f"[DEBUG] Loaded → {__plugin_name__} {PLUGIN_VERSION}", level=20)
+# except Exception:
+#     pass

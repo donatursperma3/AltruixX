@@ -206,7 +206,7 @@ class Config(BaseConfig):
         return (
             await self.get_env_from_db(env_key)
             or self.get_env_(env_key, as_list)
-            or super().__getattribute__(env_key)
+            or getattr(self, env_key, None)
         )
 
     def get_env_(self, env_key, as_list):

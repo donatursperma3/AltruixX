@@ -37,7 +37,7 @@ logger = logging.getLogger("altruix.pm_logger_user")
 logger.setLevel(logging.INFO)
 
 PLUGIN_NAME = __plugin_name__ 
-PLUGIN_VERSION = "1.3.0"  # ✅ Added message type filters
+PLUGIN_VERSION = "1.3.1"  # ✅ Added message type filters
 STORAGE_FILE = Path("pm_logger_user_settings.json")
 
 # Settings Cache
@@ -97,7 +97,9 @@ async def load_settings():
                 content = await f.read()
                 if content.strip():
                     data = json.loads(content)
-                    PM_LOGGER_USER_DATA = data.get("settings", {})
+                    
+                    # Supports both old and new structure
+                    PM_LOGGER_USER_DATA = data.get("settings", {}) or data.get("sessions", {})
                     PM_LOGGER_FILTERS = data.get("filters", PM_LOGGER_FILTERS)
                     REPLY_FROM_ALL_ACCESSIBLE = data.get("reply_from_all_accessible", True)
     except Exception as e:
@@ -106,7 +108,7 @@ async def load_settings():
 async def save_settings():
     try:
         data = {
-            "settings": PM_LOGGER_USER_DATA,
+            "sessions": PM_LOGGER_USER_DATA,
             "filters": PM_LOGGER_FILTERS,
             "reply_from_all_accessible": REPLY_FROM_ALL_ACCESSIBLE,
             "version": PLUGIN_VERSION
@@ -116,7 +118,8 @@ async def save_settings():
     except Exception as e:
         logger.error(f"Failed to save PM Logger User settings: {e}")
 
-asyncio.create_task(load_settings())
+# Call load_settings initially
+asyncio.run_coroutine_threadsafe(load_settings(), asyncio.get_event_loop())
 
 @Altruix.register_on_cmd(
     ["pmlu"],
@@ -279,25 +282,27 @@ async def pmlu_settings_handler(c: Client, m: AltruixMessage):
 )
 @log_errors
 async def pml_status_unified_handler(c: Client, m: AltruixMessage):
-    u_enabled = PM_LOGGER_USER_DATA.get("enabled", False)
-    mode = PM_LOGGER_USER_DATA.get("mode", "both")
+    await load_settings()
+    user_id_str = str(c.me.id)
+    session_settings = PM_LOGGER_USER_DATA.get(user_id_str, {})
     
-    # Bot status (import from the other plugin)
+    # User status
+    is_globally_on = session_settings.get("enabled", PM_LOGGER_USER_DATA.get("enabled", False))
+    log_from_user = session_settings.get("log_from_user", is_globally_on)
+    log_from_bot = session_settings.get("log_from_bot", is_globally_on)
+    
+    # Bot assistant status
     try:
-        from Main.plugins.bot.pm_logger_bot import PM_LOGGER_BOT_DATA as B_DATA
+        from Main.plugins.bot.xpm_logger_bot import PM_LOGGER_BOT_DATA as B_DATA
         b_enabled = B_DATA.get("enabled", False)
     except:
         b_enabled = False
     
-    # Calculate effective status
-    user_active = u_enabled and mode in ["user", "both"]
-    bot_active = b_enabled and mode in ["bot", "both"]
-    
-    u_status = "✅ ACTIVE" if user_active else "❌ INACTIVE"
-    b_status = "✅ ACTIVE" if bot_active else "❌ INACTIVE"
-    pml_global = "✅ ACTIVE" if (user_active or bot_active) else "❌ INACTIVE"
+    u_status = "✅ ACTIVE" if log_from_user else "❌ INACTIVE"
+    b_status = "✅ ACTIVE" if log_from_bot else "❌ INACTIVE"
+    bot_assist_status = "✅ ACTIVE" if b_enabled else "❌ INACTIVE"
     ra_status = "✅ ACTIVE" if REPLY_FROM_ALL_ACCESSIBLE else "❌ INACTIVE"
-
+    pml_global = "✅ ACTIVE" if (log_from_user or log_from_bot or b_enabled) else "❌ INACTIVE"
     log_chat = Altruix.log_chat or "⚠️ Not Configured"
     
     res = (
@@ -305,11 +310,12 @@ async def pml_status_unified_handler(c: Client, m: AltruixMessage):
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"• **Global PM Logger:** {pml_global}\n"
         f"• **Reply From All:** {ra_status}\n\n"
-        f"📊 **Sub-Logger Status:**\n"
-        f"• **Logger From User:** {u_status}\n"
-        f"• **Logger From Bot:** {b_status}\n\n"
+        f"📊 **Userbot Logging (Current):**\n"
+        f"• **From Users:** {u_status}\n"
+        f"• **From Bots:** {b_status}\n\n"
+        f"🤖 **Bot Assistant Logging:**\n"
+        f"• **Status:** {bot_assist_status}\n\n"
         f"⚙️ **Configuration:**\n"
-        f"• **Current Mode:** `{mode.upper()}`\n"
         f"• **Log Group:** ` {log_chat} `\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"Tip: Gunakan `.pmlu mode` untuk mengubah sumber logger."
@@ -324,18 +330,33 @@ async def pml_status_unified_handler(c: Client, m: AltruixMessage):
 async def pm_logger_user_handler(c: Client, m: RawMessage):
     """Log incoming private messages."""
     try:
-        # Debug Log
-        # logger.debug(f"PMLU triggered for msg {m.id} in chat {m.chat.id}")
+        # ✅ Dynamic Reload: Catch UI updates from settings.py
+        await load_settings()
         
-        if not PM_LOGGER_USER_DATA.get("enabled", False):
-            return
+        user_id_str = str(c.me.id)
+        session_settings = PM_LOGGER_USER_DATA.get(user_id_str)
+        
+        if session_settings is None:
+            # Fallback to legacy global setting
+            is_globally_on = PM_LOGGER_USER_DATA.get("enabled", False)
+            log_from_user = is_globally_on
+            log_from_bot = is_globally_on
+            session_filters = {}
+        elif isinstance(session_settings, bool):
+            is_globally_on = session_settings
+            log_from_user = is_globally_on
+            log_from_bot = is_globally_on
+            session_filters = {}
+        else:
+            is_globally_on = session_settings.get("enabled", False)
+            log_from_user = session_settings.get("log_from_user", is_globally_on)
+            log_from_bot = session_settings.get("log_from_bot", is_globally_on)
+            session_filters = session_settings.get("filters", {})
 
-        mode = PM_LOGGER_USER_DATA.get("mode", "both")
-        if mode == "bot":
+        if not (log_from_user or log_from_bot):
             return
 
         if not Altruix.log_chat:
-            # logger.warning("PMLU: Altruix.log_chat is not set!")
             return
 
         sender = m.from_user
@@ -363,6 +384,13 @@ async def pm_logger_user_handler(c: Client, m: RawMessage):
 
         # ✅ NEW: Message Type Filter Check (Bot vs User)
         is_bot = m.from_user.is_bot if m.from_user else False
+        
+        # ✅ Master Category Check
+        if is_bot:
+            if not log_from_bot: return
+        else:
+            if not log_from_user: return
+
         filter_key = "from_bot" if is_bot else "from_user"
         
         # Determine message type for filtering
@@ -386,8 +414,10 @@ async def pm_logger_user_handler(c: Client, m: RawMessage):
         elif m.video_note:
             filter_msg_type = "video_note"
         
-        # Check if this message type is allowed
-        if filter_msg_type and not PM_LOGGER_FILTERS.get(filter_key, {}).get(filter_msg_type, True):
+        # ✅ Filter Check (Use pre-initialized session_filters)
+        category_filters = session_filters.get(filter_key, PM_LOGGER_FILTERS.get(filter_key, {}))
+        
+        if filter_msg_type and not category_filters.get(filter_msg_type, True):
             return  # Skip logging this message type
 
         is_restricted = getattr(m, "has_protected_content", False)

@@ -29,6 +29,45 @@ cache_help_menu = None
 multi_pages = False
 
 
+def split_help_text(text: str, max_chars: int = 1500) -> list:
+    """Split help text into chunks properly, avoiding tag breakage."""
+    if len(text) <= max_chars:
+        return [text]
+
+    chunks = []
+    # Split by blocks starting with <b>Command :</b>
+    pattern = r"(?=<b>Command :</b>)"
+    blocks = re.split(pattern, text)
+    
+    if len(blocks) <= 1:
+        # Fallback: simple split by lines if no bold command headers found
+        lines = text.split('\n')
+        current_chunk = ""
+        for line in lines:
+            if len(current_chunk) + len(line) + 1 > max_chars:
+                if current_chunk: chunks.append(current_chunk.strip())
+                current_chunk = line + '\n'
+            else:
+                current_chunk += line + '\n'
+        if current_chunk:
+            chunks.append(current_chunk.strip())
+        return chunks
+
+    current_chunk = blocks[0]
+    for i in range(1, len(blocks)):
+        block = blocks[i]
+        if len(current_chunk) + len(block) > max_chars and current_chunk:
+            chunks.append(current_chunk.strip())
+            current_chunk = block
+        else:
+            current_chunk += block
+            
+    if current_chunk:
+        chunks.append(current_chunk.strip())
+        
+    return [c for c in chunks if c.strip()]
+
+
 @log_errors
 async def get_help_menu(return_all: bool = False):
     global cache_help_menu, multi_pages
@@ -78,12 +117,35 @@ async def get_help_menu(return_all: bool = False):
 
 
 @log_errors
-async def get_plugin_data(plugin: str, number: int = 0):
-    text = f"<b>Help for</b> <code>{plugin}</code>\n\n{Altruix._command_help_message_data[plugin.lower()].strip()}"
-    buttons = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("Back", callback_data=f"help#_page?page={number}")]]
-    )
-    return text, buttons
+async def get_plugin_data(plugin: str, number: int = 0, sub_page: int = 0):
+    full_text = Altruix._command_help_message_data[plugin.lower()].strip()
+    pages = split_help_text(full_text)
+    
+    # Ensure sub_page is within bounds
+    if sub_page >= len(pages):
+        sub_page = 0
+    elif sub_page < 0:
+        sub_page = len(pages) - 1
+        
+    text = f"<b>Help for</b> <code>{plugin}</code>"
+    if len(pages) > 1:
+        text += f" [Page {sub_page + 1}/{len(pages)}]"
+    text += f"\n\n{pages[sub_page]}"
+    
+    buttons = []
+    nav_buttons = []
+    if len(pages) > 1:
+        if sub_page > 0:
+            nav_buttons.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"help#{plugin}?page={number}&sub={sub_page-1}"))
+        if sub_page < len(pages) - 1:
+            nav_buttons.append(InlineKeyboardButton("Next ➡️", callback_data=f"help#{plugin}?page={number}&sub={sub_page+1}"))
+    
+    if nav_buttons:
+        buttons.append(nav_buttons)
+        
+    buttons.append([InlineKeyboardButton("Back", callback_data=f"help#_page?page={number}")])
+    
+    return text, InlineKeyboardMarkup(buttons)
 
 
 @Altruix.bot.on_callback_query(filters.regex("close_help"))
@@ -190,7 +252,7 @@ async def re_help(c: Client, cq: CallbackQuery):
     await cq.edit_message_text(help_msg, reply_markup=InlineKeyboardMarkup(buttons))
 
 
-@Altruix.bot.on_callback_query(filters.regex(r"^help(?:#(\w+)\?page=(\d+))?$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^help(?:#(\w+)\?page=(\d+)(?:&sub=(\d+))?)?$"))
 @log_errors
 @iuser_check
 async def help_callback(_: Client, cq: CallbackQuery):
@@ -200,16 +262,19 @@ async def help_callback(_: Client, cq: CallbackQuery):
         return await cq.edit_message_text(
             help_msg, reply_markup=InlineKeyboardMarkup(buttons)
         )
-    text = data.group(1)
+    text_type = data.group(1)
     number = int(data.group(2))
-    if text == "_page":
+    sub_page = int(data.group(3)) if data.group(3) else 0
+
+    if text_type == "_page":
         help_msg, buttons = await get_help_menu(return_all=True)
         return await cq.edit_message_text(
             help_msg, reply_markup=InlineKeyboardMarkup(buttons[number])
         )
-    if text.lower() not in Altruix._command_help_message_data.keys():
+    if text_type.lower() not in Altruix._command_help_message_data.keys():
         return await cq.answer(Altruix.get_string("PLUGIN_404"))
-    text, buttons = await get_plugin_data(text, number)
+    
+    text, buttons = await get_plugin_data(text_type, number, sub_page)
     await cq.edit_message_text(text, reply_markup=buttons)
 
 

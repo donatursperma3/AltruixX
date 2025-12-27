@@ -31,7 +31,7 @@ logger = logging.getLogger("altruix.sudo_manager")
 logger.setLevel(logging.INFO)
 
 # 🔥 LOG STARTUP
-logger.info(f"🚀 Initializing sudo_manager plugin v{PLUGIN_VERSION}")
+# logger.info(f"🚀 Initializing sudo_manager plugin v{PLUGIN_VERSION}")
 
 
 
@@ -232,5 +232,5 @@ async def list_sudo_func(c: Client, m: Message):
 
     await msg.edit_msg(format_sudo_list(active_users, unfetchable_users, deleted_users))
 
-# Log sukses loading
-logger.info(f"✅ Loaded → {__plugin_name__} v{PLUGIN_VERSION}")
+# # Log sukses loading
+# logger.info(f"✅ Loaded → {__plugin_name__} v{PLUGIN_VERSION}")
