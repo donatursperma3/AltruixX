@@ -8,6 +8,7 @@
 # All rights reserved.
 
 from Main import Altruix
+from Main.core.config import BaseConfig
 from typing import List, Tuple, Dict, Any, Union, Optional
 from pyrogram import Client, filters, raw
 from Main.core.decorators import log_errors
@@ -71,7 +72,7 @@ import logging
 
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "settings"
-PLUGIN_VERSION = "1.0.3"  # ✅ REFACTORED: Integrated session addition
+PLUGIN_VERSION = "1.0.6"  # ✅ REFACTORED: Broad ENV Discovery & Security Fixed
 
 logger = logging.getLogger("altruix.settings")
 logger.setLevel(logging.INFO)
@@ -107,6 +108,7 @@ user_privacy_state = {} # ✅ BARU: State untuk privacy settings
 user_bulk_leave_state = {} # ✅ BARU: State untuk bulk leave
 user_bulk_report_state = {} # ✅ BARU: State untuk bulk report
 user_laucreate_state = {} # ✅ BARU: State untuk Laucreate integration
+user_env_manager_state = {} # ✅ BARU: State untuk ENV Manager (CRUD)
 
 # ✅ LOCALIZATION / TRANSLATION SYSTEM
 SETTINGS_LANG = getattr(Altruix.config, "UB_LANG", "english").lower()
@@ -339,7 +341,24 @@ async def send_log_notification(
 @log_errors
 async def configs_menu_cb_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
-    await cb.answer("This feature will be added soon!", show_alert=True)
+    await cb.answer()
+    
+    text = (
+        "<b>⚙️ Configuration Manager</b>\n\n"
+        "Gunakan menu ini untuk mengelola environment variables dan konfigurasi bot secara langsung.\n"
+        "💡 <b>Tip:</b> Perubahan pada beberapa variabel mungkin memerlukan restart bot untuk efek penuh."
+    )
+    
+    buttons = [
+        [
+            InlineKeyboardButton("🔧 ENV Manager", callback_data="env_manager_list_1"),
+        ],
+        [
+            InlineKeyboardButton("🔙 Back to Settings", callback_data="settings_menu"),
+        ]
+    ]
+    
+    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
 
 @Altruix.bot.on_callback_query(filters.regex("settings_menu"))
@@ -1610,6 +1629,60 @@ async def user_text_handler(c: Client, m: Message):
             parse_mode=ParseMode.HTML
         )
         return
+
+    # ✅ BARU: Handle ENV Manager Text Input
+    elif user_id in user_env_manager_state:
+        state = user_env_manager_state[user_id]
+        if text.lower() == "/cancel":
+            del user_env_manager_state[user_id]
+            await m.reply("❌ ENV Manager dibatalkan.")
+            return
+            
+        action = state['action']
+        
+        if action == 'add_key':
+            # Step 1: Dapatkan key, lalu minta value
+            env_key = text.strip().upper()
+            
+            # Cek jika sudah ada
+            existing = await Altruix.config.env_col.find_one({"_id": env_key})
+            if existing:
+                await m.reply(f"❌ Variabel <code>{env_key}</code> sudah ada di database. Silakan gunakan nama lain atau edit yang sudah ada.", parse_mode=ParseMode.HTML)
+                return
+                
+            user_env_manager_state[user_id]['env_key'] = env_key
+            user_env_manager_state[user_id]['action'] = 'add_value'
+            
+            await m.reply(
+                f"<b>➕ Add New ENV (Step 2/2)</b>\n\n"
+                f"🔑 <b>Key:</b> <code>{env_key}</code>\n\n"
+                f"Sekarang silakan kirimkan <b>NILAI (Value)</b> untuk variabel ini.\n\n"
+                f"Ketik <code>/cancel</code> untuk membatalkan.",
+                parse_mode=ParseMode.HTML
+            )
+            return
+            
+        elif action == 'add_value' or action == 'edit_value':
+            # Final Step: Dapatkan value dan minta konfirmasi simpan
+            env_key = state['env_key']
+            user_env_manager_state[user_id]['new_value'] = text
+            
+            confirm_btns = [
+                [
+                    InlineKeyboardButton("✅ Ya, Simpan", callback_data="env_save_confirm_yes"),
+                    InlineKeyboardButton("❌ Tidak, Batal", callback_data="env_save_confirm_no")
+                ]
+            ]
+            
+            await m.reply(
+                f"<b>❓ Konfirmasi Simpan ENV</b>\n\n"
+                f"🔑 <b>Key:</b> <code>{env_key}</code>\n"
+                f"📝 <b>Value:</b> <code>{html.escape(text)}</code>\n\n"
+                f"Apakah Anda yakin ingin menyimpan perubahan ini?",
+                reply_markup=InlineKeyboardMarkup(confirm_btns),
+                parse_mode=ParseMode.HTML
+            )
+            return
 
 
 # ✅ PERUBAHAN: Handler untuk foto profil dengan konfirmasi
@@ -7211,6 +7284,9 @@ async def bot_controls_menu_handler(c: Client, cb: CallbackQuery):
             InlineKeyboardButton(f"🤖 Join Log: {join_status}", "bot_log_joinl_toggle"),
         ],
         [
+            InlineKeyboardButton("📤 Export Log Group Link", "export_log_link_confirmation"),
+        ],
+        [
             InlineKeyboardButton("🔙 Back to Settings", "settings_menu"),
         ]
     ]
@@ -7265,6 +7341,87 @@ async def bot_logger_toggle_handler(c: Client, cb: CallbackQuery):
         await bot_controls_menu_handler(c, cb)
     except Exception as e:
         await cb.answer(f"Error: {e}", show_alert=True)
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^export_log_link_confirmation$"))
+@log_errors
+async def export_log_link_confirmation_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk konfirmasi export log link"""
+    if not await check_authorization(cb): return
+    await cb.answer()
+    
+    confirmation_buttons = [
+        [
+            InlineKeyboardButton("✅ Ya, Export", "export_log_link_execute"),
+            InlineKeyboardButton("❌ Batal", "bot_controls_menu")
+        ]
+    ]
+    
+    await cb.message.edit(
+        text="<b>📤 Konfirmasi Export Log Link</b>\n\n"
+             "Apakah Anda yakin ingin mengekspor link invite Log Group?\n\n"
+             "⚠️ <b>Catatan:</b>\n"
+             "• Link ini akan dikirim ke chat ini\n"
+             "• Aksi ini akan dicatat di log group",
+        reply_markup=InlineKeyboardMarkup(confirmation_buttons),
+        parse_mode=ParseMode.HTML
+    )
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^export_log_link_execute$"))
+@log_errors
+async def export_log_link_execute_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk eksekusi export log link"""
+    if not await check_authorization(cb): return
+    await cb.answer("⏳ Memproses...", show_alert=False)
+    
+    # Dapatkan LOG_CHAT_ID
+    log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
+    
+    try:
+        # Coba ekspor link baru
+        try:
+            invite_link = await Altruix.bot.export_chat_invite_link(log_chat_id)
+            link = invite_link
+        except Exception:
+            # Fallback jika export gagal, coba get_chat
+            chat = await Altruix.bot.get_chat(log_chat_id)
+            link = chat.invite_link
+            if not link:
+                # Jika masih tidak ada, coba create link baru (membutuhkan admin rights lebih spesifik)
+                new_link = await Altruix.bot.create_chat_invite_link(log_chat_id)
+                link = new_link.invite_link
+
+        if not link:
+            raise Exception("Tidak dapat mendapatkan link invite. Pastikan bot adalah admin di log group.")
+
+        await cb.message.edit(
+            text=f"<b>✅ Log Group Invite Link</b>\n\n"
+                 f"Link: <code>{link}</code>\n\n"
+                 f"⚠️ Harap simpan link ini dengan aman.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", "bot_controls_menu")]]),
+            parse_mode=ParseMode.HTML
+        )
+        
+        # Kirim notifikasi log
+        await send_log_notification(
+            c, 'export_log_link', 0, cb.from_user, 
+            True, None, {'Link': 'Successfully exported'}
+        )
+        
+    except Exception as e:
+        error_msg = str(e)
+        await cb.message.edit(
+            text=f"❌ <b>Gagal Export Link:</b>\n<code>{html.escape(error_msg)}</code>",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", "bot_controls_menu")]]),
+            parse_mode=ParseMode.HTML
+        )
+        
+        # Kirim notifikasi error ke log group
+        await send_log_notification(
+            c, 'export_log_link', 0, cb.from_user, 
+            False, error_msg, {}
+        )
 
 @Altruix.bot.on_callback_query(filters.regex(r"^mntf_menu_(\d+)_(\d+)$"))
 @log_errors
@@ -7423,3 +7580,285 @@ async def track_profile_confirm_cb_handler(c: Client, cb: CallbackQuery):
         await cb.message.edit(f"❌ <b>Gagal melacak:</b> {str(e)}")
         
     del Altruix.user_track_state[user_id]
+
+
+# ============================================================================
+# 🔧 ENV MANAGER (CRUD) HANDLERS
+# ============================================================================
+
+@Altruix.bot.on_callback_query(filters.regex(r"^env_manager_list_(\d+)$"))
+@log_errors
+async def env_manager_list_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk menampilkan daftar environment variables dari database"""
+    if not await check_authorization(cb): return
+    page = int(cb.matches[0].group(1))
+    await cb.answer("🔍 Loading ENV list...", show_alert=False)
+    
+    # Ambil semua data dari env_col
+    all_envs = set()
+    async for var in Altruix.config.env_col.find({}):
+        all_envs.add(var.get("_id"))
+    
+    # Tambahkan kunci dari BaseConfig (yang uppercase dan relevan)
+    for key in dir(BaseConfig):
+        if key.isupper() and not key.startswith("_") and key not in ["AUTOPOST_CACHE", "SESSIONS"]:
+            all_envs.add(key)
+    
+    all_envs = sorted(list(all_envs))
+    
+    if not all_envs:
+        await cb.message.edit(
+            "ℹ️ <b>ENV Manager</b>\n\nDatabase environment variables kosong.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("➕ Add New ENV", callback_data="env_manager_add")],
+                [InlineKeyboardButton("🔙 Back", callback_data="configs_home")]
+            ]),
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    # Pagination
+    limit = 10
+    total_pages = (len(all_envs) + limit - 1) // limit
+    start = (page - 1) * limit
+    end = start + limit
+    current_page_envs = all_envs[start:end]
+    
+    text = (
+        f"<b>🔧 ENV Manager (Page {page}/{total_pages})</b>\n\n"
+        f"Daftar variabel yang tersimpan di database:\n"
+        f"Total: <code>{len(all_envs)}</code> variabel"
+    )
+    
+    buttons = []
+    for env_key in current_page_envs:
+        buttons.append([InlineKeyboardButton(f"📄 {env_key}", callback_data=f"env_view_{env_key}_{page}")])
+    
+    # Kontrol Navigasi
+    nav_row = []
+    if page > 1:
+        nav_row.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"env_manager_list_{page-1}"))
+    if page < total_pages:
+        nav_row.append(InlineKeyboardButton("Next ➡️", callback_data=f"env_manager_list_{page+1}"))
+    if nav_row:
+        buttons.append(nav_row)
+    
+    buttons.append([InlineKeyboardButton("➕ Add New ENV", callback_data="env_manager_add")])
+    buttons.append([InlineKeyboardButton("🔙 Back to Configs", callback_data="configs_home")])
+    
+    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^env_view_(.+)_(\d+)$"))
+@log_errors
+async def env_view_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk melihat detail satu environment variable"""
+    if not await check_authorization(cb): return
+    env_key = cb.matches[0].group(1)
+    page = int(cb.matches[0].group(2))
+    await cb.answer()
+    
+    # Ambil nilai (cek DB dulu, baru default/ENV)
+    value = await Altruix.config.get_env(env_key)
+    
+    # Cek apakah ada di DB (untuk tombol Delete)
+    is_in_db = await Altruix.config.env_col.find_one({"_id": env_key}) is not None
+    
+    # Format value agar tidak terlalu panjang di UI
+    display_value = str(value)
+    if len(display_value) > 500:
+        display_value = display_value[:500] + "..."
+    
+    text = (
+        f"<b>📄 ENV Detail</b>\n\n"
+        f"🔑 <b>Key:</b> <code>{env_key}</code>\n"
+        f"📝 <b>Value:</b>\n<pre>{html.escape(display_value)}</pre>\n\n"
+        f"💡 <b>Tipe Data:</b> <code>{type(value).__name__}</code>\n"
+        f"☁️ <b>Source:</b> <code>{'Database' if is_in_db else 'Default/ENV'}</code>"
+    )
+    
+    buttons = [
+        [
+            InlineKeyboardButton("✏️ Edit Value", callback_data=f"env_edit_{env_key}_{page}")
+        ],
+        [InlineKeyboardButton("🔙 Back to List", callback_data=f"env_manager_list_{page}")]
+    ]
+    
+    # Hanya tampilkan tombol Delete jika variabel ada di database
+    if is_in_db:
+        buttons[0].append(InlineKeyboardButton("🗑️ Delete", callback_data=f"env_delete_confirm_{env_key}_{page}"))
+    
+    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^env_manager_add$"))
+@log_errors
+async def env_manager_add_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk memulai proses penambahan ENV baru"""
+    if not await check_authorization(cb): return
+    await cb.answer()
+    
+    user_id = cb.from_user.id
+    user_env_manager_state[user_id] = {
+        'action': 'add_key',
+        'timestamp': datetime.now()
+    }
+    
+    await cb.message.edit(
+        "<b>➕ Add New ENV (Step 1/2)</b>\n\n"
+        "Silakan kirimkan <b>NAMA (Key)</b> untuk environment variable baru.\n"
+        "Contoh: <code>CUSTOM_API_KEY</code>\n\n"
+        "Ketik <code>/cancel</code> untuk membatalkan.",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Batal", callback_data="env_manager_list_1")]]),
+        parse_mode=ParseMode.HTML
+    )
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^env_edit_(.+)_(\d+)$"))
+@log_errors
+async def env_edit_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk memulai proses pengeditan nilai ENV"""
+    if not await check_authorization(cb): return
+    env_key = cb.matches[0].group(1)
+    page = int(cb.matches[0].group(2))
+    await cb.answer()
+    
+    user_id = cb.from_user.id
+    user_env_manager_state[user_id] = {
+        'action': 'edit_value',
+        'env_key': env_key,
+        'page': page,
+        'timestamp': datetime.now()
+    }
+    
+    await cb.message.edit(
+        f"<b>✏️ Edit ENV Value:</b> <code>{env_key}</code>\n\n"
+        f"Silakan kirimkan <b>NILAI (Value)</b> baru untuk variabel ini.\n\n"
+        f"Ketik <code>/cancel</code> untuk membatalkan.",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Batal", callback_data=f"env_view_{env_key}_{page}")]]) ,
+        parse_mode=ParseMode.HTML
+    )
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^env_delete_confirm_(.+)_(\d+)$"))
+@log_errors
+async def env_delete_confirm_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk konfirmasi penghapusan ENV"""
+    if not await check_authorization(cb): return
+    env_key = cb.matches[0].group(1)
+    page = int(cb.matches[0].group(2))
+    await cb.answer()
+    
+    buttons = [
+        [
+            InlineKeyboardButton("✅ Ya, Hapus", callback_data=f"env_delete_exec_{env_key}_{page}"),
+            InlineKeyboardButton("❌ Tidak", callback_data=f"env_view_{env_key}_{page}")
+        ]
+    ]
+    
+    await cb.message.edit(
+        f"<b>⚠️ Konfirmasi Hapus ENV</b>\n\n"
+        f"Apakah Anda yakin ingin menghapus variabel <code>{env_key}</code> dari database?\n\n"
+        f"🔥 <b>PERINGATAN:</b> Aksi ini tidak dapat dibatalkan.",
+        reply_markup=InlineKeyboardMarkup(buttons),
+        parse_mode=ParseMode.HTML
+    )
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^env_delete_exec_(.+)_(\d+)$"))
+@log_errors
+async def env_delete_exec_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk mengeksekusi penghapusan ENV"""
+    if not await check_authorization(cb): return
+    env_key = cb.matches[0].group(1)
+    page = int(cb.matches[0].group(2))
+    await cb.answer("🗑️ Menghapus...", show_alert=False)
+    
+    try:
+        success = await Altruix.config.del_env_from_db(env_key)
+        if success:
+            # Sync dengan in-memory config jika ada
+            if hasattr(Altruix.config, env_key):
+                delattr(Altruix.config, env_key)
+            
+            await cb.message.edit(
+                f"✅ Variabel <code>{env_key}</code> berhasil dihapus dari database.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to List", callback_data=f"env_manager_list_{page}")]]),
+                parse_mode=ParseMode.HTML
+            )
+            
+            # Log notification
+            await send_log_notification(
+                c, 'del_env', 0, cb.from_user, 
+                True, None, {'Key': env_key}
+            )
+        else:
+            await cb.message.edit(
+                f"❌ Gagal menghapus <code>{env_key}</code>. Mungkin sudah dihapus.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data=f"env_manager_list_{page}")]]),
+                parse_mode=ParseMode.HTML
+            )
+    except Exception as e:
+        await cb.message.edit(f"❌ <b>Error:</b> {str(e)}")
+        await send_log_notification(
+            c, 'del_env', 0, cb.from_user, 
+            False, str(e), {'Key': env_key}
+        )
+
+@Altruix.bot.on_callback_query(filters.regex(r"^env_save_confirm_(yes|no)$"))
+@log_errors
+async def env_save_confirm_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk konfirmasi simpan (Ya/Tidak)"""
+    if not await check_authorization(cb): return
+    user_id = cb.from_user.id
+    action = cb.matches[0].group(1)
+    
+    if user_id not in user_env_manager_state:
+        await cb.answer("❌ State tidak ditemukan.", show_alert=True)
+        return
+        
+    state = user_env_manager_state[user_id]
+    
+    if action == "no":
+        del user_env_manager_state[user_id]
+        await cb.answer("Dibatalkan")
+        await cb.message.edit("❌ Aksi dibatalkan.", 
+                             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="env_manager_list_1")]]))
+        return
+        
+    await cb.answer("💾 Menyimpan...", show_alert=False)
+    
+    try:
+        env_key = state['env_key']
+        new_value = state['new_value']
+        
+        # Simpan ke database
+        await Altruix.config.sync_env_to_db(env_key, new_value, upsert=True)
+        
+        # Sync dengan in-memory config
+        processed_val = Altruix.config.digit_wrap(new_value)
+        setattr(Altruix.config, env_key, processed_val)
+        
+        await cb.message.edit(
+            f"✅ <b>Berhasil Disimpan!</b>\n\n"
+            f"🔑 <b>Key:</b> <code>{env_key}</code>\n"
+            f"📝 <b>Value:</b> <code>{html.escape(str(new_value))}</code>",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="env_manager_list_1")]]),
+            parse_mode=ParseMode.HTML
+        )
+        
+        # Log notification
+        await send_log_notification(
+            c, 'save_env', 0, cb.from_user, 
+            True, None, {'Key': env_key, 'Action': state.get('action')}
+        )
+        
+    except Exception as e:
+        await cb.message.edit(f"❌ <b>Error Simpan:</b> {str(e)}")
+        await send_log_notification(
+            c, 'save_env', 0, cb.from_user, 
+            False, str(e), {'Key': state.get('env_key')}
+        )
+        
+    # Cleanup state
+    del user_env_manager_state[user_id]
