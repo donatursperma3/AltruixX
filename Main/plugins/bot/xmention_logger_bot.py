@@ -3,8 +3,11 @@
 # Copyright (C) 2021-present by Altruix@Github, <https://github.com/Altruix>.
 
 from Main import Altruix
-from pyrogram import Client, filters
-from pyrogram.types import Message as RawMessage, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
+from pyrogram import Client, filters, enums
+from pyrogram.types import (
+    Message as RawMessage, InlineKeyboardButton, InlineKeyboardMarkup, 
+    CallbackQuery, ReplyParameters
+)
 from Main.core.decorators import log_errors
 import os
 import html
@@ -22,7 +25,7 @@ logger = logging.getLogger("altruix.mention_logger_bot")
 logger.setLevel(logging.INFO)
 
 PLUGIN_NAME = __plugin_name__
-PLUGIN_VERSION = "1.0.0"
+PLUGIN_VERSION = "1.0.1"
 STORAGE_FILE = Path("mention_logger_bot_settings.json")
 
 # Settings Cache
@@ -101,20 +104,33 @@ async def mention_logger_bot_handler(c: Client, m: RawMessage):
         )
         
         # Buttons
+        # Determine label based on access mode
+        reply_label = "Reply (Sudo + Owner)"
+        if REPLY_ACCESS_MODE == "owner":
+            reply_label = "Reply (Owner)"
+        elif REPLY_ACCESS_MODE == "all":
+            reply_label = "Reply (All)"
+        elif REPLY_ACCESS_MODE != "sudo":
+             reply_label = f"Reply ({REPLY_ACCESS_MODE})"
+
         buttons = [
             [
-                InlineKeyboardButton("💬 Reply", callback_data=f"mntlb_reply_{chat.id}_{m.id}_{sender_id}"),
+                InlineKeyboardButton(f"💬 {reply_label}", callback_data=f"mntlb_reply_{chat.id}_{m.id}_{sender_id}"),
                 InlineKeyboardButton("🔇 Mute Group", callback_data=f"mntlb_mute_{chat.id}"),
             ],
             [
                 InlineKeyboardButton("🔗 Go to Message", url=m.link if m.link else f"https://t.me/c/{str(chat.id)[4:]}/{m.id}")
             ]
         ]
+
+        # Check if muted
+        if chat.id in MENTION_LOGGER_BOT_DATA.get("muted_chats", []):
+            return
         
         await Altruix.bot.send_message(
             chat_id=Altruix.log_chat,
             text=log_content,
-            parse_mode="HTML",
+            parse_mode=enums.ParseMode.HTML,
             reply_markup=InlineKeyboardMarkup(buttons),
             disable_web_page_preview=True
         )
@@ -129,6 +145,8 @@ async def mention_logger_bot_handler(c: Client, m: RawMessage):
 @log_errors
 async def mention_reply_handler(c: Client, cb: CallbackQuery):
     """Handle reply button for bot mentions."""
+    # Import shared cache
+    from Main.plugins.userbot.xpm_logger_user import REPLY_AS_MENTIONED_WAITING
     try:
         from Main.utils.access_control import check_reply_access
         
@@ -149,10 +167,27 @@ async def mention_reply_handler(c: Client, cb: CallbackQuery):
             await cb.answer(reason, show_alert=True)
             return
         
-        await cb.answer("Silakan kirim pesan reply Anda di sini...", show_alert=False)
+        # Use simple timestamp based ID
+        waiting_id = f"mntlb_r_{int(datetime.now().timestamp())}_{cb.id}"
+        REPLY_AS_MENTIONED_WAITING[waiting_id] = {
+            "chat_id": chat_id,
+            "message_id": msg_id,
+            "client_id": c.me.id, # Bot ID
+            "user_id": cb.from_user.id,
+            "instruction_msg_id": None,
+            "is_reply_all": False,
+            "msg_key": f"{chat_id}_{msg_id}"
+        }
         
-        # Store waiting reply context
-        # TODO: Implement reply waiting mechanism similar to PM logger
+        instr = await cb.message.reply(
+            "💬 <b>Reply to Mention (Bot)</b>\n\n"
+            "Silakan balas pesan ini.\n"
+            "Pesan akan dikirim dari Bot ke Group tersebut.",
+            parse_mode=enums.ParseMode.HTML,
+            reply_parameters=ReplyParameters(message_id=cb.message.id)
+        )
+        REPLY_AS_MENTIONED_WAITING[waiting_id]["instruction_msg_id"] = instr.id
+        await cb.answer("Silakan kirim balasan Anda.")
         
     except Exception as e:
         logger.error(f"Error in mention_reply_handler: {e}")
@@ -173,8 +208,17 @@ async def mention_mute_handler(c: Client, cb: CallbackQuery):
         
         chat_id = int(cb.matches[0].group(1))
         
-        # TODO: Implement mute functionality (add to blacklist/ignore list)
-        await cb.answer(f"✅ Group {chat_id} telah di-mute untuk mention logger", show_alert=True)
+        muted = MENTION_LOGGER_BOT_DATA.get("muted_chats", [])
+        if chat_id not in muted:
+            muted.append(chat_id)
+            MENTION_LOGGER_BOT_DATA["muted_chats"] = muted
+            
+            # Save settings
+            asyncio.create_task(save_settings())
+            
+            await cb.answer(f"✅ Group {chat_id} telah di-mute.", show_alert=True)
+        else:
+            await cb.answer(f"⚠️ Group {chat_id} sudah di-mute sebelumnya.", show_alert=True)
         
     except Exception as e:
         logger.error(f"Error in mention_mute_handler: {e}")

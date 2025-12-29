@@ -2,7 +2,7 @@
 # Copyright (C) 2021-present by Altruix@Github, < https://github.com/Altruix >.
 
 from Main import Altruix
-from pyrogram import Client, enums, filters
+from pyrogram import Client, filters, enums, filters
 from pyrogram.types import (
     Message as RawMessage,
     InlineKeyboardButton,
@@ -37,15 +37,77 @@ logger = logging.getLogger("altruix.pm_logger_user")
 logger.setLevel(logging.INFO)
 
 PLUGIN_NAME = __plugin_name__ 
-PLUGIN_VERSION = "1.3.1"  # ✅ Added message type filters
+PLUGIN_VERSION = "1.3.5"# ✅ Added message type filters
 STORAGE_FILE = Path("pm_logger_user_settings.json")
 
 # Settings Cache
-PM_LOGGER_USER_DATA = {}
-PM_LOG_CACHE = {}
-REPLY_AS_MENTIONED_WAITING = {}
+# Shared state from Altruix object (PERSISTENT across reloads)
+PM_LOG_CACHE = Altruix.PM_LOG_CACHE
+REPLY_AS_MENTIONED_WAITING = Altruix.REPLY_AS_MENTIONED_WAITING
+USER_REPLY_COUNTS = Altruix.USER_REPLY_COUNTS
+BUTTON_STATS = Altruix.BUTTON_STATS
+
+# --- SESSION PERSISTENCE ---
+SESSION_FILE = Path("pm_logger_sessions.json")
+
+class SessionManager:
+    @staticmethod
+    def save():
+        try:
+            # We want to be sure everything is string-indexed for JSON
+            to_save = {}
+            for k, v in Altruix.REPLY_AS_MENTIONED_WAITING.items():
+                to_save[str(k)] = v
+                
+            # Also save PM_LOG_CACHE
+            cache_file = Path("pm_logger_cache.json")
+            with open(cache_file, "w", encoding="utf-8") as f:
+                json.dump(Altruix.PM_LOG_CACHE, f, indent=4)
+                
+            logger.debug("SessionManager: Saved successfully.")
+        except Exception as e:
+            logger.error(f"SessionManager: Failed to save: {e}")
+
+    @staticmethod
+    def load():
+        if SESSION_FILE.exists():
+            try:
+                with open(SESSION_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    # Merge but keep integer types if they exist or just rely on manager casting to str
+                    Altruix.REPLY_AS_MENTIONED_WAITING.update(data)
+                logger.info(f"SessionManager: Loaded {len(data)} sessions from {SESSION_FILE}")
+            except Exception as e:
+                logger.error(f"SessionManager: Failed to load sessions: {e}")
+                
+        cache_file = Path("pm_logger_cache.json")
+        if cache_file.exists():
+            try:
+                with open(cache_file, "r", encoding="utf-8") as f:
+                    c_data = json.load(f)
+                    Altruix.PM_LOG_CACHE.update(c_data)
+                logger.info(f"SessionManager: Loaded {len(c_data)} cache items from {cache_file}")
+            except Exception as e:
+                logger.error(f"SessionManager: Failed to load cache: {e}")
+        
+        # Cleanup: Remove old sessions with missing thread_id
+        # These are from before the thread_id tracking was implemented
+        cleaned_count = 0
+        for session_id in list(Altruix.REPLY_AS_MENTIONED_WAITING.keys()):
+            session_data = Altruix.REPLY_AS_MENTIONED_WAITING[session_id]
+            # Remove sessions without thread_id (old sessions before patch)
+            if session_data.get("thread_id") is None:
+                del Altruix.REPLY_AS_MENTIONED_WAITING[session_id]
+                cleaned_count += 1
+        
+        if cleaned_count > 0:
+            logger.info(f"SessionManager: Cleaned {cleaned_count} old sessions (missing thread_id)")
+
+# Load sessions on startup
+SessionManager.load()
+
 REPLY_FROM_ALL_ACCESSIBLE = True
-USER_REPLY_COUNTS = defaultdict(lambda: defaultdict(int))
+REPLY_ACCESS_MODE = "sudo" # Default
 USER_REPLY_LIMIT = 5
 
 # Message Type Filters
@@ -62,7 +124,7 @@ PM_LOGGER_FILTERS = {
         "video_note": True,
     },
     "from_bot": {
-        "text": False,  # Don't log text from bots by default
+        "text": True,   # Enabled for tools like SangMata
         "photo": True,
         "video": True,
         "document": True,
@@ -89,8 +151,33 @@ VALID_REACTION_EMOJIS = {
 def is_valid_emoji(emoji: str) -> bool:
     return emoji in VALID_REACTION_EMOJIS
 
+def get_permission_label(mode: str = "sudo") -> str:
+    """Generate permission label for Reply button."""
+    # Format: [ reply : (all/as mentioned/sudo user/owner/sudo+owner) ]
+    # Default userbot logic usually allows Owner + Sudo
+    
+    if mode == "owner":
+        return "Reply (Owner)"
+    elif mode == "sudo":
+        return "Reply (Sudo + Owner)"
+    elif mode == "all":
+        return "Reply (All)"
+    else:
+        return f"Reply ({mode})"
+
+def get_shared_reply_mode():
+    """Read reply mode from shared settings file."""
+    try:
+        if STORAGE_FILE.exists():
+            with open(STORAGE_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                return data.get("reply_access_mode", "sudo")
+    except:
+        pass
+    return REPLY_ACCESS_MODE
+
 async def load_settings():
-    global PM_LOGGER_USER_DATA, PM_LOGGER_FILTERS, REPLY_FROM_ALL_ACCESSIBLE
+    global PM_LOGGER_USER_DATA, PM_LOGGER_FILTERS, REPLY_FROM_ALL_ACCESSIBLE, REPLY_ACCESS_MODE
     try:
         if STORAGE_FILE.exists():
             async with aiofiles.open(STORAGE_FILE, 'r', encoding='utf-8') as f:
@@ -101,7 +188,9 @@ async def load_settings():
                     # Supports both old and new structure
                     PM_LOGGER_USER_DATA = data.get("settings", {}) or data.get("sessions", {})
                     PM_LOGGER_FILTERS = data.get("filters", PM_LOGGER_FILTERS)
+                    PM_LOGGER_FILTERS = data.get("filters", PM_LOGGER_FILTERS)
                     REPLY_FROM_ALL_ACCESSIBLE = data.get("reply_from_all_accessible", True)
+                    REPLY_ACCESS_MODE = data.get("reply_access_mode", "sudo")
     except Exception as e:
         logger.error(f"Failed to load PM Logger User settings: {e}")
 
@@ -111,6 +200,7 @@ async def save_settings():
             "sessions": PM_LOGGER_USER_DATA,
             "filters": PM_LOGGER_FILTERS,
             "reply_from_all_accessible": REPLY_FROM_ALL_ACCESSIBLE,
+            "reply_access_mode": REPLY_ACCESS_MODE,
             "version": PLUGIN_VERSION
         }
         async with aiofiles.open(STORAGE_FILE, 'w', encoding='utf-8') as f:
@@ -457,33 +547,34 @@ async def pm_logger_user_handler(c: Client, m: RawMessage):
             f"• <b>Message:</b>\n<blockquote>{html.escape(str(msg_text)[:1000])}</blockquote>"
         )
 
+        # Get topic: "pm logger"
+        topic_id = await get_or_create_topic(Altruix.bot, Altruix.log_chat, "pm logger", userbot_client=c)
+
         # ─── BUTTONS ───
-        # Menu Ringkas/Kompak secara default
+        # Main consolidated button using direct callback (skipping menu)
+        p_label = get_permission_label(get_shared_reply_mode())
         keyboard = [
             [
-                InlineKeyboardButton("⚙️ Show Settings Menu", callback_data=f"pmlu_toggle_full_{m.chat.id}_{m.id}_{c.me.id}"),
-                InlineKeyboardButton("🔗 Chat with User", url=f"tg://user?id={sender_id}")
+                InlineKeyboardButton(f"💬 Reply ({p_label})", callback_data=f"pmlu_reply_{m.chat.id}_{m.id}_{c.me.id}"),
+                InlineKeyboardButton("⚙️ Menu", callback_data=f"pmlu_toggle_full_{m.chat.id}_{m.id}_{c.me.id}")
+            ],
+            [
+                InlineKeyboardButton("👤 User", url=f"tg://user?id={sender_id}"),
+                InlineKeyboardButton("📂 Save", callback_data=f"pmlu_save_{m.chat.id}_{m.id}_{c.me.id}")
             ]
         ]
         
         if is_restricted:
-            keyboard[0].insert(0, InlineKeyboardButton("🚀 Force/Bypass Forward", callback_data=f"pmlu_force_fwd_{m.chat.id}_{m.id}_{c.me.id}"))
+            keyboard[1].append(InlineKeyboardButton("🚀 Bypass/Force Forward", callback_data=f"pmlu_force_fwd_{m.chat.id}_{m.id}_{c.me.id}"))
 
-        if not REPLY_FROM_ALL_ACCESSIBLE:
-            # Remove Reply From All button row or just that button
-            keyboard = [r for r in keyboard if not any(b.text == "👥 Reply From All" for b in r)]
-
-        # Get topic if any (use userbot to create if needed)
-        topic_id = await get_or_create_topic(Altruix.bot, Altruix.log_chat, "pm logger", userbot_client=c)
-
-        # Forward message
+        # Forward message to topic
         try:
             fwd_msg = await c.forward_messages(Altruix.log_chat, m.chat.id, m.id, message_thread_id=topic_id)
         except Exception as e:
             logger.debug(f"PMLU Forward failed: {e}")
             fwd_msg = None
         
-        # Send Detailed Info as a reply to the forwarded message
+        # Send Detailed Info as a reply to the forwarded message in topic
         sent_log = await Altruix.bot.send_message(
             Altruix.log_chat,
             log_content,
@@ -493,14 +584,20 @@ async def pm_logger_user_handler(c: Client, m: RawMessage):
             message_thread_id=topic_id
         )
         
-        # Cache for recovery
+        # Cache for recovery - capture ACTUAL thread_id from sent message
+        actual_thread_id = getattr(sent_log, "message_thread_id", None)
         PM_LOG_CACHE[f"{m.chat.id}_{m.id}"] = {
             "client_id": c.me.id,
             "log_msg_id": sent_log.id,
+            "fwd_msg_id": fwd_msg.id if fwd_msg else None,
+            "thread_id": actual_thread_id,
             "chat_id": m.chat.id,
             "msg_id": m.id,
             "last_reply_id": None
         }
+        
+        # Save both sessions and cache
+        SessionManager.save()
 
     except Exception as e:
         logger.error(f"Error in PM Logger User: {e}")
@@ -575,6 +672,10 @@ async def pm_logger_user_edit_handler(c: Client, m: RawMessage):
 @log_errors
 async def pmlu_react_callback(c: Client, cb: CallbackQuery):
     try:
+        from Main.utils.access_control import is_authorized_user
+        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+            return await cb.answer("⛔ Akses Ditolak!", show_alert=True)
+
         data = cb.data.split("_")
         chat_id, msg_id, client_id, emoji = int(data[2]), int(data[3]), int(data[4]), data[5]
         
@@ -597,6 +698,10 @@ async def pmlu_react_callback(c: Client, cb: CallbackQuery):
 @log_errors
 async def pmlu_unreact_callback(c: Client, cb: CallbackQuery):
     try:
+        from Main.utils.access_control import is_authorized_user
+        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+            return await cb.answer("⛔ Akses Ditolak!", show_alert=True)
+
         data = cb.data.split("_")
         chat_id, msg_id, client_id = int(data[2]), int(data[3]), int(data[4])
         
@@ -619,6 +724,10 @@ async def pmlu_unreact_callback(c: Client, cb: CallbackQuery):
 @log_errors
 async def pmlu_save_callback(c: Client, cb: CallbackQuery):
     try:
+        from Main.utils.access_control import is_authorized_user
+        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+            return await cb.answer("⛔ Akses Ditolak!", show_alert=True)
+
         data = cb.data.split("_")
         chat_id, msg_id, client_id = int(data[2]), int(data[3]), int(data[4])
         
@@ -641,6 +750,10 @@ async def pmlu_save_callback(c: Client, cb: CallbackQuery):
 @log_errors
 async def pmlu_force_fwd_callback(c: Client, cb: CallbackQuery):
     try:
+        from Main.utils.access_control import is_authorized_user
+        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+            return await cb.answer("⛔ Akses Ditolak!", show_alert=True)
+
         data = cb.data.split("_")
         # pmlu_force_fwd_{chat_id}_{msg_id}_{client_id}
         chat_id, msg_id, client_id = int(data[3]), int(data[4]), int(data[5])
@@ -674,7 +787,7 @@ async def pmlu_force_fwd_callback(c: Client, cb: CallbackQuery):
         # Update text to show uploading
         try:
             old_text = cb.message.text.html
-            await cb.edit_message_text(f"{old_text}\n\n📤 **Uploading bypassed content...**", parse_mode=enums.ParseMode.HTML)
+            await cb.edit_message_text(f"{old_text}\n\n📤 <b>Uploading bypassed content...</b>", parse_mode=enums.ParseMode.HTML)
         except: pass
         
         # Get topic
@@ -684,7 +797,7 @@ async def pmlu_force_fwd_callback(c: Client, cb: CallbackQuery):
         await target_client.send_document(
             Altruix.log_chat, 
             file_path, 
-            caption=f"✅ **Bypassed Restrict Content**\nFrom account: {target_client.me.mention}",
+            caption=f"✅ <b>Bypassed Restrict Content</b>\nFrom account: {target_client.me.mention}",
             message_thread_id=topic_id
         )
         
@@ -742,18 +855,14 @@ async def pmlu_back_callback(c: Client, cb: CallbackQuery):
                 InlineKeyboardButton("🗑️ Remove React", callback_data=f"pmlu_unreact_{chat_id}_{msg_id}_{client_id}")
             ],
             [
-                InlineKeyboardButton("🗨️ Reply", callback_data=f"pmlu_reply_{chat_id}_{msg_id}_{client_id}"),
+                InlineKeyboardButton(f"🗨️ {get_permission_label(REPLY_ACCESS_MODE)}", callback_data=f"pmlu_reply_{chat_id}_{msg_id}_{client_id}"),
                 InlineKeyboardButton("💾 Save to Log", callback_data=f"pmlu_save_{chat_id}_{msg_id}_{client_id}")
             ],
             [
-                InlineKeyboardButton("👥 Reply From All", callback_data=f"pmlu_replyall_{chat_id}_{msg_id}_{client_id}"),
                 InlineKeyboardButton("🗑️ Unsend", callback_data=f"pmlu_unsend_{chat_id}_{msg_id}_{client_id}")
             ],
             [InlineKeyboardButton("🔗 Chat with User", url=f"tg://user?id={chat_id}")] 
         ]
-        
-        if not REPLY_FROM_ALL_ACCESSIBLE:
-             keyboard = [r for r in keyboard if not any(b.text == "👥 Reply From All" for b in r)]
 
         await cb.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
     except Exception as e:
@@ -770,28 +879,49 @@ async def pmlu_replyall_callback(c: Client, cb: CallbackQuery):
         chat_id, msg_id, client_id = int(data[2]), int(data[3]), int(data[4])
         msg_key = f"{chat_id}_{msg_id}"
         
-        user_id = cb.from_user.id
+        # Get bot ID dynamically
+        bot_id = Altruix.bot.me.id if Altruix.bot and Altruix.bot.me else None
+        
+        # Find first sudo user that is NOT the bot assistant
+        # Allow: userbot owner (client_id), PM sender if sudo (chat_id), any other sudo
+        user_id = None
+        if Altruix.config.SUDO_USERS:
+            for sudo_id in Altruix.config.SUDO_USERS:
+                if sudo_id != bot_id:  # Only exclude bot assistant
+                    user_id = sudo_id
+                    break
+        
+        if not user_id:
+            user_id = Altruix.config.OWNER_ID
         today = datetime.now().strftime("%Y%m%d")
         if USER_REPLY_COUNTS[user_id][today] >= USER_REPLY_LIMIT:
              return await cb.answer(f"❌ Limit harian tercapai ({USER_REPLY_LIMIT}x).", show_alert=True)
 
-        waiting_id = f"pmlu_ra_{int(time.time())}_{cb.id}"
+        # Get thread_id from cache if possible
+        cache = PM_LOG_CACHE.get(msg_key, {})
+        thread_id = cache.get("thread_id") or getattr(cb.message, "message_thread_id", None)
+
+        waiting_id = f"pmlu_ra_{cb.id}"
         REPLY_AS_MENTIONED_WAITING[waiting_id] = {
             "chat_id": chat_id,
             "message_id": msg_id,
             "client_id": client_id,
             "user_id": user_id,
+            "log_msg_id": cb.message.id, # Store original log message ID
+            "thread_id": thread_id,
             "instruction_msg_id": None,
             "is_reply_all": True,
             "msg_key": msg_key
         }
+        SessionManager.save()
         
         instr = await cb.message.reply(
             "👥 <b>Reply From All (PM)</b>\n\n"
             "Silakan balas pesan ini dengan teks atau media.\n"
             "Pesan akan dikirim dari <b>SEMUA</b> akun Anda ke user ini.",
             parse_mode=enums.ParseMode.HTML,
-            reply_parameters=ReplyParameters(message_id=cb.message.id)
+            reply_parameters=ReplyParameters(message_id=cb.message.id),
+            message_thread_id=cb.message.message_thread_id if hasattr(cb.message, "message_thread_id") else None
         )
         REPLY_AS_MENTIONED_WAITING[waiting_id]["instruction_msg_id"] = instr.id
         await cb.answer("Silakan kirim balasan Anda.")
@@ -801,41 +931,17 @@ async def pmlu_replyall_callback(c: Client, cb: CallbackQuery):
     except Exception as e:
         await cb.answer(f"❌ Error: {e}", show_alert=True)
 
-@Altruix.bot.on_callback_query(filters.regex(r"^pmlu_reply_"))
-@log_errors
-async def pmlu_reply_callback(c: Client, cb: CallbackQuery):
-    try:
-        data = cb.data.split("_")
-        chat_id, msg_id, client_id = int(data[2]), int(data[3]), int(data[4])
-        msg_key = f"{chat_id}_{msg_id}"
-        
-        waiting_id = f"pmlu_r_{int(time.time())}_{cb.id}"
-        REPLY_AS_MENTIONED_WAITING[waiting_id] = {
-            "chat_id": chat_id,
-            "message_id": msg_id,
-            "client_id": client_id,
-            "user_id": cb.from_user.id,
-            "instruction_msg_id": None,
-            "is_reply_all": False,
-            "msg_key": msg_key
-        }
-        
-        instr = await cb.message.reply(
-            "🗨️ <b>Reply (PM)</b>\n\n"
-            "Silakan balas pesan ini dengan teks atau media.\n"
-            "Pesan akan dikirim dari akun yang bersangkutan ke user ini.",
-            parse_mode=enums.ParseMode.HTML,
-            reply_parameters=ReplyParameters(message_id=cb.message.id)
-        )
-        REPLY_AS_MENTIONED_WAITING[waiting_id]["instruction_msg_id"] = instr.id
-        await cb.answer("Silakan kirim balasan Anda.")
-    except Exception as e:
-        await cb.answer(f"❌ Error: {e}", show_alert=True)
+
+# pmlu_reply_callback removed as it is now handled by pmlu_direct_reply_callback
 
 @Altruix.bot.on_callback_query(filters.regex(r"^pmlu_unsend_"))
 @log_errors
 async def pmlu_unsend_callback(c: Client, cb: CallbackQuery):
     try:
+        from Main.utils.access_control import is_authorized_user
+        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+            return await cb.answer("⛔ Akses Ditolak!", show_alert=True)
+
         data = cb.data.split("_")
         chat_id, msg_id, client_id = int(data[2]), int(data[3]), int(data[4])
         msg_key = f"{chat_id}_{msg_id}"
@@ -887,7 +993,7 @@ async def pmlu_toggle_callback(c: Client, cb: CallbackQuery):
                     InlineKeyboardButton("🗑️ Remove React", callback_data=f"pmlu_unreact_{chat_id}_{msg_id}_{client_id}")
                 ],
                 [
-                    InlineKeyboardButton("🗨️ Reply", callback_data=f"pmlu_reply_{chat_id}_{msg_id}_{client_id}"),
+                    InlineKeyboardButton(f"🗨️ {get_permission_label('sudo')}", callback_data=f"pmlu_reply_{chat_id}_{msg_id}_{client_id}"),
                     InlineKeyboardButton("💾 Save", callback_data=f"pmlu_save_{chat_id}_{msg_id}_{client_id}")
                 ],
                 [
@@ -895,7 +1001,6 @@ async def pmlu_toggle_callback(c: Client, cb: CallbackQuery):
                     InlineKeyboardButton("✅ Unblock", callback_data=f"pmlu_unblock_{chat_id}_{client_id}")
                 ],
                 [
-                    InlineKeyboardButton("👥 Reply All", callback_data=f"pmlu_replyall_{chat_id}_{msg_id}_{client_id}"),
                     InlineKeyboardButton("🗑️ Unsend", callback_data=f"pmlu_unsend_{chat_id}_{msg_id}_{client_id}")
                 ],
                 [
@@ -920,6 +1025,10 @@ async def pmlu_toggle_callback(c: Client, cb: CallbackQuery):
 @log_errors
 async def pmlu_block_unblock_callback(c: Client, cb: CallbackQuery):
     try:
+        from Main.utils.access_control import is_authorized_user
+        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+            return await cb.answer("⛔ Akses Ditolak!", show_alert=True)
+
         data = cb.data.split("_")
         action, chat_id, client_id = data[1], int(data[2]), int(data[3])
         
@@ -941,78 +1050,104 @@ async def pmlu_block_unblock_callback(c: Client, cb: CallbackQuery):
     except Exception as e:
         await cb.answer(f"❌ Error: {e}", show_alert=True)
 
-@Altruix.bot.on_message(filters.chat(Altruix.log_chat) & filters.reply, group=3)
+@Altruix.bot.on_callback_query(filters.regex(r"^pmlu_reply_(-?\d+)_(\d+)_(\d+)"))
 @log_errors
-async def handle_pmlu_input(c: Client, m: RawMessage):
-    if not m.reply_to_message: return
-    
-    waiting_id = None
-    for wid, data in REPLY_AS_MENTIONED_WAITING.items():
-        if data.get("instruction_msg_id") == m.reply_to_message.id:
-            waiting_id = wid
-            break
+async def pmlu_direct_reply_callback(c: Client, cb: CallbackQuery):
+    """Langsung memulai proses reply ke user tertentu."""
+    try:
+        from Main.utils.access_control import check_reply_access
+        has_access, reason = check_reply_access(
+            cb.from_user, get_shared_reply_mode(), Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS
+        )
+        if not has_access:
+            return await cb.answer(reason, show_alert=True)
             
-    if not waiting_id:
-        # Check if it was a reply to any bot message in log chat? No, better be specific.
-        return
-    
-    # Process the input
-    logger.info(f"PMLU: Processing input for waiting_id {waiting_id}")
-    
-    data = REPLY_AS_MENTIONED_WAITING.pop(waiting_id)
-    chat_id = data["chat_id"]
-    msg_id = data["message_id"]
-    msg_key = data["msg_key"]
-    
-    sent_count = 0
-    errors = []
-    
-    if msg_key not in PM_LOG_CACHE:
-        PM_LOG_CACHE[msg_key] = {"last_replies": []}
-    elif "last_replies" not in PM_LOG_CACHE[msg_key]:
-        PM_LOG_CACHE[msg_key]["last_replies"] = []
-
-    if data["is_reply_all"]:
-        # Send from all userbots
-        for client in Altruix.clients:
-            if client.is_connected:
-                try:
-                    # Use client.copy_message to ensure it's sent from the userbot
-                    sent = await client.copy_message(chat_id, m.chat.id, m.id, reply_to_message_id=msg_id)
-                    sent_count += 1
-                    PM_LOG_CACHE[msg_key]["last_replies"].append((client.me.id, sent.id))
-                except Exception as e:
-                    errors.append(str(e))
+        data = cb.data.split("_")
+        chat_id, msg_id, client_id = int(data[2]), int(data[3]), int(data[4])
+        msg_key = f"{chat_id}_{msg_id}"
         
-        today = datetime.now().strftime("%Y%m%d")
-        USER_REPLY_COUNTS[data["user_id"]][today] += 1
-    else:
-        # Send from specific account
-        target_client = None
-        if Altruix.bot and Altruix.bot.me and Altruix.bot.me.id == data["client_id"]:
-            target_client = Altruix.bot
-        else:
-            for client in Altruix.clients:
-                if client.me and client.me.id == data["client_id"]:
-                    target_client = client
+        # DEBUG: Check OWNER_ID and SUDO_USERS
+        logger.info(f"DEBUG OWNER_ID: {Altruix.config.OWNER_ID}, SUDO count: {len(Altruix.config.SUDO_USERS) if Altruix.config.SUDO_USERS else 0}")
+        
+        # FIXED: Allow ANY sudo user to reply
+        # Only exclude: actual bot (5240721396), PM sender (chat_id), userbot accounts (client_id)
+        # Get bot ID dynamically
+        bot_id = Altruix.bot.me.id if Altruix.bot and Altruix.bot.me else None
+        
+        # Find first sudo user that is NOT the bot assistant
+        # Allow: userbot owner (client_id), PM sender if sudo (chat_id), any other sudo
+        admin_user_id = None
+        if Altruix.config.SUDO_USERS:
+            for sudo_id in Altruix.config.SUDO_USERS:
+                if sudo_id != bot_id:  # Only exclude bot assistant
+                    admin_user_id = sudo_id
+                    logger.info(f"Using SUDO user as admin: {admin_user_id}")
                     break
         
-        if target_client:
-            try:
-                # Use target_client.copy_message
-                sent = await target_client.copy_message(chat_id, m.chat.id, m.id, reply_to_message_id=msg_id)
-                sent_count = 1
-                PM_LOG_CACHE[msg_key]["last_replies"].append((target_client.me.id, sent.id))
-            except Exception as e:
-                errors.append(str(e))
-        else:
-            errors.append("Account not found or offline.")
-    
-    res_msg = f"✅ Berhasil mengirim dari {sent_count} akun."
-    if errors:
-        res_msg += f"\n❌ Gagal: {len(errors)} akun."
-    
-    await m.reply(res_msg)
+        if not admin_user_id:
+            admin_user_id = Altruix.config.OWNER_ID
+            logger.info(f"No valid SUDO found, using OWNER_ID: {admin_user_id}")
+        logger.info(
+            f"PMLU Reply Callback Debug:\n"
+            f"  - Callback from user: {cb.from_user.id} ({cb.from_user.first_name})\n"
+            f"  - Callback data: {cb.data}\n"
+            f"  - Parsed: chat_id={chat_id}, msg_id={msg_id}, client_id={client_id}\n"
+            f"  - msg_key={msg_key}"
+        )
+        
+        # Get extra info from cache if available
+        cache = PM_LOG_CACHE.get(msg_key, {})
+        log_msg_id = cache.get("log_msg_id") or cb.message.id
+        fwd_msg_id = cache.get("fwd_msg_id")
+        # Try to get thread_id from cache, then from the current callback message
+        current_msg_thread = getattr(cb.message, "message_thread_id", None)
+        thread_id = cache.get("thread_id") or current_msg_thread
+        
+        logger.info(f"PMLU Reply: msg_key={msg_key}, log_msg_id={log_msg_id}, thread_id={thread_id}, admin={admin_user_id}")
+        
+        waiting_id = f"pmlu_r_{cb.id}"
+        
+        # Find current client name
+        client_name = "Unknown"
+        for client in Altruix.clients:
+            if client.me and client.me.id == client_id:
+                client_name = client.me.first_name
+                break
+        
+        waiting_data = {
+            "chat_id": chat_id,
+            "message_id": msg_id,
+            "client_id": client_id,
+            "user_id": admin_user_id,  # Use the explicitly captured admin ID
+            "log_msg_id": log_msg_id,
+            "fwd_msg_id": fwd_msg_id,
+            "thread_id": thread_id,
+            "is_reply_all": False,
+            "msg_key": msg_key
+        }
+        logger.info(f"DirectReply: Created session {waiting_id} with user_id={waiting_data['user_id']} (admin: {admin_user_id})")
+        REPLY_AS_MENTIONED_WAITING[waiting_id] = waiting_data
+        SessionManager.save()
+
+        instr = await Altruix.bot.send_message(
+            Altruix.log_chat,
+            f"✉️ <b>Input Balasan</b> (via {client_name})\n\n"
+            f"⚠️ <b>PENTING</b>: Balas pesan INI, bukan judul topik!\n"
+            f"Pesan akan dikirim ke User ID <code>{chat_id}</code>.\n\n"
+            f"💡 Tip: Klik 'Reply' pada pesan ini untuk memastikan balasan terdeteksi.",
+            parse_mode=enums.ParseMode.HTML,
+            reply_parameters=ReplyParameters(message_id=cb.message.id),
+            message_thread_id=cb.message.message_thread_id if hasattr(cb.message, "message_thread_id") else None
+        )
+        REPLY_AS_MENTIONED_WAITING[waiting_id]["instruction_msg_id"] = instr.id
+        SessionManager.save()
+        logger.info(f"DirectReply: Session {waiting_id} updated with instruction_msg_id={instr.id}")
+        await cb.answer("Silakan kirim balasan Anda.")
+    except Exception as e:
+        logger.error(f"Direct reply error: {e}")
+        await cb.answer(f"❌ Error: {e}", show_alert=True)
+
+
 
 # Cleanup task for cache
 async def cleanup_pmlu_cache():

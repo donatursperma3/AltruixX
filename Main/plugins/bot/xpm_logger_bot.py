@@ -87,6 +87,17 @@ VALID_REACTION_EMOJIS = {
 def is_valid_emoji(emoji: str) -> bool:
     return emoji in VALID_REACTION_EMOJIS
 
+def get_permission_label(mode: str = "sudo") -> str:
+    """Generate permission label for Reply button."""
+    if mode == "owner":
+        return "Reply (Owner)"
+    elif mode == "sudo":
+        return "Reply (Sudo + Owner)"
+    elif mode == "all":
+        return "Reply (All)"
+    else:
+        return f"Reply ({mode})"
+
 async def load_settings():
     global PM_LOGGER_BOT_DATA, PM_LOGGER_FILTERS, REPLY_FROM_ALL_ACCESSIBLE, REPLY_ACCESS_MODE
     try:
@@ -99,8 +110,17 @@ async def load_settings():
                     PM_LOGGER_FILTERS = data.get("filters", PM_LOGGER_FILTERS)
                     REPLY_FROM_ALL_ACCESSIBLE = data.get("reply_from_all_accessible", True)
                     REPLY_ACCESS_MODE = data.get("reply_access_mode", "sudo")
+                    
+        # Try to read shared REPLY_ACCESS_MODE from user settings
+        shared_file = Path("pm_logger_user_settings.json")
+        if shared_file.exists():
+            async with aiofiles.open(shared_file, 'r', encoding='utf-8') as f:
+                content = await f.read()
+                if content.strip():
+                    data = json.loads(content)
+                    REPLY_ACCESS_MODE = data.get("reply_access_mode", REPLY_ACCESS_MODE)
     except Exception as e:
-        logger.error(f"Failed to load PM Logger Bot settings: {e}")
+        logger.error(f"Failed to load settings: {e}")
 
 async def save_settings():
     try:
@@ -349,18 +369,14 @@ async def pm_logger_bot_handler(c: Client, m: RawMessage):
                 InlineKeyboardButton("🗑️ Remove React", callback_data=f"pmlb_unreact_{m.chat.id}_{m.id}_{c.me.id}")
             ],
             [
-                InlineKeyboardButton("🗨️ Reply", callback_data=f"pmlb_reply_{m.chat.id}_{m.id}_{c.me.id}"),
+                InlineKeyboardButton(f"🗨️ {get_permission_label(REPLY_ACCESS_MODE)}", callback_data=f"pmlb_reply_menu_{m.chat.id}_{m.id}_{c.me.id}"),
                 InlineKeyboardButton("💾 Save to Log", callback_data=f"pmlb_save_{m.chat.id}_{m.id}_{c.me.id}")
             ],
             [
-                InlineKeyboardButton("👥 Reply From All", callback_data=f"pmlb_replyall_{m.chat.id}_{m.id}_{c.me.id}"),
                 InlineKeyboardButton("🗑️ Unsend", callback_data=f"pmlb_unsend_{m.chat.id}_{m.id}_{c.me.id}")
             ],
             [InlineKeyboardButton("🔗 Chat with User", url=f"tg://user?id={sender_id}")]
         ]
-
-        if not REPLY_FROM_ALL_ACCESSIBLE:
-            keyboard = [r for r in keyboard if not any(b.text == "👥 Reply From All" for b in r)]
 
         # Get topic if any (bot will search, but won't create if no permission)
         topic_id = await get_or_create_topic(Altruix.bot, Altruix.log_chat, "pm logger")
@@ -383,14 +399,21 @@ async def pm_logger_bot_handler(c: Client, m: RawMessage):
         )
         
         # Cache for recovery
-        from Main.plugins.userbot.xpm_logger_user import PM_LOG_CACHE as U_CACHE
+        # Cache for recovery - capture ACTUAL thread_id from sent message
+        actual_thread_id = getattr(sent_log, "message_thread_id", None)
         U_CACHE[f"{m.chat.id}_{m.id}"] = {
             "client_id": c.me.id,
             "log_msg_id": sent_log.id,
+            "fwd_msg_id": fwd_msg.id if fwd_msg else None,
+            "thread_id": actual_thread_id,
             "chat_id": m.chat.id,
             "msg_id": m.id,
             "last_replies": []
         }
+        
+        # Save cache
+        from Main.plugins.userbot.xpm_logger_user import SessionManager
+        SessionManager.save()
     except Exception as e:
         logger.error(f"Error in PM Logger Bot: {e}")
 
@@ -454,6 +477,10 @@ async def pm_logger_bot_edit_handler(c: Client, m: RawMessage):
 @log_errors
 async def pmlb_save_callback(c: Client, cb: CallbackQuery):
     try:
+        from Main.utils.access_control import is_authorized_user
+        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+            return await cb.answer("⛔ Akses Ditolak!", show_alert=True)
+            
         data = cb.data.split("_")
         chat_id, msg_id = int(data[2]), int(data[3])
         await Altruix.bot.forward_messages(Altruix.log_chat, chat_id, msg_id)
@@ -466,18 +493,41 @@ async def pmlb_save_callback(c: Client, cb: CallbackQuery):
 async def pmlb_reply_callback(c: Client, cb: CallbackQuery):
     from Main.plugins.userbot.xpm_logger_user import REPLY_AS_MENTIONED_WAITING as WAIT_CACHE
     try:
+        from Main.utils.access_control import check_reply_access
+        has_access, reason = check_reply_access(cb.from_user, REPLY_ACCESS_MODE, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS)
+        if not has_access:
+            return await cb.answer(reason, show_alert=True)
+            
         data = cb.data.split("_")
         chat_id, msg_id, client_id = int(data[2]), int(data[3]), int(data[4])
         waiting_id = f"pmlb_r_{int(time.time())}_{cb.id}"
+        msg_key = f"{chat_id}_{msg_id}"
+        
+        # Access cache to get log_msg_id and fwd_msg_id
+        from Main.plugins.userbot.xpm_logger_user import PM_LOG_CACHE
+        cache = PM_LOG_CACHE.get(msg_key, {})
+        log_msg_id = cache.get("log_msg_id") or cb.message.id
+        fwd_msg_id = cache.get("fwd_msg_id")
+        current_msg_thread = getattr(cb.message, "message_thread_id", None)
+        thread_id = cache.get("thread_id") or current_msg_thread
+        
+        logger.info(f"PMLB Reply: msg_key={msg_key}, log_msg_id={log_msg_id}, thread_id={thread_id}")
+        
         WAIT_CACHE[waiting_id] = {
             "chat_id": chat_id, "message_id": msg_id, "client_id": client_id,
             "user_id": cb.from_user.id, "instruction_msg_id": None, "is_reply_all": False,
-            "msg_key": f"{chat_id}_{msg_id}"
+            "log_msg_id": log_msg_id, "fwd_msg_id": fwd_msg_id, "thread_id": thread_id,
+            "msg_key": msg_key
         }
         instr = await cb.message.reply("🗨️ <b>Reply (PM Bot)</b>\n\nSilakan balas pesan ini.", parse_mode=enums.ParseMode.HTML)
         WAIT_CACHE[waiting_id]["instruction_msg_id"] = instr.id
+        # Save session
+        from Main.plugins.userbot.xpm_logger_user import SessionManager
+        SessionManager.save()
         await cb.answer("Silakan kirim balasan Anda.")
     except Exception as e:
+        logger.error(f"PMLB Reply Error: {e}")
+        await cb.answer(f"❌ Error: {e}", show_alert=True)
         await cb.answer(f"❌ Error: {e}", show_alert=True)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^pmlb_others_"))
@@ -507,12 +557,10 @@ async def pmlb_back_callback(c: Client, cb: CallbackQuery):
         keyboard = [
             reaction_btns[:3], reaction_btns[3:6],
             [InlineKeyboardButton("➕ Others", callback_data=f"pmlb_others_{chat_id}_{msg_id}_{client_id}"), InlineKeyboardButton("🗑️ Remove React", callback_data=f"pmlb_unreact_{chat_id}_{msg_id}_{client_id}")],
-            [InlineKeyboardButton("🗨️ Reply", callback_data=f"pmlb_reply_{chat_id}_{msg_id}_{client_id}"), InlineKeyboardButton("💾 Save to Log", callback_data=f"pmlb_save_{chat_id}_{msg_id}_{client_id}")],
-            [InlineKeyboardButton("👥 Reply From All", callback_data=f"pmlb_replyall_{chat_id}_{msg_id}_{client_id}"), InlineKeyboardButton("🗑️ Unsend", callback_data=f"pmlb_unsend_{chat_id}_{msg_id}_{client_id}")],
+            [InlineKeyboardButton(f"🗨️ {get_permission_label(REPLY_ACCESS_MODE)}", callback_data=f"pmlb_reply_menu_{chat_id}_{msg_id}_{client_id}"), InlineKeyboardButton("💾 Save to Log", callback_data=f"pmlb_save_{chat_id}_{msg_id}_{client_id}")],
+            [InlineKeyboardButton("🗑️ Unsend", callback_data=f"pmlb_unsend_{chat_id}_{msg_id}_{client_id}")],
             [InlineKeyboardButton("🔗 Chat with User", url=f"tg://user?id={chat_id}")]
         ]
-        if not REPLY_FROM_ALL_ACCESSIBLE:
-             keyboard = [r for r in keyboard if not any(b.text == "👥 Reply From All" for b in r)]
         await cb.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
     except Exception as e:
         await cb.answer(f"❌ Error: {e}", show_alert=True)
@@ -521,6 +569,10 @@ async def pmlb_back_callback(c: Client, cb: CallbackQuery):
 @log_errors
 async def pmlb_react_callback(c: Client, cb: CallbackQuery):
     try:
+        from Main.utils.access_control import is_authorized_user
+        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+            return await cb.answer("⛔ Akses Ditolak!", show_alert=True)
+            
         data = cb.data.split("_")
         chat_id, msg_id, client_id, emoji = int(data[2]), int(data[3]), int(data[4]), data[5]
         await Altruix.bot.send_reaction(chat_id, msg_id, emoji)
@@ -532,6 +584,10 @@ async def pmlb_react_callback(c: Client, cb: CallbackQuery):
 @log_errors
 async def pmlb_unreact_callback(c: Client, cb: CallbackQuery):
     try:
+        from Main.utils.access_control import is_authorized_user
+        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+            return await cb.answer("⛔ Akses Ditolak!", show_alert=True)
+            
         data = cb.data.split("_")
         chat_id, msg_id, client_id = int(data[2]), int(data[3]), int(data[4])
         await Altruix.bot.send_reaction(chat_id, msg_id, None)
@@ -544,8 +600,10 @@ async def pmlb_unreact_callback(c: Client, cb: CallbackQuery):
 async def pmlb_replyall_callback(c: Client, cb: CallbackQuery):
     from Main.plugins.userbot.xpm_logger_user import REPLY_AS_MENTIONED_WAITING as WAIT_CACHE, USER_REPLY_COUNTS, USER_REPLY_LIMIT
     try:
-        if not REPLY_FROM_ALL_ACCESSIBLE:
-            return await cb.answer("❌ Fitur ini sedang dinonaktifkan.", show_alert=True)
+        from Main.utils.access_control import is_authorized_user
+        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+            return await cb.answer("⛔ Akses Ditolak!", show_alert=True)
+            
         data = cb.data.split("_")
         chat_id, msg_id, client_id = int(data[2]), int(data[3]), int(data[4])
         user_id = cb.from_user.id
@@ -553,14 +611,27 @@ async def pmlb_replyall_callback(c: Client, cb: CallbackQuery):
         if USER_REPLY_COUNTS[user_id][today] >= USER_REPLY_LIMIT:
              return await cb.answer(f"❌ Limit harian tercapai.", show_alert=True)
         
+        msg_key = f"{chat_id}_{msg_id}"
+        
+        # Access cache
+        from Main.plugins.userbot.xpm_logger_user import PM_LOG_CACHE
+        cache = PM_LOG_CACHE.get(msg_key, {})
+        log_msg_id = cache.get("log_msg_id") or cb.message.id
+        fwd_msg_id = cache.get("fwd_msg_id")
+        thread_id = cache.get("thread_id") or getattr(cb.message, "message_thread_id", None)
+
         waiting_id = f"pmlb_ra_{int(time.time())}_{cb.id}"
         WAIT_CACHE[waiting_id] = {
             "chat_id": chat_id, "message_id": msg_id, "client_id": client_id,
             "user_id": user_id, "instruction_msg_id": None, "is_reply_all": True,
-            "msg_key": f"{chat_id}_{msg_id}"
+            "log_msg_id": log_msg_id, "fwd_msg_id": fwd_msg_id, "thread_id": thread_id,
+            "msg_key": msg_key
         }
         instr = await cb.message.reply("👥 <b>Reply From All (PM Bot)</b>\n\nSilakan balas pesan ini.", parse_mode=enums.ParseMode.HTML)
         WAIT_CACHE[waiting_id]["instruction_msg_id"] = instr.id
+        # Save session
+        from Main.plugins.userbot.xpm_logger_user import SessionManager
+        SessionManager.save()
         await cb.answer("Silakan kirim balasan Anda.")
     except Exception as e:
         await cb.answer(f"❌ Error: {e}", show_alert=True)
@@ -570,6 +641,10 @@ async def pmlb_replyall_callback(c: Client, cb: CallbackQuery):
 async def pmlb_unsend_callback(c: Client, cb: CallbackQuery):
     from Main.plugins.userbot.xpm_logger_user import PM_LOG_CACHE as U_CACHE
     try:
+        from Main.utils.access_control import is_authorized_user
+        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+            return await cb.answer("⛔ Akses Ditolak!", show_alert=True)
+            
         data = cb.data.split("_")
         chat_id, msg_id, client_id = int(data[2]), int(data[3]), int(data[4])
         msg_key = f"{chat_id}_{msg_id}"
@@ -585,6 +660,36 @@ async def pmlb_unsend_callback(c: Client, cb: CallbackQuery):
             U_CACHE[msg_key]["last_replies"] = []
             return await cb.answer(f"✅ Unsent {unsend_count} messages!")
         await cb.answer("❌ No recent reply found.", show_alert=True)
+    except Exception as e:
+        await cb.answer(f"❌ Error: {e}", show_alert=True)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^pmlb_reply_menu_"))
+@log_errors
+async def pmlb_reply_menu_callback(c: Client, cb: CallbackQuery):
+    try:
+        data = cb.data.split("_")
+        chat_id, msg_id, client_id = int(data[3]), int(data[4]), int(data[5])
+        
+        # Check Access
+        from Main.utils.access_control import check_reply_access
+        has_access, reason = check_reply_access(cb.from_user, REPLY_ACCESS_MODE, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS)
+        if not has_access:
+            return await cb.answer(reason, show_alert=True)
+            
+        reply_btns = [
+             InlineKeyboardButton("👤 Reply as User", callback_data=f"pmlb_reply_{chat_id}_{msg_id}_{client_id}")
+        ]
+        
+        if REPLY_FROM_ALL_ACCESSIBLE:
+             reply_btns.append(InlineKeyboardButton("👥 Reply From All", callback_data=f"pmlb_replyall_{chat_id}_{msg_id}_{client_id}"))
+             
+        menu_markup = InlineKeyboardMarkup([
+            reply_btns,
+            [InlineKeyboardButton("🔙 Back", callback_data=f"pmlb_back_{chat_id}_{msg_id}_{client_id}")]
+        ])
+        
+        await cb.edit_message_reply_markup(reply_markup=menu_markup)
+        await cb.answer()
     except Exception as e:
         await cb.answer(f"❌ Error: {e}", show_alert=True)
 

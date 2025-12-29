@@ -25,6 +25,7 @@ import traceback
 import contextlib
 import multiprocessing
 from pathlib import Path
+from collections import defaultdict
 from functools import wraps
 from Main.core.apm import APM
 from datetime import datetime
@@ -121,7 +122,7 @@ class AltruixClient:
         self.clients: List[Client] = []
         self.cmd_list = {}
         self.all_lang_strings = {}
-        self.__version__ = "0.0.4.36"
+        self.__version__ = "0.0.4.47"
         self.selected_lang = "english"
         self.local_lang_file = "./Main/localization"
         self.cmd_list = {}
@@ -144,6 +145,16 @@ class AltruixClient:
         self.config = Config(self.db.env_col, loop=self.loop, executor=self.executor)
         self.log_chat = None
         self._command_help_message_data = {}
+        
+        # Shared state for PM and Mention Loggers
+        self.PM_LOG_CACHE = {}
+        self.REPLY_AS_MENTIONED_WAITING = {}
+        # Daily limit tracking: user_id -> date_str -> count
+        self.USER_REPLY_COUNTS = defaultdict(lambda: defaultdict(int))
+        self.BUTTON_STATS = {"react": 0, "reply": 0, "reply_all": 0, "confirm": 0, "cancel": 0, "save": 0, "unsend": 0}
+        
+        # State mapping for different plugins
+        self.user_track_state = {} # {user_id: {'session_index': int, 'step': str, ...}}
         
         # ✅ PERBAIKAN: Setup signal handlers untuk graceful shutdown
         if sys.platform != "win32":
@@ -692,6 +703,8 @@ class AltruixClient:
             "DISABLED_SUDO_CMD_LIST", []
         )
         self.log_chat = self.config.digit_wrap(await self.config.get_env("LOG_CHAT_ID"))
+        if self.log_chat is None:
+            logger.warning("LOG_CHAT_ID not set. Mention notifications will not be sent. Please set LOG_CHAT_ID in .env or config.")
         self.bot_mode = (str(await self.config.get_env("BOT_MODE"))).lower() in {
             "yes",
             "true",
@@ -1254,9 +1267,9 @@ class AltruixClient:
                             )
                             await asyncio.sleep(3)
                             success_count += 1
-                            self.log(f"BERHASIL: [{client_type}] {name} mengirim startup log")
+                            self.log(f"BERHASIL: [{client_type}] {name} mengirim startup log", level=20)
                         except FloodWait as e:
-                            self.log(f"FloodWait terdeteksi. Menunggu {e.value} detik...")
+                            self.log(f"FloodWait terdeteksi. Menunggu {e.value} detik...", level=30)
                             await asyncio.sleep(e.value + 6)
                         except Exception as e:
                             error_type = type(e).__name__
@@ -1266,15 +1279,15 @@ class AltruixClient:
                             username = f" @{me.username}" if me and me.username else ""
                             client_type = "Bot" if client == self.bot else "User"
                             failed_clients.append(f"• <b>{name}{username}</b> → {error_type}")
-                            self.log(f"GAGAL: [{client_type}] {name}{username} → {error_type}: {error_msg}")
+                            self.log(f"GAGAL: [{client_type}] {name}{username} → {error_type}: {error_msg}", level=30)
                     self.log("=== RINGKASAN PENGIRIMAN STARTUP LOG ===")
-                    self.log(f"Berhasil kirim: {success_count}/{len(all_clients)} client")
+                    self.log(f"Berhasil kirim: {success_count}/{len(all_clients)} client", level=20)
                     if failed_clients:
-                        self.log("Client yang gagal:")
+                        self.log("Client yang gagal:", level=30)
                         for fail in failed_clients:
-                            self.log(f" {fail}")
+                            self.log(f" {fail}", level=30)
                     else:
-                        self.log(f"SEMUA client berhasil mengirim pesan ke LOG_CHAT_ID: {log_chat_id}")
+                        self.log(f"SEMUA client berhasil mengirim pesan ke LOG_CHAT_ID: {log_chat_id}", level=20)
                     if success_count > 0:
                         try:
                             branch = get_current_git_branch()
@@ -1292,7 +1305,7 @@ class AltruixClient:
                                 f"Waktu: <code>{startup_time}</code>"
                             )
                             await self.bot.send_message(log_chat_id, summary)
-                            self.log(f"Ringkasan akhir berhasil dikirim. Branch: {branch}, Versi: {altruix_version}")
+                            self.log(f"Ringkasan akhir berhasil dikirim. Branch: {branch}, Versi: {altruix_version}, level=20")
                         except Exception as e:
                             self.log(f"Gagal kirim ringkasan startup log: {e}", level=logging.ERROR)
         except Exception as e:
@@ -1315,7 +1328,7 @@ class AltruixClient:
         import time
         temp_client_name = f"temp_session_{int(time.time()*1000)}"
         
-        self.log(f"Attempting to add new session with temp name: {temp_client_name}")
+        self.log(f"Attempting to add new session with temp name: {temp_client_name}", level=20)
 
         app = Client(
             temp_client_name,
@@ -1358,7 +1371,7 @@ class AltruixClient:
             if session not in self.config.SESSIONS:
                 self.config.SESSIONS.append(session)
             
-            self.log(f"User session added successfully: {me.first_name} ({user_id})")
+            self.log(f"User session added successfully: {me.first_name} ({user_id})", level=20)
             
             # Add to active clients list
             self.clients.append(app)

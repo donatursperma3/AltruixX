@@ -71,7 +71,7 @@ import logging
 
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "settings"
-PLUGIN_VERSION = "1.0.2"  # ✅ REFACTORED: Integrated session addition
+PLUGIN_VERSION = "1.0.3"  # ✅ REFACTORED: Integrated session addition
 
 logger = logging.getLogger("altruix.settings")
 logger.setLevel(logging.INFO)
@@ -1469,6 +1469,37 @@ async def user_text_handler(c: Client, m: Message):
                 del user_recent_messages_state[user_id]
         
         return
+
+    # ✅ BARU: Cek jika user sedang dalam proses Track Profile
+    elif user_id in Altruix.user_track_state and Altruix.user_track_state[user_id].get('step') == 'waiting_target_id':
+        if text.lower() == "/cancel":
+            del Altruix.user_track_state[user_id]
+            await m.reply("❌ Track Profile dibatalkan.")
+            return
+            
+        target_id = text.strip()
+        Altruix.user_track_state[user_id]['target_id'] = target_id
+        Altruix.user_track_state[user_id]['step'] = 'confirming'
+        
+        session_index = Altruix.user_track_state[user_id]['session_index']
+        page = Altruix.user_track_state[user_id]['page']
+        
+        confirm_btns = [
+            [
+                InlineKeyboardButton("✅ Yes, Track", callback_data=f"track_profile_confirm_yes_{user_id}"),
+                InlineKeyboardButton("❌ No, Cancel", callback_data=f"track_profile_confirm_no_{user_id}")
+            ]
+        ]
+        
+        await m.reply(
+            f"🔍 <b>Confirm Track Profile</b>\n\n"
+            f"• <b>Target ID/Username:</b> <code>{html.escape(target_id)}</code>\n"
+            f"• <b>Via Account:</b> <code>Session {session_index + 1}</code>\n\n"
+            f"Pesan <code>/id {html.escape(target_id)}</code> akan dikirim ke @SangMata_beta_bot.",
+            reply_markup=InlineKeyboardMarkup(confirm_btns),
+            parse_mode=ParseMode.HTML
+        )
+        return
     
     # Handler untuk konfirmasi teks 'ok' dari user (untuk export)
     elif user_id in user_text_confirmation_state and text.lower() == "ok":
@@ -2839,6 +2870,9 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
              InlineKeyboardButton(gt("change_username"), f"gen_conf_change_username_{index}_{callback_page}"),
              InlineKeyboardButton(gt("change_profile_photo"), f"gen_conf_change_profile_photo_{index}_{callback_page}"),
         ],
+        [
+             InlineKeyboardButton(gt("delete_all_photos"), f"gen_conf_delete_all_profile_photos_{index}_{callback_page}"),
+        ],
         # Row 2: Media & Downloads
         [
             InlineKeyboardButton(gt("download_story"), f"gen_conf_dlstory_session_input_{index}_{callback_page}"),
@@ -2855,11 +2889,11 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
         ],
         [
             InlineKeyboardButton(gt("test_ping"), f"gen_conf_test_ping_{index}_{callback_page}"),
-            InlineKeyboardButton(gt("check_limit"), f"check_limit_confirm_{index}_{callback_page}"),
+            InlineKeyboardButton("🔍 Track Profile", f"track_profile_start_{index}_{callback_page}"),
         ],
         [
+            InlineKeyboardButton(gt("check_limit"), f"check_limit_confirm_{index}_{callback_page}"),
             InlineKeyboardButton(gt("view_sessions"), f"gen_conf_view_all_sessions_{index}_{callback_page}"),
-            InlineKeyboardButton(gt("delete_all_photos"), f"delete_all_profile_photos_{index}_{callback_page}"),
         ],
         # Row 4: Group & Message Management
         [
@@ -4648,14 +4682,14 @@ async def pml_menu_handler(c: Client, cb: CallbackQuery, index: int = None, page
             with open("pm_logger_user_settings.json", "r") as f:
                 data = json.load(f)
                 sessions_data = data.get("sessions", {}) or data.get("settings", {})
-                replyall_accessible = data.get("reply_from_all_accessible", True)
+                reply_access_mode = data.get("reply_access_mode", "sudo") # Default to sudo
         else:
             sessions_data = {}
-            replyall_accessible = True
+            reply_access_mode = "sudo"
     except Exception as e:
         logger.error(f"Error loading PML settings: {e}")
         sessions_data = {}
-        replyall_accessible = True
+        reply_access_mode = "sudo"
 
     # Per-session settings
     session_client = Altruix.clients[index]
@@ -4678,7 +4712,8 @@ async def pml_menu_handler(c: Client, cb: CallbackQuery, index: int = None, page
         "<i>Mencatat pesan dari pengguna biasa.</i>\n\n"
         f"• 🤖 <b>Log Bot:</b> {'✅ ON' if log_from_bot else '❌ OFF'}\n"
         "<i>Mencatat pesan dari akun bot/service.</i>\n\n"
-        f"• 👥 <b>Reply All Access:</b> {'✅ ALLOWED' if replyall_accessible else '❌ DENIED'}\n\n"
+        f"• 👥 <b>Reply Mode:</b> {reply_access_mode.upper()}\n"
+        "<i>Mengatur siapa yang dapat melihat tombol Reply.</i>\n"
         "Pilih kategori di bawah untuk mengatur filter tipe pesan."
     )
     
@@ -4688,7 +4723,7 @@ async def pml_menu_handler(c: Client, cb: CallbackQuery, index: int = None, page
             InlineKeyboardButton(f"🤖 Log Bot: {'OFF' if log_from_bot else 'ON'}", f"pml_toggle_log_bot_{index}_{page}"),
         ],
         [
-            InlineKeyboardButton(f"👥 Reply All: {'DENY' if replyall_accessible else 'ALLOW'}", f"pml_toggle_log_replyall_{index}_{page}"),
+            InlineKeyboardButton(f"👥 Reply Mode: {reply_access_mode.upper()}", f"pml_toggle_log_mode_{index}_{page}"),
         ],
         [
             InlineKeyboardButton("👤 User Filters", f"pmlf_menu_user_{index}_{page}"),
@@ -4701,7 +4736,7 @@ async def pml_menu_handler(c: Client, cb: CallbackQuery, index: int = None, page
 
 
 # ✅ HANDLER BARU: Toggle PM Logger Settings
-@Altruix.bot.on_callback_query(filters.regex(r"^pml_toggle_log_(user|bot|replyall)_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^pml_toggle_log_(user|bot|mode)_(\d+)_(\d+)$"))
 @log_errors
 async def pml_toggle_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
@@ -4716,7 +4751,7 @@ async def pml_toggle_handler(c: Client, cb: CallbackQuery):
             with open(filename, "r") as f:
                 data = json.load(f)
         else:
-            data = {"sessions": {}, "reply_from_all_accessible": True}
+            data = {"sessions": {}, "reply_access_mode": "sudo"}
             
         if "sessions" not in data:
             data["sessions"] = data.pop("settings", {})
@@ -4738,10 +4773,19 @@ async def pml_toggle_handler(c: Client, cb: CallbackQuery):
             current_val = data["sessions"][user_id_str].get("log_from_bot", False)
             data["sessions"][user_id_str]["log_from_bot"] = not current_val
             success = True
-        elif target == "replyall":
-            current_val = data.get("reply_from_all_accessible", True)
-            data["reply_from_all_accessible"] = not current_val
+        elif target == "mode":
+            current_mode = data.get("reply_access_mode", "sudo")
+            # Cycle: owner -> sudo -> all
+            if current_mode == "owner":
+                new_mode = "sudo"
+            elif current_mode == "sudo":
+                new_mode = "all"
+            else:
+                new_mode = "owner"
+                
+            data["reply_access_mode"] = new_mode
             success = True
+            current_val = new_mode # For logging
             
         if success:
             with open(filename, "w") as f:
@@ -4988,19 +5032,28 @@ async def mnt_menu_handler(c: Client, cb: CallbackQuery, index: int = None, page
     if page is None:
         page = int(cb.matches[0].group(2))
     
-    # Check current states (mock logic - ideally stored in a shared settings file)
-    from Main.plugins.userbot.mentions import MENTION_LOG_CACHE # Assuming it exists or use common settings
-    # We'll use a local json check as backup
+    # Load Mention Settings with support for structured format
     settings_file = "mentions_settings.json"
+    m_settings = {"global": {"mention": True, "auto_log": True, "reply_from_all": False}, "settings": {}}
+    
     if os.path.exists(settings_file):
-        with open(settings_file, "r") as f:
-            m_settings = json.load(f)
-    else:
-        m_settings = {"reply_from_all": False, "mention": True, "auto_log": True}
+        try:
+            with open(settings_file, "r") as f:
+                loaded_data = json.load(f)
+                if "global" in loaded_data:
+                    m_settings = loaded_data
+                else:
+                    # Migrate legacy flat format
+                    m_settings["global"]["mention"] = loaded_data.get("mention", True)
+                    m_settings["global"]["auto_log"] = loaded_data.get("auto_log", True)
+                    m_settings["global"]["reply_from_all"] = loaded_data.get("reply_from_all", False)
+        except Exception as e:
+            logger.error(f"Error loading mentions_settings: {e}")
 
-    rfa_status = "✅ ON" if m_settings.get("reply_from_all") else "❌ OFF"
-    mnt_status = "✅ ON" if m_settings.get("mention") else "❌ OFF"
-    alog_status = "✅ ON" if m_settings.get("auto_log") else "❌ OFF"
+    g_settings = m_settings.get("global", {})
+    rfa_status = "✅ ON" if g_settings.get("reply_from_all") else "❌ OFF"
+    mnt_status = "✅ ON" if g_settings.get("mention") else "❌ OFF"
+    alog_status = "✅ ON" if g_settings.get("auto_log") else "❌ OFF"
 
     desc_text = (
         f"<b>{gt('mention_control')}</b>\n\n"
@@ -5184,16 +5237,22 @@ async def mnt_toggle_handler(c: Client, cb: CallbackQuery):
     page = int(cb.matches[0].group(3))
     
     settings_file = "mentions_settings.json"
+    m_settings = {"global": {"mention": True, "auto_log": True, "reply_from_all": False}, "settings": {}}
+    
     if os.path.exists(settings_file):
         try:
             with open(settings_file, "r") as f:
-                m_settings = json.load(f)
-        except:
-             m_settings = {"reply_from_all": False, "mention": True, "auto_log": True}
-    else:
-        m_settings = {"reply_from_all": False, "mention": True, "auto_log": True}
-
-    # Map action to setting key
+                loaded_data = json.load(f)
+                if "global" in loaded_data:
+                    m_settings = loaded_data
+                else:
+                    # Legacy migration logic
+                    m_settings["global"]["mention"] = loaded_data.get("mention", True)
+                    m_settings["global"]["auto_log"] = loaded_data.get("auto_log", True)
+                    m_settings["global"]["reply_from_all"] = loaded_data.get("reply_from_all", False)
+        except: pass
+    
+    # Map action to setting key in 'global'
     key_map = {
         "rfa": "reply_from_all",
         "mnt": "mention",
@@ -5202,12 +5261,12 @@ async def mnt_toggle_handler(c: Client, cb: CallbackQuery):
     
     key = key_map.get(action)
     if key:
-        m_settings[key] = not m_settings.get(key, False)
+        m_settings["global"][key] = not m_settings["global"].get(key, False)
         with open(settings_file, "w") as f:
             json.dump(m_settings, f, indent=4)
         
         readable_name = key.replace('_', ' ').title()
-        status_text = "ON" if m_settings[key] else "OFF"
+        status_text = "ON" if m_settings["global"][key] else "OFF"
         await cb.answer(f"✅ {readable_name} turned {status_text}", show_alert=False)
         await mnt_menu_handler(c, cb, index=index, page=page)
     else:
@@ -7277,3 +7336,90 @@ async def mntf_toggle_handler(c: Client, cb: CallbackQuery):
     with open(filename, "w") as f: json.dump(data, f, indent=2)
     await cb.answer(f"Mention Filter {m_type}: {'Enabled' if not current else 'Disabled'}")
     await mntf_list_handler(c, cb)
+
+# ============================================================================
+# 🔍 TRACK PROFILE (SANGMATA) HANDLERS
+# ============================================================================
+
+@Altruix.bot.on_callback_query(filters.regex(r"^track_profile_start_(\d+)_(\d+)$"))
+@log_errors
+async def track_profile_start_cb_handler(c: Client, cb: CallbackQuery):
+    if not await check_authorization(cb): return
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    user_id = cb.from_user.id
+    
+    Altruix.user_track_state[user_id] = {
+        "session_index": index,
+        "page": page,
+        "step": "waiting_target_id"
+    }
+    
+    await cb.answer()
+    await cb.message.edit(
+        f"🔍 <b>Track Profile (Session {index + 1})</b>\n\n"
+        f"Silakan kirimkan <b>User ID</b> atau <b>Username</b> user yang ingin dilacak.\n"
+        f"Userbot akan mengirimkan perintah <code>/id</code> ke @SangMata_beta_bot.\n\n"
+        f"Ketik /cancel untuk membatalkan.",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 Back", callback_data=f"session_info_{index}_{page}")]
+        ]),
+        parse_mode=ParseMode.HTML
+    )
+
+@Altruix.bot.on_callback_query(filters.regex(r"^track_profile_confirm_(yes|no)_(\d+)$"))
+@log_errors
+async def track_profile_confirm_cb_handler(c: Client, cb: CallbackQuery):
+    if not await check_authorization(cb): return
+    action = cb.matches[0].group(1)
+    user_id = int(cb.matches[0].group(2))
+    
+    if user_id not in Altruix.user_track_state:
+        await cb.answer("❌ Sesi telah kadaluarsa.", show_alert=True)
+        return
+        
+    state = Altruix.user_track_state[user_id]
+    index = state['session_index']
+    page = state['page']
+    target_id = state.get('target_id')
+    
+    if action == "no":
+        del Altruix.user_track_state[user_id]
+        await cb.answer("Dibatalkan.")
+        await sessions_info_cb_handler(c, cb, index, page)
+        return
+        
+    await cb.answer("Memproses pelacakan...", show_alert=False)
+    await cb.message.edit(f"⏳ Mengirim perintah track untuk <code>{html.escape(target_id)}</code>...")
+    
+    try:
+        session_client = Altruix.clients[index]
+        # Kirim perintah ke SangMata @SangMata_beta_bot
+        await session_client.send_message("SangMata_beta_bot", f"{target_id}")
+        
+        await cb.message.edit(
+            f"✅ <b>Perintah Track Terkirim!</b>\n\n"
+            f"Perintah <code>/id {html.escape(target_id)}</code> telah dikirim ke @SangMata_beta_bot via Session {index + 1}.\n"
+            f"Silakan cek (Log Group) atau tunggu respon dari SangMata.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 Menu Sesi", callback_data=f"session_info_{index}_{page}")]
+            ]),
+            parse_mode=ParseMode.HTML
+        )
+        
+        # Log to private/log chat
+        log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
+        await Altruix.bot.send_message(
+            log_chat_id,
+            f"🔍 <b>TRACK PROFILE LOG</b>\n"
+            f"• User: {cb.from_user.mention}\n"
+            f"• Target: <code>{html.escape(target_id)}</code>\n"
+            f"• Via Session: <code>{index + 1}</code>\n"
+            f"• Status: ✅ Perintah terkirim ke @SangMata_beta_bot"
+        )
+        
+    except Exception as e:
+        logger.error(f"Track Profile error: {e}")
+        await cb.message.edit(f"❌ <b>Gagal melacak:</b> {str(e)}")
+        
+    del Altruix.user_track_state[user_id]

@@ -23,7 +23,7 @@ def get_total_plugins():
     import glob
     ub_plugins = len(glob.glob("Main/plugins/userbot/*.py"))
     bot_plugins = len(glob.glob("Main/plugins/bot/*.py"))
-    return ub_plugins + bot_plugins
+    return ub_plugins, bot_plugins
 
 cache_help_menu = None
 multi_pages = False
@@ -71,12 +71,13 @@ def split_help_text(text: str, max_chars: int = 1500) -> list:
 @log_errors
 async def get_help_menu(return_all: bool = False):
     global cache_help_menu, multi_pages
-    total_plugins = get_total_plugins()
-    help_msg = f"<b><u>Altruix Help Menu</u></b>\n" \
+    ub_plugins, bot_plugins = get_total_plugins()
+    help_msg = f"<b><u>❇️ Altruix Userbot Help Menu</u></b>\n" \
                f"<b>Userbot version :</b> <code>V{Altruix.__version__}</code>\n" \
                f"<b>Pyrogram version :</b> <code>V{pyrogram.__version__} </code>\n" \
                f"<b>Python version :</b> <code>V{python_version()}</code>\n" \
-               f"<b>Total Plugins :</b> <code>{total_plugins}</code>"
+               f"<b>Userbot Plugins :</b> <code>{ub_plugins}</code>\n" \
+               f"<b>Bot Plugins :</b> <code>{bot_plugins}</code>"
 
     if cache_help_menu:
         if multi_pages and not return_all:
