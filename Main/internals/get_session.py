@@ -129,7 +129,7 @@ async def add_session_cb_handler(_, cb: CallbackQuery):
     status = await cb.message.reply(
         "<code>Processing the given string session...</code>"
     )
-    new_session = await Altruix.add_session(session, status)
+    new_session = await Altruix.add_session(session, status, user=cb.from_user)
     if not new_session:
         return # add_session already handled the error message/logging
 

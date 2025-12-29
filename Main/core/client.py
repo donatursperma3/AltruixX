@@ -122,7 +122,7 @@ class AltruixClient:
         self.clients: List[Client] = []
         self.cmd_list = {}
         self.all_lang_strings = {}
-        self.__version__ = "0.0.4.48"
+        self.__version__ = "0.0.4.49"
         self.selected_lang = "english"
         self.local_lang_file = "./Main/localization"
         self.cmd_list = {}
@@ -186,7 +186,7 @@ class AltruixClient:
   / ___ \\| | |_| |  | |_| | |>  <
  /_/   \\_\\_|\\__|_|   \\__,_|_/_/\\_\\
 
- (C) Project-Altruix 2021-{datetime.today().year}
+ (C) Project-Altruix Reborn 2021-{datetime.today().year}
  Version: {self.__version__} - [ Altruix Assistant ]
         """
 
@@ -1312,7 +1312,7 @@ class AltruixClient:
             self.log(f"CRITICAL: Session initialization failed: {e}", level=50)
             raise
 
-    async def add_session(self, session: str, status: Message = None) -> Client:
+    async def add_session(self, session: str, status: Message = None, user: User = None) -> Client:
         """
         Validates and adds a new user session.
         Checks for duplicates and connection validity BEFORE saving.
@@ -1392,6 +1392,24 @@ class AltruixClient:
             if status:
                 await status.edit("<b>Account Successfully added!</b>")
 
+            # ✅ LOG NOTIFICATION: SESI BERHASIL DITAMBAHKAN
+            try:
+                log_chat_id = int(os.getenv("LOG_CHAT_ID", self.config.OWNER_ID))
+                log_msg = (
+                    "✅ <b>SESSION BERHASIL DITAMBAHKAN</b>\n\n"
+                    f"• <b>User Admin:</b> <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a> (<code>{user.id}</code>)\n"
+                    f"• <b>Akun Baru:</b> <a href='tg://user?id={me.id}'>{html.escape(me.first_name or 'None')}</a> (<code>{me.id}</code>)\n"
+                    f"• <b>Username:</b> @{me.username or 'None'}\n"
+                    f"• <b>Waktu:</b> <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>"
+                ) if user else (
+                    "✅ <b>SESSION BERHASIL DITAMBAHKAN (System)</b>\n\n"
+                    f"• <b>Akun ID:</b> <code>{me.id}</code>\n"
+                    f"• <b>Waktu:</b> <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>"
+                )
+                await self.bot.send_message(log_chat_id, log_msg, parse_mode=ParseMode.HTML)
+            except Exception as le:
+                self.log(f"Failed to send success add_session log: {le}", level=logging.DEBUG)
+
             return app
 
         except (AuthKeyDuplicated, UserDeactivated, SessionPasswordNeeded) as e:
@@ -1403,6 +1421,20 @@ class AltruixClient:
             self.log(error_msg, level=logging.ERROR)
             if status:
                 await status.edit(f"❌ Gagal menambahkan akun:\n`{error_msg}`")
+            
+            # ✅ LOG NOTIFICATION: GAGAL TAMBAH (Auth Error)
+            try:
+                log_chat_id = int(os.getenv("LOG_CHAT_ID", self.config.OWNER_ID))
+                log_msg = (
+                    "❌ <b>GAGAL MENAMBAH SESSION</b>\n\n"
+                    f"• <b>User Admin:</b> <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a> (<code>{user.id}</code>)\n"
+                    f"• <b>Error:</b> <code>{type(e).__name__}</code>\n"
+                    f"• <b>Pesan:</b> <code>{html.escape(str(e))}</code>\n"
+                    f"• <b>Waktu:</b> <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>"
+                ) if user else f"❌ <b>GAGAL MENAMBAH SESSION (System)</b>\n\n• Error: <code>{type(e).__name__}</code>"
+                await self.bot.send_message(log_chat_id, log_msg, parse_mode=ParseMode.HTML)
+            except Exception: pass
+            
             raise e # Lempar ulang agar caller tau gagal
             
         except Exception as e:
@@ -1417,7 +1449,7 @@ class AltruixClient:
                 await status.edit(f"❌ Error tidak dikenal:\n`{str(e)[:100]}`")
             raise e
 
-    async def remove_session(self, index: int) -> User:
+    async def remove_session(self, index: int, user: User = None) -> User:
         session = self.config.pop_session(index)
         await self.config.pop_element_from_list("SESSIONS", session)
         removed_session_info = self.ourselves.pop(index)
@@ -1429,6 +1461,26 @@ class AltruixClient:
             self.training_wheels_protocol = True
             self.log("[TWP] has been enabled!")
         self.log("User session removed successfully!")
+        
+        # ✅ LOG NOTIFICATION: SESI BERHASIL DIHAPUS (UNLINK)
+        try:
+            log_chat_id = int(os.getenv("LOG_CHAT_ID", self.config.OWNER_ID))
+            log_msg = (
+                "🗑 <b>SESSION BERHASIL DIHAPUS (UNLINK)</b>\n\n"
+                f"• <b>User Admin:</b> <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a> (<code>{user.id}</code>)\n"
+                f"• <b>Akun Dihapus:</b> <a href='tg://user?id={removed_session_info.id}'>{html.escape(removed_session_info.first_name or 'None')}</a> (<code>{removed_session_info.id}</code>)\n"
+                f"• <b>Username:</b> @{removed_session_info.username or 'None'}\n"
+                f"• <b>Index Sesi:</b> <code>{index + 1}</code>\n"
+                f"• <b>Waktu:</b> <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>"
+            ) if user else (
+                "🗑 <b>SESSION BERHASIL DIHAPUS (System)</b>\n\n"
+                f"• <b>Akun ID:</b> <code>{removed_session_info.id}</code>\n"
+                f"• <b>Waktu:</b> <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>"
+            )
+            await self.bot.send_message(log_chat_id, log_msg, parse_mode=ParseMode.HTML)
+        except Exception as le:
+            self.log(f"Failed to send remove_session log: {le}", level=logging.DEBUG)
+
         self.loop.create_task(self.load_all_modules())
         return removed_session_info
 

@@ -271,7 +271,7 @@ async def _start_add_session_process(cb: CallbackQuery):
         app_session = await app.export_session_string()
         await app.send_message("me", f"✅ **Session Berhasil!**\n\n`{app_session}`\n\n⚠️ **JANGAN DIBAGIKAN!**")
         await app.disconnect()
-        await Altruix.add_session(app_session, process_msg)
+        await Altruix.add_session(app_session, process_msg, user=cb.from_user)
         await log_to_group(
             f"✅ <b>BERHASIL TAMBAH SESSION</b>\n"
             f"• User ID: <code>{user_id}</code>\n"

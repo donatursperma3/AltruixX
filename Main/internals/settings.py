@@ -72,7 +72,7 @@ import logging
 
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "settings"
-PLUGIN_VERSION = "1.0.6"  # ✅ REFACTORED: Broad ENV Discovery & Security Fixed
+PLUGIN_VERSION = "1.0.9"  # ✅ REFACTORED: Broad ENV Discovery & Security Fixed
 
 logger = logging.getLogger("altruix.settings")
 logger.setLevel(logging.INFO)
@@ -3542,7 +3542,10 @@ async def send_profile_photo_handler(c: Client, cb: CallbackQuery):
         if os.path.exists(photo_path):
             os.remove(photo_path)
         
-        await cb.message.edit("✅ Foto profil telah dikirim ke pesan pribadi Anda.")
+        await cb.message.edit(
+            f"✅ Foto profil telah dikirim ke pesan pribadi Anda.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]])
+        )
         
         # Kirim log
         await send_log_notification(
@@ -4211,13 +4214,14 @@ async def check_limit_execute_handler(c: Client, cb: CallbackQuery):
         Altruix.log(f"Error check limit session {index}: {e}", level=logging.ERROR)
 
 
-@Altruix.bot.on_callback_query(filters.regex("test_ping_(\\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^test_ping_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def test_ping_cb_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     user = cb.from_user
     user_id = user.id
     index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2)) if cb.matches[0].group(2) else 1
 
     if index >= len(Altruix.clients):
         return await cb.answer("Session tidak ditemukan.", show_alert=True)
@@ -4253,6 +4257,7 @@ async def test_ping_cb_handler(c: Client, cb: CallbackQuery):
         await cb.message.edit(
             f"✅ Ping berhasil! Pesan dikirim ke grup log.\n"
             f"Akun: <a href='tg://user?id={session_user.id}'>{html.escape(session_user.first_name or '')} {html.escape(session_user.last_name or '')}</a>",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}")]]) ,
             parse_mode=ParseMode.HTML
         )
         
@@ -4345,13 +4350,14 @@ async def test_ping_cb_handler(c: Client, cb: CallbackQuery):
         )
 
 
-@Altruix.bot.on_callback_query(filters.regex("export_phone_(\\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^export_phone_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def export_phone_cb_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     user = cb.from_user
     user_id = user.id
     index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2)) if cb.matches[0].group(2) else 1
 
     if index >= len(Altruix.clients):
         return await cb.answer("Session tidak ditemukan.", show_alert=True)
@@ -4397,7 +4403,10 @@ async def export_phone_cb_handler(c: Client, cb: CallbackQuery):
             }
         )
         
-        await cb.message.edit("✅ Nomor telepon dikirim ke pesan pribadi Anda.")
+        await cb.message.edit(
+            f"✅ Nomor HP untuk sesi {index + 1} telah dikirim ke pesan pribadi Anda.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}")]])
+        )
         
     except Exception as e:
         error_text = (
@@ -4422,13 +4431,14 @@ async def export_phone_cb_handler(c: Client, cb: CallbackQuery):
         )
 
 
-@Altruix.bot.on_callback_query(filters.regex(r"^export_session_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^export_session_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def export_session_cb_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     user = cb.from_user
     user_id = user.id
     index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2)) if cb.matches[0].group(2) else 1
 
     if index >= len(Altruix.clients):
         return await cb.answer("Session tidak ditemukan.", show_alert=True)
@@ -4464,7 +4474,10 @@ async def export_session_cb_handler(c: Client, cb: CallbackQuery):
             True, None, {'Aksi': 'Export session berhasil'}
         )
         
-        await cb.message.edit("✅ Session dikirim ke pesan pribadi Anda.")
+        await cb.message.edit(
+            "✅ Session dikirim ke pesan pribadi Anda.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}")]])
+        )
         
     except Exception as e:
         error_text = (
@@ -4547,15 +4560,23 @@ async def unlink_confirm_handler(c: Client, cb: CallbackQuery):
     """Eksekusi unlink setelah konfirmasi tombol"""
     if not await check_authorization(cb): return
     index = int(cb.matches[0].group(1))
-    await cb.answer("Processing...", show_alert=False)
     
     try:
         await cb.message.edit(f"⏳ {gt('unlink_session')}...")
-        await Altruix.remove_session(index)
+        await Altruix.remove_session(index, user=cb.from_user)
+        
+        # Answer only once at the end with the success alert
+        # This avoiding "QUERY_ID_INVALID" error from double answer
         await cb.answer("Sesi berhasil dihapus. Restarting...", show_alert=True)
+        
         # ✅ REFINED: Sebaiknya restart agar sesi benar-benar bersih dari list memori di semua plugin
         await Altruix._restart(soft=True)
     except Exception as e:
+        # If edit fails, the query might still be valid, try to answer with error
+        try:
+            await cb.answer(f"❌ Error: {e}", show_alert=True)
+        except:
+            pass
         await cb.message.edit(f"❌ Gagal menghapus sesi: {e}")
 
 
