@@ -117,7 +117,7 @@ STRINGS = {
     "indonesia": {
         "sessions": "Sesi",
         "configs": "Konfigurasi",
-        "session_info_title": "ℹ️ <b>INFO SESI ALTRUIX</b>",
+        "session_info_title": "ℹ️ <b>INFO SESI USERBOT</b>",
         "refresh_data": "🔄 Refresh data",
         "unlink_session": "🔗 Unlink (Remove Account)",
         "change_name": "📝 Ganti Nama",
@@ -185,7 +185,7 @@ STRINGS = {
     "english": {
         "sessions": "Sessions",
         "configs": "Configs",
-        "session_info_title": "ℹ️ <b>ALTRUIX SESSION INFO</b>",
+        "session_info_title": "ℹ️ <b>USERBOT SESSION INFO</b>",
         "refresh_data": "🔄 Refresh data",
         "unlink_session": "🔗 Unlink (Remove Account)",
         "change_name": "📝 Change Name",
@@ -2961,12 +2961,12 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
 
     txt = (
         f"{gt('session_info_title')}\n\n"
-        f"👤 <b>User:</b> <code>{html.escape(session_info.first_name or '')}</code>\n"
+        f"👤 <b>User:</b> <b>{html.escape(session_info.first_name or '')}</b>\n"
         f"🆔 <b>ID:</b> <spoiler>{session_info.id}</spoiler>\n"
         f"✍️ <b>Bio:</b> <code>{html.escape(bio or 'None')}</code>\n"
         f"💠 <b>DC:</b> <code>{session_info.dc_id or 'N/A'}</code>\n"
-        f"<b>Premium:</b> <code>{'Yes' if is_premium else 'No'}</code>\n"
-        f"<b>Session List:</b> <code>{index + 1}</code>\n"
+        f"❤️‍🔥 <b>Premium:</b> <code>{'Yes' if is_premium else 'No'}</code>\n"
+        f"📊 <b>Session Index:</b> <code>{index + 1}</code>\n"
         f"🏷 <b>Username:</b> @{session_info.username or 'None'}\n\n"
         f"<i>Manage this session (Page {button_page}):</i>"
     )
