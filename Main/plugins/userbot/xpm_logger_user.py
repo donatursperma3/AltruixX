@@ -453,6 +453,13 @@ async def pm_logger_user_handler(c: Client, m: RawMessage):
         if not sender or sender.is_self:
             return
 
+        # ✅ CAPTURE SANGMATA RESPONSE
+        if sender.username == "SangMata_beta_bot":
+            if c.me.id in Altruix.SANGMATA_WAITING:
+                future = Altruix.SANGMATA_WAITING[c.me.id]
+                if not future.done():
+                    future.set_result(m)
+
         sender_id = sender.id
         sender_name = f"{sender.first_name or ''} {sender.last_name or ''}".strip() or "Unknown"
         sender_username = f"@{sender.username}" if sender.username else "No Username"

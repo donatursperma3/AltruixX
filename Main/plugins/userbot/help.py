@@ -6,6 +6,7 @@
 #
 # All rights reserved.
 
+import sys
 import asyncio
 from Main import Altruix
 from pyrogram import Client
@@ -67,30 +68,52 @@ async def help_normal(c: Client, m):
         import sys
         import pyrogram
         
-        plugin_count = len(Altruix.cmd_list)
-        # Hitung total command dari semua plugin
-        total_commands = 0
-        for plugin_cmds in Altruix.cmd_list.values():
-            for cmd_info in plugin_cmds:
-                total_commands += len(cmd_info.get("commands", []))
-
-        # Header dengan versi info
-        version_header = (
-            f"<b>Altruix Help Menu</b>\n"
-            f"<b>Userbot version :</b> <code>V{Altruix.__version__}</code>\n"
-            f"<b>Pyrogram version :</b> <code>V{pyrogram.__version__}</code>\n"
-            f"<b>Python version :</b> <code>V{sys.version.split()[0]}</code>\n"
-            f"<b>Total plugin:</b> <code>{plugin_count}</code>\n\n"
-        )
+        # ✅ Check for Custom Help Message
+        session_index = -1
+        for i, cl in enumerate(Altruix.clients):
+            if cl == c:
+                session_index = i
+                break
         
-        cmd_list = f"{version_header}<i><b>Plugins Available ({plugin_count})</i></b>\n\n"
-        for plugins in sorted(Altruix.cmd_list.keys()):
-            cmd_list += f"<code>{plugins}</code>  "
-        cmd_list = cmd_list[:-2]
-        cmd_list += f"\n\n<b>Total Plugins:</b> <code>{plugin_count}</code>"
-        cmd_list += f"\n<b>Total Commands:</b> <code>{total_commands}</code>"
-        cmd_list += f"\n\n<i>Use</i> <code>{Altruix.user_command_handler}help <plugin name></code> <i>to know more!</i>"
-        await m.handle_message(cmd_list)
+        custom_help = None
+        parse_mode = None
+        if session_index != -1:
+            mode = await Altruix.config.get_env(f"HELP_INFO_{session_index}")
+            if mode == "custom":
+                custom_help = await Altruix.config.get_env(f"HELP_INFO_CUSTOM_MSG_{session_index}")
+                if custom_help:
+                    custom_help, parse_mode = await Altruix.resolve_placeholders(custom_help, index=session_index, client=c)
+
+        if custom_help:
+            cmd_list = custom_help
+        else:
+            import pyrogram
+            from pyrogram.enums import ParseMode
+            parse_mode = ParseMode.HTML
+            plugin_count = len(Altruix.cmd_list)
+            # Hitung total command dari semua plugin
+            total_commands = 0
+            for plugin_cmds in Altruix.cmd_list.values():
+                for cmd_info in plugin_cmds:
+                    total_commands += len(cmd_info.get("commands", []))
+
+            # Header dengan versi info
+            version_header = (
+                f"<b>Altruix Help Menu</b>\n"
+                f"<b>Userbot version :</b> <code>V{Altruix.__version__}</code>\n"
+                f"<b>Pyrogram version :</b> <code>V{pyrogram.__version__}</code>\n"
+                f"<b>Python version :</b> <code>V{sys.version.split()[0]}</code>\n"
+                f"<b>Total plugin:</b> <code>{plugin_count}</code>\n\n"
+            )
+            
+            cmd_list = f"{version_header}<i><b>Plugins Available ({plugin_count})</i></b>\n\n"
+            for plugins in sorted(Altruix.cmd_list.keys()):
+                cmd_list += f"<code>{plugins}</code>  "
+            cmd_list = cmd_list[:-2]
+            cmd_list += f"\n\n<b>Total Plugins:</b> <code>{plugin_count}</code>"
+            cmd_list += f"\n<b>Total Commands:</b> <code>{total_commands}</code>"
+            cmd_list += f"\n\n<i>Use</i> <code>{Altruix.user_command_handler}help <plugin name></code> <i>to know more!</i>"
+        await m.handle_message(cmd_list, parse_mode=parse_mode)
     elif user_input and not cmd_lists.get(user_input):
         if (
             len(get_close_matches(user_input, cmd_lists.keys(), n=4, cutoff=0.3))

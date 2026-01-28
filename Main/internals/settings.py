@@ -173,7 +173,9 @@ STRINGS = {
         "export_phones": "📲 Ekspor Semua No. HP",
         "refresh_session_info": "🔄 Segarkan Info Sesi",
         "settings_text": "<b>🛠️ Pengaturan Altruix</b>",
-        "mention_logic": "Logika Mention"
+        "mention_logic": "Logika Mention",
+        "next": "Selanjutnya ➡️",
+        "prev": "⬅️ Sebelumnya"
     },
     "english": {
         "sessions": "Sessions",
@@ -234,7 +236,9 @@ STRINGS = {
         "export_phones": "📲 Export All Phones",
         "refresh_session_info": "🔄 Refresh Session Info",
         "settings_text": "<b>🛠️ Altruix Settings</b>",
-        "mention_logic": "Mention Logic"
+        "mention_logic": "Mention Logic",
+        "next": "Next ➡️",
+        "prev": "⬅️ Prev"
     }
 }
 
@@ -859,6 +863,26 @@ async def user_text_handler(c: Client, m: Message):
                 f"✅ <b>Startup message berhasil diupdate!</b>\n\n"
                 f"<code>{html.escape(text)}</code>",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Kembali", callback_data=f"startup_custom_menu_{index}_{page}")]])
+            )
+            return
+
+        # ✅ Handle Custom Help Message Input
+        if state['step'] == 'waiting_help_custom_msg':
+            index = state['session_index']
+            page = state['page']
+            
+            # Save to DB
+            key = f"HELP_INFO_CUSTOM_MSG_{index}"
+            await Altruix.config.sync_env_to_db(key, text, upsert=True)
+            setattr(Altruix.config, key, text)
+            
+            # Clear state
+            del user_privacy_state[user_id]
+            
+            await m.reply(
+                f"✅ <b>Help info message berhasil diupdate!</b>\n\n"
+                f"<code>{html.escape(text)}</code>",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Kembali", callback_data=f"help_info_custom_menu_{index}_{page}")]])
             )
             return
 
@@ -2871,21 +2895,26 @@ async def test_ping_all_execute_handler(c: Client, cb: CallbackQuery):
     )
 
 
-@Altruix.bot.on_callback_query(filters.regex("session_info_(\\d+)_(\\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^session_info_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
-async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = None, callback_page: int = None):
+async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = None, callback_page: int = None, button_page: int = 1):
     if not await check_authorization(cb): return
     try:
         await cb.answer()
     except:
         pass
     
-    if index is None or callback_page is None:
-        if not cb.matches:
-            await cb.message.edit("Invalid callback.")
-            return
-        index = int(cb.matches[0].group(1))
-        callback_page = int(cb.matches[0].group(2))
+    data = cb.matches[0]
+    num_groups = len(data.groups())
+    
+    if index is None:
+        index = int(data.group(1))
+    if callback_page is None:
+        callback_page = int(data.group(2))
+    
+    # 🕵️ Safe group access for optional button_page
+    if button_page == 1 and num_groups >= 3 and data.group(3):
+        button_page = int(data.group(3))
 
     if index >= len(Altruix.clients):
         await cb.message.edit("Session not found.")
@@ -2916,7 +2945,7 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
     startup_status = status_map.get(str(startup_state).lower(), "✅ DEFAULT")
 
     txt = (
-        "ℹ️ <b>SESSION INFO</b>\n\n"
+        f"{gt('session_info_title')}\n\n"
         f"👤 <b>User:</b> <code>{html.escape(session_info.first_name or '')}</code>\n"
         f"🆔 <b>ID:</b> <spoiler>{session_info.id}</spoiler>\n"
         f"✍️ <b>Bio:</b> <code>{html.escape(bio or 'None')}</code>\n"
@@ -2924,98 +2953,91 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
         f"<b>Premium:</b> <code>{'Yes' if is_premium else 'No'}</code>\n"
         f"<b>Session List:</b> <code>{index + 1}</code>\n"
         f"🏷 <b>Username:</b> @{session_info.username or 'None'}\n\n"
-        f"<i>Manage this session using the buttons below:</i>"
+        f"<i>Manage this session (Page {button_page}):</i>"
     )
 
-    # Susun buttons
-    buttons = [
-        # Baris 1: Refresh dan Unlink
-        [
-            InlineKeyboardButton(gt("refresh_data"), f"gen_conf_refresh_session_info_{index}_{callback_page}"),
-            InlineKeyboardButton(gt("unlink_session"), f"unlink_session_{index}"),
-        ],
-        # Baris 2: Profile Management
-        [
-             InlineKeyboardButton("✏️ Change Name", f"change_name_menu_{index}_{callback_page}"),
-             InlineKeyboardButton(gt("change_bio"), f"gen_conf_change_bio_{index}_{callback_page}"),
-        ],
-        [
-             InlineKeyboardButton(gt("change_username"), f"gen_conf_change_username_{index}_{callback_page}"),
-             InlineKeyboardButton(gt("change_profile_photo"), f"gen_conf_change_profile_photo_{index}_{callback_page}"),
-        ],
-        [
-             InlineKeyboardButton(gt("delete_all_photos"), f"gen_conf_delete_all_profile_photos_{index}_{callback_page}"),
-        ],
-        # Row 2: Media & Downloads
-        [
-            InlineKeyboardButton(gt("download_story"), f"gen_conf_dlstory_session_input_{index}_{callback_page}"),
-            InlineKeyboardButton(gt("download_content"), f"gen_conf_dl_content_input_{index}_{callback_page}"),
-        ],
-        [
-            InlineKeyboardButton(gt("download_user_photo"), f"gen_conf_dl_uphoto_start_{index}_{callback_page}"),
-            InlineKeyboardButton(gt("download_my_photo"), f"gen_conf_send_profile_photo_{index}_{callback_page}"),
-        ],
-        # Row 3: Account Security & Utility
-        [
-            InlineKeyboardButton(gt("export_session"), f"gen_conf_export_session_{index}_{callback_page}"),
-            InlineKeyboardButton(gt("export_phone"), f"gen_conf_export_phone_{index}_{callback_page}"),
-        ],
-        [
-            InlineKeyboardButton(gt("test_ping"), f"gen_conf_test_ping_{index}_{callback_page}"),
-            InlineKeyboardButton("🔍 Track Profile", f"track_profile_start_{index}_{callback_page}"),
-        ],
-        [
-            InlineKeyboardButton(gt("check_limit"), f"check_limit_confirm_{index}_{callback_page}"),
-            InlineKeyboardButton(gt("view_sessions"), f"gen_conf_view_all_sessions_{index}_{callback_page}"),
-        ],
-        # Row 4: Group & Message Management
-        [
-            InlineKeyboardButton(gt("join_group"), f"gen_conf_join_chat_input_{index}_{callback_page}"),
-            InlineKeyboardButton(gt("leave_group"), f"gen_conf_leave_chat_input_{index}_{callback_page}"),
-        ],
-        [
-            InlineKeyboardButton(gt("purge_my_msg"), f"gen_conf_purge_msg_start_{index}_{callback_page}"),
-            InlineKeyboardButton(gt("send_message"), f"gen_conf_send_message_input_{index}_{callback_page}"),
-        ],
-        # Row 5: Logs & Controls
-        [
-            InlineKeyboardButton("🔒 Privacy & Security", f"privacy_menu_{index}_{callback_page}"),
-            InlineKeyboardButton("📊 Chat Stats", f"gen_conf_chat_stats_scan_{index}_{callback_page}"),
-        ],
-        [
-            InlineKeyboardButton(gt("pm_logger_control"), f"pml_menu_{index}_{callback_page}"),
-            InlineKeyboardButton(gt("mention_control"), f"mnt_menu_{index}_{callback_page}"),
-        ],
-        [
-            InlineKeyboardButton(gt("join_logger_control"), f"joinl_menu_{index}_{callback_page}"),
-            InlineKeyboardButton(gt("cmd_logger_control"), f"cmdl_menu_{index}_{callback_page}"),
-        ],
-        [
-            InlineKeyboardButton(gt("recent_messages"), f"gen_conf_recent_messages_menu_{index}_{callback_page}"),
-            InlineKeyboardButton("🚀 Create Group", f"laucreate_menu_{index}_{callback_page}"),
-        ],
-        [
-            InlineKeyboardButton(gt("view_mentions"), f"gen_conf_view_mentions_menu_{index}_{callback_page}"),
-            InlineKeyboardButton(gt("join_log_group"), f"join_log_group_{index}"),
-        ],
-        [
-            InlineKeyboardButton(f"🚀 Startup: {startup_status}", f"toggle_startup_msg_{index}_{callback_page}"),
-            InlineKeyboardButton("📝 Edit Custom Msg", f"startup_custom_menu_{index}_{callback_page}"),
-        ],
-        # Row 6: Advanced Tools
-        [
-            InlineKeyboardButton("🐍 Eval Python", f"eval_session_{index}_{callback_page}"),
-            InlineKeyboardButton("🖥️ Exec Terminal", f"exec_session_{index}_{callback_page}"),
-        ],
-        # Back button
-        [
-            InlineKeyboardButton(gt("back"), f"sessions_list_{callback_page}"),
-        ],
+    # All available buttons
+    all_buttons = [
+        # Account Actions
+        InlineKeyboardButton(gt("refresh_data"), f"gen_conf_refresh_session_info_{index}_{callback_page}"),
+        InlineKeyboardButton(gt("unlink_session"), f"unlink_session_{index}"),
+        InlineKeyboardButton("✏️ Change Name", f"change_name_menu_{index}_{callback_page}"),
+        InlineKeyboardButton(gt("change_bio"), f"gen_conf_change_bio_{index}_{callback_page}"),
+        InlineKeyboardButton(gt("change_username"), f"gen_conf_change_username_{index}_{callback_page}"),
+        InlineKeyboardButton(gt("change_profile_photo"), f"gen_conf_change_profile_photo_{index}_{callback_page}"),
+        InlineKeyboardButton(gt("delete_all_photos"), f"gen_conf_delete_all_profile_photos_{index}_{callback_page}"),
+        
+        # Tools & Downloads
+        InlineKeyboardButton(gt("download_story"), f"gen_conf_dlstory_session_input_{index}_{callback_page}"),
+        InlineKeyboardButton(gt("download_content"), f"gen_conf_dl_content_input_{index}_{callback_page}"),
+        InlineKeyboardButton(gt("download_user_photo"), f"gen_conf_dl_uphoto_start_{index}_{callback_page}"),
+        InlineKeyboardButton(gt("download_my_photo"), f"gen_conf_send_profile_photo_{index}_{callback_page}"),
+        
+        # Info & Security
+        InlineKeyboardButton(gt("export_session"), f"gen_conf_export_session_{index}_{callback_page}"),
+        InlineKeyboardButton(gt("export_phone"), f"gen_conf_export_phone_{index}_{callback_page}"),
+        InlineKeyboardButton(gt("test_ping"), f"gen_conf_test_ping_{index}_{callback_page}"),
+        InlineKeyboardButton("🔍 Track Profile", f"track_profile_start_{index}_{callback_page}"),
+        InlineKeyboardButton(gt("check_limit"), f"check_limit_confirm_{index}_{callback_page}"),
+        InlineKeyboardButton(gt("view_sessions"), f"gen_conf_view_all_sessions_{index}_{callback_page}"),
+        
+        # Group & Msg
+        InlineKeyboardButton(gt("join_group"), f"gen_conf_join_chat_input_{index}_{callback_page}"),
+        InlineKeyboardButton(gt("leave_group"), f"gen_conf_leave_chat_input_{index}_{callback_page}"),
+        InlineKeyboardButton(gt("purge_my_msg"), f"gen_conf_purge_msg_start_{index}_{callback_page}"),
+        InlineKeyboardButton(gt("send_message"), f"gen_conf_send_message_input_{index}_{callback_page}"),
+        InlineKeyboardButton("📊 Chat Stats", f"gen_conf_chat_stats_scan_{index}_{callback_page}"),
+        
+        # Logs & Monitoring
+        InlineKeyboardButton(gt("pm_logger_control"), f"pml_menu_{index}_{callback_page}"),
+        InlineKeyboardButton(gt("mention_control"), f"mnt_menu_{index}_{callback_page}"),
+        InlineKeyboardButton(gt("join_logger_control"), f"joinl_menu_{index}_{callback_page}"),
+        InlineKeyboardButton(gt("cmd_logger_control"), f"cmdl_menu_{index}_{callback_page}"),
+        InlineKeyboardButton(gt("recent_messages"), f"gen_conf_recent_messages_menu_{index}_{callback_page}"),
+        InlineKeyboardButton(gt("view_mentions"), f"gen_conf_view_mentions_menu_{index}_{callback_page}"),
+        InlineKeyboardButton(gt("join_log_group"), f"join_log_group_{index}"),
+        
+        # Advanced & Settings
+        InlineKeyboardButton(f"🚀 Startup: {startup_status}", f"toggle_startup_msg_{index}_{callback_page}"),
+        InlineKeyboardButton("🚀 Create Group", f"laucreate_menu_{index}_{callback_page}"),
+        InlineKeyboardButton("📝 Edit Custom Msg", f"startup_custom_menu_{index}_{callback_page}"),
+        InlineKeyboardButton("🔒 Privacy & Security", f"privacy_menu_{index}_{callback_page}"),
+        InlineKeyboardButton(f"🚀 Help Info: {await Altruix.config.get_env(f'HELP_INFO_{index}') or 'default'}", f"toggle_help_info_{index}_{callback_page}"),
+        InlineKeyboardButton("📝 Edit Help Msg", f"help_info_custom_menu_{index}_{callback_page}"),
+        InlineKeyboardButton("🐍 Eval Python", f"eval_session_{index}_{callback_page}"),
+        InlineKeyboardButton("🖥️ Exec Terminal", f"exec_session_{index}_{callback_page}"),
     ]
+
+    # Pagination Logic
+    buttons_per_page = 10
+    total_pages = (len(all_buttons) + buttons_per_page - 1) // buttons_per_page
+    
+    start = (button_page - 1) * buttons_per_page
+    end = start + buttons_per_page
+    current_page_buttons = all_buttons[start:end]
+    
+    # Render buttons in 2 columns
+    kb_buttons = []
+    for i in range(0, len(current_page_buttons), 2):
+        kb_buttons.append(current_page_buttons[i:i+2])
+        
+    # Navigation Buttons
+    nav_row = []
+    if button_page > 1:
+        nav_row.append(InlineKeyboardButton(gt("prev"), f"session_info_{index}_{callback_page}_{button_page-1}"))
+    
+    if button_page < total_pages:
+        nav_row.append(InlineKeyboardButton(gt("next"), f"session_info_{index}_{callback_page}_{button_page+1}"))
+        
+    if nav_row:
+        kb_buttons.append(nav_row)
+        
+    # Final row: Back
+    kb_buttons.append([InlineKeyboardButton(gt("back"), f"sessions_list_{callback_page}")])
 
     await cb.message.edit(
         text=txt,
-        reply_markup=InlineKeyboardMarkup(buttons),
+        reply_markup=InlineKeyboardMarkup(kb_buttons),
         parse_mode=ParseMode.HTML
     )
 
@@ -6574,8 +6596,13 @@ async def sys_restart_handler(c: Client, cb: CallbackQuery):
     await cb.answer("Restarting...", show_alert=True)
     try:
         import sys
+        import subprocess
         args = [sys.executable, "-m", "Main"]
-        os.execv(sys.executable, args)
+        if os.name == 'nt':
+            subprocess.Popen(args, creationflags=subprocess.CREATE_NEW_CONSOLE)
+            sys.exit(0)
+        else:
+            os.execv(sys.executable, args)
     except Exception as e:
         await cb.answer(f"Failed to restart: {e}", show_alert=True)
 
@@ -7193,6 +7220,34 @@ async def toggle_startup_msg_handler(c: Client, cb: CallbackQuery):
     await sessions_info_cb_handler(c, cb, index=index, callback_page=page)
 
 
+@Altruix.bot.on_callback_query(filters.regex(r"^toggle_help_info_(\d+)_(\d+)$"))
+@log_errors
+async def toggle_help_info_handler(c: Client, cb: CallbackQuery):
+    if not await check_authorization(cb): return
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    key = f"HELP_INFO_{index}"
+    
+    current = await Altruix.config.get_env(key)
+    if current is None:
+        current = "default"
+    
+    states = ["default", "custom"]
+    try:
+        new_idx = (states.index(str(current).lower()) + 1) % len(states)
+    except ValueError:
+        new_idx = 0 # default
+        
+    new_val = states[new_idx]
+    
+    # Persist to DB
+    await Altruix.config.sync_env_to_db(key, new_val, upsert=True)
+    setattr(Altruix.config, key, new_val)
+    
+    await cb.answer(f"Help Info Mode: {new_val.upper()}")
+    await sessions_info_cb_handler(c, cb, index=index, callback_page=page)
+
+
 @Altruix.bot.on_callback_query(filters.regex(r"^startup_custom_menu_(\d+)_(\d+)$"))
 @log_errors
 async def startup_custom_menu_handler(c: Client, cb: CallbackQuery):
@@ -7208,12 +7263,17 @@ async def startup_custom_menu_handler(c: Client, cb: CallbackQuery):
         f"<b>🚀 Custom Startup Message Info</b>\n\n"
         f"Anda dapat mengatur pesan pembuka kustom untuk sesi ini.\n\n"
         f"<b>Placeholders yang didukung:</b>\n"
-        f"• <code>{{first_name}}</code>: Nama depan\n"
-        f"• <code>{{last_name}}</code>: Nama belakang\n"
-        f"• <code>{{mention_first_name}}</code>: Nama depan (Hyperlink)\n"
-        f"• <code>{{mention_last_name}}</code>: Nama belakang (Hyperlink)\n"
-        f"• <code>{{user_name}}</code>: Username akun\n"
-        f"• <code>{{user_id}}</code>: ID akun\n\n"
+        f"• <code>{{first_name}}</code> / <code>(first name)</code>\n"
+        f"• <code>{{last_name}}</code> / <code>(last name)</code>\n"
+        f"• <code>{{mention}}</code> / <code>(mention)</code>\n"
+        f"• <code>{{user_name}}</code> / <code>(user name)</code>\n"
+        f"• <code>{{user_id}}</code> / <code>(user id)</code>\n"
+        f"• <code>{{ub_version}}</code> / <code>(userbot version)</code>\n"
+        f"• <code>{{pyrogram_version}}</code> / <code>(pyrogram version)</code>\n"
+        f"• <code>{{python_version}}</code> / <code>(python version)</code>\n"
+        f"• <code>{{ub_plugins}}</code> / <code>(userbot plugins)</code>\n"
+        f"• <code>{{bot_plugins}}</code> / <code>(bot plugins)</code>\n"
+        f"• <code>{{index}}</code> / <code>(session index)</code>\n\n"
         f"<b>Pesan Saat Ini:</b>\n<code>{html.escape(str(current_msg))}</code>\n\n"
         f"<i>Gunakan tombol di bawah untuk mengubah pesan atau kembali.</i>"
     )
@@ -7228,6 +7288,70 @@ async def startup_custom_menu_handler(c: Client, cb: CallbackQuery):
     ]
     
     await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^help_info_custom_menu_(\d+)_(\d+)$"))
+@log_errors
+async def help_info_custom_menu_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk menu kustomisasi help info message"""
+    if not await check_authorization(cb): return
+    await cb.answer()
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    
+    current_msg = await Altruix.config.get_env(f"HELP_INFO_CUSTOM_MSG_{index}") or "(Belum diatur)"
+    
+    text = (
+        f"<b>❇️ Custom Help Info Message Info</b>\n\n"
+        f"Anda dapat mengatur pesan help menu kustom untuk sesi ini.\n\n"
+        f"<b>Placeholders yang didukung:</b>\n"
+        f"• <code>{{ub_version}}</code> / <code>(userbot version)</code>\n"
+        f"• <code>{{pyrogram_version}}</code> / <code>(pyrogram version)</code>\n"
+        f"• <code>{{python_version}}</code> / <code>(python version)</code>\n"
+        f"• <code>{{ub_plugins}}</code> / <code>(userbot plugins)</code>\n"
+        f"• <code>{{bot_plugins}}</code> / <code>(bot plugins)</code>\n"
+        f"• <code>{{mention}}</code> / <code>(mention session)</code>\n"
+        f"• <code>{{index}}</code> / <code>(session index)</code>\n\n"
+        f"<b>Pesan Saat Ini:</b>\n<code>{html.escape(str(current_msg))}</code>\n\n"
+        f"<i>Gunakan tombol di bawah untuk mengubah pesan atau kembali.</i>"
+    )
+    
+    buttons = [
+        [
+            InlineKeyboardButton("📝 Edit Help Message", f"help_info_custom_input_{index}_{page}"),
+        ],
+        [
+            InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}"),
+        ]
+    ]
+    
+    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^help_info_custom_input_(\d+)_(\d+)$"))
+@log_errors
+async def help_info_custom_input_handler(c: Client, cb: CallbackQuery):
+    """Memulai proses input pesan help kustom"""
+    if not await check_authorization(cb): return
+    await cb.answer()
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    user_id = cb.from_user.id
+    
+    user_privacy_state[user_id] = {
+        'session_index': index,
+        'page': page,
+        'step': 'waiting_help_custom_msg'
+    }
+    
+    await cb.message.edit(
+        f"⌨️ <b>Input Custom Help Message</b>\n\n"
+        f"Silakan kirim pesan help menu kustom Anda sekarang.\n"
+        f"Gunakan placeholders seperti <code>(userbot version)</code>, <code>{{ub_version}}</code> dll.\n\n"
+        f"Ketik <code>/cancel</code> untuk membatalkan.",
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("cancel"), f"help_info_custom_menu_{index}_{page}")]])
+    )
 
 
 @Altruix.bot.on_callback_query(filters.regex(r"^startup_custom_input_(\d+)_(\d+)$"))
@@ -7575,10 +7699,25 @@ async def track_profile_confirm_cb_handler(c: Client, cb: CallbackQuery):
         # Kirim perintah ke SangMata @SangMata_beta_bot
         await session_client.send_message("SangMata_beta_bot", f"{target_id}")
         
+        # ✅ TUNGGU RESPON DARI SANGMATA
+        Altruix.SANGMATA_WAITING[session_client.me.id] = asyncio.Future()
+        
+        try:
+            # Tunggu maksimal 15 detik
+            response_msg = await asyncio.wait_for(Altruix.SANGMATA_WAITING[session_client.me.id], timeout=15)
+            # Dapatkan teks respon
+            sangmata_text = response_msg.text or response_msg.caption or "[No text response]"
+            status_summary = f"✅ <b>Respon sangmata diterima!</b>\n\n<blockquote>{html.escape(sangmata_text)}</blockquote>"
+        except asyncio.TimeoutExpired:
+            status_summary = "⚠️ <b>Timeout:</b> SangMata tidak merespon dalam 15 detik. Silakan cek chat secara manual."
+        finally:
+            if session_client.me.id in Altruix.SANGMATA_WAITING:
+                del Altruix.SANGMATA_WAITING[session_client.me.id]
+
         await cb.message.edit(
-            f"✅ <b>Perintah Track Terkirim!</b>\n\n"
-            f"Perintah <code>/id {html.escape(target_id)}</code> telah dikirim ke @SangMata_beta_bot via Session {index + 1}.\n"
-            f"Silakan cek (Log Group) atau tunggu respon dari SangMata.",
+            f"🔍 <b>Track Profile Result</b>\n\n"
+            f"{status_summary}\n\n"
+            f"<i>Perintah dikirim via Session {index + 1}.</i>",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔙 Menu Sesi", callback_data=f"session_info_{index}_{page}")]
             ]),
@@ -7593,7 +7732,7 @@ async def track_profile_confirm_cb_handler(c: Client, cb: CallbackQuery):
             f"• User: {cb.from_user.mention}\n"
             f"• Target: <code>{html.escape(target_id)}</code>\n"
             f"• Via Session: <code>{index + 1}</code>\n"
-            f"• Status: ✅ Perintah terkirim ke @SangMata_beta_bot"
+            f"• Status: ✅ Selesai (lihat detail di Bot Assistant)"
         )
         
     except Exception as e:

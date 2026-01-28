@@ -53,6 +53,7 @@ from pyrogram.errors.exceptions.bad_request_400 import (
     MessageEmpty, PeerIdInvalid, MessageTooLong, MessageIdInvalid,
     MessageNotModified, UserNotParticipant)
 from pyrogram.types import LinkPreviewOptions
+from pyrogram.enums import ParseMode
 from pyrogram.errors import FloodWait
 import psutil
 import platform
@@ -122,7 +123,7 @@ class AltruixClient:
         self.clients: List[Client] = []
         self.cmd_list = {}
         self.all_lang_strings = {}
-        self.__version__ = "0.0.4.49"
+        self.__version__ = "0.0.4.52"
         self.selected_lang = "english"
         self.local_lang_file = "./Main/localization"
         self.cmd_list = {}
@@ -148,6 +149,7 @@ class AltruixClient:
         
         # Shared state for PM and Mention Loggers
         self.PM_LOG_CACHE = {}
+        self.SANGMATA_WAITING = {}
         self.REPLY_AS_MENTIONED_WAITING = {}
         # Daily limit tracking: user_id -> date_str -> count
         self.USER_REPLY_COUNTS = defaultdict(lambda: defaultdict(int))
@@ -1209,6 +1211,9 @@ class AltruixClient:
                             client_type = "🤖 Bot" if client == self.bot else "🦸🏼 Ubot"
                             mention_user = f'<a href="tg://user?id={user_id}">{name}</a>'
                             total_user_sessions = len(self.clients)
+                            final_message = ""
+                            parse_mode = ParseMode.HTML
+                            
                             if client == self.bot:
                                 base_text = f"<b>✅ Altruix Bot Assistant is alive!</b>"
                                 final_message = (
@@ -1231,25 +1236,7 @@ class AltruixClient:
                                 if state == "custom":
                                     custom_msg = await self.config.get_env(f"STARTUP_CUSTOM_MSG_{user_index}")
                                     if custom_msg:
-                                        try:
-                                            # Placeholders
-                                            p_first = me.first_name or ""
-                                            p_last = me.last_name or ""
-                                            p_mention_first = f'<a href="tg://user?id={user_id}">{html.escape(p_first)}</a>'
-                                            p_mention_last = f'<a href="tg://user?id={user_id}">{html.escape(p_last)}</a>'
-                                            p_username = f"@{me.username}" if me.username else ""
-                                            
-                                            final_message = custom_msg.format(
-                                                first_name=p_first,
-                                                last_name=p_last,
-                                                mention_first_name=p_mention_first,
-                                                mention_last_name=p_mention_last,
-                                                user_name=p_username,
-                                                user_id=user_id
-                                            )
-                                        except Exception as fe:
-                                            self.log(f"Error formatting custom startup msg: {fe}", level=30)
-                                            state = "default" # Fallback
+                                        final_message, parse_mode = await self.resolve_placeholders(custom_msg, index=user_index, client=client)
                                     else:
                                         state = "default" # Fallback
                                 
@@ -1259,10 +1246,12 @@ class AltruixClient:
                                         f"{base_text}\n"
                                         f"<b>{client_type}: {mention_user}</b> [ <code>{user_id}</code> ]\n"
                                     )
+                                    parse_mode = ParseMode.HTML
 
                             await client.send_message(
                                 log_chat_id,
                                 final_message,
+                                parse_mode=parse_mode,
                                 link_preview_options=LinkPreviewOptions(is_disabled=True)
                             )
                             await asyncio.sleep(3)
@@ -1484,6 +1473,130 @@ class AltruixClient:
         self.loop.create_task(self.load_all_modules())
         return removed_session_info
 
+    def find_plugin_file(self, plugin_name: str) -> Optional[str]:
+        """Find the file path for a given plugin name."""
+        import os
+        # Check standard locations
+        search_paths = [
+            f"Main/plugins/userbot/{plugin_name}.py",
+            f"Main/plugins/bot/{plugin_name}.py",
+            # Also check underscore version if name has spaces
+            f"Main/plugins/userbot/{plugin_name.replace(' ', '_')}.py",
+            f"Main/plugins/bot/{plugin_name.replace(' ', '_')}.py",
+        ]
+        
+        for path in search_paths:
+            if os.path.exists(path):
+                return path
+        
+        # If not found, try a broader search in the plugins directory
+        import glob
+        all_plugins = glob.glob("Main/plugins/**/*.py", recursive=True)
+        for p in all_plugins:
+            if os.path.basename(p).lower() == f"{plugin_name.lower()}.py" or \
+               os.path.basename(p).lower() == f"{plugin_name.replace(' ', '_').lower()}.py":
+                return p
+                
+        return None
+
+    async def resolve_placeholders(self, text: str, index: int = None, client: Client = None) -> Union[str, tuple[str, Any]]:
+        """Resolve placeholders in custom messages. Returns (text, parse_mode) if detection is requested."""
+        if not text:
+            return "", ParseMode.HTML
+            
+        import pyrogram
+        import platform
+        import glob
+        import html
+        from pyrogram.enums import ParseMode
+        
+        # Determine client and index if not provided
+        if client is None and index is not None and index < len(self.clients):
+            client = self.clients[index]
+        elif client is not None and index is None:
+            try:
+                index = self.clients.index(client)
+            except ValueError:
+                index = -1 # Probably the bot client
+                
+        me = None
+        if client:
+            me = client.myself if hasattr(client, "myself") else await client.get_me()
+            
+        ub_plugins = len(glob.glob("Main/plugins/userbot/*.py"))
+        bot_plugins = len(glob.glob("Main/plugins/bot/*.py"))
+        total_sessions = len(self.clients)
+        
+        # Detect ParseMode
+        parse_mode = ParseMode.HTML
+        if "(md2)" in text:
+            parse_mode = ParseMode.MARKDOWN
+            text = text.replace("(md2)", "")
+        elif "(markdown2)" in text:
+            parse_mode = ParseMode.MARKDOWN
+            text = text.replace("(markdown2)", "")
+        
+        replacements = {
+            # Standard placeholders
+            "ub_version": self.__version__,
+            "pyrogram_version": pyrogram.__version__,
+            "python_version": platform.python_version(),
+            "ub_plugins": ub_plugins,
+            "bot_plugins": bot_plugins,
+            "index": (index + 1) if index is not None and index >= 0 else "N/A",
+            "total_sessions": total_sessions,
+            
+            # Legacy/Requested (userbot version) style
+            "(userbot version)": self.__version__,
+            "(pyrogram version)": pyrogram.__version__,
+            "(python version)": platform.python_version(),
+            "(userbot plugins)": ub_plugins,
+            "(bot plugins)": bot_plugins,
+            "(session index)": (index + 1) if index is not None and index >= 0 else "N/A",
+            "(total sessions)": total_sessions,
+        }
+        
+        if me:
+            first = me.first_name or ""
+            last = me.last_name or ""
+            # Escape only for HTML mode
+            m_first = html.escape(first) if parse_mode == ParseMode.HTML else first
+            mention = f'<a href="tg://user?id={me.id}">{m_first}</a>' if parse_mode == ParseMode.HTML else f"[{first}](tg://user?id={me.id})"
+            username = f"@{me.username}" if me.username else ""
+            
+            replacements.update({
+                "first_name": first,
+                "last_name": last,
+                "mention": mention,
+                "mention_first_name": mention, # Backward compatibility
+                "user_name": username,
+                "user_id": me.id,
+                
+                "(first name)": first,
+                "(last name)": last,
+                "(mention)": mention,
+                "(mention session)": mention,
+                "(mention session/userbot client)": mention,
+                "(user name)": username,
+                "(user id)": me.id,
+            })
+            
+        # Perform replacement for {} style
+        try:
+            # We use a safer way than .format() to avoid KeyError on unknown braces
+            for k, v in replacements.items():
+                if not k.startswith("("):
+                    text = text.replace(f"{{{k}}}", str(v))
+        except Exception as e:
+            self.log(f"Error resolving {{}} placeholders: {e}")
+            
+        # Perform replacement for () style
+        for k, v in replacements.items():
+            if k.startswith("("):
+                text = text.replace(k, str(v))
+                
+        return text, parse_mode
+
     async def _restart(
         self,
         soft=False,
@@ -1495,11 +1608,20 @@ class AltruixClient:
         await self._setup(restart=True)
         if not soft:
             if power_hard:
+                import subprocess
+                self.log("Hard restart initiated...", level=30)
                 args = [sys.executable, "-m", "Main"]
-                os.execle(sys.executable, *args, os.environ)
-            if not self.training_wheels_protocol and not self.clients:
+                if os.name == 'nt':
+                     subprocess.Popen(args, creationflags=subprocess.CREATE_NEW_CONSOLE)
+                     sys.exit(0)
+                else:
+                     os.execv(sys.executable, args)
+                     
+            if not self.training_wheels_protocol and self.clients:
                 for each in self.clients:
-                    await each.restart()
+                    try:
+                        await each.restart()
+                    except: pass
             await self.bot.restart()
             self.start_time = time.time()
         await self.load_all_modules()

@@ -69,24 +69,48 @@ def split_help_text(text: str, max_chars: int = 1500) -> list:
 
 
 @log_errors
-async def get_help_menu(return_all: bool = False):
+async def get_help_menu(return_all: bool = False, user_id: int = None):
     global cache_help_menu, multi_pages
     ub_plugins, bot_plugins = get_total_plugins()
-    help_msg = f"<b><u>❇️ Altruix Userbot Help Menu</u></b>\n" \
-               f"<b>Userbot version :</b> <code>V{Altruix.__version__}</code>\n" \
-               f"<b>Pyrogram version :</b> <code>V{pyrogram.__version__} </code>\n" \
-               f"<b>Python version :</b> <code>V{python_version()}</code>\n" \
-               f"<b>Userbot Plugins :</b> <code>{ub_plugins}</code>\n" \
-               f"<b>Bot Plugins :</b> <code>{bot_plugins}</code>"
+    from pyrogram.enums import ParseMode
+    
+    # ✅ Check for Custom Help Message
+    custom_help = None
+    parse_mode = ParseMode.HTML
+    if user_id:
+        # Find session index
+        session_index = -1
+        for i, cl in enumerate(Altruix.clients):
+            me = getattr(cl, "me", None) or getattr(cl, "myself", None) or (await cl.get_me() if cl.is_initialized else None)
+            if me and me.id == user_id:
+                session_index = i
+                break
+        
+        if session_index != -1:
+            mode = await Altruix.config.get_env(f"HELP_INFO_{session_index}")
+            if mode == "custom":
+                custom_help = await Altruix.config.get_env(f"HELP_INFO_CUSTOM_MSG_{session_index}")
+                if custom_help:
+                    custom_help, parse_mode = await Altruix.resolve_placeholders(custom_help, index=session_index)
 
-    if cache_help_menu:
-        if multi_pages and not return_all:
-             return help_msg, cache_help_menu[0]
-        return help_msg, cache_help_menu
+    if custom_help:
+        help_msg = custom_help
+    else:
+        help_msg = f"<b><u>❇️ Altruix Userbot Help Menu</u></b>\n" \
+                   f"<b>Userbot version :</b> <code>V{Altruix.__version__}</code>\n" \
+                   f"<b>Pyrogram version :</b> <code>V{pyrogram.__version__} </code>\n" \
+                   f"<b>Python version :</b> <code>V{python_version()}</code>\n" \
+                   f"<b>Userbot Plugins :</b> <code>{ub_plugins}</code>\n" \
+                   f"<b>Bot Plugins :</b> <code>{bot_plugins}</code>"
+
     plugins = sorted(list(Altruix._command_help_message_data.keys()))
+    
+    # 🔗 Propagate session_index for all plugin buttons to ensure placeholder accuracy
+    si_str = f"?page=0&si={session_index}" if session_index != -1 else "?page=0"
+    
     ikb = [
         InlineKeyboardButton(
-            plugin.replace("_", " ").title(), callback_data=f"help#{plugin}"
+            plugin.replace("_", " ").title(), callback_data=f"help#{plugin}{si_str}"
         )
         for plugin in plugins
     ]
@@ -96,6 +120,9 @@ async def get_help_menu(return_all: bool = False):
     if len(buttons) > rows:
         buttons = [buttons[i : i + rows] for i in range(0, len(buttons), rows)]
         multi_pages = True
+    
+    close_data = f"close_help_{session_index}" if session_index != -1 else "close_help"
+    
     if multi_pages:
         for page in buttons:
             index = buttons.index(page)
@@ -103,22 +130,24 @@ async def get_help_menu(return_all: bool = False):
                 for j in i:
                     j.callback_data += f"?page={index}"
             page_buttons = [
-                InlineKeyboardButton(str(i + 1), callback_data=f"help#_page?page={i}")
+                InlineKeyboardButton(str(i + 1), callback_data=f"help#_page?page={i}&si={session_index}")
                 for i in range(len(buttons))
             ]
             for i in page_buttons:
                 if i.text == str(index + 1):
                     i.text = f"> {i.text} <"
             page.append(page_buttons)
-            page.append([InlineKeyboardButton("Close", "close_help")])
-    cache_help_menu = buttons
+            page.append([InlineKeyboardButton("Close", close_data)])
+    else:
+        buttons.append([InlineKeyboardButton("Close", close_data)])
+        
     if multi_pages and not return_all:
-        return help_msg, buttons[0]
-    return help_msg, buttons
+        return help_msg, buttons[0], parse_mode
+    return help_msg, buttons, parse_mode
 
 
 @log_errors
-async def get_plugin_data(plugin: str, number: int = 0, sub_page: int = 0):
+async def get_plugin_data(plugin: str, number: int = 0, sub_page: int = 0, user_id: int = None):
     full_text = Altruix._command_help_message_data[plugin.lower()].strip()
     pages = split_help_text(full_text)
     
@@ -133,30 +162,44 @@ async def get_plugin_data(plugin: str, number: int = 0, sub_page: int = 0):
         text += f" [Page {sub_page + 1}/{len(pages)}]"
     text += f"\n\n{pages[sub_page]}"
     
+    session_index = -1
+    if user_id:
+        for i, cl in enumerate(Altruix.clients):
+            me = getattr(cl, "me", None) or getattr(cl, "myself", None) or (await cl.get_me() if not cl.me else cl.me)
+            if me and me.id == user_id:
+                session_index = i
+                break
+                
+    si_suffix = f"&si={session_index}" if session_index != -1 else ""
+    
     buttons = []
     nav_buttons = []
     if len(pages) > 1:
         if sub_page > 0:
-            nav_buttons.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"help#{plugin}?page={number}&sub={sub_page-1}"))
+            nav_buttons.append(InlineKeyboardButton(Altruix.get_string("prev"), callback_data=f"help#{plugin}?page={number}&sub={sub_page-1}{si_suffix}"))
         if sub_page < len(pages) - 1:
-            nav_buttons.append(InlineKeyboardButton("Next ➡️", callback_data=f"help#{plugin}?page={number}&sub={sub_page+1}"))
+            nav_buttons.append(InlineKeyboardButton(Altruix.get_string("next"), callback_data=f"help#{plugin}?page={number}&sub={sub_page+1}{si_suffix}"))
     
     if nav_buttons:
         buttons.append(nav_buttons)
         
-    buttons.append([InlineKeyboardButton("Back", callback_data=f"help#_page?page={number}")])
+    back_data = f"help#_page?page={number}{si_suffix}"
+    buttons.append([InlineKeyboardButton(Altruix.get_string("back"), callback_data=back_data)])
+    buttons.append([InlineKeyboardButton("📤 Send Plugin", callback_data=f"send_plugin#{plugin}?page={number}{si_suffix}")])
     
     return text, InlineKeyboardMarkup(buttons)
 
 
-@Altruix.bot.on_callback_query(filters.regex("close_help"))
+@Altruix.bot.on_callback_query(filters.regex(r"^close_help(?:_(-?\d+))?"))
 @log_errors
 @iuser_check
 async def close_help(c: Client, cq: CallbackQuery):
+    session_index = cq.matches[0].group(1)
+    re_open_data = f"re_open_{session_index}" if session_index else "re_open"
     await cq.edit_message_text(
         "<b>Help Menu Closed 🔐</b>",
         reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton("Re-Open", "re_open")]]
+            [[InlineKeyboardButton("Re-Open", re_open_data)]]
         ),
     )
 
@@ -209,12 +252,12 @@ async def change_lang(c: Client, cb: CallbackQuery):
 async def help(_: Client, iq: InlineQuery):
     plugin: Optional[str] = iq.matches[0].group(1)
     if not plugin:
-        help_msg, buttons = await get_help_menu()
+        help_msg, buttons, parse_mode = await get_help_menu(user_id=iq.from_user.id)
         await iq.answer(
             results=[
                 InlineQueryResultArticle(
                     title="Help Menu",
-                    input_message_content=InputTextMessageContent(help_msg),
+                    input_message_content=InputTextMessageContent(help_msg, parse_mode=parse_mode),
                     reply_markup=InlineKeyboardMarkup(buttons),
                 )
             ]
@@ -245,37 +288,73 @@ async def help(_: Client, iq: InlineQuery):
         )
 
 
-@Altruix.bot.on_callback_query(filters.regex("^re_open"))
+@Altruix.bot.on_callback_query(filters.regex(r"^re_open(?:_(-?\d+))?"))
 @log_errors
 @iuser_check
 async def re_help(c: Client, cq: CallbackQuery):
-    help_msg, buttons = await get_help_menu()
-    await cq.edit_message_text(help_msg, reply_markup=InlineKeyboardMarkup(buttons))
+    session_idx = cq.matches[0].group(1)
+    user_id = cq.from_user.id
+    
+    if session_idx and int(session_idx) != -1:
+        idx = int(session_idx)
+        if idx < len(Altruix.clients):
+            cl = Altruix.clients[idx]
+            me = getattr(cl, "myself", None) or await cl.get_me()
+            user_id = me.id
+
+    help_msg, buttons, parse_mode = await get_help_menu(user_id=user_id)
+    await cq.edit_message_text(help_msg, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=parse_mode)
 
 
-@Altruix.bot.on_callback_query(filters.regex(r"^help(?:#(\w+)\?page=(\d+)(?:&sub=(\d+))?)?$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^help(?:#(\w+)\?page=(\d+)(?:&sub=(\d+))?(?:&si=(-?\d+))?)?$"))
 @log_errors
 @iuser_check
 async def help_callback(_: Client, cq: CallbackQuery):
     data = cq.matches[0]
-    if not data.group(1):
-        help_msg, buttons = await get_help_menu()
+    num_groups = len(data.groups())
+    
+    # 🕵️ Safe group access helper
+    def get_group(idx):
+        try:
+            return data.group(idx) if num_groups >= idx else None
+        except IndexError:
+            return None
+
+    if not get_group(1):
+        help_msg, buttons, parse_mode = await get_help_menu(user_id=cq.from_user.id)
         return await cq.edit_message_text(
-            help_msg, reply_markup=InlineKeyboardMarkup(buttons)
+            help_msg, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=parse_mode
         )
-    text_type = data.group(1)
-    number = int(data.group(2))
-    sub_page = int(data.group(3)) if data.group(3) else 0
+    
+    text_type = get_group(1)
+    number = int(get_group(2)) if get_group(2) else 0
+    sub_page = int(get_group(3)) if get_group(3) else 0
 
     if text_type == "_page":
-        help_msg, buttons = await get_help_menu(return_all=True)
+        session_idx = get_group(4)
+        u_id = cq.from_user.id
+        if session_idx and int(session_idx) != -1:
+            idx = int(session_idx)
+            if idx < len(Altruix.clients):
+                cl = Altruix.clients[idx]
+                me = getattr(cl, "myself", None) or await cl.get_me()
+                u_id = me.id
+                
+        help_msg, buttons, parse_mode = await get_help_menu(return_all=True, user_id=u_id)
         return await cq.edit_message_text(
-            help_msg, reply_markup=InlineKeyboardMarkup(buttons[number])
+            help_msg, reply_markup=InlineKeyboardMarkup(buttons[number]), parse_mode=parse_mode
         )
-    if text_type.lower() not in Altruix._command_help_message_data.keys():
-        return await cq.answer(Altruix.get_string("PLUGIN_404"))
-    
-    text, buttons = await get_plugin_data(text_type, number, sub_page)
+    # Propagate session user_id for Back button and placeholder persistence
+    session_idx = get_group(4)
+    u_id = cq.from_user.id
+    if session_idx and int(session_idx) != -1:
+        idx = int(session_idx)
+        if idx < len(Altruix.clients):
+            cl = Altruix.clients[idx]
+            me = getattr(cl, "me", None) or getattr(cl, "myself", None) or await cl.get_me()
+            u_id = me.id
+            
+    text, buttons = await get_plugin_data(text_type, number, sub_page, user_id=u_id)
     await cq.edit_message_text(text, reply_markup=buttons)
 
 
@@ -283,5 +362,70 @@ async def help_callback(_: Client, cq: CallbackQuery):
 @log_errors
 async def bot_help_handler(c: Client, m: pyrogram.types.Message):
     """Handler for bot help command"""
-    text, markup = await get_help_menu(return_all=False)
-    await m.reply(text, reply_markup=InlineKeyboardMarkup(markup))
+    text, markup, parse_mode = await get_help_menu(return_all=False, user_id=m.from_user.id)
+    await m.reply(text, reply_markup=InlineKeyboardMarkup(markup), parse_mode=parse_mode)
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^send_plugin#([\w_ ]+)\?page=(\d+)"))
+@log_errors
+@iuser_check
+async def send_plugin_confirm(c: Client, cb: CallbackQuery):
+    plugin = cb.matches[0].group(1)
+    page = cb.matches[0].group(2)
+    
+    # Confirmation menu
+    text = (
+        f"<b>📤 Konfirmasi Kirim Plugin</b>\n\n"
+        f"Apakah Anda yakin ingin mengirim file kode sumber untuk plugin <code>{plugin}</code>?\n\n"
+        f"<i>File ini dapat mengandung kode yang sensitif atau penting.</i>"
+    )
+    
+    buttons = [
+        [
+            InlineKeyboardButton("✅ Ya, Kirim", callback_data=f"conf_send_pl#{plugin}#yes?page={page}"),
+            InlineKeyboardButton("❌ Tidak", callback_data=f"conf_send_pl#{plugin}#no?page={page}"),
+        ]
+    ]
+    
+    await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^conf_send_pl#([\w_ ]+)#(yes|no)\?page=(\d+)"))
+@log_errors
+@iuser_check
+async def send_plugin_execute(c: Client, cb: CallbackQuery):
+    plugin = cb.matches[0].group(1)
+    answer = cb.matches[0].group(2)
+    page = int(cb.matches[0].group(3))
+    
+    if answer == "no":
+        # Return to plugin help with user_id persistence
+        text, buttons = await get_plugin_data(plugin, page, user_id=cb.from_user.id)
+        return await cb.edit_message_text(text, reply_markup=buttons)
+        
+    await cb.answer("🔍 Mencari file plugin...", show_alert=False)
+    
+    file_path = Altruix.find_plugin_file(plugin)
+    if not file_path:
+        return await cb.answer(f"❌ File plugin '{plugin}' tidak ditemukan!", show_alert=True)
+        
+    await cb.answer("📤 Mengirim file...", show_alert=False)
+    try:
+        # ✅ FIX: Handle missing cb.message (inline) or potential NoneType
+        target_chat = cb.message.chat.id if cb.message else cb.from_user.id
+        
+        await Altruix.bot.send_document(
+            chat_id=target_chat,
+            document=file_path,
+            caption=f"📦 <b>Plugin File:</b> <code>{plugin}</code>\n"
+                    f"🌿 <b>Path:</b> <code>{file_path}</code>\n\n"
+                    f"Generated by Altruix Assistant."
+        )
+        await cb.answer("✅ Plugin berhasil dikirim!", show_alert=True)
+        
+        # Return to plugin help with user_id persistence
+        text, buttons = await get_plugin_data(plugin, page, user_id=cb.from_user.id)
+        await cb.edit_message_text(text, reply_markup=buttons)
+    except Exception as e:
+        Altruix.log(f"Failed to send plugin {plugin}: {e}", level=40)
+        await cb.answer(f"❌ Gagal mengirim plugin: {str(e)}", show_alert=True)
