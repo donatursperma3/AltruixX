@@ -63,21 +63,21 @@ async def get_or_create_topic(bot_client: Client, chat_id: int, title: str, user
         logger.debug(f"Could not verify if chat {chat_id} is a forum: {e}")
         return None
 
+    # Try to determine which client to use for searching/creating
+    client_to_use = userbot_client if userbot_client else bot_client
+
     # Search for existing topics with this title
     try:
         logger.debug(f"Searching for existing topic '{title}' in {chat_id}")
-        async for topic in bot_client.get_forum_topics(chat_id, query=title):
+        async for topic in client_to_use.get_forum_topics(chat_id, query=title):
             if topic.title.lower() == title.lower():
                 logger.info(f"Found existing topic '{title}' with ID {topic.id}")
                 cache[chat_id_str][title] = topic.id
                 save_cache(cache)
                 return topic.id
     except Exception as e:
-        logger.debug(f"Could not search topics: {e}")
+        logger.debug(f"Could not search topics using {'userbot' if userbot_client else 'bot'}: {e}")
 
-    # Try to create it using userbot if available, otherwise use bot
-    client_to_use = userbot_client if userbot_client else bot_client
-    
     try:
         logger.info(f"Creating new topic '{title}' in {chat_id} using {'userbot' if userbot_client else 'bot'}")
         topic = await client_to_use.create_forum_topic(chat_id, title)

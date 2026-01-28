@@ -89,9 +89,15 @@ async def get_help_menu(return_all: bool = False, user_id: int = None):
         if session_index != -1:
             mode = await Altruix.config.get_env(f"HELP_INFO_{session_index}")
             if mode == "custom":
-                custom_help = await Altruix.config.get_env(f"HELP_INFO_CUSTOM_MSG_{session_index}")
-                if custom_help:
-                    custom_help, parse_mode = await Altruix.resolve_placeholders(custom_help, index=session_index)
+                custom_msg_type = await Altruix.config.get_env(f"HELP_INFO_TYPE_{session_index}") or "per_account"
+        
+                if custom_msg_type == "global":
+                    custom_msg = await Altruix.config.get_env("HELP_INFO_CUSTOM_MSG_GLOBAL")
+                else:
+                    custom_msg = await Altruix.config.get_env(f"HELP_INFO_CUSTOM_MSG_{session_index}")
+                
+                if custom_msg:
+                    custom_help, parse_mode = await Altruix.resolve_placeholders(custom_msg, index=session_index)
 
     if custom_help:
         help_msg = custom_help

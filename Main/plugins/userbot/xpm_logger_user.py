@@ -41,6 +41,7 @@ PLUGIN_VERSION = "1.3.5"# ✅ Added message type filters
 STORAGE_FILE = Path("pm_logger_user_settings.json")
 
 # Settings Cache
+PM_LOGGER_USER_DATA = {}
 # Shared state from Altruix object (PERSISTENT across reloads)
 PM_LOG_CACHE = Altruix.PM_LOG_CACHE
 REPLY_AS_MENTIONED_WAITING = Altruix.REPLY_AS_MENTIONED_WAITING

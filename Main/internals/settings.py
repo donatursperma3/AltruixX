@@ -175,7 +175,12 @@ STRINGS = {
         "settings_text": "<b>🛠️ Pengaturan Altruix</b>",
         "mention_logic": "Logika Mention",
         "next": "Selanjutnya ➡️",
-        "prev": "⬅️ Sebelumnya"
+        "prev": "⬅️ Sebelumnya",
+        "apply_type": "Tipe Penerapan",
+        "global": "Global 🌐",
+        "per_account": "Per-Akun 👤",
+        "set_as_global": "Jadikan Global ✨",
+        "help_info_msg_updated": "✅ <b>Pesan help info berhasil diperbarui!</b>"
     },
     "english": {
         "sessions": "Sessions",
@@ -238,7 +243,12 @@ STRINGS = {
         "settings_text": "<b>🛠️ Altruix Settings</b>",
         "mention_logic": "Mention Logic",
         "next": "Next ➡️",
-        "prev": "⬅️ Prev"
+        "prev": "⬅️ Prev",
+        "apply_type": "Apply Type",
+        "global": "Global 🌐",
+        "per_account": "Per-Account 👤",
+        "set_as_global": "Set as Global ✨",
+        "help_info_msg_updated": "✅ <b>Help info message updated!</b>"
     }
 }
 
@@ -871,8 +881,13 @@ async def user_text_handler(c: Client, m: Message):
             index = state['session_index']
             page = state['page']
             
-            # Save to DB
-            key = f"HELP_INFO_CUSTOM_MSG_{index}"
+            # Save to DB based on type
+            apply_type = await Altruix.config.get_env(f"HELP_INFO_TYPE_{index}") or "per_account"
+            if apply_type == "global":
+                key = "HELP_INFO_CUSTOM_MSG_GLOBAL"
+            else:
+                key = f"HELP_INFO_CUSTOM_MSG_{index}"
+                
             await Altruix.config.sync_env_to_db(key, text, upsert=True)
             setattr(Altruix.config, key, text)
             
@@ -880,9 +895,9 @@ async def user_text_handler(c: Client, m: Message):
             del user_privacy_state[user_id]
             
             await m.reply(
-                f"✅ <b>Help info message berhasil diupdate!</b>\n\n"
+                f"{gt('help_info_msg_updated')}\n\n"
                 f"<code>{html.escape(text)}</code>",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Kembali", callback_data=f"help_info_custom_menu_{index}_{page}")]])
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("back"), callback_data=f"help_info_custom_menu_{index}_{page}")]])
             )
             return
 
@@ -3000,7 +3015,7 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
         # Advanced & Settings
         InlineKeyboardButton(f"🚀 Startup: {startup_status}", f"toggle_startup_msg_{index}_{callback_page}"),
         InlineKeyboardButton("🚀 Create Group", f"laucreate_menu_{index}_{callback_page}"),
-        InlineKeyboardButton("📝 Edit Custom Msg", f"startup_custom_menu_{index}_{callback_page}"),
+        InlineKeyboardButton("📝 Edit Startup Msg", f"startup_custom_menu_{index}_{callback_page}"),
         InlineKeyboardButton("🔒 Privacy & Security", f"privacy_menu_{index}_{callback_page}"),
         InlineKeyboardButton(f"🚀 Help Info: {await Altruix.config.get_env(f'HELP_INFO_{index}') or 'default'}", f"toggle_help_info_{index}_{callback_page}"),
         InlineKeyboardButton("📝 Edit Help Msg", f"help_info_custom_menu_{index}_{callback_page}"),
@@ -7299,11 +7314,21 @@ async def help_info_custom_menu_handler(c: Client, cb: CallbackQuery):
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
     
-    current_msg = await Altruix.config.get_env(f"HELP_INFO_CUSTOM_MSG_{index}") or "(Belum diatur)"
+    # 🕵️ Get Current Logic Type
+    apply_type = await Altruix.config.get_env(f"HELP_INFO_TYPE_{index}") or "per_account"
+    
+    # 🕵️ Get Message based on type for preview
+    if apply_type == "global":
+        current_msg = await Altruix.config.get_env("HELP_INFO_CUSTOM_MSG_GLOBAL") or "(Global belum diatur)"
+    else:
+        current_msg = await Altruix.config.get_env(f"HELP_INFO_CUSTOM_MSG_{index}") or "(Belum diatur)"
+    
+    type_label = gt("global") if apply_type == "global" else gt("per_account")
     
     text = (
         f"<b>❇️ Custom Help Info Message Info</b>\n\n"
         f"Anda dapat mengatur pesan help menu kustom untuk sesi ini.\n\n"
+        f"• <b>{gt('apply_type')}:</b> <code>{type_label}</code>\n\n"
         f"<b>Placeholders yang didukung:</b>\n"
         f"• <code>{{ub_version}}</code> / <code>(userbot version)</code>\n"
         f"• <code>{{pyrogram_version}}</code> / <code>(pyrogram version)</code>\n"
@@ -7312,13 +7337,17 @@ async def help_info_custom_menu_handler(c: Client, cb: CallbackQuery):
         f"• <code>{{bot_plugins}}</code> / <code>(bot plugins)</code>\n"
         f"• <code>{{mention}}</code> / <code>(mention session)</code>\n"
         f"• <code>{{index}}</code> / <code>(session index)</code>\n\n"
-        f"<b>Pesan Saat Ini:</b>\n<code>{html.escape(str(current_msg))}</code>\n\n"
+        f"<b>Pesan Saat Ini ({type_label}):</b>\n<code>{html.escape(str(current_msg))}</code>\n\n"
         f"<i>Gunakan tombol di bawah untuk mengubah pesan atau kembali.</i>"
     )
     
     buttons = [
         [
-            InlineKeyboardButton("📝 Edit Help Message", f"help_info_custom_input_{index}_{page}"),
+            InlineKeyboardButton(f"🔄 {gt('apply_type')}: {type_label}", f"help_info_toggle_type_{index}_{page}"),
+        ],
+        [
+            InlineKeyboardButton("📝 Edit Help Msg", f"help_info_custom_input_{index}_{page}"),
+            InlineKeyboardButton(gt("set_as_global"), f"help_info_set_global_{index}_{page}"),
         ],
         [
             InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}"),
@@ -7348,10 +7377,43 @@ async def help_info_custom_input_handler(c: Client, cb: CallbackQuery):
         f"⌨️ <b>Input Custom Help Message</b>\n\n"
         f"Silakan kirim pesan help menu kustom Anda sekarang.\n"
         f"Gunakan placeholders seperti <code>(userbot version)</code>, <code>{{ub_version}}</code> dll.\n\n"
-        f"Ketik <code>/cancel</code> untuk membatalkan.",
+        f"<i>Kirim /cancel untuk membatalkan.</i>",
         parse_mode=ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("cancel"), f"help_info_custom_menu_{index}_{page}")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("cancel"), callback_data=f"help_info_custom_menu_{index}_{page}")]])
     )
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^help_info_toggle_type_(\d+)_(\d+)$"))
+@log_errors
+async def help_info_toggle_type_callback(c: Client, cb: CallbackQuery):
+    """Toggle antara mode Per-Akun dan Global"""
+    if not await check_authorization(cb): return
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    
+    current_type = await Altruix.config.get_env(f"HELP_INFO_TYPE_{index}") or "per_account"
+    new_type = "global" if current_type == "per_account" else "per_account"
+    
+    await Altruix.config.add_env_to_db(f"HELP_INFO_TYPE_{index}", new_type, upsert=True)
+    await cb.answer(f"✅ Mode diubah ke: {new_type.upper()}")
+    await help_info_custom_menu_handler(c, cb)
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^help_info_set_global_(\d+)_(\d+)$"))
+@log_errors
+async def help_info_set_global_callback(c: Client, cb: CallbackQuery):
+    """Menjadikan pesan kustom akun ini sebagai pesan Global"""
+    if not await check_authorization(cb): return
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    
+    current_msg = await Altruix.config.get_env(f"HELP_INFO_CUSTOM_MSG_{index}")
+    if not current_msg:
+        return await cb.answer("❌ Akun ini belum memiliki pesan kustom untuk dibagikan.", show_alert=True)
+        
+    await Altruix.config.add_env_to_db("HELP_INFO_CUSTOM_MSG_GLOBAL", current_msg, upsert=True)
+    await cb.answer("✅ Berhasil! Pesan kustom akun ini sekarang menjadi pesan GLOBAL.", show_alert=True)
+    await help_info_custom_menu_handler(c, cb)
 
 
 @Altruix.bot.on_callback_query(filters.regex(r"^startup_custom_input_(\d+)_(\d+)$"))
