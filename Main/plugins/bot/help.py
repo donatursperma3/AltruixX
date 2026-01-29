@@ -134,7 +134,7 @@ async def get_help_menu(return_all: bool = False, user_id: int = None):
             index = buttons.index(page)
             for i in page:
                 for j in i:
-                    j.callback_data += f"?page={index}"
+                    j.callback_data = j.callback_data.replace("?page=0", f"?page={index}")
             page_buttons = [
                 InlineKeyboardButton(str(i + 1), callback_data=f"help#_page?page={i}&si={session_index}")
                 for i in range(len(buttons))

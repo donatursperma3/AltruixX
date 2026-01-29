@@ -107,6 +107,7 @@ SHARED_BUTTON_STATS = Altruix.BUTTON_STATS
 # Default Mode
 REPLY_ACCESS_MODE = "sudo"
 MENTION_SETTINGS_GLOBAL = {"mention": True, "auto_log": True, "reply_from_all": False}
+MENTION_APPLY_TYPES = {}
 
 def get_shared_reply_mode():
     """Read reply mode from shared settings file."""
@@ -663,6 +664,8 @@ async def load_local_storage():
                     if "global" in data:
                         MENTION_SETTINGS_GLOBAL = data.get("global", {})
                         MENTIONS_DATA = data.get("settings", {})
+                        global MENTION_APPLY_TYPES
+                        MENTION_APPLY_TYPES = data.get("apply_types", {})
                     else:
                         # Old format migration
                         MENTIONS_DATA = data.get("settings", data)
@@ -672,7 +675,7 @@ async def load_local_storage():
                             "reply_from_all": data.get("reply_from_all", False)
                         }
                     AUTO_REPLY_ENABLED = data.get("auto_reply", False)
-                    logger.info(f"Loaded {len(MENTIONS_DATA)} settings and global config from local storage")
+                    logger.info(f"Loaded {len(MENTIONS_DATA)} settings, {len(MENTION_APPLY_TYPES)} apply types")
     except Exception as e:
         logger.error(f"Failed to load local storage: {e}")
 
@@ -682,6 +685,7 @@ async def save_local_storage():
         data = {
             "global": MENTION_SETTINGS_GLOBAL,
             "settings": MENTIONS_DATA,
+            "apply_types": MENTION_APPLY_TYPES,
             "auto_reply": AUTO_REPLY_ENABLED,
             "last_saved": int(time.time()),
             "version": PLUGIN_VERSION
@@ -691,24 +695,25 @@ async def save_local_storage():
     except Exception as e:
         logger.error(f"Failed to save local storage: {e}")
 
-async def get_mention_setting_safe(client_id: int) -> bool:
+async def get_mention_setting_safe(client_id: int, key: str = "mention") -> bool:
     """Safe method untuk membaca setting - gabungkan cache, local, dan global."""
-    # 1. Cek dari cache terlebih dahulu
-    cache_setting = await get_mention_setting(client_id)
-    if cache_setting is not False and cache_setting is not None:
-        return cache_setting
-    
-    # 2. Check local storage (settings per client)
     client_id_str = str(client_id)
+    
+    # 0. Resolve apply_type
+    apply_type = MENTION_APPLY_TYPES.get(client_id_str, "per_account")
+    if apply_type == "global":
+        return bool(MENTION_SETTINGS_GLOBAL.get(key, MENTION_SETTINGS_GLOBAL.get("mention", True) if key == "mention" else False))
+
+    # 1. Check local storage (settings per client)
     if client_id_str in MENTIONS_DATA:
         setting_data = MENTIONS_DATA[client_id_str]
-        if isinstance(setting_data, dict) and "value" in setting_data:
-            return bool(setting_data["value"])
-        elif isinstance(setting_data, bool):
+        if isinstance(setting_data, dict):
+            return bool(setting_data.get(key, MENTION_SETTINGS_GLOBAL.get(key, False)))
+        elif isinstance(setting_data, bool) and key == "mention":
             return setting_data
 
     # 3. Fallback to GLOBAL setting from mentions_settings.json
-    return bool(MENTION_SETTINGS_GLOBAL.get("mention", True))
+    return bool(MENTION_SETTINGS_GLOBAL.get(key, True if key == "mention" else False))
 
 async def save_mention_setting_safe(client_id: int, value: bool) -> bool:
     """Safe method untuk menyimpan setting - simpan ke cache DAN local."""

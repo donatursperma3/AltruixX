@@ -401,6 +401,7 @@ async def pm_logger_bot_handler(c: Client, m: RawMessage):
         # Cache for recovery
         # Cache for recovery - capture ACTUAL thread_id from sent message
         actual_thread_id = getattr(sent_log, "message_thread_id", None)
+        from Main.plugins.userbot.xpm_logger_user import PM_LOG_CACHE as U_CACHE
         U_CACHE[f"{m.chat.id}_{m.id}"] = {
             "client_id": c.me.id,
             "log_msg_id": sent_log.id,
@@ -488,7 +489,7 @@ async def pmlb_save_callback(c: Client, cb: CallbackQuery):
     except Exception as e:
         await cb.answer(f"❌ Error: {e}", show_alert=True)
 
-@Altruix.bot.on_callback_query(filters.regex(r"^pmlb_reply_"))
+@Altruix.bot.on_callback_query(filters.regex(r"^pmlb_reply_(\d+)"))
 @log_errors
 async def pmlb_reply_callback(c: Client, cb: CallbackQuery):
     from Main.plugins.userbot.xpm_logger_user import REPLY_AS_MENTIONED_WAITING as WAIT_CACHE
@@ -527,8 +528,10 @@ async def pmlb_reply_callback(c: Client, cb: CallbackQuery):
         await cb.answer("Silakan kirim balasan Anda.")
     except Exception as e:
         logger.error(f"PMLB Reply Error: {e}")
-        await cb.answer(f"❌ Error: {e}", show_alert=True)
-        await cb.answer(f"❌ Error: {e}", show_alert=True)
+        try:
+            await cb.answer(f"❌ Error: {str(e)[:40]}", show_alert=True)
+        except Exception:
+            pass
 
 @Altruix.bot.on_callback_query(filters.regex(r"^pmlb_others_"))
 @log_errors

@@ -29,7 +29,12 @@ def load_settings():
     if SETTINGS_FILE.exists():
         try:
             with open(SETTINGS_FILE, "r") as f:
-                JOIN_LOGGER_DATA.update(json.load(f))
+                data = json.load(f)
+                if "global" in data:
+                    JOIN_LOGGER_DATA = data
+                else:
+                    # Migration
+                    JOIN_LOGGER_DATA = {"global": {"enabled": data.get("enabled", True)}, "sessions": {}, "apply_types": {}}
         except:
             pass
 
@@ -49,7 +54,22 @@ load_settings()
 async def join_logger_handler(c: Client, m: Message):
     """Log when userbot joins or is invited to groups/channels."""
     try:
-        if not JOIN_LOGGER_DATA.get("enabled", True):
+        # Dynamic Reload
+        load_settings()
+        
+        user_id_str = str(c.me.id)
+        apply_type = JOIN_LOGGER_DATA.get("apply_types", {}).get(user_id_str, "per_account")
+        
+        if apply_type == "global":
+            is_enabled = JOIN_LOGGER_DATA.get("global", {}).get("enabled", True)
+        else:
+            session_config = JOIN_LOGGER_DATA.get("sessions", {}).get(user_id_str, JOIN_LOGGER_DATA.get("global", {}))
+            if isinstance(session_config, bool):
+                 is_enabled = session_config
+            else:
+                 is_enabled = session_config.get("enabled", True)
+
+        if not is_enabled:
             return
             
         # Check if this is about the current userbot
@@ -105,16 +125,21 @@ async def join_logger_toggle(c: Client, m: Message):
     arg = m.user_input.lower() if m.user_input else "status"
     
     if arg == "on":
-        JOIN_LOGGER_DATA["enabled"] = True
+        if "global" not in JOIN_LOGGER_DATA: JOIN_LOGGER_DATA["global"] = {}
+        JOIN_LOGGER_DATA["global"]["enabled"] = True
+        JOIN_LOGGER_DATA["enabled"] = True  # Legacy sync
         save_settings()
-        await m.handle_message("✅ <b>Join Logger enabled!</b>")
+        await m.handle_message("✅ <b>Join Logger enabled (Global)!</b>")
     elif arg == "off":
-        JOIN_LOGGER_DATA["enabled"] = False
+        if "global" not in JOIN_LOGGER_DATA: JOIN_LOGGER_DATA["global"] = {}
+        JOIN_LOGGER_DATA["global"]["enabled"] = False
+        JOIN_LOGGER_DATA["enabled"] = False # Legacy sync
         save_settings()
-        await m.handle_message("❌ <b>Join Logger disabled!</b>")
+        await m.handle_message("❌ <b>Join Logger disabled (Global)!</b>")
     else:
-        status = "✅ Enabled" if JOIN_LOGGER_DATA.get("enabled", True) else "❌ Disabled"
+        is_on = JOIN_LOGGER_DATA.get("global", {}).get("enabled", JOIN_LOGGER_DATA.get("enabled", True))
+        status = "✅ Enabled" if is_on else "❌ Disabled"
         await m.handle_message(
-            f"<b>Join Logger Status:</b> {status}\n\n"
-            f"<i>Use</i> <code>.joinlogger on/off</code> <i>to toggle</i>"
+            f"<b>Join Logger Status (Global):</b> {status}\n\n"
+            f"<i>Use</i> <code>.joinlogger on/off</code> <i>to toggle global status.</i>"
         )

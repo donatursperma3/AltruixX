@@ -425,8 +425,15 @@ async def pm_logger_user_handler(c: Client, m: RawMessage):
         await load_settings()
         
         user_id_str = str(c.me.id)
-        session_settings = PM_LOGGER_USER_DATA.get(user_id_str)
         
+        # Resolve settings based on apply_type
+        apply_type = PM_LOGGER_USER_DATA.get("apply_types", {}).get(user_id_str, "per_account")
+        
+        if apply_type == "global":
+            session_settings = PM_LOGGER_USER_DATA.get("global_config", {})
+        else:
+            session_settings = PM_LOGGER_USER_DATA.get("sessions", {}).get(user_id_str)
+            
         if session_settings is None:
             # Fallback to legacy global setting
             is_globally_on = PM_LOGGER_USER_DATA.get("enabled", False)

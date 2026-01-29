@@ -29,7 +29,12 @@ def load_settings():
     if SETTINGS_FILE.exists():
         try:
             with open(SETTINGS_FILE, "r") as f:
-                CMD_LOGGER_DATA.update(json.load(f))
+                data = json.load(f)
+                if "global" in data:
+                    CMD_LOGGER_DATA = data
+                else:
+                    # Migration
+                    CMD_LOGGER_DATA = {"global": {"enabled": data.get("enabled", False)}, "sessions": {}, "apply_types": {}}
         except:
             pass
 
@@ -49,7 +54,22 @@ load_settings()
 async def cmd_logger_handler(c: Client, m: Message):
     """Log all commands executed by userbot."""
     try:
-        if not CMD_LOGGER_DATA.get("enabled", False):
+        # Dynamic Reload
+        load_settings()
+        
+        user_id_str = str(c.me.id)
+        apply_type = CMD_LOGGER_DATA.get("apply_types", {}).get(user_id_str, "per_account")
+        
+        if apply_type == "global":
+            is_enabled = CMD_LOGGER_DATA.get("global", {}).get("enabled", False)
+        else:
+            session_config = CMD_LOGGER_DATA.get("sessions", {}).get(user_id_str, CMD_LOGGER_DATA.get("global", {}))
+            if isinstance(session_config, bool):
+                 is_enabled = session_config
+            else:
+                 is_enabled = session_config.get("enabled", False)
+
+        if not is_enabled:
             return
             
         # Don't log the cmdlogger command itself
@@ -97,16 +117,21 @@ async def cmd_logger_toggle(c: Client, m: Message):
     arg = m.user_input.lower() if m.user_input else "status"
     
     if arg == "on":
-        CMD_LOGGER_DATA["enabled"] = True
+        if "global" not in CMD_LOGGER_DATA: CMD_LOGGER_DATA["global"] = {}
+        CMD_LOGGER_DATA["global"]["enabled"] = True
+        CMD_LOGGER_DATA["enabled"] = True  # Legacy sync
         save_settings()
-        await m.handle_message("✅ <b>Command Logger enabled!</b>")
+        await m.handle_message("✅ <b>Command Logger enabled (Global)!</b>")
     elif arg == "off":
-        CMD_LOGGER_DATA["enabled"] = False
+        if "global" not in CMD_LOGGER_DATA: CMD_LOGGER_DATA["global"] = {}
+        CMD_LOGGER_DATA["global"]["enabled"] = False
+        CMD_LOGGER_DATA["enabled"] = False # Legacy sync
         save_settings()
-        await m.handle_message("❌ <b>Command Logger disabled!</b>")
+        await m.handle_message("❌ <b>Command Logger disabled (Global)!</b>")
     else:
-        status = "✅ Enabled" if CMD_LOGGER_DATA.get("enabled", False) else "❌ Disabled"
+        is_on = CMD_LOGGER_DATA.get("global", {}).get("enabled", CMD_LOGGER_DATA.get("enabled", False))
+        status = "✅ Enabled" if is_on else "❌ Disabled"
         await m.handle_message(
-            f"<b>Command Logger Status:</b> {status}\n\n"
-            f"<i>Use</i> <code>.cmdlogger on/off</code> <i>to toggle</i>"
+            f"<b>Command Logger Status (Global):</b> {status}\n\n"
+            f"<i>Use</i> <code>.cmdlogger on/off</code> <i>to toggle global status.</i>"
         )

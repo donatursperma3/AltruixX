@@ -185,7 +185,8 @@ STRINGS = {
         "purge_progress": "🧹 <b>Purging:</b> <code>{count}/{total}</code>",
         "purge_success_log": "✅ <b>Purge Selesai!</b>\n\n• Chat: {chat}\n• Berhasil: <code>{count}</code>\n• Gagal: <code>{error}</code>",
         "startup_settings_title": "🚀 <b>Pengaturan Startup</b>",
-        "help_info_settings_title": "❇️ <b>Pengaturan Help Info</b>"
+        "help_info_settings_title": "❇️ <b>Pengaturan Help Info</b>",
+        "callback_logger": "Callback Logger"
     },
     "english": {
         "sessions": "Sessions",
@@ -258,7 +259,8 @@ STRINGS = {
         "purge_progress": "🧹 <b>Purging:</b> <code>{count}/{total}</code>",
         "purge_success_log": "✅ <b>Purge Complete!</b>\n\n• Chat: {chat}\n• Success: <code>{count}</code>\n• Failed: <code>{error}</code>",
         "startup_settings_title": "🚀 <b>Startup Settings</b>",
-        "help_info_settings_title": "❇️ <b>Help Info Settings</b>"
+        "help_info_settings_title": "❇️ <b>Help Info Settings</b>",
+        "callback_logger": "Callback Logger"
     }
 }
 
@@ -367,6 +369,45 @@ async def send_log_notification(
         
     except Exception as e:
         Altruix.log(f"Error sending log notification: {e}", level=logging.ERROR)
+
+@Altruix.bot.on_callback_query(group=-1)
+async def central_callback_logger(c: Client, cb: CallbackQuery):
+    """Central dynamic logger for all callback button interactions."""
+    try:
+        # Check if enabled
+        settings_file = "callback_logger_settings.json"
+        is_enabled = True # On by default
+        if os.path.exists(settings_file):
+            try:
+                with open(settings_file, "r") as f:
+                    data = json.load(f)
+                    is_enabled = data.get("settings", {}).get("enabled", True)
+            except: pass
+        
+        if not is_enabled:
+            return
+
+        user = cb.from_user
+        user_info = f"👤 {user.first_name} (@{user.username})" if user.username else f"👤 {user.first_name}"
+        user_id = user.id
+        cb_data = cb.data
+        msg_text = cb.message.text or cb.message.caption or "[No Text]"
+        
+        log_msg = (
+            f"🎯 <b>Callback Button Clicked</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"• <b>User:</b> {user_info}\n"
+            f"• <b>User ID:</b> <code>{user_id}</code>\n"
+            f"• <b>Data:</b> <code>{cb_data}</code>\n"
+            f"• <b>Message:</b>\n<blockquote>{html.escape(str(msg_text)[:500])}</blockquote>\n"
+            f"🕒 {datetime.now().strftime('%H:%M:%S')}"
+        )
+        
+        if Altruix.log_chat:
+            await c.send_message(Altruix.log_chat, log_msg, parse_mode=ParseMode.HTML)
+            
+    except Exception as e:
+        logger.error(f"Callback Logger Error: {e}")
 
 
 @Altruix.bot.on_callback_query(filters.regex("configs_home"))
@@ -4901,15 +4942,17 @@ async def pml_menu_handler(c: Client, cb: CallbackQuery, index: int = None, page
     log_from_user = session_config.get("log_from_user", is_globally_on)
     log_from_bot = session_config.get("log_from_bot", is_globally_on)
     
+    # Apply Type logic
+    apply_type = data.get("apply_types", {}).get(user_id_str, "per_account")
+    type_label = gt("global") if apply_type == "global" else gt("per_account")
+    
     text = (
         "<b>📟 PM Logger (Userbot)</b>\n\n"
         "Atur bagaimana akun ini mencatat pesan PM masuk ke Log Group.\n\n"
         f"• 👤 <b>Log User:</b> {'✅ ON' if log_from_user else '❌ OFF'}\n"
-        "<i>Mencatat pesan dari pengguna biasa.</i>\n\n"
         f"• 🤖 <b>Log Bot:</b> {'✅ ON' if log_from_bot else '❌ OFF'}\n"
-        "<i>Mencatat pesan dari akun bot/service.</i>\n\n"
         f"• 👥 <b>Reply Mode:</b> {reply_access_mode.upper()}\n"
-        "<i>Mengatur siapa yang dapat melihat tombol Reply.</i>\n"
+        f"• ⚙️ <b>{gt('apply_type')}:</b> <code>{type_label}</code>\n\n"
         "Pilih kategori di bawah untuk mengatur filter tipe pesan."
     )
     
@@ -4917,6 +4960,10 @@ async def pml_menu_handler(c: Client, cb: CallbackQuery, index: int = None, page
         [
             InlineKeyboardButton(f"👤 Log User: {'OFF' if log_from_user else 'ON'}", f"pml_toggle_log_user_{index}_{page}"),
             InlineKeyboardButton(f"🤖 Log Bot: {'OFF' if log_from_bot else 'ON'}", f"pml_toggle_log_bot_{index}_{page}"),
+        ],
+        [
+            InlineKeyboardButton(f"⚙️ {gt('apply_type')}: {type_label}", f"pml_toggle_type_{index}_{page}"),
+            InlineKeyboardButton(gt("set_as_global"), f"pml_set_global_{index}_{page}"),
         ],
         [
             InlineKeyboardButton(f"👥 Reply Mode: {reply_access_mode.upper()}", f"pml_toggle_log_mode_{index}_{page}"),
@@ -4932,6 +4979,62 @@ async def pml_menu_handler(c: Client, cb: CallbackQuery, index: int = None, page
 
 
 # ✅ HANDLER BARU: Toggle PM Logger Settings
+@Altruix.bot.on_callback_query(filters.regex(r"^pml_toggle_type_(\d+)_(\d+)$"))
+@log_errors
+async def pml_toggle_type_handler(c: Client, cb: CallbackQuery):
+    if not await check_authorization(cb): return
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    user_id_str = str(Altruix.clients[index].me.id)
+    filename = "pm_logger_user_settings.json"
+    
+    try:
+        if os.path.exists(filename):
+            with open(filename, "r") as f: data = json.load(f)
+        else:
+            data = {"sessions": {}, "reply_access_mode": "sudo", "apply_types": {}}
+            
+        if "apply_types" not in data: data["apply_types"] = {}
+        
+        current = data["apply_types"].get(user_id_str, "per_account")
+        new_val = "global" if current == "per_account" else "per_account"
+        data["apply_types"][user_id_str] = new_val
+        
+        with open(filename, "w") as f:
+            json.dump(data, f, indent=2)
+        
+        await cb.answer(f"Apply Type: {new_val.upper()}")
+        await pml_menu_handler(c, cb, index=index, page=page)
+    except Exception as e:
+        await cb.answer(f"Error: {e}", show_alert=True)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^pml_set_global_(\d+)_(\d+)$"))
+@log_errors
+async def pml_set_global_handler(c: Client, cb: CallbackQuery):
+    if not await check_authorization(cb): return
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    user_id_str = str(Altruix.clients[index].me.id)
+    filename = "pm_logger_user_settings.json"
+    
+    try:
+        if os.path.exists(filename):
+            with open(filename, "r") as f: data = json.load(f)
+        else:
+            return await cb.answer("❌ Error: Settings file missing", show_alert=True)
+            
+        current_config = data.get("sessions", {}).get(user_id_str)
+        if not current_config:
+             return await cb.answer("❌ Current session has no config to set as global", show_alert=True)
+             
+        data["global_config"] = current_config
+        with open(filename, "w") as f:
+            json.dump(data, f, indent=2)
+            
+        await cb.answer("✅ Successfully set as GLOBAL!", show_alert=True)
+    except Exception as e:
+        await cb.answer(f"Error: {e}", show_alert=True)
+
 @Altruix.bot.on_callback_query(filters.regex(r"^pml_toggle_log_(user|bot|mode)_(\d+)_(\d+)$"))
 @log_errors
 async def pml_toggle_handler(c: Client, cb: CallbackQuery):
@@ -4947,7 +5050,10 @@ async def pml_toggle_handler(c: Client, cb: CallbackQuery):
             with open(filename, "r") as f:
                 data = json.load(f)
         else:
-            data = {"sessions": {}, "reply_access_mode": "sudo"}
+            data = {"sessions": {}, "reply_access_mode": "sudo", "apply_types": {}, "global_config": {"log_from_user": False, "log_from_bot": False}}
+            
+        if "apply_types" not in data: data["apply_types"] = {}
+        if "global_config" not in data: data["global_config"] = {"log_from_user": False, "log_from_bot": False}
             
         if "sessions" not in data:
             data["sessions"] = data.pop("settings", {})
@@ -4986,7 +5092,7 @@ async def pml_toggle_handler(c: Client, cb: CallbackQuery):
         if success:
             with open(filename, "w") as f:
                 json.dump(data, f, indent=2)
-            await cb.answer("Status Updated!")
+            await cb.answer("✅ Updated!")
             await pml_menu_handler(c, cb, index=index, page=page)
             
             # Log
@@ -5013,35 +5119,112 @@ async def joinl_menu_handler(c: Client, cb: CallbackQuery, index: int = None, pa
     if page is None: page = int(cb.matches[0].group(2))
     
     filename = "join_logger_settings.json"
+    data = {"global": {"enabled": True}, "sessions": {}, "apply_types": {}}
     if os.path.exists(filename):
-        with open(filename, "r") as f: data = json.load(f)
-    else: data = {"enabled": True}
+        with open(filename, "r") as f:
+            loaded = json.load(f)
+            if "global" in loaded: data = loaded
+            else: data["global"]["enabled"] = loaded.get("enabled", True)
+
+    if "sessions" not in data: data["sessions"] = {}
+    if "apply_types" not in data: data["apply_types"] = {}
     
-    enabled = data.get("enabled", True)
+    user_id_str = str(Altruix.clients[index].me.id)
+    apply_type = data["apply_types"].get(user_id_str, "per_account")
+    type_label = gt("global") if apply_type == "global" else gt("per_account")
+
+    if apply_type == "global":
+        active_enabled = data["global"].get("enabled", True)
+    else:
+        active_enabled = data["sessions"].get(user_id_str, data["global"]).get("enabled", True) if isinstance(data["sessions"].get(user_id_str), dict) else data["sessions"].get(user_id_str, data["global"].get("enabled", True))
+
     text = (
         "<b>🚪 Join Logger Settings</b>\n\n"
         f"Mendeteksi saat akun Anda join atau diundang ke group/channel.\n\n"
-        f"• **Status:** {'✅ ENABLED' if enabled else '❌ DISABLED'}"
+        f"• <b>Status:</b> {'✅ ENABLED' if active_enabled else '❌ DISABLED'}\n"
+        f"• ⚙️ <b>{gt('apply_type')}:</b> <code>{type_label}</code>"
     )
     buttons = [
-        [InlineKeyboardButton(f"{'Disable' if enabled else 'Enable'} Join Logger", f"joinl_toggle_{index}_{page}")],
+        [InlineKeyboardButton(f"{'Disable' if active_enabled else 'Enable'} Join Logger", f"joinl_toggle_{index}_{page}")],
+        [
+            InlineKeyboardButton(f"⚙️ {gt('apply_type')}: {type_label}", f"joinl_toggle_type_{index}_{page}"),
+            InlineKeyboardButton(gt("set_as_global"), f"joinl_set_global_{index}_{page}"),
+        ],
         [InlineKeyboardButton("🔙 Back to Session Info", f"session_info_{index}_{page}")]
     ]
     await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^joinl_toggle_type_(\d+)_(\d+)$"))
+@log_errors
+async def joinl_toggle_type_handler(c: Client, cb: CallbackQuery):
+    if not await check_authorization(cb): return
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    user_id_str = str(Altruix.clients[index].me.id)
+    filename = "join_logger_settings.json"
+    try:
+        if os.path.exists(filename):
+            with open(filename, "r") as f: data = json.load(f)
+        else:
+            data = {"global": {"enabled": True}, "sessions": {}, "apply_types": {}}
+        if "apply_types" not in data: data["apply_types"] = {}
+        current = data["apply_types"].get(user_id_str, "per_account")
+        new_val = "global" if current == "per_account" else "per_account"
+        data["apply_types"][user_id_str] = new_val
+        with open(filename, "w") as f: json.dump(data, f, indent=4)
+        await cb.answer(f"Apply Type: {new_val.upper()}")
+        await joinl_menu_handler(c, cb, index=index, page=page)
+    except Exception as e: await cb.answer(f"Error: {e}", show_alert=True)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^joinl_set_global_(\d+)_(\d+)$"))
+@log_errors
+async def joinl_set_global_handler(c: Client, cb: CallbackQuery):
+    if not await check_authorization(cb): return
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    user_id_str = str(Altruix.clients[index].me.id)
+    filename = "join_logger_settings.json"
+    try:
+        if os.path.exists(filename):
+            with open(filename, "r") as f: data = json.load(f)
+        else: return await cb.answer("❌ Error: Settings file missing", show_alert=True)
+        current = data.get("sessions", {}).get(user_id_str)
+        if current is None: return await cb.answer("❌ Current session has no config to set as global", show_alert=True)
+        if not isinstance(current, dict): current = {"enabled": bool(current)}
+        data["global"] = current
+        with open(filename, "w") as f: json.dump(data, f, indent=4)
+        await cb.answer("✅ Successfully set as GLOBAL!", show_alert=True)
+    except Exception as e: await cb.answer(f"Error: {e}", show_alert=True)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^joinl_toggle_(\d+)_(\d+)$"))
 @log_errors
 async def joinl_toggle_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
-    index = int(cb.matches[0].group(1))
-    page = int(cb.matches[0].group(2))
+    user_id_str = str(Altruix.clients[index].me.id)
     filename = "join_logger_settings.json"
     if os.path.exists(filename):
         with open(filename, "r") as f: data = json.load(f)
-    else: data = {"enabled": True}
-    data["enabled"] = not data.get("enabled", True)
-    with open(filename, "w") as f: json.dump(data, f, indent=2)
-    await cb.answer(f"Join Logger: {'Enabled' if data['enabled'] else 'Disabled'}")
+    else: data = {"global": {"enabled": True}, "sessions": {}, "apply_types": {}}
+    
+    if "global" not in data: 
+        # Migration from old flat format
+        data = {"global": {"enabled": data.get("enabled", True)}, "sessions": {}, "apply_types": {}}
+    
+    if "sessions" not in data: data["sessions"] = {}
+    if "apply_types" not in data: data["apply_types"] = {}
+
+    apply_type = data["apply_types"].get(user_id_str, "per_account")
+    if apply_type == "per_account":
+        if user_id_str not in data["sessions"]: data["sessions"][user_id_str] = data["global"].copy()
+        if not isinstance(data["sessions"][user_id_str], dict): data["sessions"][user_id_str] = {"enabled": bool(data["sessions"][user_id_str])}
+        data["sessions"][user_id_str]["enabled"] = not data["sessions"][user_id_str].get("enabled", True)
+        new_val = data["sessions"][user_id_str]["enabled"]
+    else:
+        data["global"]["enabled"] = not data["global"].get("enabled", True)
+        new_val = data["global"]["enabled"]
+
+    with open(filename, "w") as f: json.dump(data, f, indent=4)
+    await cb.answer(f"Join Logger: {'Enabled' if new_val else 'Disabled'}")
     await joinl_menu_handler(c, cb, index=index, page=page)
 
 # ✅ HANDLER BARU: Command Logger Menu
@@ -5055,35 +5238,111 @@ async def cmdl_menu_handler(c: Client, cb: CallbackQuery, index: int = None, pag
     if page is None: page = int(cb.matches[0].group(2))
     
     filename = "cmd_logger_settings.json"
+    data = {"global": {"enabled": False}, "sessions": {}, "apply_types": {}}
     if os.path.exists(filename):
-        with open(filename, "r") as f: data = json.load(f)
-    else: data = {"enabled": False}
+        with open(filename, "r") as f:
+            loaded = json.load(f)
+            if "global" in loaded: data = loaded
+            else: data["global"]["enabled"] = loaded.get("enabled", False)
+
+    if "sessions" not in data: data["sessions"] = {}
+    if "apply_types" not in data: data["apply_types"] = {}
     
-    enabled = data.get("enabled", False)
+    user_id_str = str(Altruix.clients[index].me.id)
+    apply_type = data["apply_types"].get(user_id_str, "per_account")
+    type_label = gt("global") if apply_type == "global" else gt("per_account")
+
+    if apply_type == "global":
+        active_enabled = data["global"].get("enabled", False)
+    else:
+        active_enabled = data["sessions"].get(user_id_str, data["global"]).get("enabled", False) if isinstance(data["sessions"].get(user_id_str), dict) else data["sessions"].get(user_id_str, data["global"].get("enabled", False))
+
     text = (
         "<b>⌨️ Command Logger Settings</b>\n\n"
         f"Mencatat seluruh perintah yang Anda jalankan.\n\n"
-        f"• **Status:** {'✅ ENABLED' if enabled else '❌ DISABLED'}"
+        f"• <b>Status:</b> {'✅ ENABLED' if active_enabled else '❌ DISABLED'}\n"
+        f"• ⚙️ <b>{gt('apply_type')}:</b> <code>{type_label}</code>"
     )
     buttons = [
-        [InlineKeyboardButton(f"{'Disable' if enabled else 'Enable'} Cmd Logger", f"cmdl_toggle_{index}_{page}")],
+        [InlineKeyboardButton(f"{'Disable' if active_enabled else 'Enable'} Cmd Logger", f"cmdl_toggle_{index}_{page}")],
+        [
+            InlineKeyboardButton(f"⚙️ {gt('apply_type')}: {type_label}", f"cmdl_toggle_type_{index}_{page}"),
+            InlineKeyboardButton(gt("set_as_global"), f"cmdl_set_global_{index}_{page}"),
+        ],
         [InlineKeyboardButton("🔙 Back to Session Info", f"session_info_{index}_{page}")]
     ]
     await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^cmdl_toggle_type_(\d+)_(\d+)$"))
+@log_errors
+async def cmdl_toggle_type_handler(c: Client, cb: CallbackQuery):
+    if not await check_authorization(cb): return
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    user_id_str = str(Altruix.clients[index].me.id)
+    filename = "cmd_logger_settings.json"
+    try:
+        if os.path.exists(filename):
+            with open(filename, "r") as f: data = json.load(f)
+        else:
+            data = {"global": {"enabled": False}, "sessions": {}, "apply_types": {}}
+        if "apply_types" not in data: data["apply_types"] = {}
+        current = data["apply_types"].get(user_id_str, "per_account")
+        new_val = "global" if current == "per_account" else "per_account"
+        data["apply_types"][user_id_str] = new_val
+        with open(filename, "w") as f: json.dump(data, f, indent=4)
+        await cb.answer(f"Apply Type: {new_val.upper()}")
+        await cmdl_menu_handler(c, cb, index=index, page=page)
+    except Exception as e: await cb.answer(f"Error: {e}", show_alert=True)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^cmdl_set_global_(\d+)_(\d+)$"))
+@log_errors
+async def cmdl_set_global_handler(c: Client, cb: CallbackQuery):
+    if not await check_authorization(cb): return
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    user_id_str = str(Altruix.clients[index].me.id)
+    filename = "cmd_logger_settings.json"
+    try:
+        if os.path.exists(filename):
+            with open(filename, "r") as f: data = json.load(f)
+        else: return await cb.answer("❌ Error: Settings file missing", show_alert=True)
+        current = data.get("sessions", {}).get(user_id_str)
+        if current is None: return await cb.answer("❌ Current session has no config to set as global", show_alert=True)
+        if not isinstance(current, dict): current = {"enabled": bool(current)}
+        data["global"] = current
+        with open(filename, "w") as f: json.dump(data, f, indent=4)
+        await cb.answer("✅ Successfully set as GLOBAL!", show_alert=True)
+    except Exception as e: await cb.answer(f"Error: {e}", show_alert=True)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^cmdl_toggle_(\d+)_(\d+)$"))
 @log_errors
 async def cmdl_toggle_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
-    index = int(cb.matches[0].group(1))
-    page = int(cb.matches[0].group(2))
+    user_id_str = str(Altruix.clients[index].me.id)
     filename = "cmd_logger_settings.json"
     if os.path.exists(filename):
         with open(filename, "r") as f: data = json.load(f)
-    else: data = {"enabled": False}
-    data["enabled"] = not data.get("enabled", False)
-    with open(filename, "w") as f: json.dump(data, f, indent=2)
-    await cb.answer(f"Command Logger: {'Enabled' if data['enabled'] else 'Disabled'}")
+    else: data = {"global": {"enabled": False}, "sessions": {}, "apply_types": {}}
+    
+    if "global" not in data:
+        data = {"global": {"enabled": data.get("enabled", False)}, "sessions": {}, "apply_types": {}}
+    
+    if "sessions" not in data: data["sessions"] = {}
+    if "apply_types" not in data: data["apply_types"] = {}
+
+    apply_type = data["apply_types"].get(user_id_str, "per_account")
+    if apply_type == "per_account":
+        if user_id_str not in data["sessions"]: data["sessions"][user_id_str] = data["global"].copy()
+        if not isinstance(data["sessions"][user_id_str], dict): data["sessions"][user_id_str] = {"enabled": bool(data["sessions"][user_id_str])}
+        data["sessions"][user_id_str]["enabled"] = not data["sessions"][user_id_str].get("enabled", False)
+        new_val = data["sessions"][user_id_str]["enabled"]
+    else:
+        data["global"]["enabled"] = not data["global"].get("enabled", False)
+        new_val = data["global"]["enabled"]
+
+    with open(filename, "w") as f: json.dump(data, f, indent=4)
+    await cb.answer(f"Command Logger: {'Enabled' if new_val else 'Disabled'}")
     await cmdl_menu_handler(c, cb, index=index, page=page)
 
 # ✅ HANDLER BARU: PM Filters Menu
@@ -5246,26 +5505,48 @@ async def mnt_menu_handler(c: Client, cb: CallbackQuery, index: int = None, page
         except Exception as e:
             logger.error(f"Error loading mentions_settings: {e}")
 
-    g_settings = m_settings.get("global", {})
-    rfa_status = "✅ ON" if g_settings.get("reply_from_all") else "❌ OFF"
-    mnt_status = "✅ ON" if g_settings.get("mention") else "❌ OFF"
-    alog_status = "✅ ON" if g_settings.get("auto_log") else "❌ OFF"
+    # Structured format support
+    if "settings" not in m_settings: m_settings["settings"] = {}
+    if "apply_types" not in m_settings: m_settings["apply_types"] = {}
+    
+    user_id_str = str(Altruix.clients[index].me.id)
+    apply_type = m_settings["apply_types"].get(user_id_str, "per_account")
+    type_label = gt("global") if apply_type == "global" else gt("per_account")
+
+    if apply_type == "global":
+        active_settings = m_settings.get("global", {})
+    else:
+        # Resolve per-session settings
+        session_data = m_settings["settings"].get(user_id_str, {})
+        if isinstance(session_data, bool):
+             # Migrate old boolean value
+             active_settings = {"mention": session_data, "auto_log": True, "reply_from_all": False}
+        elif isinstance(session_data, dict) and "value" in session_data:
+             # Another old format
+             active_settings = {"mention": session_data["value"], "auto_log": True, "reply_from_all": False}
+        else:
+             active_settings = session_data
+
+    rfa_status = "✅ ON" if active_settings.get("reply_from_all", m_settings["global"].get("reply_from_all")) else "❌ OFF"
+    mnt_status = "✅ ON" if active_settings.get("mention", m_settings["global"].get("mention")) else "❌ OFF"
+    alog_status = "✅ ON" if active_settings.get("auto_log", m_settings["global"].get("auto_log")) else "❌ OFF"
 
     desc_text = (
         f"<b>{gt('mention_control')}</b>\n\n"
-        "ℹ️ <b>Penjelasan Fungsi:</b>\n"
-        f"• <b>{gt('mention_logic')}:</b> Mengaktifkan sistem deteksi mention/keyword. Jika MATIKAN, bot tidak akan memantau mention.\n"
-        f"• <b>{gt('mention_auto_log')}:</b> Menentukan apakah mention yang terdeteksi akan dikirim ke Log Group atau tidak.\n\n"
-        f"• <b>{gt('status')}:</b>\n"
-        f"  ├ {gt('reply_from_all')}: {rfa_status}\n"
-        f"  ├ {gt('mention_logic')}: {mnt_status}\n"
-        f"  └ {gt('mention_auto_log')}: {alog_status}\n\n"
+        f"• <b>{gt('reply_from_all')}:</b> {rfa_status}\n"
+        f"• <b>{gt('mention_logic')}:</b> {mnt_status}\n"
+        f"• <b>{gt('mention_auto_log')}:</b> {alog_status}\n"
+        f"• ⚙️ <b>{gt('apply_type')}:</b> <code>{type_label}</code>\n\n"
         f"<i>Gunakan tombol di bawah untuk konfigurasi.</i>"
     )
 
     buttons = [
         [
             InlineKeyboardButton(f"{gt('reply_from_all')}: {rfa_status}", f"mnt_toggle_rfa_{index}_{page}"),
+        ],
+        [
+            InlineKeyboardButton(f"⚙️ {gt('apply_type')}: {type_label}", f"mnt_toggle_type_{index}_{page}"),
+            InlineKeyboardButton(gt("set_as_global"), f"mnt_set_global_{index}_{page}"),
         ],
         [
             InlineKeyboardButton(f"{gt('mention_logic')}: {mnt_status}", f"mnt_toggle_mnt_{index}_{page}"),
@@ -5318,15 +5599,7 @@ async def dlstory_session_input_handler(c: Client, cb: CallbackQuery):
         user_id = cb.from_user.id
         msg = await c.listen(filters.chat(user_id) & filters.text, timeout=120)
         
-        if msg.text.lower() == 'cancel':
-            await msg.delete()
-            await cb.message.edit("❌ Dibatalkan.")
-            await asyncio.sleep(2)
-            await sessions_info_cb_handler(c, cb, index=index, callback_page=page)
-            return
-            
         link = msg.text.strip()
-        await msg.delete()
         
         await cb.message.edit("🔄 <b>Sedang memproses...</b>")
         
@@ -5349,8 +5622,17 @@ async def dlstory_session_input_handler(c: Client, cb: CallbackQuery):
             
             try:
                 # Prioritas 1: Copy jika Premium atau Non-Restricted
-                await session_client.copy_story(log_chat_id, target, story_id)
+                msg_copied = await session_client.copy_story(log_chat_id, target, story_id)
+                # Edit log group message to add details if it was a copy
+                try:
+                    meta_info = f"\n\n🆔 <b>Story ID:</b> <code>{story_id}</code>\n👤 <b>Author ID:</b> <code>{target}</code>"
+                    new_caption = (msg_copied.caption or "") + meta_info
+                    await Altruix.bot.edit_message_caption(log_chat_id, msg_copied.id, caption=new_caption, parse_mode=enums.ParseMode.HTML)
+                except Exception:
+                    pass
+                    
                 await cb.message.edit(f"✅ <b>Berhasil!</b> Story telah disalin ke Log Group.")
+                await cb.answer("✅ Success!", show_alert=False)
             except Exception as e:
                 err_str = str(e)
                 # Check Bypass condition
@@ -5359,15 +5641,37 @@ async def dlstory_session_input_handler(c: Client, cb: CallbackQuery):
                 if not bypass and isinstance(e, FloodWait):
                      raise e
                 
-                await cb.message.edit(f"🔄 <b>Copy gagal ({err_str[:20]}...), mencoba Bypass (Download & Re-upload)...</b>")
+                await cb.message.edit(f"🔄 <b>Copy gagal, mencoba Bypass (Download & Re-upload)...</b>")
                 
                 # ✅ BYPASS: Download and Re-upload
                 story = await session_client.get_stories(target, story_id)
                 if not story:
                     await cb.message.edit("❌ <b>Story tidak ditemukan atau sudah kadaluarsa.</b>")
+                    try:
+                        await cb.answer("❌ Story Not Found", show_alert=True)
+                    except Exception:
+                        pass
                     return
                 
-                file_path = await session_client.download_media(story)
+                # Fetch Author details
+                try:
+                    ent = await session_client.get_chat(target)
+                    author_name = getattr(ent, 'title', None) or f"{getattr(ent, 'first_name', '')} {getattr(ent, 'last_name', '')}".strip()
+                    author_mention = f"@{ent.username}" if getattr(ent, 'username', None) else f'<a href="tg://user?id={ent.id}">{html.escape(author_name)}</a>'
+                    author_id = ent.id
+                except:
+                    author_mention = f"@{target}" if str(target).isalpha() else f"<code>{target}</code>"
+                    author_id = target
+
+                # Use progress callback for "speed" and feedback appearance
+                async def progress(current, total):
+                    try:
+                        percent = (current / total) * 100
+                        await cb.message.edit(f"🔄 <b>Downloading Media... {percent:.1f}%</b>")
+                    except Exception:
+                        pass
+
+                file_path = await session_client.download_media(story, progress=progress)
                 if file_path:
                     try:
                         # Clean Caption Logic
@@ -5384,9 +5688,13 @@ async def dlstory_session_input_handler(c: Client, cb: CallbackQuery):
                                     final_entities.append(ent)
                                     
                         final_caption = caption
+                        author_info = f"👤 <b>Author:</b> {author_mention}\n🆔 <b>Author ID:</b> <code>{author_id}</code>\n🆔 <b>Story ID:</b> <code>{story_id}</code>"
+                        
                         if not final_caption:
-                             final_caption = f"📥 <b>Story from</b> @{target}" + (f" ({target})" if str(target).lstrip('-').isdigit() else "")
+                             final_caption = f"📥 <b>Story Downloaded</b>\n\n{author_info}"
                              final_entities = None
+                        else:
+                             final_caption = f"📥 <b>Story Downloaded</b>\n\n{final_caption}\n\n{author_info}"
 
                         if story.video:
                             await session_client.send_video(log_chat_id, file_path, caption=final_caption, caption_entities=final_entities)
@@ -5394,11 +5702,19 @@ async def dlstory_session_input_handler(c: Client, cb: CallbackQuery):
                             await session_client.send_photo(log_chat_id, file_path, caption=final_caption, caption_entities=final_entities)
                         
                         await cb.message.edit("✅ <b>Bypass Berhasil!</b> Story telah diupload ke Log Group.")
+                        try:
+                            await cb.answer("✅ Bypass Success!", show_alert=False)
+                        except Exception:
+                            pass
                     finally:
                         if os.path.exists(file_path):
                             os.remove(file_path)
                 else:
                     await cb.message.edit("❌ <b>Gagal mendownload media story untuk bypass.</b>")
+                    try:
+                        await cb.answer("❌ Download Media Failed", show_alert=True)
+                    except Exception:
+                        pass
             
             # Notifikasi Log
             await send_log_notification(
@@ -5407,10 +5723,12 @@ async def dlstory_session_input_handler(c: Client, cb: CallbackQuery):
             )
             
         except Exception as e:
-            await cb.message.edit(f"❌ <b>Gagal:</b> {str(e)}")
+            err_msg = str(e)
+            await cb.message.edit(f"❌ <b>Gagal:</b> {err_msg}")
+            await cb.answer(f"❌ Failed: {err_msg[:30]}", show_alert=True)
             await send_log_notification(
                 c, 'dlstory_session', index, cb.from_user,
-                False, str(e), {'Target': target, 'StoryID': story_id, 'Aksi': 'Download story gagal'}
+                False, err_msg, {'Target': target, 'StoryID': story_id, 'Aksi': 'Download story gagal'}
             )
             
         await asyncio.sleep(3)
@@ -5422,6 +5740,67 @@ async def dlstory_session_input_handler(c: Client, cb: CallbackQuery):
         await cb.message.edit(f"❌ Error: {str(e)}")
 
 
+@Altruix.bot.on_callback_query(filters.regex(r"^mnt_toggle_type_(\d+)_(\d+)$"))
+@log_errors
+async def mnt_toggle_type_handler(c: Client, cb: CallbackQuery):
+    if not await check_authorization(cb): return
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    user_id_str = str(Altruix.clients[index].me.id)
+    settings_file = "mentions_settings.json"
+    
+    try:
+        if os.path.exists(settings_file):
+            with open(settings_file, "r") as f: data = json.load(f)
+        else:
+            data = {"global": {"mention": True, "auto_log": True, "reply_from_all": False}, "settings": {}, "apply_types": {}}
+            
+        if "apply_types" not in data: data["apply_types"] = {}
+        
+        current = data["apply_types"].get(user_id_str, "per_account")
+        new_val = "global" if current == "per_account" else "per_account"
+        data["apply_types"][user_id_str] = new_val
+        
+        with open(settings_file, "w") as f:
+            json.dump(data, f, indent=4)
+        
+        await cb.answer(f"Apply Type: {new_val.upper()}")
+        await mnt_menu_handler(c, cb, index=index, page=page)
+    except Exception as e:
+        await cb.answer(f"Error: {e}", show_alert=True)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^mnt_set_global_(\d+)_(\d+)$"))
+@log_errors
+async def mnt_set_global_handler(c: Client, cb: CallbackQuery):
+    if not await check_authorization(cb): return
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    user_id_str = str(Altruix.clients[index].me.id)
+    settings_file = "mentions_settings.json"
+    
+    try:
+        if os.path.exists(settings_file):
+            with open(settings_file, "r") as f: data = json.load(f)
+        else:
+            return await cb.answer("❌ Error: Settings file missing", show_alert=True)
+            
+        current_config = data.get("settings", {}).get(user_id_str)
+        if not current_config:
+             return await cb.answer("❌ Current session has no config to set as global", show_alert=True)
+        
+        if isinstance(current_config, bool):
+             current_config = {"mention": current_config, "auto_log": True, "reply_from_all": False}
+        elif isinstance(current_config, dict) and "value" in current_config:
+             current_config = {"mention": current_config["value"], "auto_log": True, "reply_from_all": False}
+
+        data["global"] = current_config
+        with open(settings_file, "w") as f:
+            json.dump(data, f, indent=4)
+            
+        await cb.answer("✅ Successfully set as GLOBAL!", show_alert=True)
+    except Exception as e:
+        await cb.answer(f"Error: {e}", show_alert=True)
+
 # ✅ HANDLER BARU: Toggle Mention Settings (RFA, MNT, ALOG)
 @Altruix.bot.on_callback_query(filters.regex(r"^mnt_toggle_(rfa|mnt|alog)_(\d+)_(\d+)$"))
 @log_errors
@@ -5431,9 +5810,10 @@ async def mnt_toggle_handler(c: Client, cb: CallbackQuery):
     action = cb.matches[0].group(1)
     index = int(cb.matches[0].group(2))
     page = int(cb.matches[0].group(3))
+    user_id_str = str(Altruix.clients[index].me.id)
     
     settings_file = "mentions_settings.json"
-    m_settings = {"global": {"mention": True, "auto_log": True, "reply_from_all": False}, "settings": {}}
+    m_settings = {"global": {"mention": True, "auto_log": True, "reply_from_all": False}, "settings": {}, "apply_types": {}}
     
     if os.path.exists(settings_file):
         try:
@@ -5448,7 +5828,10 @@ async def mnt_toggle_handler(c: Client, cb: CallbackQuery):
                     m_settings["global"]["reply_from_all"] = loaded_data.get("reply_from_all", False)
         except: pass
     
-    # Map action to setting key in 'global'
+    if "settings" not in m_settings: m_settings["settings"] = {}
+    if "apply_types" not in m_settings: m_settings["apply_types"] = {}
+
+    # Map action to setting key
     key_map = {
         "rfa": "reply_from_all",
         "mnt": "mention",
@@ -5457,13 +5840,25 @@ async def mnt_toggle_handler(c: Client, cb: CallbackQuery):
     
     key = key_map.get(action)
     if key:
-        m_settings["global"][key] = not m_settings["global"].get(key, False)
+        apply_type = m_settings["apply_types"].get(user_id_str, "per_account")
+        
+        if apply_type == "per_account":
+            if user_id_str not in m_settings["settings"]:
+                m_settings["settings"][user_id_str] = m_settings["global"].copy()
+            
+            # Ensure it's a dict
+            if not isinstance(m_settings["settings"][user_id_str], dict):
+                 m_settings["settings"][user_id_str] = {"mention": bool(m_settings["settings"][user_id_str]), "auto_log": True, "reply_from_all": False}
+
+            m_settings["settings"][user_id_str][key] = not m_settings["settings"][user_id_str].get(key, False)
+        else:
+            m_settings["global"][key] = not m_settings["global"].get(key, False)
+
         with open(settings_file, "w") as f:
             json.dump(m_settings, f, indent=4)
         
         readable_name = key.replace('_', ' ').title()
-        status_text = "ON" if m_settings["global"][key] else "OFF"
-        await cb.answer(f"✅ {readable_name} turned {status_text}", show_alert=False)
+        await cb.answer(f"✅ {readable_name} updated", show_alert=False)
         await mnt_menu_handler(c, cb, index=index, page=page)
     else:
         await cb.answer("❌ Invalid action", show_alert=True)
@@ -7708,6 +8103,7 @@ async def bot_controls_menu_handler(c: Client, cb: CallbackQuery):
     pm_status = get_status("pm_logger_bot_settings.json", nested=True)
     mnt_status = get_status("mention_logger_bot_settings.json", nested=True)  # Bot mention logger
     join_status = get_status("join_logger_settings.json")
+    cb_status = get_status("callback_logger_settings.json", nested=True)
     
     # Generate timestamp to avoid MESSAGE_NOT_MODIFIED
     ts = datetime.now().strftime("%H:%M:%S")
@@ -7717,7 +8113,8 @@ async def bot_controls_menu_handler(c: Client, cb: CallbackQuery):
         f"Gunakan tombol di bawah untuk mengatur log yang dikelola oleh Bot Assistant.\n\n"
         f"• <b>PM Log:</b> {pm_status}\n"
         f"• <b>Mention Log:</b> {mnt_status}\n"
-        f"• <b>Join Log:</b> {join_status}\n\n"
+        f"• <b>Join Log:</b> {join_status}\n"
+        f"• <b>Callback Log:</b> {cb_status}\n\n"
         f"<i>Last Update: {ts}</i>"
     )
     
@@ -7732,6 +8129,9 @@ async def bot_controls_menu_handler(c: Client, cb: CallbackQuery):
             InlineKeyboardButton(f"🤖 Join Log: {join_status}", "bot_log_joinl_toggle"),
         ],
         [
+            InlineKeyboardButton(f"🤖 Callback Log: {cb_status}", "bot_log_cbl_toggle"),
+        ],
+        [
             InlineKeyboardButton("📤 Export Log Group Link", "export_log_link_confirmation"),
         ],
         [
@@ -7741,7 +8141,7 @@ async def bot_controls_menu_handler(c: Client, cb: CallbackQuery):
     
     await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
-@Altruix.bot.on_callback_query(filters.regex(r"^bot_log_(pml|mnt|joinl)_toggle$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^bot_log_(pml|mnt|joinl|cbl)_toggle$"))
 @log_errors
 async def bot_logger_toggle_handler(c: Client, cb: CallbackQuery):
     # Authorization check
@@ -7753,7 +8153,8 @@ async def bot_logger_toggle_handler(c: Client, cb: CallbackQuery):
     file_map = {
         "pml": "pm_logger_bot_settings.json",
         "mnt": "mention_logger_bot_settings.json",  # Bot mention logger (independent from userbot)
-        "joinl": "join_logger_settings.json"
+        "joinl": "join_logger_settings.json",
+        "cbl": "callback_logger_settings.json"
     }
     
     filename = file_map.get(target)
@@ -7773,11 +8174,17 @@ async def bot_logger_toggle_handler(c: Client, cb: CallbackQuery):
                 data["settings"] = {}
             data["settings"]["enabled"] = not data["settings"].get("enabled", False)
             status = data["settings"]["enabled"]
-        elif target == "pml":
-            # PM Logger Bot expects nested "settings" key
+        elif target == "pml" or target == "cbl":
+            # PM Logger Bot and Callback Logger expect nested "settings" key
             if "settings" not in data:
                 data["settings"] = {}
-            data["settings"]["enabled"] = not data["settings"].get("enabled", False)
+            
+            # Default to ON for CBL if just created
+            if target == "cbl" and not os.path.exists(filename):
+                data["settings"]["enabled"] = True
+            else:
+                data["settings"]["enabled"] = not data["settings"].get("enabled", False)
+            
             status = data["settings"]["enabled"]
         else:
             data["enabled"] = not data.get("enabled", False)
