@@ -72,7 +72,7 @@ import logging
 
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "settings"
-PLUGIN_VERSION = "1.0.9"  # ✅ REFACTORED: Broad ENV Discovery & Security Fixed
+PLUGIN_VERSION = "1.1.0"  # ✅ REFACTORED: Purge Enhancements & UI Consolidation
 
 logger = logging.getLogger("altruix.settings")
 logger.setLevel(logging.INFO)
@@ -180,7 +180,12 @@ STRINGS = {
         "global": "Global 🌐",
         "per_account": "Per-Akun 👤",
         "set_as_global": "Jadikan Global ✨",
-        "help_info_msg_updated": "✅ <b>Pesan help info berhasil diperbarui!</b>"
+        "help_info_msg_updated": "✅ <b>Pesan help info berhasil diperbarui!</b>",
+        "custom_delay_prompt": "Silakan kirim <b>angka</b> jeda (delay) dalam detik (contoh: 0.5 atau 2):",
+        "purge_progress": "🧹 <b>Purging:</b> <code>{count}/{total}</code>",
+        "purge_success_log": "✅ <b>Purge Selesai!</b>\n\n• Chat: {chat}\n• Berhasil: <code>{count}</code>\n• Gagal: <code>{error}</code>",
+        "startup_settings_title": "🚀 <b>Pengaturan Startup</b>",
+        "help_info_settings_title": "❇️ <b>Pengaturan Help Info</b>"
     },
     "english": {
         "sessions": "Sessions",
@@ -248,7 +253,12 @@ STRINGS = {
         "global": "Global 🌐",
         "per_account": "Per-Account 👤",
         "set_as_global": "Set as Global ✨",
-        "help_info_msg_updated": "✅ <b>Help info message updated!</b>"
+        "help_info_msg_updated": "✅ <b>Help info message updated!</b>",
+        "custom_delay_prompt": "Please send the <b>number</b> of delay in seconds (e.g., 0.5 or 2):",
+        "purge_progress": "🧹 <b>Purging:</b> <code>{count}/{total}</code>",
+        "purge_success_log": "✅ <b>Purge Complete!</b>\n\n• Chat: {chat}\n• Success: <code>{count}</code>\n• Failed: <code>{error}</code>",
+        "startup_settings_title": "🚀 <b>Startup Settings</b>",
+        "help_info_settings_title": "❇️ <b>Help Info Settings</b>"
     }
 }
 
@@ -275,7 +285,8 @@ async def send_log_notification(
     user: Any, 
     success: bool, 
     error_msg: str = None,
-    additional_info: Dict[str, Any] = None
+    additional_info: Dict[str, Any] = None,
+    reply_markup: InlineKeyboardMarkup = None
 ):
     """Mengirim notifikasi ke log group untuk semua aksi"""
     try:
@@ -308,7 +319,8 @@ async def send_log_notification(
             'check_limit': 'Check Limit',
             'recent_messages': 'Pesan Terbaru',  # ✅ BARU
             'view_mentions': 'Lihat Mention',  # ✅ BARU
-            'send_profile_photo': 'Kirim Foto Profil'  # ✅ BARU
+            'send_profile_photo': 'Kirim Foto Profil',  # ✅ BARU
+            'purge_my_message': 'Purge My Message'  # ✅ BARU
         }
         
         action_text = action_map.get(action, action)
@@ -332,7 +344,12 @@ async def send_log_notification(
         if additional_info:
             for key, value in additional_info.items():
                 if value and str(value).strip():
-                    log_message += f"• {key}: <code>{html.escape(str(value))}</code>\n"
+                    val_str = str(value)
+                    # ✅ Cek jika value sudah mengandung tag HTML (a, code, b, i)
+                    if any(tag in val_str for tag in ["<a ", "<code>", "<b>", "<i>"]):
+                        log_message += f"• {key}: {val_str}\n"
+                    else:
+                        log_message += f"• {key}: <code>{html.escape(val_str)}</code>\n"
         
         if error_msg:
             log_message += f"• Error: <code>{html.escape(error_msg)}</code>\n"
@@ -344,6 +361,7 @@ async def send_log_notification(
             log_chat_id,
             log_message,
             parse_mode=ParseMode.HTML,
+            reply_markup=reply_markup,
             link_preview_options=LinkPreviewOptions(is_disabled=True)
         )
         
@@ -862,7 +880,12 @@ async def user_text_handler(c: Client, m: Message):
             page = state['page']
             
             # Save to DB
-            key = f"STARTUP_CUSTOM_MSG_{index}"
+            apply_type = await Altruix.config.get_env(f"STARTUP_MSG_TYPE_{index}") or "per_account"
+            if apply_type == "global":
+                key = "STARTUP_CUSTOM_MSG_GLOBAL"
+            else:
+                key = f"STARTUP_CUSTOM_MSG_{index}"
+                
             await Altruix.config.sync_env_to_db(key, text, upsert=True)
             setattr(Altruix.config, key, text)
             
@@ -1217,6 +1240,48 @@ async def user_text_handler(c: Client, m: Message):
             f"Chat: <code>{html.escape(state['chat_id'])}</code>\n"
             f"Jumlah: <code>{amount}</code>\n\n"
             f"Pilih jeda (delay) antar pesan:",
+            reply_markup=InlineKeyboardMarkup(buttons),
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    # ✅ BARU: Cek jika user sedang menunggu input delay custom untuk purge
+    elif user_id in user_purge_state and user_purge_state[user_id]['step'] == 'waiting_custom_delay':
+        if text.lower() == "/cancel":
+            del user_purge_state[user_id]
+            await m.reply("❌ Purge dibatalkan.")
+            return
+        
+        try:
+            delay = float(text)
+            if delay < 0:
+                await m.reply("❌ Jeda tidak boleh negatif.")
+                return
+        except ValueError:
+            await m.reply("❌ Masukkan angka (float/int) yang valid.")
+            return
+        
+        state = user_purge_state[user_id]
+        state['delay'] = delay
+        state['step'] = 'selecting_mode'
+        
+        # Tampilkan pilihan mode (Reverse)
+        buttons = [
+            [
+                InlineKeyboardButton("🆕 Terbaru (Latest)", callback_data=f"purge_mode_{user_id}_latest"),
+                InlineKeyboardButton("⌛ Terlama (Oldest)", callback_data=f"purge_mode_{user_id}_oldest"),
+            ],
+            [
+                InlineKeyboardButton("🔙 Cancel", callback_data=f"session_info_{state['session_index']}_{state['page']}"),
+            ]
+        ]
+        
+        await m.reply(
+            f"<b>🧹 Purge My Message</b>\n\n"
+            f"Chat: <code>{html.escape(state['chat_id'])}</code>\n"
+            f"Jumlah: <code>{state['amount']}</code>\n"
+            f"Jeda: <code>{delay}s</code>\n\n"
+            f"Pilih mode urutan penghapusan:",
             reply_markup=InlineKeyboardMarkup(buttons),
             parse_mode=ParseMode.HTML
         )
@@ -2967,7 +3032,7 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
         f"💠 <b>DC:</b> <code>{session_info.dc_id or 'N/A'}</code>\n"
         f"❤️‍🔥 <b>Premium:</b> <code>{'Yes' if is_premium else 'No'}</code>\n"
         f"📊 <b>Session Index:</b> <code>{index + 1}</code>\n"
-        f"🏷 <b>Username:</b> @{session_info.username or 'None'}\n\n"
+        f"🏷 <b>Username:</b> <spoiler>@{session_info.username or 'None'}</spoiler>\n\n"
         f"<i>Manage this session (Page {button_page}):</i>"
     )
 
@@ -3013,12 +3078,12 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
         InlineKeyboardButton(gt("join_log_group"), f"join_log_group_{index}"),
         
         # Advanced & Settings
-        InlineKeyboardButton(f"🚀 Startup: {startup_status}", f"toggle_startup_msg_{index}_{callback_page}"),
+        InlineKeyboardButton(f"🚀 Startup: {startup_status}", f"startup_menu_{index}_{callback_page}"),
         InlineKeyboardButton("🚀 Create Group", f"laucreate_menu_{index}_{callback_page}"),
-        InlineKeyboardButton("📝 Edit Startup Msg", f"startup_custom_menu_{index}_{callback_page}"),
+        # Removed Edit Startup Msg
         InlineKeyboardButton("🔒 Privacy & Security", f"privacy_menu_{index}_{callback_page}"),
-        InlineKeyboardButton(f"🚀 Help Info: {await Altruix.config.get_env(f'HELP_INFO_{index}') or 'default'}", f"toggle_help_info_{index}_{callback_page}"),
-        InlineKeyboardButton("📝 Edit Help Msg", f"help_info_custom_menu_{index}_{callback_page}"),
+        InlineKeyboardButton(f"🚀 Help Info: {await Altruix.config.get_env(f'HELP_INFO_{index}') or 'default'}", f"help_info_menu_{index}_{callback_page}"),
+        # Removed Edit Help Msg
         InlineKeyboardButton("🐍 Eval Python", f"eval_session_{index}_{callback_page}"),
         InlineKeyboardButton("🖥️ Exec Terminal", f"exec_session_{index}_{callback_page}"),
     ]
@@ -5506,6 +5571,7 @@ async def purge_amt_handler(c: Client, cb: CallbackQuery):
         [
             InlineKeyboardButton("3s", callback_data=f"purge_del_{user_id}_3"),
             InlineKeyboardButton("5s", callback_data=f"purge_del_{user_id}_5"),
+            InlineKeyboardButton("Custom", callback_data=f"purge_del_{user_id}_custom"),
         ],
         [
             InlineKeyboardButton("🔙 Cancel", callback_data=f"session_info_{state['session_index']}_{state['page']}"),
@@ -5527,13 +5593,29 @@ async def purge_del_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     await cb.answer()
     user_id = int(cb.matches[0].group(1))
-    delay = float(cb.matches[0].group(2))
+    delay_val = cb.matches[0].group(2)
     
     if user_id not in user_purge_state:
         await cb.answer("❌ State tidak ditemukan.", show_alert=True)
         return
         
     state = user_purge_state[user_id]
+    
+    if delay_val == "custom":
+        state['step'] = 'waiting_custom_delay'
+        await cb.message.edit(
+            f"<b>🧹 Purge My Message</b>\n\n"
+            f"Chat: <code>{html.escape(state['chat_id'])}</code>\n"
+            f"Jumlah: <code>{state['amount']}</code>\n\n"
+            f"{gt('custom_delay_prompt')}\n\n"
+            f"Ketik /cancel untuk membatalkan.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(gt("cancel"), f"session_info_{state['session_index']}_{state['page']}")]
+            ])
+        )
+        return
+
+    delay = float(delay_val)
     state['delay'] = delay
     state['step'] = 'selecting_mode'
     
@@ -5650,10 +5732,16 @@ async def purge_exec_handler(c: Client, cb: CallbackQuery):
 
         await cb.message.edit(f"🧹 <b>Menghapus {len(msgs_to_delete)} pesan...</b>")
         
+        total_to_purge = len(msgs_to_delete)
         for mid in msgs_to_delete:
             try:
                 await session_client.delete_messages(target.id, mid)
                 count += 1
+                if count % 5 == 0 or count == total_to_purge:
+                    try:
+                        await cb.message.edit(gt("purge_progress").format(count=count, total=total_to_purge))
+                    except:
+                        pass
                 await asyncio.sleep(delay)
             except FloodWait as e:
                 await asyncio.sleep(e.value)
@@ -5662,18 +5750,34 @@ async def purge_exec_handler(c: Client, cb: CallbackQuery):
             except Exception:
                 error_count += 1
                 
-        final_text = f"✅ <b>Purge Selesai!</b>\n\n• Berhasil dihapus: <code>{count}</code>\n• Gagal: <code>{error_count}</code>"
+        final_text = gt("purge_success_log").format(
+            chat=html.escape(target.title or target.first_name),
+            count=count,
+            error=error_count
+        )
         await cb.message.edit(final_text)
         
+        # Generate Chat Link if possible
+        chat_link = f"https://t.me/{target.username}" if target.username else None
+        chat_display = f"<a href='{chat_link}'>{html.escape(target.title or target.first_name)}</a>" if chat_link else f"<b>{html.escape(target.title or target.first_name)}</b>"
+
         # Log to Altruix Log Group
+        log_buttons = None
+        if chat_link:
+            log_buttons = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🌐 Visit Group", url=chat_link)]
+            ])
+
         await send_log_notification(
             c, 'purge_my_message', session_index, cb.from_user,
             True, None, {
-                'Chat': f"{target.title or target.first_name} ({target.id})",
+                'Chat': f"{chat_display} (<code>{target.id}</code>)",
                 'Jumlah': count,
-                'Delay': delay,
-                'Mode': mode
-            }
+                'Delay': f"{delay}s",
+                'Mode': mode.upper(),
+                'Account': f"<a href='tg://user?id={me.id}'>{html.escape(me.first_name)}</a>"
+            },
+            reply_markup=log_buttons
         )
         
     except Exception as e:
@@ -6804,7 +6908,7 @@ async def render_laucreate_ui(cb: Optional[CallbackQuery], state: dict, message:
         ],
         # Username
         [
-            InlineKeyboardButton(f"User: {config['username'] or 'None'}", callback_data="noop"),
+            InlineKeyboardButton(f"Username: {config['username'] or 'None'}", callback_data="noop"),
             InlineKeyboardButton("✏️ Input", callback_data=f"laucreate_in_{idx}_{pg}_username")
         ],
         # Description
@@ -7207,60 +7311,197 @@ async def process_laucreate_input(c: Client, m: Message, text: str = None):
             except:
                 pass
         return
-@Altruix.bot.on_callback_query(filters.regex(r"^toggle_startup_msg_(\d+)_(\d+)$"))
+# ✅ NEW: Startup Message Menu
+@Altruix.bot.on_callback_query(filters.regex(r"^startup_menu_(\d+)_(\d+)$"))
 @log_errors
-async def toggle_startup_msg_handler(c: Client, cb: CallbackQuery):
+async def startup_menu_handler(c: Client, cb: CallbackQuery):
+    if not await check_authorization(cb): return
+    await cb.answer()
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    
+    mode = await Altruix.config.get_env(f"STARTUP_MSG_{index}") or "default"
+    apply_type = await Altruix.config.get_env(f"STARTUP_MSG_TYPE_{index}") or "per_account"
+    
+    status_map = {"off": "❌ OFF", "default": "✅ DEFAULT", "custom": "✨ CUSTOM"}
+    mode_label = status_map.get(str(mode).lower(), "✅ DEFAULT")
+    type_label = gt("global") if apply_type == "global" else gt("per_account")
+    
+    text = (
+        f"{gt('startup_settings_title')}\n\n"
+        f"• <b>Status:</b> <code>{mode_label}</code>\n"
+        f"• <b>{gt('apply_type')}:</b> <code>{type_label}</code>\n\n"
+        f"Pilih opsi di bawah untuk mengatur pesan pembuka otomatis."
+    )
+    
+    buttons = [
+        [
+            InlineKeyboardButton(f"🔄 Mode: {mode_label}", f"startup_set_val_{index}_{page}"),
+        ],
+        [
+            InlineKeyboardButton(f"⚙️ {gt('apply_type')}: {type_label}", f"startup_toggle_type_{index}_{page}"),
+        ],
+        [
+            InlineKeyboardButton("📝 Edit Custom Msg", f"startup_custom_menu_{index}_{page}"),
+            InlineKeyboardButton(gt("set_as_global"), f"startup_set_global_{index}_{page}"),
+        ],
+        [
+            InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}"),
+        ]
+    ]
+    
+    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^startup_set_val_(\d+)_(\d+)$"))
+@log_errors
+async def startup_set_val_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
     key = f"STARTUP_MSG_{index}"
     
-    current = await Altruix.config.get_env(key)
-    if current is None:
-        current = "default"
-    
+    current = await Altruix.config.get_env(key) or "default"
     states = ["off", "default", "custom"]
     try:
         new_idx = (states.index(str(current).lower()) + 1) % len(states)
-    except ValueError:
-        new_idx = 1 # default
+    except:
+        new_idx = 1
         
     new_val = states[new_idx]
-    
-    # Persist to DB
     await Altruix.config.sync_env_to_db(key, new_val, upsert=True)
     setattr(Altruix.config, key, new_val)
     
-    await cb.answer(f"Startup Message: {new_val.upper()}")
-    await sessions_info_cb_handler(c, cb, index=index, callback_page=page)
+    await cb.answer(f"Startup: {new_val.upper()}")
+    await startup_menu_handler(c, cb)
 
-
-@Altruix.bot.on_callback_query(filters.regex(r"^toggle_help_info_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^startup_toggle_type_(\d+)_(\d+)$"))
 @log_errors
-async def toggle_help_info_handler(c: Client, cb: CallbackQuery):
+async def startup_toggle_type_handler(c: Client, cb: CallbackQuery):
+    if not await check_authorization(cb): return
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    key = f"STARTUP_MSG_TYPE_{index}"
+    
+    current = await Altruix.config.get_env(key) or "per_account"
+    new_val = "global" if current == "per_account" else "per_account"
+    
+    await Altruix.config.sync_env_to_db(key, new_val, upsert=True)
+    setattr(Altruix.config, key, new_val)
+    
+    await cb.answer(f"Apply Type: {new_val.upper()}")
+    await startup_menu_handler(c, cb)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^startup_set_global_(\d+)_(\d+)$"))
+@log_errors
+async def startup_set_global_handler(c: Client, cb: CallbackQuery):
+    if not await check_authorization(cb): return
+    index = int(cb.matches[0].group(1))
+    
+    current_custom = await Altruix.config.get_env(f"STARTUP_CUSTOM_MSG_{index}")
+    if not current_custom:
+        await cb.answer("❌ Pesan kustom belum diatur untuk akun ini.", show_alert=True)
+        return
+        
+    await Altruix.config.sync_env_to_db("STARTUP_CUSTOM_MSG_GLOBAL", current_custom, upsert=True)
+    setattr(Altruix.config, "STARTUP_CUSTOM_MSG_GLOBAL", current_custom)
+    
+    await cb.answer("✅ Berhasil dijadikan pesan GLOBAL!", show_alert=True)
+
+# ✅ NEW: Help Info Menu
+@Altruix.bot.on_callback_query(filters.regex(r"^help_info_menu_(\d+)_(\d+)$"))
+@log_errors
+async def help_info_menu_handler(c: Client, cb: CallbackQuery):
+    if not await check_authorization(cb): return
+    await cb.answer()
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    
+    mode = await Altruix.config.get_env(f"HELP_INFO_{index}") or "default"
+    apply_type = await Altruix.config.get_env(f"HELP_INFO_TYPE_{index}") or "per_account"
+    
+    status_map = {"default": "✅ DEFAULT", "custom": "✨ CUSTOM"}
+    mode_label = status_map.get(str(mode).lower(), "✅ DEFAULT")
+    type_label = gt("global") if apply_type == "global" else gt("per_account")
+    
+    text = (
+        f"{gt('help_info_settings_title')}\n\n"
+        f"• <b>Status:</b> <code>{mode_label}</code>\n"
+        f"• <b>{gt('apply_type')}:</b> <code>{type_label}</code>\n\n"
+        f"Pilih opsi di bawah untuk mengatur pesan bantuan kustom."
+    )
+    
+    buttons = [
+        [
+            InlineKeyboardButton(f"🔄 Mode: {mode_label}", f"help_info_set_val_{index}_{page}"),
+        ],
+        [
+            InlineKeyboardButton(f"⚙️ {gt('apply_type')}: {type_label}", f"help_info_toggle_type_{index}_{page}"),
+        ],
+        [
+            InlineKeyboardButton("📝 Edit Custom Msg", f"help_info_custom_menu_{index}_{page}"),
+            InlineKeyboardButton(gt("set_as_global"), f"help_info_set_global_{index}_{page}"),
+        ],
+        [
+            InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}"),
+        ]
+    ]
+    
+    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^help_info_set_val_(\d+)_(\d+)$"))
+@log_errors
+async def help_info_set_val_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
     key = f"HELP_INFO_{index}"
     
-    current = await Altruix.config.get_env(key)
-    if current is None:
-        current = "default"
-    
+    current = await Altruix.config.get_env(key) or "default"
     states = ["default", "custom"]
     try:
         new_idx = (states.index(str(current).lower()) + 1) % len(states)
-    except ValueError:
-        new_idx = 0 # default
+    except:
+        new_idx = 0
         
     new_val = states[new_idx]
-    
-    # Persist to DB
     await Altruix.config.sync_env_to_db(key, new_val, upsert=True)
     setattr(Altruix.config, key, new_val)
     
-    await cb.answer(f"Help Info Mode: {new_val.upper()}")
-    await sessions_info_cb_handler(c, cb, index=index, callback_page=page)
+    await cb.answer(f"Help Info: {new_val.upper()}")
+    await help_info_menu_handler(c, cb)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^help_info_toggle_type_(\d+)_(\d+)$"))
+@log_errors
+async def help_info_toggle_type_handler(c: Client, cb: CallbackQuery):
+    if not await check_authorization(cb): return
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    key = f"HELP_INFO_TYPE_{index}"
+    
+    current = await Altruix.config.get_env(key) or "per_account"
+    new_val = "global" if current == "per_account" else "per_account"
+    
+    await Altruix.config.sync_env_to_db(key, new_val, upsert=True)
+    setattr(Altruix.config, key, new_val)
+    
+    await cb.answer(f"Apply Type: {new_val.upper()}")
+    await help_info_menu_handler(c, cb)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^help_info_set_global_(\d+)_(\d+)$"))
+@log_errors
+async def help_info_set_global_handler(c: Client, cb: CallbackQuery):
+    if not await check_authorization(cb): return
+    index = int(cb.matches[0].group(1))
+    
+    current_custom = await Altruix.config.get_env(f"HELP_INFO_CUSTOM_MSG_{index}")
+    if not current_custom:
+        await cb.answer("❌ Pesan kustom belum diatur untuk akun ini.", show_alert=True)
+        return
+        
+    await Altruix.config.sync_env_to_db("HELP_INFO_CUSTOM_MSG_GLOBAL", current_custom, upsert=True)
+    setattr(Altruix.config, "HELP_INFO_CUSTOM_MSG_GLOBAL", current_custom)
+    
+    await cb.answer("✅ Berhasil dijadikan pesan GLOBAL!", show_alert=True)
 
 
 @Altruix.bot.on_callback_query(filters.regex(r"^startup_custom_menu_(\d+)_(\d+)$"))
@@ -7298,7 +7539,7 @@ async def startup_custom_menu_handler(c: Client, cb: CallbackQuery):
             InlineKeyboardButton("📝 Edit Startup Message", f"startup_custom_input_{index}_{page}"),
         ],
         [
-            InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}"),
+            InlineKeyboardButton("🔙 Back", f"startup_menu_{index}_{page}"),
         ]
     ]
     
@@ -7350,7 +7591,7 @@ async def help_info_custom_menu_handler(c: Client, cb: CallbackQuery):
             InlineKeyboardButton(gt("set_as_global"), f"help_info_set_global_{index}_{page}"),
         ],
         [
-            InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}"),
+            InlineKeyboardButton("🔙 Back", f"help_info_menu_{index}_{page}"),
         ]
     ]
     

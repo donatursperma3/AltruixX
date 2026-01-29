@@ -123,7 +123,7 @@ class AltruixClient:
         self.clients: List[Client] = []
         self.cmd_list = {}
         self.all_lang_strings = {}
-        self.__version__ = "0.0.4.55"
+        self.__version__ = "0.0.4.56"
         self.selected_lang = "english"
         self.local_lang_file = "./Main/localization"
         self.cmd_list = {}
