@@ -269,7 +269,7 @@ async def cache_log_toggle_handler(c: Client, cb: CallbackQuery):
 
 
 # ====================== HANDLE CUSTOM BOT TOKEN INPUT ======================
-@Altruix.bot.on_message(~filters.bot & (filters.private | filters.group))
+@Altruix.bot.on_message(~filters.bot & (filters.private | filters.group), group=-1)
 @log_errors
 async def handle_custom_bot_token_input(c: Client, m: Message):
     """Handle user input for custom bot token"""
@@ -278,13 +278,19 @@ async def handle_custom_bot_token_input(c: Client, m: Message):
         
     user_id = m.from_user.id
     
-    if user_id not in user_env_manager_state:
+    # Use State from Altruix client to ensure consistency
+    state_dict = Altruix.user_env_manager_state
+    
+    if user_id not in state_dict:
         return
     
-    state = user_env_manager_state[user_id]
+    state = state_dict[user_id]
     
     if state.get('action') != 'custom_bot_token':
         return
+    
+    # It's our message! Stop others from processing.
+    m.stop_propagation()
 
     if not m.text:
         return
@@ -366,5 +372,6 @@ async def handle_custom_bot_token_input(c: Client, m: Message):
             False, str(e), {'Session': index + 1}
         )
     
-    # Cleanup state
-    del user_env_manager_state[user_id]
+    # Cleanup state from shared dict
+    if user_id in Altruix.user_env_manager_state:
+        del Altruix.user_env_manager_state[user_id]

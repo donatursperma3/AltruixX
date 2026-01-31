@@ -1166,8 +1166,14 @@ async def send_mention_edit_handler(c: Client, m: RawMessage):
 @Altruix.bot.on_callback_query(filters.regex(r"^mentions_react_"))
 @log_errors
 async def quick_reaction_handler(c: Client, cb: CallbackQuery):
-    """Kirim reaksi ke pesan asli di grup."""
+    """Handle quick reactions from buttons."""
     try:
+        from Main.utils.access_control import is_authorized_user
+        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+            msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+            return await cb.answer(msg, show_alert=True)
+            
+        # Format: mentions_react_{chat_id}_{message_id}_{emoji}
         BUTTON_STATS["react"] += 1
         log_button_press("REACT", cb.data, cb.from_user.id if cb.from_user else None)
         logger.info(f"📊 React button pressed. Total: {BUTTON_STATS['react']}")
@@ -1279,8 +1285,13 @@ async def quick_reaction_handler(c: Client, cb: CallbackQuery):
 @Altruix.bot.on_callback_query(filters.regex(r"^mentions_replyall_"))
 @log_errors
 async def start_reply_from_all(c: Client, cb: CallbackQuery):
-    """Memulai proses reply-from-all untuk semua user."""
+    """Memulai proses reply-from-all for all user."""
     try:
+        from Main.utils.access_control import is_authorized_user
+        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+            msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+            return await cb.answer(msg, show_alert=True)
+            
         # 1. Log Aktivitas
         BUTTON_STATS["reply_all"] += 1
         log_button_press("REPLY_ALL", cb.data, cb.from_user.id if cb.from_user else None)
@@ -1540,6 +1551,11 @@ async def test_buttons_handler_bot(c: Client, cb: CallbackQuery):
 async def quick_unreact_handler(c: Client, cb: CallbackQuery):
     """Hapus reaksi (unreact) pada pesan asli."""
     try:
+        from Main.utils.access_control import is_authorized_user
+        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+            msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+            return await cb.answer(msg, show_alert=True)
+            
         chat_id = int(cb.matches[0].group(1))
         message_id = int(cb.matches[0].group(2))
         msg_key = f"{chat_id}_{message_id}"
@@ -1579,6 +1595,11 @@ async def quick_unreact_handler(c: Client, cb: CallbackQuery):
 async def others_emoji_handler(c: Client, cb: CallbackQuery):
     """Tampilkan menu pilihan emoji lainnya."""
     try:
+        from Main.utils.access_control import is_authorized_user
+        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+            msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+            return await cb.answer(msg, show_alert=True)
+            
         chat_id = int(cb.matches[0].group(1))
         message_id = int(cb.matches[0].group(2))
         
@@ -1612,6 +1633,11 @@ async def others_emoji_handler(c: Client, cb: CallbackQuery):
 async def back_to_main_handler(c: Client, cb: CallbackQuery):
     """Kembali ke menu utama mention log."""
     try:
+        from Main.utils.access_control import is_authorized_user
+        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+            msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+            return await cb.answer(msg, show_alert=True)
+            
         chat_id = int(cb.matches[0].group(1))
         message_id = int(cb.matches[0].group(2))
         
@@ -2595,6 +2621,11 @@ async def cache_cleanup_task():
 async def tags_toggle_menu_callback(c: Client, cb: CallbackQuery):
     """Toggle between compact and full menu for tag notifications."""
     try:
+        from Main.utils.access_control import is_authorized_user
+        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+            msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+            return await cb.answer(msg, show_alert=True)
+            
         data = cb.data.split("_")
         mode, chat_id, msg_id = data[2], int(data[3]), int(data[4])
         
@@ -2661,6 +2692,11 @@ async def tags_toggle_menu_callback(c: Client, cb: CallbackQuery):
 async def tags_forward_confirm_callback(c: Client, cb: CallbackQuery):
     """Show confirmation before forwarding large/restricted media."""
     try:
+        from Main.utils.access_control import is_authorized_user
+        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+            msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+            return await cb.answer(msg, show_alert=True)
+            
         data = cb.data.split("_")
         chat_id, msg_id = int(data[3]), int(data[4])
         
@@ -2686,6 +2722,11 @@ async def tags_forward_confirm_callback(c: Client, cb: CallbackQuery):
 async def tags_forward_media_callback(c: Client, cb: CallbackQuery):
     """Download and forward media to tag logger topic."""
     try:
+        from Main.utils.access_control import is_authorized_user
+        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+            msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+            return await cb.answer(msg, show_alert=True)
+            
         data = cb.data.split("_")
         chat_id, msg_id = int(data[3]), int(data[4])
         
@@ -2746,6 +2787,11 @@ async def tags_forward_media_callback(c: Client, cb: CallbackQuery):
 async def tags_forward_cancel_callback(c: Client, cb: CallbackQuery):
     """Cancel media forward and restore original buttons."""
     try:
+        from Main.utils.access_control import is_authorized_user
+        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+            msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+            return await cb.answer(msg, show_alert=True)
+            
         data = cb.data.split("_")
         chat_id, msg_id = int(data[3]), int(data[4])
         
@@ -2771,6 +2817,11 @@ async def tags_forward_cancel_callback(c: Client, cb: CallbackQuery):
 async def tags_block_user_callback(c: Client, cb: CallbackQuery):
     """Block user who tagged."""
     try:
+        from Main.utils.access_control import is_authorized_user
+        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+            msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+            return await cb.answer(msg, show_alert=True)
+            
         # Parse: tags_block_CHATID_MSGID_USERID
         parts = cb.data.split("_")
         chat_id, msg_id, user_id = int(parts[2]), int(parts[3]), int(parts[4])
@@ -2813,6 +2864,11 @@ async def tags_block_user_callback(c: Client, cb: CallbackQuery):
 async def tags_unblock_user_callback(c: Client, cb: CallbackQuery):
     """Unblock user who tagged."""
     try:
+        from Main.utils.access_control import is_authorized_user
+        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+            msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+            return await cb.answer(msg, show_alert=True)
+            
         # Parse: tags_unblock_CHATID_MSGID_USERID
         parts = cb.data.split("_")
         chat_id, msg_id, user_id = int(parts[2]), int(parts[3]), int(parts[4])
@@ -2855,6 +2911,11 @@ async def tags_unblock_user_callback(c: Client, cb: CallbackQuery):
 async def tags_send_message_callback(c: Client, cb: CallbackQuery):
     """Start process to send message to user who tagged."""
     try:
+        from Main.utils.access_control import is_authorized_user
+        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+            msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+            return await cb.answer(msg, show_alert=True)
+            
         # Parse: tags_send_msg_CHATID_MSGID_USERID
         parts = cb.data.split("_")
         chat_id, msg_id, user_id = int(parts[3]), int(parts[4]), int(parts[5])

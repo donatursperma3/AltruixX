@@ -37,7 +37,7 @@ logger = logging.getLogger("altruix.pm_logger_user")
 logger.setLevel(logging.INFO)
 
 PLUGIN_NAME = __plugin_name__ 
-PLUGIN_VERSION = "1.3.5"# ✅ Added message type filters
+PLUGIN_VERSION = "1.3.6"  # ✅ Fixed CHANNEL_INVALID during topic creation
 STORAGE_FILE = Path("pm_logger_user_settings.json")
 
 # Settings Cache
@@ -563,7 +563,11 @@ async def pm_logger_user_handler(c: Client, m: RawMessage):
         )
 
         # Get topic: "pm logger"
-        topic_id = await get_or_create_topic(Altruix.bot, Altruix.log_chat, "pm logger", userbot_client=c)
+        try:
+            topic_id = await get_or_create_topic(Altruix.bot, Altruix.log_chat, "pm logger", userbot_client=c)
+        except Exception as e:
+            logger.debug(f"PMLU Topic creation failed: {e}")
+            topic_id = None
 
         # ─── BUTTONS ───
         # Main consolidated button using direct callback (skipping menu)
@@ -583,40 +587,54 @@ async def pm_logger_user_handler(c: Client, m: RawMessage):
             keyboard[1].append(InlineKeyboardButton("🚀 Bypass/Force Forward", callback_data=f"pmlu_force_fwd_{m.chat.id}_{m.id}_{c.me.id}"))
 
         # Forward message to topic
-        try:
-            fwd_msg = await c.forward_messages(Altruix.log_chat, m.chat.id, m.id, message_thread_id=topic_id)
-        except Exception as e:
-            logger.debug(f"PMLU Forward failed: {e}")
-            fwd_msg = None
+        fwd_msg = None
+        if Altruix.log_chat:
+            try:
+                fwd_msg = await c.forward_messages(Altruix.log_chat, m.chat.id, m.id, message_thread_id=topic_id)
+            except Exception as e:
+                logger.debug(f"PMLU Forward failed: {e}")
         
+        if not fwd_msg and not Altruix.log_chat:
+            return
+
         # Send Detailed Info as a reply to the forwarded message in topic
-        bot = Altruix.bot_manager.get_bot(c.me.id)
-        sent_log = await bot.send_message(
-            Altruix.log_chat,
-            log_content,
-            parse_mode=enums.ParseMode.HTML,
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            reply_to_message_id=fwd_msg.id if fwd_msg else None,
-            message_thread_id=topic_id
-        )
-        
-        # Cache for recovery - capture ACTUAL thread_id from sent message
-        actual_thread_id = getattr(sent_log, "message_thread_id", None)
-        PM_LOG_CACHE[f"{m.chat.id}_{m.id}"] = {
-            "client_id": c.me.id,
-            "log_msg_id": sent_log.id,
-            "fwd_msg_id": fwd_msg.id if fwd_msg else None,
-            "thread_id": actual_thread_id,
-            "chat_id": m.chat.id,
-            "msg_id": m.id,
-            "last_reply_id": None
-        }
-        
+        try:
+            bot = Altruix.bot_manager.get_bot(c.me.id)
+            sent_log = await bot.send_message(
+                Altruix.log_chat,
+                log_content,
+                parse_mode=enums.ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                reply_to_message_id=fwd_msg.id if fwd_msg else None,
+                message_thread_id=topic_id
+            )
+            
+            # Cache for recovery - capture ACTUAL thread_id from sent message
+            actual_thread_id = getattr(sent_log, "message_thread_id", None)
+            PM_LOG_CACHE[f"{m.chat.id}_{m.id}"] = {
+                "client_id": c.me.id,
+                "log_msg_id": sent_log.id,
+                "fwd_msg_id": fwd_msg.id if fwd_msg else None,
+                "thread_id": actual_thread_id,
+                "chat_id": m.chat.id,
+                "msg_id": m.id,
+                "last_reply_id": None
+            }
+        except Exception as e:
+            if "CHANNEL_INVALID" in str(e):
+                logger.warning(f"PMLU Log send failed due to invalid log channel/topic: {e}")
+            else:
+                logger.error(f"PMLU Log send failed: {e}")
+
         # Save both sessions and cache
         SessionManager.save()
 
     except Exception as e:
-        logger.error(f"Error in PM Logger User: {e}")
+        if "CHANNEL_INVALID" in str(e):
+             # Silently catch CHANNEL_INVALID to prevent spamming logs
+             logger.warning(f"PM Logger User: Target channel/topic is invalid: {e}")
+        else:
+             logger.error(f"Error in PM Logger User: {e}")
 
 @Altruix.on_edited_message(
     filters.private & ~filters.me, group=0, bot_mode_unsupported=True
@@ -831,6 +849,11 @@ async def pmlu_force_fwd_callback(c: Client, cb: CallbackQuery):
 @log_errors
 async def pmlu_others_callback(c: Client, cb: CallbackQuery):
     try:
+        from Main.utils.access_control import is_authorized_user
+        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+            msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+            return await cb.answer(msg, show_alert=True)
+            
         data = cb.data.split("_")
         chat_id, msg_id, client_id = int(data[2]), int(data[3]), int(data[4])
         
@@ -855,6 +878,11 @@ async def pmlu_others_callback(c: Client, cb: CallbackQuery):
 @log_errors
 async def pmlu_back_callback(c: Client, cb: CallbackQuery):
     try:
+        from Main.utils.access_control import is_authorized_user
+        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+            msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+            return await cb.answer(msg, show_alert=True)
+            
         data = cb.data.split("_")
         chat_id, msg_id, client_id = int(data[2]), int(data[3]), int(data[4])
         
@@ -994,6 +1022,11 @@ async def pmlu_unsend_callback(c: Client, cb: CallbackQuery):
 @log_errors
 async def pmlu_toggle_callback(c: Client, cb: CallbackQuery):
     try:
+        from Main.utils.access_control import is_authorized_user
+        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+            msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+            return await cb.answer(msg, show_alert=True)
+            
         data = cb.data.split("_")
         mode, chat_id, msg_id, client_id = data[2], int(data[3]), int(data[4]), int(data[5])
         

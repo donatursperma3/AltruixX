@@ -61,7 +61,9 @@ async def check_authorization(cb: CallbackQuery) -> bool:
     Returns True if authorized, False otherwise (and sends access denied message).
     """
     if not is_authorized(cb.from_user.id):
-        await cb.answer("⛔ Akses Ditolak - Hanya owner dan sudo users yang dapat menggunakan settings", show_alert=True)
+        msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+        full_msg = Altruix.get_string("access_denied_desc") or "Anda tidak memiliki izin untuk menggunakan tombol ini."
+        await cb.answer(f"{msg} - {full_msg}", show_alert=True)
         return False
     return True
 
@@ -84,32 +86,29 @@ from Main.internals.get_session import add_session_cb_handler
 logger.info(f"🚀 Initializing settings plugin v{PLUGIN_VERSION}")
 
 # Dictionary untuk menyimpan state konfirmasi user
+# ✅ SHARED STATES (Using client-instantiated dictionaries)
 user_confirmation_state = {}
 user_text_confirmation_state = {}
-user_bulk_join_state = {}  # State untuk bulk join
-user_dlphoto_state = {} # ✅ BARU: State untuk download foto profil
-user_purge_state = {}   # ✅ BARU: State untuk purge pesan
-user_eval_state = {}  # ✅ BARU
-user_exec_state = {} # ✅ BARU: State untuk exec terminal
-user_sys_ctrl_state = {} # ✅ BARU  # State untuk bulk join
-user_profile_edit_state = {}  # State untuk edit profil
-user_photo_delete_state = {}  # State untuk hapus foto profil
-user_edit_confirmation_state = {}  # State untuk konfirmasi edit profil
-user_mentions_state = {}  # ✅ BARU: State untuk cek mention
-user_recent_messages_state = {}  # ✅ BARU: State untuk pesan terbaru
-user_message_count_state = {}  # ✅ BARU: State untuk jumlah pesan
-
-# ✅ TAMBAHAN STATE UNTUK CEK LIMIT (per session)
-user_limit_check_state = {}  # {user_id: {'session_index': int, 'page': int}}
-user_dlstory_state = {} # ✅ BARU: State untuk download story
-user_purge_state = {}   # ✅ BARU: State untuk purge pesan
-user_dlphoto_state = {} # ✅ BARU: State untuk download foto profil
-user_privacy_state = {} # ✅ BARU: State untuk privacy settings
-user_bulk_leave_state = {} # ✅ BARU: State untuk bulk leave
-user_bulk_report_state = {} # ✅ BARU: State untuk bulk report
-# ✅ BARU: State untuk Laucreate integration
-user_laucreate_state = {} # ✅ BARU: State untuk Laucreate integration
-user_env_manager_state = {} # ✅ BARU: State untuk ENV Manager (CRUD)
+user_bulk_join_state = {}
+user_dlphoto_state = {}
+user_purge_state = {}
+user_eval_state = {}
+user_exec_state = {}
+user_sys_ctrl_state = {}
+user_profile_edit_state = {}
+user_photo_delete_state = {}
+user_edit_confirmation_state = {}
+user_mentions_state = {}
+user_recent_messages_state = {}
+user_message_count_state = {}
+user_limit_check_state = {}
+user_dlstory_state = {}
+user_privacy_state = Altruix.user_privacy_state
+user_bulk_leave_state = {}
+user_bulk_report_state = {}
+user_laucreate_state = {}
+user_env_manager_state = Altruix.user_env_manager_state
+user_track_state = Altruix.user_track_state
 
 # ✅ LOCALIZATION / TRANSLATION SYSTEM
 SETTINGS_LANG = getattr(Altruix.config, "UB_LANG", "english").lower()
@@ -424,7 +423,7 @@ async def central_callback_logger(c: Client, cb: CallbackQuery):
         )
         
         if Altruix.log_chat:
-            await c.send_message(Altruix.log_chat, log_msg, parse_mode=ParseMode.HTML)
+            await Altruix.bot.send_message(Altruix.log_chat, log_msg, parse_mode=ParseMode.HTML)
             
     except Exception as e:
         logger.error(f"Callback Logger Error: {e}")

@@ -10,6 +10,7 @@ from pyrogram import Client, filters, enums
 from pyrogram.errors import FloodWait, MessageNotModified
 from Main import Altruix
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+from Main.internals.settings import send_log_notification
 
 # Initialize shared state storage if not exists
 if not hasattr(Altruix, "PURGEME_STATE"):
@@ -34,21 +35,36 @@ def get_purgeme_status_text(state):
     
     # Dynamic Phase Indicator
     if status == "config":
-        desc = loc("purgeme_desc") or "Configure purge settings"
-        return f"{title}\n{desc}"
+        menu_title = loc("purgeme_menu_title") or "<b>⚙️ Purgeme Configuration</b>"
+        chat_name = state.get("chat_name", "Unknown")
+        chat_id = state.get("chat_id", "Unknown")
+        chat_link = state.get("chat_link")
+        
+        display_name = f"<a href='{chat_link}'>{chat_name}</a>" if chat_link else f"<b>{chat_name}</b>"
+        
+        return (
+            f"{title}\n\n"
+            f"<b>Chat:</b> {display_name}\n"
+            f"<b>Chat_ID:</b> <code>{chat_id}</code>\n\n"
+            f"{menu_title}\n"
+            f"Please select options:"
+        )
+
+    chat_name = state.get("chat_name", "Unknown")
+    account_name = state.get("account_name", "Unknown")
 
     # Common Header for active states
     header = f"{title}\n" \
              f"<b>Mode:</b> {mode.capitalize()} | <b>Type:</b> {types[0].upper() if types else 'ALL'}\n" \
-             f"<b>Target:</b> {count} messages"
+             f"<b>Target:</b> {count} messages\n" \
+             f"<b>Chat:</b> {chat_name}\n" \
+             f"<b>Account:</b> {account_name}"
 
     if status == "collecting":
-        lbl = loc("purgeme_collecting")
         status_line = f"🔎 <b>Collecting...</b>\nFound: {processed}/{count}\nScanned: {scanned}"
         return f"{header}\n\n{status_line}"
 
     elif status == "running":
-        lbl = loc("purgeme_status_deleting")
         status_line = f"🗑 <b>Deleting...</b>\nDeleted: {processed}/{count}"
         if delay > 0: status_line += f"\nDelay: {delay}s"
         return f"{header}\n\n{status_line}"
@@ -58,10 +74,9 @@ def get_purgeme_status_text(state):
         return f"{header}\n\n{status_line}"
 
     elif status == "finished":
-        lbl = loc("purgeme_finished")
         start_time = state.get("start_time", 0)
         duration = time.time() - start_time if start_time > 0 else 0
-        return f"{title}\n\n✅ <b>Finished!</b>\nDeleted: {processed} messages\nTime: {round(duration, 2)}s"
+        return f"{title}\n\n✅ <b>Finished!</b>\nDeleted: {processed} messages\nTime: {round(duration, 2)}s\nChat: {chat_name}\nAccount: {account_name}"
 
     elif status == "cancelled":
         return f"{title}\n\n❌ <b>Cancelled</b>"
@@ -90,75 +105,51 @@ def get_purgeme_control_kb(unique_id, status):
 
 async def collect_user_messages_optimized(client: Client, chat_id: int, user_id: int, target_types: list, limit: int = 100, state_callback=None):
     """
-    OPTIMIZED: Collect user's message IDs with hybrid approach.
+    OPTIMIZED: Collect user's message IDs using search_messages (async generator).
     state_callback: function to call for UI updates (passed with state dict)
     """
     collected_ids = []
     scanned_total = 0
     
     try:
-        # METHOD 1: Try search_messages first
-        Altruix.log(f"Purgeme: Attempting search_messages for user {user_id}")
+        # METHOD 1: search_messages (The most efficient way)
+        Altruix.log(f"Purgeme: Starting collection via search_messages for user {user_id}")
         
         try:
-            offset = 0
-            batch_size = 100
-            search_attempts = 0
-            max_search_attempts = 50 # Increased significantly for reliability
-            
-            while len(collected_ids) < limit and search_attempts < max_search_attempts:
-                # Always request batch_size to maximize throughput, rely on 'limit' check in loop
-                request_limit = batch_size 
-                messages = await client.search_messages(
-                    chat_id=chat_id,
-                    from_user=user_id,
-                    limit=request_limit,
-                    offset=offset
-                )
+            # search_messages in Pyrogram is an async generator
+            async for msg in client.search_messages(
+                chat_id=chat_id,
+                from_user=user_id,
+                limit=limit
+            ):
+                scanned_total += 1
                 
-                if not messages:
-                    Altruix.log(f"Purgeme: search_messages returned no results (offset: {offset})")
-                    break
+                should_include = False
+                if "all" in target_types:
+                    should_include = True
+                else:
+                    try:
+                        if msg.text and "text" in target_types: should_include = True
+                        elif msg.photo and "image" in target_types: should_include = True
+                        elif msg.video and "video" in target_types: should_include = True
+                        elif (msg.voice or msg.audio) and "audio" in target_types: should_include = True
+                        elif msg.sticker and "sticker" in target_types: should_include = True
+                        elif msg.animation and "gif" in target_types: should_include = True
+                        elif msg.document and "file" in target_types: should_include = True
+                        elif msg.video_note and "vnote" in target_types: should_include = True
+                    except:
+                        pass
                 
-                # Filter by type
-                for msg in messages:
-                    scanned_total += 1
-                    if len(collected_ids) >= limit:
-                        break
-                        
-                    should_include = False
-                    if "all" in target_types:
-                        should_include = True
-                    else:
-                        try:
-                            if msg.text and "text" in target_types: should_include = True
-                            elif msg.photo and "image" in target_types: should_include = True
-                            elif msg.video and "video" in target_types: should_include = True
-                            elif (msg.voice or msg.audio) and "audio" in target_types: should_include = True
-                            elif msg.sticker and "sticker" in target_types: should_include = True
-                            elif msg.animation and "gif" in target_types: should_include = True
-                            elif msg.document and "file" in target_types: should_include = True
-                            elif msg.video_note and "vnote" in target_types: should_include = True
-                        except:
-                            pass
-                    
-                    if should_include:
-                        collected_ids.append(msg.id)
+                if should_include:
+                    collected_ids.append(msg.id)
                 
-                # Update UI periodically
-                if state_callback:
+                # Update UI periodically (Every 10 messages found OR every 50 scanned)
+                if state_callback and (scanned_total % 50 == 0 or len(collected_ids) % 10 == 0):
                     await state_callback(len(collected_ids), scanned_total)
                 
-                Altruix.log(f"Purgeme: search_messages collected {len(collected_ids)}/{limit}")
-                
-                if len(messages) < request_limit:
-                    if len(messages) == 0: break # End of stream
+                if len(collected_ids) >= limit:
                     break
                     
-                offset += len(messages)
-                search_attempts += 1
-            
-            # If search_messages worked, return results
             if collected_ids:
                 Altruix.log(f"Purgeme: search_messages SUCCESS - Found {len(collected_ids)} messages")
                 return collected_ids
@@ -168,12 +159,12 @@ async def collect_user_messages_optimized(client: Client, chat_id: int, user_id:
         except Exception as search_err:
             Altruix.log(f"Purgeme: search_messages FAILED ({search_err}), falling back to get_chat_history")
         
-        # METHOD 2: Fallback to optimized get_chat_history
+        # METHOD 2: Fallback to get_chat_history
         Altruix.log(f"Purgeme: Using get_chat_history fallback for user {user_id}")
-        collected_ids = [] # Reset if previous method failed partially
+        collected_ids = [] # Reset
         scanned_total = 0
         
-        # Scan much deeper - up to 5000 messages or 50x the limit
+        # Scan deeper - up to 5000 messages or 50x the limit
         max_scan = max(5000, limit * 50)
         
         try:
@@ -185,6 +176,9 @@ async def collect_user_messages_optimized(client: Client, chat_id: int, user_id:
                     break
                 
                 if not (msg.from_user and msg.from_user.id == user_id):
+                    # Still update counter for "scanned" to show progress
+                    if state_callback and scanned_total % 100 == 0:
+                        await state_callback(len(collected_ids), scanned_total)
                     continue
                 
                 # Filter by type
@@ -207,7 +201,7 @@ async def collect_user_messages_optimized(client: Client, chat_id: int, user_id:
                 if should_include:
                     collected_ids.append(msg.id)
                     
-                    if state_callback and (len(collected_ids) % 10 == 0):
+                    if state_callback and (len(collected_ids) % 10 == 0 or scanned_total % 100 == 0):
                         await state_callback(len(collected_ids), scanned_total)
                     
                     if len(collected_ids) >= limit:
@@ -228,12 +222,16 @@ async def collect_user_messages_optimized(client: Client, chat_id: int, user_id:
     ["purgeme"],
     cmd_help={
         "help": "Purge messages with interactive UI configuration.",
-        "example": ".purgeme",
+        "example": ".purgeme or .purgeme <chat id/username>",
         "detail": """
 <b>Interactive Purgeme Tool</b>
 
 Use this command to delete your own messages with advanced filtering and controls.
 The command triggers an interactive UI via your Assistant Bot.
+
+<b>Usage:</b>
+• <code>.purgeme</code> - Open UI for current chat.
+• <code>.purgeme [chat_id/username]</code> - Open UI for a specific target chat.
 
 <b>Features:</b>
 • <b>Count</b>: Set exact number of messages to check/delete.
@@ -250,23 +248,64 @@ The command triggers an interactive UI via your Assistant Bot.
     }
 )
 async def purgeme_cmd(client: Client, message: Message):
+    if not message.from_user or not message.from_user.is_self:
+        return
+
+    # Check for target chat input
+    input_chat = message.user_input
     chat_id = message.chat.id
+    
+    if input_chat:
+        try:
+            # Handle username or ID (including negative IDs)
+            if input_chat.lstrip('-').isdigit():
+                resolved_chat = await client.get_chat(int(input_chat))
+            else:
+                resolved_chat = await client.get_chat(input_chat)
+            chat_id = resolved_chat.id
+        except Exception as e:
+            return await message.handle_message(f"❌ **Invalid Chat Target:** `{input_chat}`\nError: {e}")
+
     user_id = client.me.id
     unique_id = f"{chat_id}_{user_id}"
     
+    # Resolve Chat and Account info
+    chat_link = None
+    try:
+        chat = await client.get_chat(chat_id)
+        if chat.type == enums.ChatType.PRIVATE:
+            chat_name = f"{chat.first_name} {chat.last_name}" if chat.last_name else chat.first_name
+        else:
+            chat_name = chat.title if chat.title else "Unknown Chat"
+        
+        # Generate Chat Link
+        if chat.username:
+            chat_link = f"https://t.me/{chat.username}"
+        elif chat.type == enums.ChatType.PRIVATE:
+            chat_link = f"tg://user?id={chat.id}"
+        elif hasattr(chat, "invite_link") and chat.invite_link:
+            chat_link = chat.invite_link
+    except:
+        chat_name = f"Chat {chat_id}"
+        
+    account_name = client.me.first_name or f"User {client.me.id}"
+
     # Initialize State
     async with STATE_LOCK:
         Altruix.PURGEME_STATE[unique_id] = {
             "count": 10,
             "delay": 0,
             "types": ["all"],
-            "mode": "latest",
+            "mode": "oldest",
             "status": "config",
             "event": asyncio.Event(),
             "stop_event": asyncio.Event(),
             "pause_event": asyncio.Event(),
             "client": client,
             "chat_id": chat_id,
+            "chat_name": chat_name,
+            "chat_link": chat_link,
+            "account_name": account_name,
             "processed": 0,
             "start_time": 0,
             "dashboard_msg_id": None, 
@@ -278,6 +317,7 @@ async def purgeme_cmd(client: Client, message: Message):
     # Trigger Assistant UI
     try:
         bot_username = Altruix.bot_manager.get_bot_username(client.me.id)
+        
         # Inline query trigger to get the menu
         try:
             results = await client.get_inline_bot_results(bot_username, f"purgeme_menu_{unique_id}")
@@ -296,25 +336,64 @@ async def purgeme_cmd(client: Client, message: Message):
                  raise Exception("Empty inline results")
 
         except Exception as inner_e:
-            Altruix.log(f"Purgeme Inline Fail: {inner_e} - Trying Fallback")
-            # FALLBACK
-            start_param = f"purgeme_{unique_id}"
+            Altruix.log(f"Purgeme Inline Fail: {inner_e} - Triggering Log & PM Fallback")
             
-            kb = enums.ParseMode.HTML
-            from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-            url = f"https://t.me/{bot_username}?start={start_param}"
+            # Send /start ONLY on failure to ensure bot is active for the user
+            try:
+                await client.send_message(bot_username, "/start")
+            except Exception as start_err:
+                Altruix.log(f"Purgeme: Auto-start bot failed: {start_err}")
             
-            fallback_msg = (
-                "⚠️ <b>Inline Mode Restricted</b>\n"
-                "I cannot open the menu here directly.\n"
-                f"👉 <a href='{url}'>Click Here to Configure via PM</a>"
-            )
+            # 1. Notify Log Group
+            try:
+                await send_log_notification(
+                    client, "purgeme_inline_restricted", 0, client.me, False,
+                    error_msg=f"Inline Restricted in {chat_name} ({chat_id})",
+                    additional_info={"Reason": str(inner_e)}
+                )
+            except: pass
+
+            # 2. Prepare Fallback Menu for PM
+            from Main.plugins.bot.xpurgeme_bot import get_purgeme_text, get_purgeme_keyboard
             
-            await message.reply(
-                fallback_msg,
-                parse_mode=kb,
-                disable_web_page_preview=True
-            )
+            menu_text = get_purgeme_text(Altruix.PURGEME_STATE[unique_id])
+            kb = get_purgeme_keyboard(chat_id, client.me.id, unique_id)
+            
+            # 3. Send Direct PM via Bot Assistant
+            try:
+                await Altruix.bot.send_message(
+                    client.me.id,
+                    f"⚠️ <b>Inline Mode Restricted</b> in {chat_name}\n\n"
+                    f"Direct Menu:\n{menu_text}",
+                    reply_markup=kb,
+                    parse_mode=enums.ParseMode.HTML,
+                    disable_web_page_preview=True
+                )
+                
+                # Notify in group that menu was sent to PM
+                msg_notif = await message.reply(
+                    "⚠️ <b>Inline Mode Restricted</b>\n"
+                    "Menu konfigurasi telah dikirim ke <b>Private Message (PM)</b> bot assistant anda.",
+                    parse_mode=enums.ParseMode.HTML,
+                    disable_web_page_preview=True
+                )
+                await message.delete()
+                # Auto delete notification after 9 seconds
+                await asyncio.sleep(9)
+                await msg_notif.delete()
+            except Exception as pm_err:
+                Altruix.log(f"Purgeme: Failed to send direct PM: {pm_err}")
+                # FALLBACK URL if PM also fails or bot not started
+                url = f"https://t.me/{bot_username}?start=purgeme_{unique_id}"
+                msg_notif = await message.reply(
+                    "⚠️ <b>Inline Mode Restricted</b>\n"
+                    f"Silakan <a href='{url}'>Klik Disini</a> untuk konfigurasi via PM.",
+                    parse_mode=enums.ParseMode.HTML,
+                    disable_web_page_preview=True
+                )
+                # Auto delete notification after 9 seconds
+                await asyncio.sleep(9)
+                await msg_notif.delete()
 
     except Exception as e:
         await message.edit(f"❌ Error initiating Purgeme: {e}")
@@ -352,24 +431,45 @@ async def purgeme_cmd(client: Client, message: Message):
         dash_text = get_purgeme_status_text(state)
         dash_kb = get_purgeme_control_kb(unique_id, "running")
         
-        # Send via BOT to allow buttons
+        # Try to send via appropriate bot (custom if available, fallback to main Altruix.bot)
         bot = Altruix.bot_manager.get_bot(client.me.id)
-        dash_msg = await bot.send_message(
-            dashboard_chat,
-            dash_text,
-            reply_markup=dash_kb,
-            disable_web_page_preview=True
-        )
+        try:
+            dash_msg = await bot.send_message(
+                dashboard_chat,
+                dash_text,
+                reply_markup=dash_kb,
+                disable_web_page_preview=True
+            )
+        except Exception as bot_err:
+            Altruix.log(f"Purgeme Dashboard Primary Bot Fail: {bot_err}. Trying fallback to main bot.")
+            try:
+                # Fallback to main Altruix.bot if custom bot failed
+                dash_msg = await Altruix.bot.send_message(
+                    dashboard_chat,
+                    dash_text,
+                    reply_markup=dash_kb,
+                    disable_web_page_preview=True
+                )
+            except Exception as main_err:
+                Altruix.log(f"Purgeme Dashboard Main Bot Fail: {main_err}. Trying fallback to PM.")
+                # FALLBACK TO PM (Send to userbot account via bot)
+                dashboard_chat = client.me.id
+                dash_msg = await bot.send_message(
+                    dashboard_chat,
+                    dash_text,
+                    reply_markup=dash_kb,
+                    disable_web_page_preview=True
+                )
+            
         state["dashboard_msg_id"] = dash_msg.id
         state["dashboard_chat_id"] = dashboard_chat
     except Exception as e:
-        Altruix.log(f"Purgeme Dashboard Error: {e}")
-        # If bot fails to send to chat_id (e.g. privacy), try log_chat?
+        Altruix.log(f"Purgeme Dashboard Critical Error: {e}")
+        # If all fail to send, try log_chat using main bot
         if Altruix.log_chat:
             dashboard_chat = Altruix.log_chat
             try:
-                bot = Altruix.bot_manager.get_bot(client.me.id)
-                dash_msg = await bot.send_message(
+                dash_msg = await Altruix.bot.send_message(
                     dashboard_chat,
                     dash_text,
                     reply_markup=dash_kb,
@@ -377,7 +477,8 @@ async def purgeme_cmd(client: Client, message: Message):
                 )
                 state["dashboard_msg_id"] = dash_msg.id
                 state["dashboard_chat_id"] = dashboard_chat
-            except: pass
+            except Exception as final_e:
+                 Altruix.log(f"Purgeme Dashboard Final Fallback Fail: {final_e}")
 
     # Execution Loop
     deleted_count = 0
@@ -490,6 +591,25 @@ async def purgeme_cmd(client: Client, message: Message):
     state["status"] = "finished"
     await update_dashboard(state)
     
+    # CALCULATE FINAL STATS
+    duration = time.time() - state.get("start_time", 0)
+    duration_str = f"{round(duration, 2)}s"
+    
+    # Wait 3 seconds before deleting the dashboard
+    await asyncio.sleep(3)
+
+    # CLEANUP DASHBOARD (Delete it from group to make space for success message)
+    try:
+        if state.get("dashboard_msg_id") and state.get("dashboard_chat_id"):
+            # Use Userbot to delete its own inline result message
+            # This ensures deletion works even if the bot assistant is not in the chat
+            try:
+                await state["client"].delete_messages(state["dashboard_chat_id"], state["dashboard_msg_id"])
+            except:
+                pass
+    except: 
+        pass
+
     # Send detailed completion log to LOG_CHAT_ID
     try:
         if Altruix.log_chat:
@@ -526,6 +646,7 @@ async def purgeme_cmd(client: Client, message: Message):
             duration_str = f"{round(duration, 2)}s"
             
             # Determine final status
+            final_status = ""
             if state.get("stop_event") and state["stop_event"].is_set():
                 final_status = "⏹ Stopped"
                 status_emoji = "⚠️"
@@ -548,32 +669,54 @@ async def purgeme_cmd(client: Client, message: Message):
             )
 
             
-            bot = Altruix.bot_manager.get_bot(client.me.id)
-            await bot.send_message(
+            # Always use main bot for log chat to ensure member access
+            await Altruix.bot.send_message(
                 Altruix.log_chat,
                 log_msg,
                 parse_mode=enums.ParseMode.HTML,
                 disable_web_page_preview=True
             )
             
-            # Send completion notification to target chat (auto-delete after 5s)
+            # Send completion notification to target chat (auto-delete after 6s)
             try:
+                title = Altruix.get_string("purgeme_title") or "🗑 <b>Userbot Purgeme</b>"
                 completion_msg = (
-                    f"{status_emoji} <b>Purgeme Selesai!</b>\n"
+                    f"{title}\n"
+                    f"✅ <b>Task telah berhasil di eksekusi!</b>\n"
                     f"Dihapus: <b>{deleted_count}</b> pesan | "
                     f"Mode: <b>{mode.capitalize()}</b> | "
                     f"Durasi: <b>{duration_str}</b>"
                 )
                 
-                target_notif = await client.send_message(
-                    chat_id,
-                    completion_msg,
-                    parse_mode=enums.ParseMode.HTML,
-                    disable_web_page_preview=True
-                )
+                # Determine which bot to use for the notification
+                target_bot = Altruix.bot_manager.get_bot(client.me.id)
+                try:
+                    target_notif = await target_bot.send_message(
+                        chat_id,
+                        completion_msg,
+                        parse_mode=enums.ParseMode.HTML,
+                        disable_web_page_preview=True
+                    )
+                except:
+                    # Fallback to main bot or Userbot (Client) if custom bot fails
+                    try:
+                        target_notif = await Altruix.bot.send_message(
+                            chat_id,
+                            completion_msg,
+                            parse_mode=enums.ParseMode.HTML,
+                            disable_web_page_preview=True
+                        )
+                    except:
+                        # Final Fallback: Use Userbot itself as it's guaranteed to be in the chat
+                        target_notif = await client.send_message(
+                            chat_id,
+                            completion_msg,
+                            parse_mode=enums.ParseMode.HTML,
+                            disable_web_page_preview=True
+                        )
                 
-                # Auto-delete after 6 seconds
-                await asyncio.sleep(6)
+                # Auto-delete after 9 seconds as requested
+                await asyncio.sleep(9)
                 await target_notif.delete()
             except Exception as notif_err:
                 Altruix.log(f"Failed to send target chat notification: {notif_err}")
@@ -588,28 +731,38 @@ async def purgeme_cmd(client: Client, message: Message):
 async def update_dashboard(state):
     """Updates the dashboard message with current state"""
     try:
-        if state["dashboard_chat_id"] and state["dashboard_msg_id"]:
+        if state.get("dashboard_chat_id") and state.get("dashboard_msg_id"):
             text = get_purgeme_status_text(state)
-            # Simpler: Store unique_id in state
             uid = f"{state['chat_id']}_{state['client'].me.id}"
             kb = get_purgeme_control_kb(uid, state["status"])
 
+            target_bot = Altruix.bot if state["dashboard_chat_id"] == Altruix.log_chat else Altruix.bot_manager.get_bot(state["client"].me.id)
+            
             try:
-                # If chat is different from bot's chat (userbot logging to PM?), 
-                # we must ensure bot can edit it.
-                bot = Altruix.bot_manager.get_bot(state["client"].me.id)
-                await bot.edit_message_text(
+                await target_bot.edit_message_text(
                     chat_id=state["dashboard_chat_id"],
                     message_id=state["dashboard_msg_id"],
                     text=text,
-                    reply_markup=kb
+                    reply_markup=kb,
+                    disable_web_page_preview=True
                 )
-            except FloodWait as f:
-                Altruix.log(f"Purgeme UI FloodWait: {f.value}s - Skipping frame")
             except MessageNotModified:
                 pass
             except Exception as e:
-                Altruix.log(f"Failed to update Purgeme Dashboard: {e}")
+                # Retry with main bot if primary bot failed
+                if target_bot != Altruix.bot:
+                    try:
+                        await Altruix.bot.edit_message_text(
+                            chat_id=state["dashboard_chat_id"],
+                            message_id=state["dashboard_msg_id"],
+                            text=text,
+                            reply_markup=kb,
+                            disable_web_page_preview=True
+                        )
+                    except Exception as e2:
+                        Altruix.log(f"Purgeme Dashboard Update Fail (Both Bots): {e2}")
+                else:
+                    Altruix.log(f"Purgeme Dashboard Update Fail: {e}")
     except Exception as e:
         Altruix.log(f"Purgeme Dashboard Critical: {e}")
 
@@ -617,46 +770,78 @@ async def update_dashboard(state):
 # MANUAL COMMANDS
 # ---------------------------------------------------------
 
-@Altruix.register_on_cmd(["purgemepause", "ppaause"], cmd_help={"help": "Pause running purge"})
+@Altruix.register_on_cmd(["purgemepause", "ppaause"], cmd_help={"help": "Pause running purge", "example": ".purgemepause [chat_id/username]"})
 async def purgeme_pause_cmd(client: Client, message: Message):
-    uid = f"{message.chat.id}_{client.me.id}"
+    input_chat = message.user_input
+    chat_id = message.chat.id
+    if input_chat:
+        try:
+            res = await client.get_chat(int(input_chat) if input_chat.lstrip('-').isdigit() else input_chat)
+            chat_id = res.id
+        except: pass
+
+    uid = f"{chat_id}_{client.me.id}"
     state = Altruix.PURGEME_STATE.get(uid)
     if state and state["status"] == "running":
         state["pause_event"].clear()
         state["status"] = "paused"
         await update_dashboard(state)
-        await message.edit("⏸ <b>Purgeme Paused</b>")
+        await message.edit(f"⏸ <b>Purgeme Paused</b> (Chat: {chat_id})")
     else:
-        await message.edit("❌ No running purge found here.")
+        await message.edit(f"❌ No running purge found for chat: {chat_id}")
 
-@Altruix.register_on_cmd(["purgemeresume", "presume"], cmd_help={"help": "Resume paused purge"})
+@Altruix.register_on_cmd(["purgemeresume", "presume"], cmd_help={"help": "Resume paused purge", "example": ".purgemeresume [chat_id/username]"})
 async def purgeme_resume_cmd(client: Client, message: Message):
-    uid = f"{message.chat.id}_{client.me.id}"
+    input_chat = message.user_input
+    chat_id = message.chat.id
+    if input_chat:
+        try:
+            res = await client.get_chat(int(input_chat) if input_chat.lstrip('-').isdigit() else input_chat)
+            chat_id = res.id
+        except: pass
+
+    uid = f"{chat_id}_{client.me.id}"
     state = Altruix.PURGEME_STATE.get(uid)
     if state and state["status"] == "paused":
         state["pause_event"].set()
         state["status"] = "running"
         await update_dashboard(state)
-        await message.edit("▶️ <b>Purgeme Resumed</b>")
+        await message.edit(f"▶️ <b>Purgeme Resumed</b> (Chat: {chat_id})")
     else:
-        await message.edit("❌ No paused purge found here.")
+        await message.edit(f"❌ No paused purge found for chat: {chat_id}")
 
-@Altruix.register_on_cmd(["purgemestop", "pstop"], cmd_help={"help": "Stop running purge"})
+@Altruix.register_on_cmd(["purgemestop", "pstop"], cmd_help={"help": "Stop running purge", "example": ".purgemestop [chat_id/username]"})
 async def purgeme_stop_cmd(client: Client, message: Message):
-    uid = f"{message.chat.id}_{client.me.id}"
+    input_chat = message.user_input
+    chat_id = message.chat.id
+    if input_chat:
+        try:
+            res = await client.get_chat(int(input_chat) if input_chat.lstrip('-').isdigit() else input_chat)
+            chat_id = res.id
+        except: pass
+
+    uid = f"{chat_id}_{client.me.id}"
     state = Altruix.PURGEME_STATE.get(uid)
     if state:
         state["stop_event"].set()
-        await message.edit("⏹ <b>Purgeme Stopping...</b>")
+        await message.edit(f"⏹ <b>Purgeme Stopping...</b> (Chat: {chat_id})")
     else:
-        await message.edit("❌ No active purge found here.")
+        await message.edit(f"❌ No active purge found for chat: {chat_id}")
 
-@Altruix.register_on_cmd(["purgemestatus", "pstatus"], cmd_help={"help": "Check purge status"})
+@Altruix.register_on_cmd(["purgemestatus", "pstatus"], cmd_help={"help": "Check purge status", "example": ".purgemestatus [chat_id/username]"})
 async def purgeme_status_cmd(client: Client, message: Message):
-    uid = f"{message.chat.id}_{client.me.id}"
+    input_chat = message.user_input
+    chat_id = message.chat.id
+    if input_chat:
+        try:
+            res = await client.get_chat(int(input_chat) if input_chat.lstrip('-').isdigit() else input_chat)
+            chat_id = res.id
+        except: pass
+
+    uid = f"{chat_id}_{client.me.id}"
     state = Altruix.PURGEME_STATE.get(uid)
     if state:
         text = get_purgeme_status_text(state)
-        await message.edit(text)
+        await message.edit(text, disable_web_page_preview=True)
     else:
-        await message.edit("❌ No active purge session.")
+        await message.edit(f"❌ No active purge session for chat: {chat_id}")

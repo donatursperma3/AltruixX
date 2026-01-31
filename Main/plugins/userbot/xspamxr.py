@@ -672,6 +672,11 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
 @Altruix.bot.on_callback_query(filters.regex(r"see_msglist_(-?\d+)"))
 @log_errors
 async def see_msglist_handler(c: Client, cb):
+    from Main.utils.access_control import is_authorized_user
+    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+        msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+        return await cb.answer(msg, show_alert=True)
+        
     chat_id = cb.data.split("_")[-1]
     config = None
     if chat_id in TELAYSPAM_TASKS:
@@ -719,6 +724,11 @@ async def see_msglist_handler(c: Client, cb):
 @log_errors
 async def confirm_start_handler(c: Client, cb):
     try:
+        from Main.utils.access_control import is_authorized_user
+        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+            msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+            return await cb.answer(msg, show_alert=True)
+            
         full_data = cb.data
         Altruix.log(f"[DEBUG] Callback diterima: {full_data}", level=20)
         if not full_data.startswith("confirm_start_"):
@@ -798,6 +808,11 @@ async def confirm_start_handler(c: Client, cb):
 @Altruix.bot.on_callback_query(filters.regex(r"^preview_msglist_.+$"))
 @log_errors
 async def preview_msglist_from_confirm(c: Client, cb):
+    from Main.utils.access_control import is_authorized_user
+    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+        msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+        return await cb.answer(msg, show_alert=True)
+        
     full_data = cb.data
     Altruix.log(f"[DEBUG] Preview callback: {full_data}", level=20)
     if not full_data.startswith("preview_msglist_"):
@@ -1131,6 +1146,11 @@ async def check_all_relayspam_cmd(c: Client, m: Message):
 @Altruix.bot.on_callback_query(filters.regex(r"toggle_purge_(-?\d+)"))
 @log_errors
 async def toggle_purge_handler(c: Client, cb):
+    from Main.utils.access_control import is_authorized_user
+    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+        msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+        return await cb.answer(msg, show_alert=True)
+        
     data = cb.data
     chat_id = data.split("_")[-1]
     if chat_id not in TELAYSPAM_TASKS:
@@ -1164,6 +1184,11 @@ async def toggle_purge_handler(c: Client, cb):
 @Altruix.bot.on_callback_query(filters.regex(r"toggle_react_(-?\d+)"))
 @log_errors
 async def toggle_reaction_handler(c: Client, cb):
+    from Main.utils.access_control import is_authorized_user
+    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+        msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+        return await cb.answer(msg, show_alert=True)
+        
     data = cb.data
     chat_id = data.split("_")[-1]
     if chat_id not in TELAYSPAM_TASKS:
@@ -1194,6 +1219,11 @@ async def toggle_reaction_handler(c: Client, cb):
 @Altruix.bot.on_callback_query(filters.regex(r"select_emoji_(-?\d+)"))
 @log_errors
 async def select_emoji_handler(c: Client, cb):
+    from Main.utils.access_control import is_authorized_user
+    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+        msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+        return await cb.answer(msg, show_alert=True)
+        
     data = cb.data
     chat_id = data.split("_")[-1]
     if chat_id not in TELAYSPAM_TASKS:
@@ -1222,6 +1252,11 @@ async def select_emoji_handler(c: Client, cb):
 @Altruix.bot.on_callback_query(filters.regex(r"set_emoji_(-?\d+)_(.+)"))
 @log_errors
 async def set_emoji_handler(c: Client, cb):
+    from Main.utils.access_control import is_authorized_user
+    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+        msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+        return await cb.answer(msg, show_alert=True)
+        
     data = cb.data
     parts = data.split("_")
     chat_id = parts[2]
@@ -1261,6 +1296,11 @@ async def set_emoji_handler(c: Client, cb):
 @Altruix.bot.on_callback_query(filters.regex(r"cancel_emoji_(-?\d+)"))
 @log_errors
 async def cancel_emoji_handler(c: Client, cb):
+    from Main.utils.access_control import is_authorized_user
+    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+        msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+        return await cb.answer(msg, show_alert=True)
+        
     data = cb.data
     chat_id = data.split("_")[-1]
     EMOJI_SELECTION_WAITING.pop(chat_id, None)
@@ -1273,6 +1313,11 @@ async def cancel_emoji_handler(c: Client, cb):
 @Altruix.bot.on_callback_query(filters.regex(r"adjust_purge_(-?\d+)"))
 @log_errors
 async def adjust_purge_handler(c: Client, cb):
+    from Main.utils.access_control import is_authorized_user
+    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+        msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+        return await cb.answer(msg, show_alert=True)
+        
     data = cb.data
     chat_id = data.split("_")[-1]
     if chat_id not in TELAYSPAM_TASKS:
@@ -1319,6 +1364,11 @@ async def adjust_purge_handler(c: Client, cb):
 @Altruix.bot.on_callback_query(filters.regex(r"inc_purge_(-?\d+)_(\d+)"))
 @log_errors
 async def increase_purge_handler(c: Client, cb):
+    from Main.utils.access_control import is_authorized_user
+    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+        msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+        return await cb.answer(msg, show_alert=True)
+        
     data = cb.data
     parts = data.split("_")
     chat_id = parts[2]
@@ -1359,6 +1409,11 @@ async def increase_purge_handler(c: Client, cb):
 @Altruix.bot.on_callback_query(filters.regex(r"dec_purge_(-?\d+)_(\d+)"))
 @log_errors
 async def decrease_purge_handler(c: Client, cb):
+    from Main.utils.access_control import is_authorized_user
+    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+        msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+        return await cb.answer(msg, show_alert=True)
+        
     data = cb.data
     parts = data.split("_")
     chat_id = parts[2]
@@ -1400,6 +1455,11 @@ async def decrease_purge_handler(c: Client, cb):
 @Altruix.bot.on_callback_query(filters.regex(r"back_purge_(-?\d+)"))
 @log_errors
 async def back_purge_handler(c: Client, cb):
+    from Main.utils.access_control import is_authorized_user
+    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+        msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+        return await cb.answer(msg, show_alert=True)
+        
     data = cb.data
     chat_id = data.split("_")[-1]
     try:
@@ -1416,6 +1476,11 @@ async def back_purge_handler(c: Client, cb):
 @Altruix.bot.on_callback_query(filters.regex(r"cancel_adjust_purge_(-?\d+)"))
 @log_errors
 async def cancel_adjust_purge_handler(c: Client, cb):
+    from Main.utils.access_control import is_authorized_user
+    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+        msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+        return await cb.answer(msg, show_alert=True)
+        
     data = cb.data
     chat_id = data.split("_")[-1]
     try:
@@ -1432,6 +1497,11 @@ async def cancel_adjust_purge_handler(c: Client, cb):
 @Altruix.bot.on_callback_query(filters.regex(r"(stop|pause|resume|cek|recurring|delete_latest|delete_oldest|edit_last|edit_msglist|cancel_edit|cancel_editlast)_(-?\d+)"))
 @log_errors
 async def handle_task_control(c: Client, cb):
+    from Main.utils.access_control import is_authorized_user
+    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+        msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+        return await cb.answer(msg, show_alert=True)
+        
     data = cb.data
     action, chat_id_str = data.rsplit("_", 1)
     chat_id = str(chat_id_str)
@@ -1724,6 +1794,11 @@ async def handle_task_control(c: Client, cb):
 @Altruix.bot.on_callback_query(filters.regex(r"(cekall|stopall|recurringall|pauseall|resumeall)"))
 @log_errors
 async def handle_global_controls(c: Client, cb):
+    from Main.utils.access_control import is_authorized_user
+    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+        msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+        return await cb.answer(msg, show_alert=True)
+        
     data = cb.data
     if data == "cekall":
         if not TELAYSPAM_TASKS:

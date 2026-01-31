@@ -1397,6 +1397,11 @@ async def confirm_laucreate_handler(client: Client, callback_query: CallbackQuer
     """Handler untuk konfirmasi mulai task"""
     
     try:
+        from Main.utils.access_control import is_authorized_user
+        if not is_authorized_user(callback_query.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+            msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+            return await callback_query.answer(msg, show_alert=True)
+            
         data_parts = callback_query.data.split(":")
         if len(data_parts) < 2:
             await callback_query.answer("Data tidak valid", show_alert=True)
@@ -1596,6 +1601,11 @@ async def laucreate_stop_cmd(client: Client, message: AltruixMessage):
 async def laucreate_control_handler(client: Client, callback_query: CallbackQuery):
     """Handler untuk tombol kontrol laucreate"""
     
+    from Main.utils.access_control import is_authorized_user
+    if not is_authorized_user(callback_query.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+        msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+        return await callback_query.answer(msg, show_alert=True)
+        
     data_parts = callback_query.data.split(":")
     action = data_parts[0].replace("_laucreate", "")
     task_id = 'laucreate_main'

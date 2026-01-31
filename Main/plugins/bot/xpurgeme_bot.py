@@ -34,22 +34,36 @@ def get_purgeme_text(state):
     def loc(key): return Altruix.get_string(key)
     
     if status == "config":
-        desc = loc("purgeme_desc") or "Configure purge settings"
-        menu_title = loc("purgeme_menu_title") or "<b>⚙️ Configuration</b>"
-        return f"{title}\n{menu_title}"
+        menu_title = loc("purgeme_menu_title") or "<b>⚙️ Purgeme Configuration</b>"
+        chat_name = state.get("chat_name", "Unknown")
+        chat_id = state.get("chat_id", "Unknown")
+        chat_link = state.get("chat_link")
+        
+        display_name = f"<a href='{chat_link}'>{chat_name}</a>" if chat_link else f"<b>{chat_name}</b>"
+        
+        return (
+            f"{title}\n\n"
+            f"<b>Chat:</b> {display_name}\n"
+            f"<b>Chat_ID:</b> <code>{chat_id}</code>\n\n"
+            f"{menu_title}\n"
+            f"Please select options:"
+        )
+
+    chat_name = state.get("chat_name", "Unknown")
+    account_name = state.get("account_name", "Unknown")
 
     # Common Header for active states
     header = f"{title}\n" \
              f"<b>Mode:</b> {mode.capitalize()} | <b>Type:</b> {types[0].upper() if types else 'ALL'}\n" \
-             f"<b>Target:</b> {count} messages"
+             f"<b>Target:</b> {count} messages\n" \
+             f"<b>Chat:</b> {chat_name}\n" \
+             f"<b>Account:</b> {account_name}"
         
     if status == "collecting":
-        lbl = loc("purgeme_collecting")
         status_line = f"🔎 <b>Collecting...</b>\nFound: {processed}/{count}\nScanned: {scanned}"
         return f"{header}\n\n{status_line}"
 
     elif status == "running":
-        lbl = loc("purgeme_status_deleting")
         status_line = f"🗑 <b>Deleting...</b>\nDeleted: {processed}/{count}"
         if delay > 0: status_line += f"\nDelay: {delay}s"
         return f"{header}\n\n{status_line}"
@@ -59,10 +73,9 @@ def get_purgeme_text(state):
         return f"{header}\n\n{status_line}"
 
     elif status == "finished":
-        lbl = loc("purgeme_finished")
         start_time = state.get("start_time", 0)
         duration = time.time() - start_time if start_time > 0 else 0
-        return f"{title}\n\n✅ <b>Finished!</b>\nDeleted: {processed} messages\nTime: {round(duration, 2)}s"
+        return f"{title}\n\n✅ <b>Finished!</b>\nDeleted: {processed} messages\nTime: {round(duration, 2)}s\nChat: {chat_name}\nAccount: {account_name}"
 
     elif status == "cancelled":
         lbl = loc("purgeme_cancelled") or "❌ Cancelled"
@@ -101,8 +114,8 @@ def get_purgeme_keyboard(chat_id, user_id, unique_id):
         reset_lbl = loc("purgeme_reset", "Reset")
         buttons.append([
             InlineKeyboardButton(delay_lbl, callback_data="noop"),
+            InlineKeyboardButton("-0.5s", callback_data=f"pg_dly_sub_0.5_{unique_id}"),
             InlineKeyboardButton("+0.5s", callback_data=f"pg_dly_add_0.5_{unique_id}"),
-            InlineKeyboardButton("+1s", callback_data=f"pg_dly_add_1_{unique_id}"),
             InlineKeyboardButton(reset_lbl, callback_data=f"pg_dly_reset_{unique_id}"),
         ])
         
@@ -131,17 +144,6 @@ def get_purgeme_keyboard(chat_id, user_id, unique_id):
         vid_active = "✅" if "video" in types else "☑️"
         type_row_1.append(InlineKeyboardButton(f"{vid_active} Vid", callback_data=f"pg_typ_video_{unique_id}"))
         
-        # Type Toggles
-        type_row_1 = []
-        all_active = "✅" if "all" in types else "☑️"
-        type_row_1.append(InlineKeyboardButton(f"{all_active} All", callback_data=f"pg_typ_all_{unique_id}"))
-        
-        img_active = "✅" if "image" in types else "☑️"
-        type_row_1.append(InlineKeyboardButton(f"{img_active} Img", callback_data=f"pg_typ_image_{unique_id}"))
-        
-        vid_active = "✅" if "video" in types else "☑️"
-        type_row_1.append(InlineKeyboardButton(f"{vid_active} Vid", callback_data=f"pg_typ_video_{unique_id}"))
-
         buttons.append(type_row_1)
 
         type_row_2 = []
@@ -212,8 +214,20 @@ async def purgeme_inline_handler(client: Client, query: InlineQuery):
         user_id = query.matches[0].group(2)
         unique_id = f"{chat_id}_{user_id}"
         
-        if str(query.from_user.id) != str(user_id):
-             pass
+        # 🔐 Security Check: Only allow owner/sudo or the session owner to see the menu
+        from Main.utils.access_control import is_authorized_user
+        if str(query.from_user.id) != str(user_id) and not is_authorized_user(query.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+             # Return empty result or an "Unauthorized" article
+             return await query.answer(
+                results=[
+                    InlineQueryResultArticle(
+                        title="🚫 Akses Ditolak",
+                        input_message_content=InputTextMessageContent("⛔ Anda tidak memiliki izin untuk mengonfigurasi sesi purgeme ini.")
+                    )
+                ],
+                cache_time=0,
+                is_personal=True
+             )
 
         # For initial inline query, we use the config state text
         if unique_id in Altruix.PURGEME_STATE:
@@ -227,7 +241,8 @@ async def purgeme_inline_handler(client: Client, query: InlineQuery):
                     title="Configure Purgeme",
                     input_message_content=InputTextMessageContent(
                         text,
-                        parse_mode=enums.ParseMode.HTML
+                        parse_mode=enums.ParseMode.HTML,
+                        disable_web_page_preview=True
                     ),
                     reply_markup=get_purgeme_keyboard(chat_id, user_id, unique_id)
                 )
@@ -242,132 +257,136 @@ async def purgeme_callback_handler(client: Client, cb: CallbackQuery):
     data = cb.data
     parts = data.split("_")
     
+    # ─── 🔐 SECURITY ENFORCEMENT ───
+    # We must determine the session owner before processing ANY action.
+    # Format map: pg_{action}_{params}_{unique_id}
+    prefix_map = {
+        "cnt_add": 4, "cnt_sub": 4, "dly_add": 4, "dly_sub": 4, "dly_reset": 3,
+        "typ": 3, "start": 2, "cancel": 2, "stop": 2, "pause": 2,
+        "resume": 2, "refresh": 2, "mode": 3
+    }
+    
+    curr_prefix = None
+    for p, count in prefix_map.items():
+        if f"pg_{p}" in data:
+            curr_prefix = count
+            break
+            
+    if not curr_prefix:
+        return await cb.answer("❌ Invalid Callback Format.", show_alert=True)
+        
+    unique_id = "_".join(parts[curr_prefix:])
+    try:
+        chat_id, user_id = unique_id.rsplit("_", 1)
+        from Main.utils.access_control import is_authorized_user
+        if str(cb.from_user.id) != str(user_id) and not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+            unauth = Altruix.get_string("access_denied") or "🚫 Access Denied"
+            return await cb.answer(unauth, show_alert=True)
+    except (ValueError, IndexError):
+        return await cb.answer("❌ Invalid Session ID.", show_alert=True)
+
+    state = Altruix.PURGEME_STATE.get(unique_id)
+    if not state:
+         return await cb.answer("⚠️ Session not found. It may have finished or timed out.", show_alert=True)
+
+    # Capture message details for dashboard updates and cleanup
+    if cb.message:
+        state["dashboard_msg_id"] = cb.message.id
+        state["dashboard_chat_id"] = cb.message.chat.id
+
     try:
         if "cnt_add" in data:
             val = int(parts[3])
-            unique_id = "_".join(parts[4:])
-            state = Altruix.PURGEME_STATE.get(unique_id)
-            if state: state["count"] += val
+            state["count"] += val
             
         elif "cnt_sub" in data:
             val = int(parts[3])
-            unique_id = "_".join(parts[4:])
-            state = Altruix.PURGEME_STATE.get(unique_id)
-            if state: state["count"] = max(1, state["count"] - val)
+            state["count"] = max(1, state["count"] - val)
 
         elif "dly_add" in data:
             val = float(parts[3])
-            unique_id = "_".join(parts[4:])
-            state = Altruix.PURGEME_STATE.get(unique_id)
-            if state: state["delay"] += val
+            state["delay"] = round(state["delay"] + val, 2)
+
+        elif "dly_sub" in data:
+            val = float(parts[3])
+            state["delay"] = max(0, round(state["delay"] - val, 2))
             
         elif "dly_reset" in data:
-            unique_id = "_".join(parts[3:])
-            state = Altruix.PURGEME_STATE.get(unique_id)
-            if state: state["delay"] = 0
+            state["delay"] = 0
 
         elif "mode_" in data:
             mode = parts[2]
-            unique_id = "_".join(parts[3:])
-            state = Altruix.PURGEME_STATE.get(unique_id)
-            if state:
-                state["mode"] = mode
+            state["mode"] = mode
 
         elif "typ_" in data:
             t_type = parts[2]
-            unique_id = "_".join(parts[3:])
-            state = Altruix.PURGEME_STATE.get(unique_id)
-            if state:
-                if t_type == "all":
-                    if "all" in state["types"]:
-                        state["types"] = []
-                    else:
-                        state["types"] = ["all"]
+            if t_type == "all":
+                if "all" in state["types"]:
+                    state["types"] = []
                 else:
-                    if "all" in state["types"]: state["types"].remove("all")
-                    if t_type in state["types"]:
-                        state["types"].remove(t_type)
-                    else:
-                        state["types"].append(t_type)
-                    if not state["types"]: state["types"] = ["all"]
+                    state["types"] = ["all"]
+            else:
+                if "all" in state["types"]: state["types"].remove("all")
+                if t_type in state["types"]:
+                    state["types"].remove(t_type)
+                else:
+                    state["types"].append(t_type)
+                if not state["types"]: state["types"] = ["all"]
 
         elif "start" in data:
-            unique_id = "_".join(parts[2:])
-            state = Altruix.PURGEME_STATE.get(unique_id)
-            if state:
-                if not state["event"].is_set(): state["event"].set()
+            if not state["event"].is_set(): 
+                state["event"].set()
+                # Immediate Feedback
+                title = Altruix.get_string("purgeme_title") or "🗑 <b>Userbot Purgeme</b>"
+                await cb.edit_message_text(
+                    f"{title}\n⏳ <i>Task sedang dalam proses...</i>",
+                    parse_mode=enums.ParseMode.HTML,
+                    disable_web_page_preview=True,
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🗑 Delete", callback_data="purgeme_close")]
+                    ])
+                )
+            return # Prevent further processing
 
         elif "cancel" in data:
-            unique_id = "_".join(parts[2:])
-            state = Altruix.PURGEME_STATE.get(unique_id)
-            if state:
-                state["status"] = "cancelled"
-                state["event"].set()
-                state["stop_event"].set()
+            state["status"] = "cancelled"
+            state["event"].set()
+            state["stop_event"].set()
+            try:
+                await cb.message.delete()
+            except: pass
+            return # Prevent further processing
 
         elif "stop" in data:
-            unique_id = "_".join(parts[2:])
-            state = Altruix.PURGEME_STATE.get(unique_id)
-            if state: state["stop_event"].set()
+            state["stop_event"].set()
 
         elif "pause" in data:
-            unique_id = "_".join(parts[2:])
-            state = Altruix.PURGEME_STATE.get(unique_id)
-            if state:
-                state["status"] = "paused"
-                state["pause_event"].clear()
+            state["status"] = "paused"
+            state["pause_event"].clear()
 
         elif "resume" in data:
-            unique_id = "_".join(parts[2:])
-            state = Altruix.PURGEME_STATE.get(unique_id)
-            if state:
-                state["status"] = "running"
-                state["pause_event"].set()
+            state["status"] = "running"
+            state["pause_event"].set()
 
         elif "refresh" in data:
             pass
 
-        # General Update Logic
-        prefix_map = {
-            "cnt_add": 4, "cnt_sub": 4, "dly_add": 4, "dly_reset": 3,
-            "typ": 3, "start": 2, "cancel": 2, "stop": 2, "pause": 2,
-            "resume": 2, "refresh": 2, "mode": 3
-        }
+        # General Keyboard Update
+        new_kb = get_purgeme_keyboard(chat_id, user_id, unique_id)
+        new_text = get_purgeme_text(state)
         
-        curr_prefix = None
-        for p, count in prefix_map.items():
-            if f"pg_{p}" in data:
-                curr_prefix = count
-                break
-        
-        if curr_prefix:
-            unique_id = "_".join(parts[curr_prefix:])
-            chat_id, user_id = unique_id.rsplit("_", 1)
-            
-            if str(cb.from_user.id) != str(user_id):
-                unauth = Altruix.get_string("purgeme_unauth") or "🚫 You are not authorized to use this menu."
-                await cb.answer(unauth, show_alert=True)
-                return
-
-            state = Altruix.PURGEME_STATE.get(unique_id)
-            if not state:
-                 await cb.answer("⚠️ Session not found. It may have finished or timed out.", show_alert=True)
-                 return
-
-            new_kb = get_purgeme_keyboard(chat_id, user_id, unique_id)
-            new_text = get_purgeme_text(state)
-            
-            try:
-                await cb.edit_message_text(
-                    new_text,
-                    reply_markup=new_kb,
-                    parse_mode=enums.ParseMode.HTML
-                )
-            except MessageNotModified:
-                # Content didn't change, just answer the callback to stop loading animation
-                await cb.answer("Status Updated", show_alert=False)
-            except Exception as inner_e:
-                raise inner_e
+        try:
+            await cb.edit_message_text(
+                new_text,
+                reply_markup=new_kb,
+                parse_mode=enums.ParseMode.HTML,
+                disable_web_page_preview=True
+            )
+        except MessageNotModified:
+            # Content didn't change, just answer the callback to stop loading animation
+            await cb.answer("Status Updated", show_alert=False)
+        except Exception as inner_e:
+            raise inner_e
 
     except Exception as e:
         Altruix.log(f"Purgeme CB Error: {e}")
@@ -376,7 +395,11 @@ async def purgeme_callback_handler(client: Client, cb: CallbackQuery):
              await cb.answer("⚠️ Error updating menu", show_alert=False)
 
 @Altruix.bot.on_callback_query(filters.regex("^purgeme_close"))
-async def purgeme_close(client, cb):
+async def purgeme_close(client, cb: CallbackQuery):
+    # Security: Verify if user is authorized
+    from Main.internals.settings import check_authorization
+    if not await check_authorization(cb):
+        return
     await cb.message.delete()
 
 @Altruix.bot.on_message(filters.command("start") & filters.private & filters.regex(r"purgeme_"))
@@ -389,8 +412,10 @@ async def purgeme_start_handler(client: Client, message):
                 
                 try:
                     chat_id, user_id = unique_id.rsplit("_", 1)
-                    if str(message.from_user.id) != str(user_id):
-                        await message.reply("🚫 You are not authorized to access this session.")
+                    from Main.utils.access_control import is_authorized_user
+                    if str(message.from_user.id) != str(user_id) and not is_authorized_user(message.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+                        msg = Altruix.get_string("access_denied") or "🚫 Access Denied"
+                        await message.reply(msg)
                         return
                     
                     state = Altruix.PURGEME_STATE.get(unique_id)
@@ -405,7 +430,8 @@ async def purgeme_start_handler(client: Client, message):
                     await message.reply(
                         menu_text,
                         reply_markup=kb,
-                        parse_mode=enums.ParseMode.HTML
+                        parse_mode=enums.ParseMode.HTML,
+                        disable_web_page_preview=True
                     )
                 except ValueError:
                     await message.reply("❌ Invalid Link Format.")

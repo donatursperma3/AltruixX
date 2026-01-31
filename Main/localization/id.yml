@@ -271,7 +271,7 @@ callback_logger: "Callback Logger"
 # Purgeme Localization
 purgeme_title: "🗑 <b>Userbot Purgeme</b>"
 purgeme_desc: "Konfigurasi pengaturan purgeme Anda di bawah ini.\n<i>Klik tombol untuk membuka menu</i>"
-purgeme_menu_title: "<b>⚙️ Konfigurasi Purgeme</b>\nSilakan pilih opsi:"
+purgeme_menu_title: "<b>⚙️ Konfigurasi Purgeme</b>"
 purgeme_count: "Jumlah: {}"
 purgeme_delay: "Jeda: {}d"
 purgeme_reset: "Reset"

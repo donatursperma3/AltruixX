@@ -126,7 +126,7 @@ class AltruixClient:
         self.clients: List[Client] = []
         self.cmd_list = {}
         self.all_lang_strings = {}
-        self.__version__ = "0.0.6.10"
+        self.__version__ = "0.0.6.26"
         self.selected_lang = "english"
         self.local_lang_file = "./Main/localization"
         self.cmd_list = {}
@@ -143,6 +143,13 @@ class AltruixClient:
         self._init_logger()
         self.config = BaseConfig
         self.local_db = LocalDatabase()
+        
+        # ✅ Shared States for Plugins
+        self.PURGEME_STATE = {}
+        self.user_env_manager_state = {}
+        self.user_privacy_state = {}
+        self.user_track_state = {}
+        self.SANGMATA_WAITING = {}
         
         # ✅ Loop setup: Get or create the optimized loop
         try:
@@ -666,7 +673,7 @@ class AltruixClient:
                     
                     registry_key = (client.name, cmd_key, handler_type.__name__)
                     if registry_key in self.handler_registry:
-                        self.log(f"⚠️ SKIPPED duplicate: {cmd_key} on {client.name}", level=20)
+                        self.log(f"⚠️ SKIPPED duplicate: {cmd_key} on {client.name}", level=10)
                         continue
                     
                     self.handler_registry.add(registry_key)
@@ -1771,7 +1778,7 @@ class AltruixClient:
                         import_type = "M"
                     try:
                         spec.loader.exec_module(load)
-                        sys.modules[import_path + plugin_name] = load
+                        sys.modules[import_path] = load
                         end_time = round(time.time() - start_time, 2)
                         if log:
                             string_load = (

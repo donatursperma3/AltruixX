@@ -42,6 +42,12 @@ async def restart_command_handler(c: Client, m: Message):
 @Altruix.bot.on_callback_query(filters.regex("^ping"))
 @log_errors
 async def ping_cb_handler(c: Client, cb: CallbackQuery):
+    # Security: Verify if user is authorized
+    from Main.utils.access_control import is_authorized_user
+    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+        msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+        return await cb.answer(msg, show_alert=True)
+
     uptime = Essentials.get_readable_time(time.time() - Altruix.start_time)
     start = time.perf_counter()
     await c.invoke(Ping(ping_id=9999999))
