@@ -125,8 +125,9 @@ async def ping_inline_handler(_, iq: InlineQuery):
 async def restart_ub_cmd(c: Client, m: Message):
     reload = m.user_args and m.user_args.soft
     rm = m.reply_to_message
+    bot_username = Altruix.bot_manager.get_bot_username(c.me.id)
     results = await c.get_inline_bot_results(
-        Altruix.bot_info.username, "reload" if reload else "restart"
+        bot_username, "reload" if reload else "restart"
     )
     await asyncio.gather(
         *[

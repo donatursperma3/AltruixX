@@ -38,7 +38,8 @@ async def ping_ub_cmd(c: Client, m: Message):
     if "c" not in user_args:
         rm = m.reply_to_message
         try:
-            results = await c.get_inline_bot_results(Altruix.bot_info.username, "ping")
+            bot_username = Altruix.bot_manager.get_bot_username(c.me.id)
+            results = await c.get_inline_bot_results(bot_username, "ping")
             await c.send_inline_bot_result(
                 chat_id=m.chat.id,
                 query_id=results.query_id,

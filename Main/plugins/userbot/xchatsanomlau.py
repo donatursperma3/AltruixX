@@ -1359,7 +1359,8 @@ async def laucreate_command_handler(client: Client, message: AltruixMessage):
             
             # Kirim konfirmasi ke Log Group menggunakan Bot Assistant
             try:
-                log_confirm = await Altruix.bot.send_message(
+                bot = Altruix.bot_manager.get_bot(client.me.id)
+                log_confirm = await bot.send_message(
                     LOG_CHAT_ID,
                     f"<b>🔐 Konfirmasi Task Laucreate</b>\n\n"
                     f"• User: {message.from_user.mention}\n"

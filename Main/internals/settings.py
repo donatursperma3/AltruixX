@@ -107,6 +107,7 @@ user_dlphoto_state = {} # ✅ BARU: State untuk download foto profil
 user_privacy_state = {} # ✅ BARU: State untuk privacy settings
 user_bulk_leave_state = {} # ✅ BARU: State untuk bulk leave
 user_bulk_report_state = {} # ✅ BARU: State untuk bulk report
+# ✅ BARU: State untuk Laucreate integration
 user_laucreate_state = {} # ✅ BARU: State untuk Laucreate integration
 user_env_manager_state = {} # ✅ BARU: State untuk ENV Manager (CRUD)
 
@@ -186,7 +187,15 @@ STRINGS = {
         "purge_success_log": "✅ <b>Purge Selesai!</b>\n\n• Chat: {chat}\n• Berhasil: <code>{count}</code>\n• Gagal: <code>{error}</code>",
         "startup_settings_title": "🚀 <b>Pengaturan Startup</b>",
         "help_info_settings_title": "❇️ <b>Pengaturan Help Info</b>",
-        "callback_logger": "Callback Logger"
+        "callback_logger": "Callback Logger",
+        "custom_bot": "🤖 Custom Bot",
+        "cache_log": "🧹 Cache Log",
+        "custom_bot_title": "🤖 <b>Custom Assistant Bot</b>",
+        "set_bot_token": "🔑 Set Bot Token",
+        "remove_bot": "🗑️ Remove Custom Bot",
+        "bot_info": "ℹ️ Bot Info",
+        "cache_log_title": "🧹 <b>Cache Cleaning Notification</b>",
+        "cache_log_desc": "Kirim notifikasi ke log group saat cache dibersihkan"
     },
     "english": {
         "sessions": "Sessions",
@@ -260,7 +269,15 @@ STRINGS = {
         "purge_success_log": "✅ <b>Purge Complete!</b>\n\n• Chat: {chat}\n• Success: <code>{count}</code>\n• Failed: <code>{error}</code>",
         "startup_settings_title": "🚀 <b>Startup Settings</b>",
         "help_info_settings_title": "❇️ <b>Help Info Settings</b>",
-        "callback_logger": "Callback Logger"
+        "callback_logger": "Callback Logger",
+        "custom_bot": "🤖 Custom Bot",
+        "cache_log": "🧹 Cache Log",
+        "custom_bot_title": "🤖 <b>Custom Assistant Bot</b>",
+        "set_bot_token": "🔑 Set Bot Token",
+        "remove_bot": "🗑️ Remove Custom Bot",
+        "bot_info": "ℹ️ Bot Info",
+        "cache_log_title": "🧹 <b>Cache Cleaning Notification</b>",
+        "cache_log_desc": "Send notification to log group when cache is cleaned"
     }
 }
 
@@ -391,7 +408,10 @@ async def central_callback_logger(c: Client, cb: CallbackQuery):
         user_info = f"👤 {user.first_name} (@{user.username})" if user.username else f"👤 {user.first_name}"
         user_id = user.id
         cb_data = cb.data
-        msg_text = cb.message.text or cb.message.caption or "[No Text]"
+        if cb.message:
+            msg_text = cb.message.text or cb.message.caption or "[No Text]"
+        else:
+            msg_text = "[Inline/No Message]"
         
         log_msg = (
             f"🎯 <b>Callback Button Clicked</b>\n"
@@ -3065,18 +3085,6 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
     }
     startup_status = status_map.get(str(startup_state).lower(), "✅ DEFAULT")
 
-    txt = (
-        f"{gt('session_info_title')}\n\n"
-        f"👤 <b>User:</b> <b>{html.escape(session_info.first_name or '')}</b>\n"
-        f"🆔 <b>ID:</b> <spoiler>{session_info.id}</spoiler>\n"
-        f"✍️ <b>Bio:</b> <code>{html.escape(bio or 'None')}</code>\n"
-        f"💠 <b>DC:</b> <code>{session_info.dc_id or 'N/A'}</code>\n"
-        f"❤️‍🔥 <b>Premium:</b> <code>{'Yes' if is_premium else 'No'}</code>\n"
-        f"📊 <b>Session Index:</b> <code>{index + 1}</code>\n"
-        f"🏷 <b>Username:</b> <spoiler>@{session_info.username or 'None'}</spoiler>\n\n"
-        f"<i>Manage this session (Page {button_page}):</i>"
-    )
-
     # All available buttons
     all_buttons = [
         # Account Actions
@@ -3127,11 +3135,29 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
         # Removed Edit Help Msg
         InlineKeyboardButton("🐍 Eval Python", f"eval_session_{index}_{callback_page}"),
         InlineKeyboardButton("🖥️ Exec Terminal", f"exec_session_{index}_{callback_page}"),
+        InlineKeyboardButton(gt("custom_bot"), f"custom_bot_menu_{index}_{callback_page}"),
+        InlineKeyboardButton(gt("cache_log"), f"cache_log_menu_{index}_{callback_page}"),
     ]
 
     # Pagination Logic
     buttons_per_page = 10
     total_pages = (len(all_buttons) + buttons_per_page - 1) // buttons_per_page
+
+    custom_bot_username = Altruix.bot_manager.get_bot_username(session_info.id)
+    custom_bot_info = f"🤖 <b>Custom Bot:</b> <spoiler>@{custom_bot_username}</spoiler>\n" if custom_bot_username else ""
+
+    txt = (
+        f"{gt('session_info_title')}\n\n"
+        f"👤 <b>User:</b> <b>{html.escape(session_info.first_name or '')}</b>\n"
+        f"🆔 <b>ID:</b> <spoiler>{session_info.id}</spoiler>\n"
+        f"✍️ <b>Bio:</b> <code>{html.escape(bio or 'None')}</code>\n"
+        f"💠 <b>DC:</b> <code>{session_info.dc_id or 'N/A'}</code>\n"
+        f"❤️‍🔥 <b>Premium:</b> <code>{'Yes' if is_premium else 'No'}</code>\n"
+        f"📊 <b>Session Index:</b> <code>{index + 1}</code>\n"
+        f"🏷 <b>Username:</b> <spoiler>@{session_info.username or 'None'}</spoiler>\n"
+        f"{custom_bot_info}\n"
+        f"<i>Manage this session ({button_page}/{total_pages}):</i>"
+    )
     
     start = (button_page - 1) * buttons_per_page
     end = start + buttons_per_page
@@ -3154,7 +3180,7 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
         kb_buttons.append(nav_row)
         
     # Final row: Back
-    kb_buttons.append([InlineKeyboardButton(gt("back"), f"sessions_list_{callback_page}")])
+    kb_buttons.append([InlineKeyboardButton(f"🔙 Back [{callback_page}]", f"sessions_list_{callback_page}")])
 
     await cb.message.edit(
         text=txt,
@@ -5931,7 +5957,10 @@ async def dl_uphoto_start_handler(c: Client, cb: CallbackQuery):
 @log_errors
 async def purge_amt_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
-    await cb.answer()
+    try:
+        await cb.answer()
+    except Exception:
+        pass
     user_id = int(cb.matches[0].group(1))
     amt_choice = cb.matches[0].group(2)
     
@@ -6039,7 +6068,10 @@ async def purge_del_handler(c: Client, cb: CallbackQuery):
 @log_errors
 async def purge_mode_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
-    await cb.answer()
+    try:
+        await cb.answer()
+    except Exception:
+        pass
     user_id = int(cb.matches[0].group(1))
     mode = cb.matches[0].group(2)
     
@@ -7140,572 +7172,6 @@ async def sys_shutdown_handler(c: Client, cb: CallbackQuery):
 # ============================================================================
 
 # Default Configuration
-DEFAULT_LAUCREATE_CONFIG = {
-    "delay": 333, "count": 2, "batch_delay": 10, "batch_size": 2, "action_delay": 3.0,
-    "pattern": "Group (index)", "username": None, "description": "Powered by @AlphaXProject",
-    "bots": "@MissRose_bot @simixbot @Spillgame_bot @truthordaresbot @truthordares_bot @truthordarerp_bot @truthordarerln_bot @truthordares18_bot",
-    "invite_bots": False, "anon_mode": True, "copy_messages": True,
-    "photo_source": "source", "custom_photo_id": None
-}
-
-@Altruix.bot.on_callback_query(filters.regex(r"^laucreate_menu_(\d+)(?:_(\d+))?$"))
-@log_errors
-async def laucreate_menu_handler(c: Client, cb: CallbackQuery):
-    """Entry point: Choose Manual vs UI"""
-    if not await check_authorization(cb): return
-    await cb.answer()
-    global user_laucreate_state
-    
-    session_index = int(cb.matches[0].group(1))
-    page = int(cb.matches[0].group(2)) if cb.matches[0].group(2) else 1
-    
-    text = (
-        "<b>🚀 Create Group</b>\n\n"
-        "Pilih metode input konfigurasi:\n"
-        "• <b>Manual Input:</b> Ketik perintah lengkap\n"
-        "• <b>Interactive UI:</b> Gunakan tombol menu"
-    )
-    
-    buttons = [
-        [InlineKeyboardButton("⌨️ Manual Input", callback_data=f"laucreate_manual_{session_index}_{page}")],
-        [InlineKeyboardButton("🎛️ Interactive UI", callback_data=f"laucreate_ui_{session_index}_{page}")],
-        [InlineKeyboardButton("🔙 Back to Session", callback_data=f"session_info_{session_index}_{page}")]
-    ]
-    
-    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
-
-@Altruix.bot.on_callback_query(filters.regex(r"^laucreate_manual_(\d+)_(\d+)$"))
-async def laucreate_manual_handler(c: Client, cb: CallbackQuery):
-    if not await check_authorization(cb): return
-    session_index = int(cb.matches[0].group(1))
-    page = int(cb.matches[0].group(2))
-    
-    user_laucreate_state[cb.from_user.id] = {
-        "step": "input_manual",
-        "session_index": session_index,
-        "page": page
-    }
-    
-    text = (
-        "<b>⌨️ Create Group - Manual Input</b>\n\n"
-        "Format: <code>&lt;delay&gt; &lt;count&gt; &lt;batch_delay&gt; &lt;batch_size&gt; &lt;type&gt; &lt;pattern&gt; ; &lt;username&gt; &lt;bots&gt;</code>\n\n"
-        "<b>Placeholders Pattern:</b>\n"
-        "• <code>(index)</code> : Urutan\n"
-        "• <code>(tahun)</code> : 2 digit tahun\n"
-        "• <code>(bulan)</code> : Bulan (angka)\n"
-        "• <code>(tanggal)</code>: Tanggal\n\n"
-        "Ketik /cancel untuk kembali."
-    )
-    await cb.message.edit(text, parse_mode=ParseMode.HTML, 
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data=f"laucreate_menu_{session_index}_{page}")]]))
-
-@Altruix.bot.on_callback_query(filters.regex(r"^laucreate_ui_(\d+)_(\d+)$"))
-async def laucreate_ui_handler(c: Client, cb: CallbackQuery):
-    """Main Interactive UI"""
-    if not await check_authorization(cb): return
-    session_index = int(cb.matches[0].group(1))
-    page = int(cb.matches[0].group(2))
-    user_id = cb.from_user.id
-    
-    # Initialize state if not exists or if checking status
-    if user_id not in user_laucreate_state or user_laucreate_state[user_id].get("step") != "ui_config":
-        # Cleanup old prompt if exists
-        if user_id in user_laucreate_state and user_laucreate_state[user_id].get("prompt_msg_id"):
-            try: await c.delete_messages(cb.message.chat.id, user_laucreate_state[user_id]["prompt_msg_id"])
-            except: pass
-            
-        user_laucreate_state[user_id] = {
-            "step": "ui_config",
-            "session_index": session_index,
-            "page": page,
-            "config": DEFAULT_LAUCREATE_CONFIG.copy(),
-            "input_mode": None, # 'pattern' or 'username'
-            "ui_msg_id": cb.message.id,
-            "prompt_msg_id": None
-        }
-    else:
-        # Just ensure step is ui_config and cleanup prompt if somehow left
-        user_laucreate_state[user_id]["step"] = "ui_config"
-        user_laucreate_state[user_id]["input_mode"] = None
-        if user_laucreate_state[user_id].get("prompt_msg_id"):
-            try: await c.delete_messages(cb.message.chat.id, user_laucreate_state[user_id]["prompt_msg_id"])
-            except: pass
-            user_laucreate_state[user_id]["prompt_msg_id"] = None
-    
-    await render_laucreate_ui(cb, user_laucreate_state[user_id])
-
-async def render_laucreate_ui(cb: Optional[CallbackQuery], state: dict, message: Optional[Message] = None):
-    config = state["config"]
-    idx = state["session_index"]
-    pg = state["page"]
-    
-    # Get session info
-    session_client = Altruix.clients[idx]
-    session_user = getattr(session_client, 'myself', None)
-    if not session_user:
-        try:
-            session_user = await session_client.get_me()
-        except Exception:
-            session_user = None
-
-    session_text = ""
-    if session_user:
-        session_text = f"👤 <b>Account:</b> <a href='tg://user?id={session_user.id}'>{html.escape(session_user.first_name)}</a> (<code><spoiler>{session_user.id}</spoiler></code>)\n"
-
-    photo_status = f"Source Account" if config.get('photo_source') == "source" else "Custom Photo"
-    if config.get('photo_source') == "custom":
-        if config.get('custom_photo_id'):
-            photo_status += " ✅"
-        else:
-            photo_status += " ❌ (No photo)"
-
-    text = (
-        "<b>🎛️ Create Group Configuration</b>\n\n"
-        f"{session_text}"
-        f"• <b>Action Delay:</b> {config['action_delay']}s\n"
-        f"• <b>Delay:</b> {config['delay']}s\n"
-        f"• <b>Count:</b> {config['count']} groups\n"
-        f"• <b>Batch Delay:</b> {config['batch_delay']}m\n"
-        f"• <b>Batch Size:</b> {config['batch_size']} groups\n"
-        f"• <b>Name:</b> {html.escape(config['pattern'])}\n"
-        f"• <b>Username:</b> {config['username'] or 'None'}\n"
-        f"• <b>Description:</b> {html.escape(config['description'])}\n"
-        f"• <b>Photo:</b> {photo_status}\n"
-        f"• <b>Anon Admin:</b> {'Yes' if config['anon_mode'] else 'No'} | <b>Copy Msg:</b> {'Yes' if config['copy_messages'] else 'No'}\n"
-        f"• <b>Invite Bots:</b> {'Yes' if config['invite_bots'] else 'No'}\n"
-        f"• <b>Bot List:</b> {len(config['bots'].split() if config['bots'] else [])} bots (Default)"
-    )
-    
-    # helper to create adjuster row with manual input
-    def adj_row(label, key, unit):
-        return [
-            InlineKeyboardButton(f"➖", callback_data=f"laucreate_adj_{idx}_{pg}_{key}_sub"),
-            InlineKeyboardButton(f"{label}", callback_data="noop"),
-            InlineKeyboardButton(f"➕", callback_data=f"laucreate_adj_{idx}_{pg}_{key}_add"),
-            InlineKeyboardButton(f"✏️", callback_data=f"laucreate_in_{idx}_{pg}_{key}")
-        ]
-
-    buttons = [
-        # Action Delay
-        adj_row(f"Act Dly ({config['action_delay']}s)", "action_delay", "s"),
-        # Delay
-        adj_row(f"Delay ({config['delay']}s)", "delay", "s"),
-        # Count
-        adj_row(f"Count ({config['count']})", "count", ""),
-        # Batch Delay
-        adj_row(f"Batch ({config['batch_delay']}m)", "batch_delay", "m"),
-        # Batch Size
-        adj_row(f"B.Size ({config['batch_size']})", "batch_size", ""),
-        # Group Name
-        [
-            InlineKeyboardButton(f"Name: {config['pattern'][:15]}...", callback_data="noop"),
-            InlineKeyboardButton("✏️ Input", callback_data=f"laucreate_in_{idx}_{pg}_pattern")
-        ],
-        # Username
-        [
-            InlineKeyboardButton(f"Username: {config['username'] or 'None'}", callback_data="noop"),
-            InlineKeyboardButton("✏️ Input", callback_data=f"laucreate_in_{idx}_{pg}_username")
-        ],
-        # Description
-        [
-            InlineKeyboardButton(f"Desc: {config['description'][:15]}...", callback_data="noop"),
-            InlineKeyboardButton("✏️ Input", callback_data=f"laucreate_in_{idx}_{pg}_description")
-        ],
-        # Photo Source
-        [
-            InlineKeyboardButton(f"Photo: {'👤 Source' if config.get('photo_source') == 'source' else '🖼 Custom'}", callback_data=f"laucreate_toggle_{idx}_{pg}_photo_source"),
-            InlineKeyboardButton("📸 Upload Photo" if config.get('photo_source') == 'custom' else "➖", 
-                                 callback_data=f"laucreate_upload_photo_{idx}_{pg}" if config.get('photo_source') == 'custom' else "noop")
-        ],
-        # Toggles Row 1
-        [
-            InlineKeyboardButton(f"Anon Admin: {'✅ Yes' if config['anon_mode'] else '❌ No'}", callback_data=f"laucreate_toggle_{idx}_{pg}_anon_mode"),
-            InlineKeyboardButton(f"Copy Msg: {'✅ Yes' if config['copy_messages'] else '❌ No'}", callback_data=f"laucreate_toggle_{idx}_{pg}_copy_messages")
-        ],
-        # Toggles Row 2 (Bots)
-        [
-            InlineKeyboardButton(f"Invite Bots: {'✅ Yes' if config['invite_bots'] else '❌ No'}", callback_data=f"laucreate_toggle_{idx}_{pg}_invite_bots")
-        ],
-        # Bot List Input
-        [
-            InlineKeyboardButton(f"Bots: {len(config['bots'].split() if config['bots'] else [])} usernames", callback_data="noop"),
-            InlineKeyboardButton("✏️ List", callback_data=f"laucreate_in_{idx}_{pg}_bots")
-        ],
-        # Actions
-        [
-            InlineKeyboardButton("✅ RUN TASK", callback_data=f"laucreate_run_{idx}_{pg}"),
-            InlineKeyboardButton("🔙 Back", callback_data=f"laucreate_menu_{idx}_{pg}")
-        ]
-    ]
-    
-    try:
-        if cb:
-            await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
-        elif message:
-            await message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
-    except Exception:
-        pass
- # Ignore modify error if same content
-
-@Altruix.bot.on_callback_query(filters.regex(r"^laucreate_adj_(\d+)_(\d+)_(\w+)_(\w+)$"))
-async def laucreate_adjust_handler(c: Client, cb: CallbackQuery):
-    if not await check_authorization(cb): return
-    idx = int(cb.matches[0].group(1))
-    pg = int(cb.matches[0].group(2))
-    key = cb.matches[0].group(3)
-    action = cb.matches[0].group(4)
-    user_id = cb.from_user.id
-    
-    if user_id not in user_laucreate_state:
-         await cb.answer("Session expired", show_alert=True)
-         return
-         
-    conf = user_laucreate_state[user_id]["config"]
-    
-    # Limits and Steps
-    # Limits and Steps (UpdatedStep=1 for integers as requested, ActionDelay support)
-    steps = {"delay": 1, "count": 1, "batch_delay": 1, "batch_size": 1, "action_delay": 1}
-    limits = {
-        "delay": (1, 300), "count": (1, 1000), "batch_delay": (0, 300), "batch_size": (1, 100),
-        "action_delay": (0, 300)
-    }
-    
-    val = conf.get(key, 0)
-    step = steps.get(key, 1)
-    
-    if action == "add":
-        val += step
-    else:
-        val -= step
-        
-    # Enforce limits
-    min_v, max_v = limits.get(key, (0, 100))
-    val = max(min_v, min(val, max_v))
-    
-    conf[key] = val
-    await render_laucreate_ui(cb, user_laucreate_state[user_id])
-    await cb.answer()
-
-@Altruix.bot.on_callback_query(filters.regex(r"^laucreate_in_(\d+)_(\d+)_(\w+)$"))
-async def laucreate_input_request(c: Client, cb: CallbackQuery):
-    if not await check_authorization(cb): return
-    idx = int(cb.matches[0].group(1))
-    pg = int(cb.matches[0].group(2))
-    field = cb.matches[0].group(3)
-    user_id = cb.from_user.id
-    
-    if user_id not in user_laucreate_state:
-        return
-        
-    user_laucreate_state[user_id]["input_mode"] = field
-    user_laucreate_state[user_id]["step"] = "awaiting_input"
-    user_laucreate_state[user_id]["ui_msg_id"] = cb.message.id
-    
-    if field in ["pattern", "username", "bots"]:
-        field_name = {
-            "pattern": "Group Name Pattern",
-            "username": "Username Prefix",
-            "bots": "Bot Usernames List",
-            "description": "Group Description"
-        }.get(field, field)
-    else:
-        field_name = field.replace("_", " ").title() # delay -> Delay, action_delay -> Action Delay
-        
-    # Update UI to waiting state
-    await cb.message.edit(
-        f"<b>📝 Awaiting Input: {field_name}...</b>\n\n"
-        "Silakan lihat instruksi pada pesan di bawah.",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancel", callback_data=f"laucreate_ui_{idx}_{pg}")]])
-    )
-    
-    # Send separate prompt
-    prompt_text = (
-        f"<b>✏️ Input {field_name}</b>\n\n"
-        f"{'Current Bots: ' + user_laucreate_state[user_id]['config']['bots'] if field == 'bots' else ''}\n"
-        "Silakan kirim text yang diinginkan.\n"
-        "Ketik /cancel untuk membatalkan."
-    )
-    prompt_msg = await c.send_message(cb.message.chat.id, prompt_text, parse_mode=ParseMode.HTML)
-    user_laucreate_state[user_id]["prompt_msg_id"] = prompt_msg.id
-
-@Altruix.bot.on_callback_query(filters.regex(r"^laucreate_toggle_(\d+)_(\d+)_(\w+)$"))
-async def laucreate_toggle_handler(c: Client, cb: CallbackQuery):
-    if not await check_authorization(cb): return
-    idx = int(cb.matches[0].group(1))
-    pg = int(cb.matches[0].group(2))
-    key = cb.matches[0].group(3)
-    user_id = cb.from_user.id
-    
-    if user_id in user_laucreate_state:
-        # Cleanup prompt if any
-        if user_laucreate_state[user_id].get("prompt_msg_id"):
-            try: await c.delete_messages(cb.message.chat.id, user_laucreate_state[user_id]["prompt_msg_id"])
-            except: pass
-            user_laucreate_state[user_id]["prompt_msg_id"] = None
-            
-        conf = user_laucreate_state[user_id]["config"]
-        if key == "photo_source":
-            conf["photo_source"] = "custom" if conf.get("photo_source") == "source" else "source"
-            await render_laucreate_ui(cb, user_laucreate_state[user_id])
-        elif key in conf:
-            conf[key] = not conf[key]
-            await render_laucreate_ui(cb, user_laucreate_state[user_id])
-    await cb.answer()
-
-@Altruix.bot.on_callback_query(filters.regex(r"^laucreate_upload_photo_(\d+)_(\d+)$"))
-@log_errors
-async def laucreate_upload_photo_handler(c: Client, cb: CallbackQuery):
-    if not await check_authorization(cb): return
-    idx = int(cb.matches[0].group(1))
-    pg = int(cb.matches[0].group(2))
-    user_id = cb.from_user.id
-    
-    if user_id not in user_laucreate_state:
-        await cb.answer("State expired", show_alert=True)
-        return
-        
-    user_laucreate_state[user_id]["step"] = "awaiting_photo"
-    user_laucreate_state[user_id]["input_mode"] = "custom_photo"
-    user_laucreate_state[user_id]["ui_msg_id"] = cb.message.id
-    
-    # Update UI to waiting state
-    await cb.message.edit(
-        "<b>📸 Awaiting Photo Upload...</b>\n\n"
-        "Silakan lihat instruksi pada pesan di bawah.",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancel", callback_data=f"laucreate_ui_{idx}_{pg}")]])
-    )
-
-    # Send separate prompt
-    prompt_msg = await c.send_message(
-        cb.message.chat.id,
-        "<b>📸 Upload Custom Photo</b>\n\n"
-        "Silakan kirim atau reply pesan ini dengan foto yang ingin dijadikan profil grup.\n"
-        "Ketik /cancel untuk membatalkan.",
-        parse_mode=ParseMode.HTML
-    )
-    user_laucreate_state[user_id]["prompt_msg_id"] = prompt_msg.id
-
-@Altruix.bot.on_callback_query(filters.regex(r"^laucreate_run_(\d+)_(\d+)$"))
-@log_errors
-async def laucreate_run_handler(c: Client, cb: CallbackQuery):
-    if not await check_authorization(cb): return
-    idx = int(cb.matches[0].group(1))
-    pg = int(cb.matches[0].group(2))
-    user_id = cb.from_user.id
-    
-    if user_id not in user_laucreate_state or "config" not in user_laucreate_state[user_id]:
-        await cb.answer("Error: Invalid state", show_alert=True)
-        return
-
-    conf = user_laucreate_state[user_id]["config"]
-    # Confirmation Step
-    photo_text = "👤 Source Account" if conf.get('photo_source') == 'source' else "🖼 Custom Photo"
-    if conf.get('photo_source') == 'custom' and conf.get('custom_photo_id'):
-        photo_text += " ✅"
-
-    text = (
-        "<b>⚠️ Konfirmasi Task Laucreate</b>\n\n"
-        f"• <b>Pattern:</b> {html.escape(conf['pattern'])}\n"
-        f"• <b>Jumlah:</b> {conf['count']} grup\n"
-        f"• <b>Anon Admin:</b> {'Yes' if conf['anon_mode'] else 'No'}\n"
-        f"• <b>Photo Source:</b> {photo_text}\n"
-        f"• <b>Description:</b> {html.escape(conf.get('description', ''))}\n"
-        f"• <b>Invite Bots:</b> {'Yes' if conf['invite_bots'] else 'No'} ({len(conf['bots'].split() if conf['bots'] else [])})\n\n"
-        "Apakah Anda yakin ingin menjalankan task ini?"
-    )
-    buttons = [
-        [
-            InlineKeyboardButton("❌ Batal", callback_data=f"laucreate_ui_{idx}_{pg}"),
-            InlineKeyboardButton("✅ Ya, Jalankan", callback_data=f"laucreate_confirm_task_{idx}")
-        ]
-    ]
-    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
-
-@Altruix.bot.on_callback_query(filters.regex(r"^laucreate_confirm_task_(\d+)$"))
-@log_errors
-async def laucreate_confirm_task_handler(c: Client, cb: CallbackQuery):
-    if not await check_authorization(cb): return
-    idx = int(cb.matches[0].group(1))
-    user_id = cb.from_user.id
-    
-    if user_id not in user_laucreate_state or "config" not in user_laucreate_state[user_id]:
-        await cb.answer("Error: Invalid state", show_alert=True)
-        return
-
-    conf = user_laucreate_state[user_id]["config"]
-    del user_laucreate_state[user_id] # Clean state
-    
-    await cb.message.edit("🚀 Memulai Laucreate Task...")
-    
-    try:
-        from Main.plugins.userbot.xchatsanomlau import laucreate_loop
-        
-        control_msg = await cb.message.reply("🔄 Initializing task...")
-        
-        # Use SELECTED session
-        executor = Altruix.clients[idx]
-        
-        # Determine valid bot identifiers
-        bots = conf["bots"].split() if conf["bots"] else []
-        
-        asyncio.create_task(
-            laucreate_loop(
-                user_client=executor,
-                bot_client=Altruix.bot,
-                initial_message=cb.message,
-                delay=conf["delay"],
-                count=conf["count"],
-                extra_delay_minutes=conf["batch_delay"],
-                batch_size=conf["batch_size"],
-                group_type="a", # Always 'a' as base, flags control features
-                name_pattern=conf["pattern"],
-                username_prefix=conf["username"],
-                bot_identifiers=bots,
-                control_message=control_msg,
-                action_delay=conf.get("action_delay", 3.0),
-                invite_bots=conf.get("invite_bots", False),
-                anon_mode=conf.get("anon_mode", True),
-                copy_messages=conf.get("copy_messages", True),
-                description=conf.get("description", "Powered by @AlphaXProject"),
-                photo_source=conf.get("photo_source", "source"),
-                custom_photo_id=conf.get("custom_photo_id"),
-                user_id=user_id
-            )
-        )
-        await cb.answer("Task started!", show_alert=True)
-    except Exception as e:
-        await cb.message.reply(f"❌ Error: {e}")
-
-async def process_laucreate_input(c: Client, m: Message, text: str = None):
-    user_id = m.from_user.id
-    state = user_laucreate_state.get(user_id)
-    
-    if not state: return
-    
-    # Handle Photo Input
-    if state["step"] == "awaiting_photo":
-        # Delete temporary prompt if exists
-        if state.get("prompt_msg_id"):
-            try: await c.delete_messages(m.chat.id, state["prompt_msg_id"])
-            except: pass
-            state["prompt_msg_id"] = None
-
-        if m.photo:
-            state["config"]["custom_photo_id"] = m.photo.file_id
-            state["step"] = "ui_config" # Back to interactive or idle
-            state["input_mode"] = None
-            
-            # Use stored ui_msg_id to refresh UI
-            if state.get("ui_msg_id"):
-                try: 
-                    target_msg = await c.get_messages(m.chat.id, state["ui_msg_id"])
-                    await render_laucreate_ui(None, state, message=target_msg)
-                except: 
-                    await render_laucreate_ui(None, state)
-            return
-        elif text and text.lower() == "/cancel":
-            state["step"] = "ui_config"
-            state["input_mode"] = None
-            if state.get("ui_msg_id"):
-                try:
-                    target_msg = await c.get_messages(m.chat.id, state["ui_msg_id"])
-                    await render_laucreate_ui(None, state, message=target_msg)
-                except:
-                    await render_laucreate_ui(None, state)
-            return
-        else:
-            return
-
-    # Manual Input Mode
-    if state["step"] == "input_manual":
-        # ... logic for parsing manual string ...
-        # For brevity, reusing the robust parsing logic is best, but here we just need to redirect to run
-        # Let's just create a dummy "config" from manual parsing and run it.
-        try:
-            # Reuse parsing logic from previous step, but adapted
-            args = text.split()
-            if len(args) < 6:
-                await m.reply("❌ Format salah! Minimal 6 parameter.")
-                return
-            
-            # ... (parsing) ...
-            # For now, let's just assume valid inputs for manual mode to save tokens or implement fully if critical
-            # Implementing full parse:    
-            config = {
-                "delay": int(args[0]), "count": int(args[1]), "batch_delay": int(args[2]),
-                "batch_size": int(args[3]), "type": args[4].lower(),
-                "bots": [], "username": None, "pattern": ""
-            }
-            # ... (rest of parsing same as before) ...
-            full_args = " ".join(args[5:])
-            if " ; " in full_args:
-                p, e = full_args.split(" ; ", 1)
-                config["pattern"] = p.strip('"\'')
-                ex = e.strip().split()
-                if ex:
-                    if not (ex[0].startswith('@') or ex[0].isdigit()):
-                         config["username"] = ex[0]
-                         config["bots"] = ex[1:]
-                    else:
-                         config["bots"] = ex
-            else:
-                 config["pattern"] = full_args.strip('"\'')
-
-            # CONFIRM MANUAL
-            state["config"] = config
-            state["step"] = "confirm_manual"
-            
-            # Show Confirm
-            buttons = [[InlineKeyboardButton("✅ Run", f"laucreate_run_{state['session_index']}_{state['page']}")]]
-            await m.reply(f"Confirm Manual Run?\n{config}", reply_markup=InlineKeyboardMarkup(buttons))
-            
-        except Exception as e:
-            await m.reply(f"Error: {e}")
-            
-    # Interactive UI Input
-    elif state["step"] == "awaiting_input":
-        field = state["input_mode"]
-        if field == "pattern":
-            state["config"]["pattern"] = text
-        elif field == "username":
-            state["config"]["username"] = text
-        elif field == "description":
-            state["config"]["description"] = text
-        elif field == "bots":
-             # Normalize bots list
-             bots = text.replace(",", " ").split()
-             clean_bots = []
-             for b in bots:
-                 if b.startswith("@") or b.isdigit():
-                     clean_bots.append(b)
-                 else:
-                     clean_bots.append(f"@{b}")
-             state["config"]["bots"] = " ".join(clean_bots)
-        elif field in ["delay", "count", "batch_delay", "batch_size", "action_delay"]:
-            if text.isdigit() or (field == "action_delay" and text.replace(".", "", 1).isdigit()):
-                 val = float(text) if field == "action_delay" else int(text)
-                 state["config"][field] = val
-            else:
-                 await m.reply("❌ Input harus angka!")
-                 return
-            
-        state["step"] = "ui_config"
-        state["input_mode"] = None
-        
-        # Delete temporary prompt if exists
-        if state.get("prompt_msg_id"):
-            try: await c.delete_messages(m.chat.id, state["prompt_msg_id"])
-            except: pass
-            state["prompt_msg_id"] = None
-        
-        # Re-render UI using stored message ID
-        if state.get("ui_msg_id"):
-            try:
-                target_msg = await c.get_messages(m.chat.id, state["ui_msg_id"])
-                await render_laucreate_ui(None, state, message=target_msg)
-            except:
-                pass
-        return
 # ✅ NEW: Startup Message Menu
 @Altruix.bot.on_callback_query(filters.regex(r"^startup_menu_(\d+)_(\d+)$"))
 @log_errors
@@ -8732,3 +8198,17 @@ async def env_save_confirm_handler(c: Client, cb: CallbackQuery):
         
     # Cleanup state
     del user_env_manager_state[user_id]
+
+
+
+# ─── END SESSION INFO HANDLERS ───────────────────────────────────────────
+
+
+# Helper function for message authorization check
+async def check_authorization_message(m: Message) -> bool:
+    """Check if user is authorized (owner or sudo)"""
+    user_id = m.from_user.id
+    owner_id = Altruix.config.OWNER_ID
+    sudo_users = getattr(Altruix.config, 'SUDO_USERS', [])
+    
+    return user_id == owner_id or user_id in sudo_users

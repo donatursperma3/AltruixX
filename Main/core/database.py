@@ -117,10 +117,16 @@ class LocalCollection:
         return item
 
 
+import asyncio
+import aiofiles
+
 class LocalDatabase:
     def __init__(self, file_path="altruix_local_db.json"):
         self.path = file_path
         self.data = {}
+        self._dirty = False
+        self._lock = asyncio.Lock()
+        self._param_lock = asyncio.Lock() # For protecting data access during save
         self._load()
         
         # Initialize collections
@@ -133,17 +139,44 @@ class LocalDatabase:
     def _load(self):
         if not path.exists(self.path):
             self.data = {}
-            self.save()
+            self._sync_save()
         try:
-            with open(self.path, "r") as f:
+            with open(self.path, "r", encoding="utf-8") as f:
                 self.data = json.load(f)
         except (ValueError, FileNotFoundError):
             self.data = {}
-            self.save()
+            self._sync_save()
 
-    def save(self) -> None:
-        with open(self.path, "w+") as _file:
+    def _sync_save(self) -> None:
+        """Synchronous save for initialization only."""
+        with open(self.path, "w+", encoding="utf-8") as _file:
             json.dump(self.data, _file, indent=4)
+
+    async def save_now(self) -> None:
+        """Asynchronous save using aiofiles."""
+        if not self._dirty:
+            return
+
+        async with self._lock:
+            try:
+                # Create a copy or dump string while holding param lock if needed?
+                # For simplicity, we assume dict operations are atomic enough for json dump in CPython
+                # But to be safe against concurrent modification during dump:
+                data_to_save = json.dumps(self.data, indent=4)
+                
+                async with aiofiles.open(self.path, "w+", encoding="utf-8") as _file:
+                    await _file.write(data_to_save)
+                
+                self._dirty = False
+            except Exception as e:
+                print(f"[LocalDatabase] Save Error: {e}")
+
+    async def start_background_saver(self):
+        """Background task to save DB periodically if dirty."""
+        while True:
+            await asyncio.sleep(2) # Check every 2 seconds
+            if self._dirty:
+                await self.save_now()
 
     def get_collection_data(self, col_name: str) -> Dict[str, Any]:
         if col_name not in self.data:
@@ -154,12 +187,14 @@ class LocalDatabase:
         if col_name not in self.data:
             self.data[col_name] = {}
         self.data[col_name][str(doc_id)] = document
-        self.save()
+        self._dirty = True
+        # REMOVED synchronous self.save()
 
     def delete_from_collection(self, col_name: str, doc_id: str):
         if col_name in self.data and str(doc_id) in self.data[col_name]:
             del self.data[col_name][str(doc_id)]
-            self.save()
+            self._dirty = True
+            # REMOVED synchronous self.save()
 
     # Compatibility methods needed by existing code if any
     async def ping(self):

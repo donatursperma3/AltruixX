@@ -590,7 +590,8 @@ async def pm_logger_user_handler(c: Client, m: RawMessage):
             fwd_msg = None
         
         # Send Detailed Info as a reply to the forwarded message in topic
-        sent_log = await Altruix.bot.send_message(
+        bot = Altruix.bot_manager.get_bot(c.me.id)
+        sent_log = await bot.send_message(
             Altruix.log_chat,
             log_content,
             parse_mode=enums.ParseMode.HTML,
@@ -661,13 +662,14 @@ async def pm_logger_user_edit_handler(c: Client, m: RawMessage):
         )
 
         # Preserve the reply_markup by fetching it
+        bot = Altruix.bot_manager.get_bot(c.me.id)
         try:
-            old_msg = await Altruix.bot.get_messages(Altruix.log_chat, log_msg_id)
+            old_msg = await bot.get_messages(Altruix.log_chat, log_msg_id)
             markup = old_msg.reply_markup if old_msg else None
         except:
             markup = None
 
-        await Altruix.bot.edit_message_text(
+        await bot.edit_message_text(
             Altruix.log_chat,
             log_msg_id,
             log_content,

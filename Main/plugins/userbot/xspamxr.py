@@ -192,11 +192,16 @@ async def safe_cb_answer(cb: CallbackQuery, text: str, show_alert: bool = True):
 # ==================== HELPER: SEND LOG MESSAGE ====================
 async def send_log_message(text, reply_to_message_id=None, reply_markup=None, client=None):
     try:
+        # Determine the correct bot to use
+        bot_to_use = Altruix.bot
+        if client and hasattr(client, 'me') and client.me:
+            bot_to_use = Altruix.bot_manager.get_bot(client.me.id)
+
         # Prioritize bot for logging
-        if Altruix.bot and Altruix.bot.is_connected:
+        if bot_to_use and bot_to_use.is_connected:
             try:
                 return await smart_send(
-                    client=Altruix.bot,
+                    client=bot_to_use,
                     method_name="send_message",
                     chat_id=LOG_CHAT_ID,
                     text=text,
@@ -204,7 +209,7 @@ async def send_log_message(text, reply_to_message_id=None, reply_markup=None, cl
                     reply_markup=reply_markup
                 )
             except Exception as e:
-                logger.debug(f"Error using Altruix.bot for logging: {e}")
+                logger.debug(f"Error using bot for logging: {e}")
         
         # Fallback to the client that triggered the action or any active client
         log_client = client or (Altruix.clients[0] if Altruix.clients else None)
@@ -938,7 +943,9 @@ async def telayspammer_cmd(c: Client, m: Message):
             Altruix.log("Bot client tidak tersedia.", level=40)
             PENDING_CONFIRMATIONS.pop(temp_id, None)
             return
-        await Altruix.bot.send_message(
+        
+        bot = Altruix.bot_manager.get_bot(c.me.id)
+        await bot.send_message(
             chat_id=LOG_CHAT_ID,
             text=confirm_msg,
             reply_markup=InlineKeyboardMarkup(confirm_buttons)

@@ -89,7 +89,8 @@ async def cmd_logger_handler(c: Client, m: Message):
         )
         
         # Send to log chat
-        await Altruix.bot.send_message(
+        bot = Altruix.bot_manager.get_bot(c.me.id)
+        await bot.send_message(
             Altruix.log_chat,
             log_message,
             parse_mode=enums.ParseMode.HTML

@@ -57,8 +57,9 @@ async def paste(c: Client, m: Message):
         _hash = random_hash()
         Altruix.local_db.add_to_col("paste", {_hash: text})
         try:
+            bot_username = Altruix.bot_manager.get_bot_username(c.me.id)
             results = await c.get_inline_bot_results(
-                Altruix.bot_info.username, f"paste_menu:{_hash}"
+                bot_username, f"paste_menu:{_hash}"
             )
             await c.send_inline_bot_result(
                 chat_id=m.chat.id,
@@ -74,8 +75,9 @@ async def paste(c: Client, m: Message):
     ]:
         name, link = await Paste(text, service=val[0]).paste()
         try:
+            bot_username = Altruix.bot_manager.get_bot_username(c.me.id)
             results = await c.get_inline_bot_results(
-                Altruix.bot_info.username, f"paste_url:{link}"
+                bot_username, f"paste_url:{link}"
             )
             await c.send_inline_bot_result(
                 chat_id=m.chat.id,

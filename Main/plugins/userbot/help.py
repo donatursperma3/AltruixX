@@ -18,7 +18,8 @@ from difflib import get_close_matches
 )
 async def lang_modify(c: Client, m):
     rm = m.reply_to_message
-    results = await c.get_inline_bot_results(Altruix.bot_info.username, "change_lang")
+    bot_username = Altruix.bot_manager.get_bot_username(c.me.id)
+    results = await c.get_inline_bot_results(bot_username, "change_lang")
     return await asyncio.gather(
         *[
             c.send_inline_bot_result(
@@ -43,7 +44,8 @@ async def help_normal(c: Client, m):
     # ✅ PERBAIKAN: Jika ada user_input (plugin target), layani secara normal tanpa paksa inline
     # Fix: Allow plugin help on userbots by removing 'and not user_input' from the inline condition
     if (not c.myself.is_bot) and "-basic" not in m.user_args and not user_input:
-        results = await c.get_inline_bot_results(Altruix.bot_info.username, "help")
+        bot_username = Altruix.bot_manager.get_bot_username(c.me.id)
+        results = await c.get_inline_bot_results(bot_username, "help")
         await c.send_inline_bot_result(
             chat_id=chat,
             query_id=results.query_id,

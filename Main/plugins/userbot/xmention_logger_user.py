@@ -106,7 +106,7 @@ SHARED_BUTTON_STATS = Altruix.BUTTON_STATS
 
 # Default Mode
 REPLY_ACCESS_MODE = "sudo"
-MENTION_SETTINGS_GLOBAL = {"mention": True, "auto_log": True, "reply_from_all": False}
+MENTION_SETTINGS_GLOBAL = {"mention": False, "auto_log": True, "reply_from_all": False}
 MENTION_APPLY_TYPES = {}
 
 def get_shared_reply_mode():
@@ -876,8 +876,9 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
                 return
             
         # Cek apakah bot bisa mengirim pesan ke log_chat
+        bot = Altruix.bot_manager.get_bot(c.me.id)
         try:
-            await Altruix.bot.get_chat(Altruix.log_chat)
+            await bot.get_chat(Altruix.log_chat)
         except Exception as chat_err:
             logger.error(f"Cannot access log chat {Altruix.log_chat}: {chat_err}")
             return
@@ -999,7 +1000,8 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
 
         # Kirim notifikasi
         try:
-            sent_log_msg = await Altruix.bot.send_message(
+            bot = Altruix.bot_manager.get_bot(c.me.id)
+            sent_log_msg = await bot.send_message(
                 Altruix.log_chat,
                 log_message,
                 parse_mode=enums.ParseMode.HTML,
@@ -1130,13 +1132,14 @@ async def send_mention_edit_handler(c: Client, m: RawMessage):
         )
 
         # Preserve markup by fetching original msg
+        bot = Altruix.bot_manager.get_bot(c.me.id)
         try:
-            old_msg = await Altruix.bot.get_messages(Altruix.log_chat, log_msg_id)
+            old_msg = await bot.get_messages(Altruix.log_chat, log_msg_id)
             markup = old_msg.reply_markup if old_msg else None
         except:
             markup = None
 
-        await Altruix.bot.edit_message_text(
+        await bot.edit_message_text(
             Altruix.log_chat,
             log_msg_id,
             log_content,
@@ -1451,7 +1454,8 @@ async def mentions_direct_reply_callback(c: Client, cb: CallbackQuery):
         client_name = mentioned_client.me.first_name if mentioned_client.me else "Unknown"
         user_mention = cb.from_user.mention(style=enums.ParseMode.HTML) if cb.from_user else "User"
         
-        instr = await Altruix.bot.send_message(
+        bot = Altruix.bot_manager.get_bot(client_id)
+        instr = await bot.send_message(
             Altruix.log_chat,
             f"✉️ **Input Balasan Mention** (via {client_name})\n\n"
             f"Halo {user_mention}!\n"
@@ -2510,6 +2514,17 @@ async def cleanup_old_entries():
                 
             if expired_cache or expired_waiting:
                 logger.info(f"🧹 Cleaned {len(expired_cache)} cache and {len(expired_waiting)} waiting entries")
+                
+                # ✅ NOTIF LOG
+                try:
+                    if getattr(Altruix.config, "CACHE_LOG_ENABLED", False) and Altruix.log_chat:
+                        await Altruix.bot.send_message(
+                            chat_id=Altruix.log_chat,
+                            text=f"🧹 <b>Cache Cleaner Triggered</b>\n\n• Cleaned: <code>{len(expired_cache)}</code> cache entries\n• Waiting: <code>{len(expired_waiting)}</code> entries",
+                            parse_mode=enums.ParseMode.HTML
+                        )
+                except Exception:
+                    pass
                 
         except Exception as e:
             logger.error(f"❌ Cleanup error: {e}")

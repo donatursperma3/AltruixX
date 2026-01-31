@@ -28,6 +28,12 @@ gitpython
 pillow
 ffmpeg-python
 
+# Performance optimization (Linux/macOS only, auto-skip on Windows)
+uvloop>=0.19.0; sys_platform != 'win32'
+
+# Performance optimization (Windows only)
+winloop>=0.1.0; sys_platform == 'win32'
+
 # Dependencies for the Cache System (select according to your needs)
 
 # For the Redis backend (recommended for production)

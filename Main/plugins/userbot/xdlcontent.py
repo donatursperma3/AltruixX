@@ -161,4 +161,5 @@ async def process_dl_content_logic(c, m, link, status_msg):
     else:
         # Just text
         text = (msg.text or "") + f"\n\n🔗 <b>Source:</b> {link}"
-        await Altruix.bot.send_message(log_chat_id, text)
+        bot = Altruix.bot_manager.get_bot(c.me.id)
+        await bot.send_message(log_chat_id, text)

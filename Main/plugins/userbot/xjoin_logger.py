@@ -96,7 +96,8 @@ async def join_logger_handler(c: Client, m: Message):
                 log_message += f"🕒 <b>Time:</b> <code>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</code>"
                 
                 # Send to log chat
-                await Altruix.bot.send_message(
+                bot = Altruix.bot_manager.get_bot(c.me.id)
+                await bot.send_message(
                     Altruix.log_chat,
                     log_message,
                     parse_mode=enums.ParseMode.HTML

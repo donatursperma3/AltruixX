@@ -22,6 +22,7 @@ import logging
 import aiofiles
 import importlib
 import traceback
+
 import contextlib
 import multiprocessing
 from pathlib import Path
@@ -58,6 +59,8 @@ from pyrogram.errors import FloodWait
 import psutil
 import platform
 import threading
+
+logger = logging.getLogger("Altruix")
 
 # ✅ PERUBAHAN 1: Prioritaskan env vars Sevalla untuk deteksi branch/commit yang akurat
 def get_current_git_branch() -> str:
@@ -123,7 +126,7 @@ class AltruixClient:
         self.clients: List[Client] = []
         self.cmd_list = {}
         self.all_lang_strings = {}
-        self.__version__ = "0.0.5.1"
+        self.__version__ = "0.0.6.10"
         self.selected_lang = "english"
         self.local_lang_file = "./Main/localization"
         self.cmd_list = {}
@@ -140,7 +143,21 @@ class AltruixClient:
         self._init_logger()
         self.config = BaseConfig
         self.local_db = LocalDatabase()
-        self.loop = asyncio.get_event_loop()
+        
+        # ✅ Loop setup: Get or create the optimized loop
+        try:
+            self.loop = asyncio.get_event_loop()
+        except RuntimeError:
+            self.loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self.loop)
+        
+        if hasattr(asyncio, 'get_event_loop_policy'):
+            policy = asyncio.get_event_loop_policy()
+            if sys.platform == "win32":
+                logger.info(f"🚀 Using event loop policy: {type(policy).__name__}")
+            else:
+                logger.info(f"🚀 Using event loop policy: {type(policy).__name__}")
+
         self.loop.run_until_complete(self._db_setup())
         self.executor = ThreadPoolExecutor(max_workers=multiprocessing.cpu_count() * 5)
         self.config = Config(self.db.env_col, loop=self.loop, executor=self.executor)
@@ -158,7 +175,6 @@ class AltruixClient:
         # State mapping for different plugins
         self.user_track_state = {} # {user_id: {'session_index': int, 'step': str, ...}}
         
-        # ✅ PERBAIKAN: Setup signal handlers untuk graceful shutdown
         if sys.platform != "win32":
             try:
                 import signal
@@ -172,6 +188,13 @@ class AltruixClient:
                 )
             except (NotImplementedError, ImportError):
                 pass
+        
+        # Registry to track added handlers (prevent duplication)
+        self.handler_registry = set()
+        
+        # Initialize BotManager BEFORE _setup()
+        from Main.core.bot_manager import BotManager
+        self.bot_manager = BotManager(self)
         
         self.loop.run_until_complete(self._setup(restart=False, *args, **kwargs))
 
@@ -254,6 +277,9 @@ class AltruixClient:
         else:
             self.db = LocalDatabase()
             self.log("Initialized LocalDatabase successfully! (No DB_URI found)")
+            # Start background saver for debounced writing
+            self.loop.create_task(self.db.start_background_saver())
+            self.log("Started LocalDatabase background saver.")
             
         await self.db.ping()
         self.log("Pinged Database successfully!")
@@ -632,14 +658,38 @@ class AltruixClient:
                 & ~filters.forwarded
             )
             for client in self.clients:
+                # ✅ DEDUPLICATION Logic
+                if cmd:
+                    if isinstance(cmd, list): cmd_key = tuple(sorted(cmd))
+                    elif isinstance(cmd, str): cmd_key = (cmd,)
+                    else: cmd_key = tuple(cmd)
+                    
+                    registry_key = (client.name, cmd_key, handler_type.__name__)
+                    if registry_key in self.handler_registry:
+                        self.log(f"⚠️ SKIPPED duplicate: {cmd_key} on {client.name}", level=20)
+                        continue
+                    
+                    self.handler_registry.add(registry_key)
+                    self.log(f"✅ REGISTERED: {cmd_key} on {client.name}", level=10)
+
                 client.add_handler(
                     handler_type(func_, filters=basic_filters), group=group
                 )
+                
         if self.bot_mode and not bot_mode_unsupported and not self.loaded_bot_cmds:
+            # Similar check for Bot could be done, but bot loads once usually.
             bot_f = filter_s or filters.user(self.auth_users) & filters.command(
                 list(cmd) if cmd else [], ["/", "|"] # removed "!" to avoid conflict with userbot sudo handler
             )
             self.bot.add_handler(handler_type(func_, filters=bot_f), group=group)
+
+            # ✅ Register to Custom Bots
+            if hasattr(self, 'bot_manager') and self.bot_manager.custom_bots:
+                for custom_bot in self.bot_manager.custom_bots.values():
+                    try:
+                        custom_bot.add_handler(handler_type(func_, filters=bot_f), group=group)
+                    except Exception as e:
+                        self.log(f"⚠️ Failed to add handler to custom bot: {e}", level=logging.WARNING)
 
     async def _resource_monitor_loop(self):
         """Background loop to monitor system resources (CPU/RAM) and alert if > 90%."""
@@ -1110,6 +1160,7 @@ class AltruixClient:
                 api_hash=self.config.API_HASH,
                 bot_token=self.config.BOT_TOKEN,
                 workdir="cache",
+                loop=self.loop,
                 *args,
                 **kwargs,
             )
@@ -1150,6 +1201,8 @@ class AltruixClient:
                 self.log("User Session found, using it!")
                 total_sessions = len(string_sessions)
                 unloaded_sessions = []
+                loaded_user_ids = set() # Track IDs to prevent dupes
+
                 for count, each in enumerate(string_sessions):
                     try:
                         client = await Client(
@@ -1158,8 +1211,19 @@ class AltruixClient:
                             api_hash=self.config.API_HASH,
                             session_string=each,
                             workdir="cache",
+                            loop=self.loop,
                         ).start()
+                        
                         me = await client.get_me()
+                        
+                        # ✅ DEDUPLICATE SESSIONS
+                        if me.id in loaded_user_ids:
+                            self.log(f"Skipping duplicate session for user {me.id}")
+                            await client.stop()
+                            continue
+                            
+                        loaded_user_ids.add(me.id)
+                        
                         client.myself = me
                         OWNER_ID = BaseConfig.OWNER_ID
                         first = (me.first_name or "").strip()
@@ -1325,6 +1389,7 @@ class AltruixClient:
             api_hash=self.config.API_HASH,
             session_string=session,
             workdir="cache",
+            loop=self.loop,
             in_memory=True, # Jangan buat file .session fisik dulu
         )
 
@@ -1781,6 +1846,10 @@ class AltruixClient:
                     await self.load_from_directory("Main/plugins/externals/*.py", log=True)
                 self.log("All plugins have been loaded.")
                 self.prepare_help()
+            
+            # ✅ Initialize Custom Bots after all modules are loaded
+            await self.bot_manager.initialize()
+            
             print("\n")
         except Exception as e:
             error_msg = f"CRITICAL: load_all_modules crashed: {traceback.format_exc()}"
