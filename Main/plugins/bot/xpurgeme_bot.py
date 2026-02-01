@@ -133,6 +133,15 @@ def get_purgeme_keyboard(chat_id, user_id, unique_id):
             InlineKeyboardButton(oldest_btn, callback_data=f"pg_mode_oldest_{unique_id}"),
         ])
         
+        # Row 4: Notification Toggle
+        notify_active = state.get("notify", True)
+        notif_lbl = f"Notif: {'Yes' if notify_active else 'No'}"
+        buttons.append([
+            InlineKeyboardButton(notif_lbl, callback_data="noop"),
+            InlineKeyboardButton(f"{'✅' if notify_active else '☑️'} Yes", callback_data=f"pg_notify_yes_{unique_id}"),
+            InlineKeyboardButton(f"{'✅' if not notify_active else '☑️'} No", callback_data=f"pg_notify_no_{unique_id}"),
+        ])
+        
         # Type Toggles
         type_row_1 = []
         all_active = "✅" if "all" in types else "☑️"
@@ -203,7 +212,7 @@ def get_purgeme_keyboard(chat_id, user_id, unique_id):
 
     elif status == "finished":
         close_lbl = loc("purgeme_close", "Close")
-        buttons.append([InlineKeyboardButton(close_lbl, callback_data="purgeme_close")])
+        buttons.append([InlineKeyboardButton(close_lbl, callback_data=f"purgeme_close_{unique_id}")])
 
     return InlineKeyboardMarkup(buttons)
 
@@ -263,7 +272,7 @@ async def purgeme_callback_handler(client: Client, cb: CallbackQuery):
     prefix_map = {
         "cnt_add": 4, "cnt_sub": 4, "dly_add": 4, "dly_sub": 4, "dly_reset": 3,
         "typ": 3, "start": 2, "cancel": 2, "stop": 2, "pause": 2,
-        "resume": 2, "refresh": 2, "mode": 3
+        "resume": 2, "refresh": 2, "mode": 3, "notify": 3, "abort": 2
     }
     
     curr_prefix = None
@@ -318,6 +327,10 @@ async def purgeme_callback_handler(client: Client, cb: CallbackQuery):
             mode = parts[2]
             state["mode"] = mode
 
+        elif "notify_" in data:
+            option = parts[2]
+            state["notify"] = (option == "yes")
+
         elif "typ_" in data:
             t_type = parts[2]
             if t_type == "all":
@@ -338,14 +351,36 @@ async def purgeme_callback_handler(client: Client, cb: CallbackQuery):
                 state["event"].set()
                 # Immediate Feedback
                 title = Altruix.get_string("purgeme_title") or "🗑 <b>Userbot Purgeme</b>"
+                
+                # IMPORTANT: Ensure persistent message tracking for deletion later
+                if cb.message:
+                    state["dashboard_msg_id"] = cb.message.id
+                    state["dashboard_chat_id"] = cb.message.chat.id
+                    
                 await cb.edit_message_text(
-                    f"{title}\n⏳ <i>Task sedang dalam proses...</i>",
+                    f"{title}\n⏳ <i>Task is in progress...</i>",
                     parse_mode=enums.ParseMode.HTML,
                     disable_web_page_preview=True,
                     reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("🗑 Delete", callback_data="purgeme_close")]
+                        [
+                            InlineKeyboardButton("🗑 Delete", callback_data=f"purgeme_close_{unique_id}"),
+                            InlineKeyboardButton("❌ Cancel", callback_data=f"pg_abort_{unique_id}")
+                        ]
                     ])
                 )
+            return # Prevent further processing
+
+        elif "abort" in data:
+            state["status"] = "cancelled"
+            state["event"].set()
+            state["stop_event"].set()
+            await cb.answer("🛑 Proses purgeme dihentikan!", show_alert=True)
+            title = Altruix.get_string("purgeme_title") or "🗑 <b>Userbot Purgeme</b>"
+            await cb.edit_message_text(f"{title}\n❌ <b>Task Cancelled / Aborted</b>")
+            await asyncio.sleep(3)
+            try:
+                await cb.message.delete()
+            except: pass
             return # Prevent further processing
 
         elif "cancel" in data:
@@ -394,13 +429,45 @@ async def purgeme_callback_handler(client: Client, cb: CallbackQuery):
         if "MessageNotModified" not in str(e):
              await cb.answer("⚠️ Error updating menu", show_alert=False)
 
-@Altruix.bot.on_callback_query(filters.regex("^purgeme_close"))
+@Altruix.bot.on_callback_query(filters.regex(r"^purgeme_close(_|$)"))
 async def purgeme_close(client, cb: CallbackQuery):
     # Security: Verify if user is authorized
     from Main.internals.settings import check_authorization
     if not await check_authorization(cb):
         return
-    await cb.message.delete()
+
+    data = cb.data
+    unique_id = data.replace("purgeme_close_", "", 1) if "_" in data else None
+    
+    # 1. Primary Attempt: Standard message delete
+    if cb.message:
+        try:
+            await cb.message.delete()
+            return
+        except:
+            pass
+
+    # 2. Secondary Attempt: Delete via Userbot/State (For Inline Results)
+    if unique_id:
+        state = Altruix.PURGEME_STATE.get(unique_id)
+        if state and state.get("dashboard_msg_id") and state.get("dashboard_chat_id"):
+            try:
+                # Use Userbot to delete its own message
+                await state["client"].delete_messages(state["dashboard_chat_id"], state["dashboard_msg_id"])
+                return
+            except Exception as e:
+                Altruix.log(f"Purgeme: Failed to delete via userbot: {e}")
+    
+    # 3. Final Fallback: Edit message text if it's an inline result and we can't delete
+    if not cb.message:
+        try:
+            await cb.edit_message_text("🗑 <b>Purgeme Closed</b>", parse_mode=enums.ParseMode.HTML)
+            await cb.answer("Message close requested.", show_alert=False)
+            return
+        except:
+            pass
+
+    await cb.answer("Message already deleted or not found.", show_alert=True)
 
 @Altruix.bot.on_message(filters.command("start") & filters.private & filters.regex(r"purgeme_"))
 async def purgeme_start_handler(client: Client, message):

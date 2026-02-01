@@ -106,7 +106,7 @@ SHARED_BUTTON_STATS = Altruix.BUTTON_STATS
 
 # Default Mode
 REPLY_ACCESS_MODE = "sudo"
-MENTION_SETTINGS_GLOBAL = {"mention": False, "auto_log": True, "reply_from_all": False}
+MENTION_SETTINGS_GLOBAL = {"mention": False, "auto_log": True, "reply_from_all": False, "auto_create_topic": False}
 MENTION_APPLY_TYPES = {}
 
 def get_shared_reply_mode():
@@ -799,46 +799,160 @@ async def debug_waiting_handler(c: Client, m: AltruixMessage):
 async def mention_settings_handler(c: Client, m: AltruixMessage):
     """Handler untuk mengaktifkan/menonaktifkan notifikasi mention global."""
     msg = await m.handle_message("PROCESSING")
-    user_input = m.user_input.lower().strip()
-
-    if user_input.startswith("replyall"):
-        arg = user_input.replace("replyall", "").strip()
-        global REPLY_FROM_ALL_ACCESSIBLE
-        if arg in ["on", "yes"]:
-            REPLY_FROM_ALL_ACCESSIBLE = True
-            msg_text = "✅ **Reply From All is now ACCESSIBLE**"
-        elif arg in ["off", "no"]:
-            REPLY_FROM_ALL_ACCESSIBLE = False
-            msg_text = "❌ **Reply From All is now RESTRICTED**"
-        else:
-            return await msg.edit_msg("Usage: `.mentions replyall on/off`")
-        
-        # Save to cache
-        await cache_set("reply_from_all_accessible", REPLY_FROM_ALL_ACCESSIBLE, 86400 * 30)
-        await save_local_storage()
-        return await safe_edit_message(c, m.chat.id, msg.id, msg_text, parse_mode=enums.ParseMode.MARKDOWN)
-    
-    if user_input in ["on", "yes"]:
-        value = True
-        status_text = "ENABLED"
-        emoji = "✅"
-    elif user_input in ["off", "no"]:
-        value = False
-        status_text = "DISABLED"
-        emoji = "❌"
-    else:
-        return await msg.edit_msg("INVALID_INPUT")
-    
     try:
-        client_id = c.me.id
-        await save_mention_setting_safe(client_id, value)
+        text, markup = await generate_mnt_menu_async(c.me.id)
+        if markup:
+            await msg.edit_msg(text, reply_markup=markup)
+        else:
+            await msg.edit_msg("❌ Failed to generate menu.")
+    except Exception as e:
+        logger.error(f"Mention Settings Error: {e}")
+        await msg.edit_msg(f"❌ Error: {str(e)[:100]}")
+# ✅ NEW: Helper to generate Mention Logger Menu
+def generate_mnt_menu(client_id):
+    """Generates the Mention Logger configuration menu for a specific client ID."""
+    try:
+        user_id_str = str(client_id)
         
-        status_msg = f"{emoji} **Mention notifications {status_text}**"
-        await safe_edit_message(c, m.chat.id, msg.id, status_msg, parse_mode=enums.ParseMode.MARKDOWN)
+        # Determine status vars
+        is_enabled = asyncio.run_coroutine_threadsafe(get_mention_setting_safe(client_id), Altruix.loop).result() if hasattr(Altruix, "loop") else False
+        # Fallback if loop is not accessible easily or use a different sync pattern. 
+        # But wait, we are in an async context anyway inside handlers. 
+        # I'll make the helper async or handle it inside.
+        return None, None # To be used in async context
+    except:
+        return None, None
+
+async def generate_mnt_menu_async(client_id):
+    """Generates the Mention Logger configuration menu for a specific client ID (Async)."""
+    try:
+        settings_file = "mentions_settings.json"
+        if os.path.exists(settings_file):
+            with open(settings_file, "r") as f:
+                data = json.load(f)
+        else:
+            data = {"settings": {}, "global": {}}
+            
+        m_global = data.get("global", {})
+        user_id_str = str(client_id)
+        
+        # Load Apply Type
+        apply_type = MENTION_APPLY_TYPES.get(user_id_str, "per_account")
+        
+        # Load Status
+        is_enabled = await get_mention_setting_safe(client_id)
+        status_text = "ENABLED ✅" if is_enabled else "DISABLED ❌"
+        
+        # Load auto_topic
+        auto_topic = m_global.get("auto_create_topic", False) # Default False
+        
+        ra_status = "ENABLED ✅" if REPLY_FROM_ALL_ACCESSIBLE else "DISABLED ❌"
+        log_chat = Altruix.log_chat or "Not Configured ⚠️"
+        
+        buttons = [
+             [
+                 InlineKeyboardButton(f"Status: {status_text}", callback_data=f"mnt_cfg_toggle_enable_{client_id}"),
+                 InlineKeyboardButton(f"Auto Topic: {'ON' if auto_topic else 'OFF'}", callback_data=f"mnt_cfg_toggle_autotopic_{client_id}")
+             ],
+             [
+                 InlineKeyboardButton(f"Apply Type: {apply_type.upper().replace('_', ' ')}", callback_data=f"mnt_cfg_toggle_apply_{client_id}"),
+                 InlineKeyboardButton(f"ReplyAll: {ra_status}", callback_data=f"mnt_cfg_toggle_replyall_{client_id}")
+             ],
+             [
+                 InlineKeyboardButton("❌ Close", callback_data="bot_controls_menu") # Back to Settings if from Bot, or we can use generic close
+             ]
+        ]
+        
+        res = (
+            f"📊 **Mention Logger Configuration (ID: {client_id})**\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"• **Status:** {status_text}\n"
+            f"• **Apply Type:** `{apply_type}`\n"
+            f"• **Auto Topic:** {'ENABLED' if auto_topic else 'DISABLED'}\n"
+            f"• **Reply From All:** {ra_status}\n"
+            f"• **Log Group:** ` {log_chat} `\n\n"
+            f"<i>Click buttons below to change settings.</i>"
+        )
+        return res, InlineKeyboardMarkup(buttons)
+    except Exception as e:
+        logger.error(f"Mention Menu Gen Error: {e}")
+        return f"Error: {e}", None
+
+@Altruix.bot.on_callback_query(filters.regex(r"^open_mentions_settings_owner$"))
+@log_errors
+async def open_mentions_settings_owner_handler(c: Client, cb: CallbackQuery):
+    try:
+        from Main.utils.access_control import is_authorized_user
+        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+            return await cb.answer("⛔ Akses Ditolak!", show_alert=True)
+            
+        await cb.answer()
+        owner_id = Altruix.config.OWNER_ID
+        text, markup = await generate_mnt_menu_async(owner_id)
+        if markup:
+            await cb.message.edit(text, reply_markup=markup, parse_mode=enums.ParseMode.HTML)
+    except Exception as e:
+        logger.error(f"Open Mentions Error: {e}")
+        await cb.answer(f"Error: {e}", show_alert=True)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^mnt_cfg_(toggle_enable|toggle_replyall|toggle_autotopic|toggle_apply)(?:_(\d+))?$"))
+@log_errors
+async def mnt_config_callback(c: Client, cb: CallbackQuery):
+    try:
+        from Main.utils.access_control import is_authorized_user
+        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+            return await cb.answer("⛔ Akses Ditolak!", show_alert=True)
+            
+        action = cb.matches[0].group(1)
+        client_id = int(cb.matches[0].group(2)) if cb.matches[0].group(2) else Altruix.config.OWNER_ID
+        
+        settings_file = "mentions_settings.json"
+        if os.path.exists(settings_file):
+             with open(settings_file, "r") as f: data = json.load(f)
+        else: data = {"settings": {}, "global": {}}
+        
+        if "global" not in data: data["global"] = {}
+        
+        text = "Setting Updated"
+        
+        if action == "toggle_enable":
+            curr = await get_mention_setting_safe(client_id)
+            await save_mention_setting_safe(client_id, not curr)
+            text = f"✅ Mentions {'ENABLED' if not curr else 'DISABLED'}"
+            
+        elif action == "toggle_replyall":
+            global REPLY_FROM_ALL_ACCESSIBLE
+            REPLY_FROM_ALL_ACCESSIBLE = not REPLY_FROM_ALL_ACCESSIBLE
+            await cache_set("reply_from_all_accessible", REPLY_FROM_ALL_ACCESSIBLE, 86400 * 30)
+            text = f"🔄 Reply From All: {'ACCESSIBLE' if REPLY_FROM_ALL_ACCESSIBLE else 'RESTRICTED'}"
+
+        elif action == "toggle_autotopic":
+            curr = data["global"].get("auto_create_topic", False) # Default False
+            data["global"]["auto_create_topic"] = not curr
+            text = f"🔄 Auto Topic: {'ENABLED' if not curr else 'DISABLED'}"
+            
+        elif action == "toggle_apply":
+            curr = MENTION_APPLY_TYPES.get(str(client_id), "per_account")
+            new_type = "global" if curr == "per_account" else "per_account"
+            MENTION_APPLY_TYPES[str(client_id)] = new_type
+            data["apply_types"] = MENTION_APPLY_TYPES
+            text = f"🔄 Apply Type for {client_id}: {new_type.upper().replace('_', ' ')}"
+            
+        # Save JSON
+        with open(settings_file, "w") as f:
+            json.dump(data, f, indent=2)
+            
+        await save_local_storage() # Sync
+        await cb.answer(text)
+        
+        # Refresh Menu
+        res_text, markup = await generate_mnt_menu_async(client_id)
+        if markup:
+            await cb.message.edit(res_text, reply_markup=markup, parse_mode=enums.ParseMode.HTML)
         
     except Exception as e:
-        logger.error(f"Save failed: {e}")
-        await msg.edit_msg(f"❌ Save error: {str(e)[:100]}")
+        await cb.answer(f"Cfg Error: {e}", show_alert=True)
+        logger.error(f"MNT Config Callback Error: {e}")
 
 # ============================================================================
 # 🔥 MENTION DETECTION HANDLER - DIUPDATE DENGAN CACHE
@@ -987,16 +1101,23 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
         # Add Chat with User button
         chat_user_button = [InlineKeyboardButton("💬 Chat with User", url=f"tg://user?id={mentioner_id}")]
         
-        # COMPACT MENU - Only toggle button
-        keyboard = [
-            [
-                InlineKeyboardButton("⚙️ Show Full Menu", callback_data=f"tags_toggle_full_{m.chat.id}_{m.id}"),
-                InlineKeyboardButton("🔗 Go to Message", url=m.link)
-            ]
-        ]
-        
         # Get topic if any (use userbot to create if needed)
-        topic_id = await get_or_create_topic(Altruix.bot, Altruix.log_chat, "tag logger", userbot_client=c)
+        # Check auto_create_topic setting
+        topic_id = None
+        try:
+             settings_file = "mentions_settings.json"
+             if os.path.exists(settings_file):
+                 with open(settings_file, "r") as f:
+                     m_settings = json.load(f)
+                 auto_create = m_settings.get("global", {}).get("auto_create_topic", False) # Default False
+             else:
+                 auto_create = False
+                 
+             if auto_create:
+                 topic_id = await get_or_create_topic(Altruix.bot, Altruix.log_chat, "tag logger", userbot_client=c)
+        except Exception as e:
+             logger.debug(f"Topic creation check failed: {e}")
+             topic_id = None
 
         # Kirim notifikasi
         try:
@@ -1498,6 +1619,10 @@ async def mentions_direct_reply_callback(c: Client, cb: CallbackQuery):
 @log_errors
 async def already_reacted_handler(c: Client, cb: CallbackQuery):
     """Handler untuk tombol yang sudah direaksi."""
+    from Main.utils.access_control import is_authorized_user
+    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+        return await cb.answer("⛔ Akses Ditolak!", show_alert=True)
+        
     log_button_press("ALREADY_REACTED", cb.data, cb.from_user.id if cb.from_user else None)
     await cb.answer("✅ Sudah direaksi sebelumnya", show_alert=False)
 
@@ -1509,6 +1634,10 @@ async def already_reacted_handler(c: Client, cb: CallbackQuery):
 async def test_buttons_handler_bot(c: Client, cb: CallbackQuery):
     """Handler untuk tombol test dari bot."""
     try:
+        from Main.utils.access_control import is_authorized_user
+        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+            return await cb.answer("⛔ Akses Ditolak!", show_alert=True)
+            
         pattern = r"test_mentions_(.+)_(-?\d+)_(\d+)"
         match = re.match(pattern, cb.data)
         
@@ -1807,6 +1936,10 @@ async def unsend_reply_handler(c: Client, cb: CallbackQuery):
 @log_errors
 async def cache_management_handler(c: Client, m: AltruixMessage):
     """Manage mention cache system."""
+    from Main.utils.access_control import is_authorized_user
+    if not is_authorized_user(m.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+        return await m.reply_msg("⛔ Akses Ditolak!")
+        
     msg = await m.handle_message("PROCESSING")
     user_input = m.user_input.lower().strip()
     
@@ -1916,6 +2049,10 @@ async def cache_management_handler(c: Client, m: AltruixMessage):
 @log_errors
 async def fix_cache_command(c: Client, m: AltruixMessage):
     """Fix missing cache entries by scanning log chat."""
+    from Main.utils.access_control import is_authorized_user
+    if not is_authorized_user(m.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+        return await m.reply_msg("⛔ Akses Ditolak!")
+        
     msg = await m.handle_message("⏳ Scanning log chat for mentions...")
     
     try:
@@ -2000,6 +2137,10 @@ async def fix_cache_command(c: Client, m: AltruixMessage):
 @log_errors
 async def status_command_handler(c: Client, m: AltruixMessage):
     """Check plugin status with cache info."""
+    from Main.utils.access_control import is_authorized_user
+    if not is_authorized_user(m.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+        return await m.reply_msg("⛔ Akses Ditolak!")
+        
     msg = await m.handle_message("PROCESSING")
     
     client_id_str = str(c.me.id)
@@ -2070,6 +2211,10 @@ async def status_command_handler(c: Client, m: AltruixMessage):
 @log_errors
 async def debug_command_handler(c: Client, m: AltruixMessage):
     """Debug button issues."""
+    from Main.utils.access_control import is_authorized_user
+    if not is_authorized_user(m.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+        return await m.reply_msg("⛔ Akses Ditolak!")
+        
     msg = await m.handle_message("PROCESSING")
     
     try:
@@ -2152,6 +2297,10 @@ async def debug_command_handler(c: Client, m: AltruixMessage):
 @log_errors
 async def test_buttons_command(c: Client, m: AltruixMessage):
     """Test semua tombol - HANYA BISA DIJALANKAN OLEH BOT!"""
+    from Main.utils.access_control import is_authorized_user
+    if not is_authorized_user(m.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+        return await m.reply_msg("⛔ Akses Ditolak!")
+        
     msg = await m.handle_message("PROCESSING")
     
     try:
@@ -2251,6 +2400,10 @@ async def test_buttons_command(c: Client, m: AltruixMessage):
 @log_errors
 async def clear_cache_handler(c: Client, m: AltruixMessage):
     """Clear plugin cache."""
+    from Main.utils.access_control import is_authorized_user
+    if not is_authorized_user(m.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+        return await m.reply_msg("⛔ Akses Ditolak!")
+        
     msg = await m.handle_message("PROCESSING")
     
     try:
@@ -2299,6 +2452,10 @@ async def clear_cache_handler(c: Client, m: AltruixMessage):
 @log_errors
 async def test_mention_system(c: Client, m: AltruixMessage):
     """Test mention system."""
+    from Main.utils.access_control import is_authorized_user
+    if not is_authorized_user(m.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+        return await m.reply_msg("⛔ Akses Ditolak!")
+        
     msg = await m.handle_message("PROCESSING")
     
     try:
@@ -2342,6 +2499,10 @@ async def test_mention_system(c: Client, m: AltruixMessage):
 @log_errors
 async def debug_structure_handler(c: Client, m: AltruixMessage):
     """Debug Altruix structure untuk menemukan client."""
+    from Main.utils.access_control import is_authorized_user
+    if not is_authorized_user(m.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+        return await m.reply_msg("⛔ Akses Ditolak!")
+        
     msg = await m.handle_message("PROCESSING")
     
     try:
@@ -2452,6 +2613,10 @@ async def debug_structure_handler(c: Client, m: AltruixMessage):
 @log_errors
 async def test_handler_command(c: Client, m: AltruixMessage):
     """Test handler functionality."""
+    from Main.utils.access_control import is_authorized_user
+    if not is_authorized_user(m.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+        return await m.reply_msg("⛔ Akses Ditolak!")
+        
     msg = await m.handle_message("PROCESSING")
     
     try:

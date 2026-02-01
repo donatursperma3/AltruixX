@@ -172,7 +172,7 @@ STRINGS = {
         "export_sessions": "📤 Ekspor Semua Sesi",
         "export_phones": "📲 Ekspor Semua No. HP",
         "refresh_session_info": "🔄 Segarkan Info Sesi",
-        "settings_text": "<b>🛠️ Pengaturan Altruix</b>",
+        "settings_text": "<b>🛠️ Pengaturan Userbot</b>",
         "mention_logic": "Logika Mention",
         "next": "Selanjutnya ➡️",
         "prev": "⬅️ Sebelumnya",
@@ -254,7 +254,7 @@ STRINGS = {
         "export_sessions": "📤 Export All Sessions",
         "export_phones": "📲 Export All Phones",
         "refresh_session_info": "🔄 Refresh Session Info",
-        "settings_text": "<b>🛠️ Altruix Settings</b>",
+        "settings_text": "<b>🛠️ Userbot Settings</b>",
         "mention_logic": "Mention Logic",
         "next": "Next ➡️",
         "prev": "⬅️ Prev",
@@ -458,9 +458,23 @@ async def configs_menu_cb_handler(c: Client, cb: CallbackQuery):
 async def settings_menu_cb_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     await cb.answer()
+    
+    total_sessions = len(Altruix.clients) if hasattr(Altruix, 'clients') else 0
+    default_bots = 1
+    custom_bots = len(Altruix.bot_manager.custom_bots) if hasattr(Altruix, 'bot_manager') and hasattr(Altruix.bot_manager, 'custom_bots') else 0
+    total_bots = default_bots + custom_bots
+        
+    full_text = (
+        f"{gt('settings_text')}\n\n"
+        f"• <b>Total Sessions:</b> <code>{total_sessions}</code>\n"
+        f"• <b>Total Bots:</b> <code>{total_bots}</code> (Default: {default_bots}, Custom: {custom_bots})\n\n"
+        f"<i>Select a category below to configure your userbot.</i>"
+    )
+
     await cb.message.edit(
-        text=Altruix.get_string("SETTINGS_TEXT") or "<b>Settings</b>",
-        reply_markup=InlineKeyboardMarkup(settings_menu_buttons)
+        text=full_text,
+        reply_markup=InlineKeyboardMarkup(settings_menu_buttons),
+        parse_mode=ParseMode.HTML
     )
 
 
@@ -528,12 +542,14 @@ async def settings_command_handler(c: Client, m: Message):
     """Handler untuk command /settings"""
     try:
         total_sessions = len(Altruix.clients) if hasattr(Altruix, 'clients') else 0
-        total_bots = 1 # Altruix always has 1 bot assistant
+        default_bots = 1
+        custom_bots = len(Altruix.bot_manager.custom_bots) if hasattr(Altruix, 'bot_manager') and hasattr(Altruix.bot_manager, 'custom_bots') else 0
+        total_bots = default_bots + custom_bots
         
         full_text = (
-            f"<b>🛠️ Altruix Userbot Settings</b>\n\n"
+            f"{gt('settings_text')}\n\n"
             f"• <b>Total Sessions:</b> <code>{total_sessions}</code>\n"
-            f"• <b>Total Bot:</b> <code>{total_bots}</code>\n\n"
+            f"• <b>Total Bots:</b> <code>{total_bots}</code> (Default: {default_bots}, Custom: {custom_bots})\n\n"
             f"<i>Select a category below to configure your userbot.</i>"
         )
         
@@ -7547,6 +7563,37 @@ async def startup_custom_input_handler(c: Client, cb: CallbackQuery):
 @Altruix.bot.on_callback_query(filters.regex(r"^bot_controls_menu$"))
 @log_errors
 async def bot_controls_menu_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk HUB menu kontrol Bot (Default vs Custom)"""
+    if not await check_authorization(cb): return
+    await cb.answer()
+    
+    txt = (
+        f"{Altruix.get_string('bot_controls_title')}\n\n"
+        f"Please select the type of bot you want to manage:"
+    )
+    
+    buttons = [
+        [
+            InlineKeyboardButton(Altruix.get_string("default_bot_settings"), "default_bot_settings"),
+        ],
+        [
+            InlineKeyboardButton(Altruix.get_string("pm_logger_control"), "open_pmlu_settings_owner"),
+            InlineKeyboardButton(Altruix.get_string("mention_control"), "open_mentions_settings_owner"),
+        ],
+        [
+            InlineKeyboardButton(Altruix.get_string("custom_bot_manager"), "custom_bot_manager"),
+        ],
+        [
+            InlineKeyboardButton(Altruix.get_string("back"), "settings_menu"),
+        ]
+    ]
+    
+    await cb.message.edit(txt, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^default_bot_settings$"))
+@log_errors
+async def default_bot_settings_handler(c: Client, cb: CallbackQuery):
     """Handler untuk menu kontrol Bot Assistant (PM, Mention, Join Logs)"""
     if not await check_authorization(cb): return
     await cb.answer()
@@ -7600,7 +7647,7 @@ async def bot_controls_menu_handler(c: Client, cb: CallbackQuery):
             InlineKeyboardButton("📤 Export Log Group Link", "export_log_link_confirmation"),
         ],
         [
-            InlineKeyboardButton("🔙 Back to Settings", "settings_menu"),
+            InlineKeyboardButton("🔙 Back to Hub", "bot_controls_menu"),
         ]
     ]
     
@@ -7658,7 +7705,7 @@ async def bot_logger_toggle_handler(c: Client, cb: CallbackQuery):
         with open(filename, "w") as f: json.dump(data, f, indent=2)
         
         await cb.answer(f"Bot Admin {target.upper()} Log: {'ON' if status else 'OFF'}")
-        await bot_controls_menu_handler(c, cb)
+        await default_bot_settings_handler(c, cb)
     except Exception as e:
         await cb.answer(f"Error: {e}", show_alert=True)
 
@@ -8197,6 +8244,108 @@ async def env_save_confirm_handler(c: Client, cb: CallbackQuery):
         
     # Cleanup state
     del user_env_manager_state[user_id]
+
+
+# ============================================================================
+# CUSTOM BOT MANAGER HANDLERS
+# ============================================================================
+
+# ✅ HANDLER BARU: Custom Bot Manager
+@Altruix.bot.on_callback_query(filters.regex(r"^custom_bot_manager$"))
+@log_errors
+async def custom_bot_manager_handler(c: Client, cb: CallbackQuery):
+    if not await check_authorization(cb): return
+    await cb.answer()
+    
+    # List Custom Bots
+    custom_bots = Altruix.bot_manager.custom_bots if hasattr(Altruix, 'bot_manager') else {}
+    
+    text = (
+        f"{Altruix.get_string('custom_bot_list_title')}\n\n"
+        f"{Altruix.get_string('custom_bot_count').format(len(custom_bots))}\n\n"
+        f"Select a bot to manage:"
+    )
+    
+    buttons = []
+    if custom_bots:
+        for bot_id, bot_client in custom_bots.items():
+            # Get Session Name or ID
+            name = f"Bot {bot_id}"
+            try:
+                me = bot_client.myself if hasattr(bot_client, "myself") else None
+                if me:
+                    name = f"{me.first_name} (@{me.username})"
+            except: pass
+            
+            buttons.append([InlineKeyboardButton(name, f"manage_custom_bot_{bot_id}")])
+    else:
+        text += f"\n\n{Altruix.get_string('no_custom_bots')}"
+
+    buttons.append([InlineKeyboardButton(Altruix.get_string("back"), "bot_controls_menu")])
+    
+    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+
+
+# ✅ HANDLER BARU: Manage Custom Bot
+@Altruix.bot.on_callback_query(filters.regex(r"^manage_custom_bot_(\d+)$"))
+@log_errors
+async def manage_custom_bot_handler(c: Client, cb: CallbackQuery):
+    if not await check_authorization(cb): return
+    await cb.answer()
+    bot_id = int(cb.matches[0].group(1))
+    
+    custom_bots = Altruix.bot_manager.custom_bots if hasattr(Altruix, 'bot_manager') else {}
+    bot_client = custom_bots.get(bot_id)
+    
+    if not bot_client:
+        await cb.answer("Bot not found!", show_alert=True)
+        return await custom_bot_manager_handler(c, cb)
+        
+    me = bot_client.myself if hasattr(bot_client, "myself") else None
+    name = me.first_name if me else f"Bot {bot_id}"
+    username = f"@{me.username}" if me and me.username else "No Username"
+    status_text = Altruix.get_string("bot_status_running") if getattr(bot_client, 'is_connected', False) else Altruix.get_string("bot_status_stopped")
+    
+    text = (
+        f"{Altruix.get_string('manage_custom_bot_title')}\n\n"
+        f"• <b>Name:</b> {html.escape(name)}\n"
+        f"• <b>Username:</b> {username}\n"
+        f"• <b>ID:</b> <code>{bot_id}</code>\n"
+        f"• <b>Status:</b> {status_text}\n"
+    )
+    
+    # Actions
+    buttons = [
+        [
+            InlineKeyboardButton(Altruix.get_string("stop_bot"), f"action_custom_bot_stop_{bot_id}"),
+            # InlineKeyboardButton(Altruix.get_string("delete_bot"), f"action_custom_bot_delete_{bot_id}"),
+        ],
+        [
+             InlineKeyboardButton(Altruix.get_string("back"), "custom_bot_manager")
+        ]
+    ]
+    
+    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+
+# ✅ HANDLER BARU: Custom Bot Actions (Stop/Delete)
+@Altruix.bot.on_callback_query(filters.regex(r"^action_custom_bot_(stop|delete)_(\d+)$"))
+@log_errors
+async def custom_bot_action_handler(c: Client, cb: CallbackQuery):
+    if not await check_authorization(cb): return
+    action = cb.matches[0].group(1)
+    bot_id = int(cb.matches[0].group(2))
+    
+    if action == "stop":
+        # await cb.answer("Stopping bot...", show_alert=False)
+        # Logic to stop bot (Altruix.bot_manager.stop_bot?)
+        await cb.answer("Fitur Stop belum diimplementasikan sepenuhnya.", show_alert=True)
+        
+    elif action == "delete":
+        # confirm
+        pass
+        
+    # Refresh
+    # await manage_custom_bot_handler(c, cb)
 
 
 

@@ -126,7 +126,7 @@ class AltruixClient:
         self.clients: List[Client] = []
         self.cmd_list = {}
         self.all_lang_strings = {}
-        self.__version__ = "0.0.6.26"
+        self.__version__ = "0.0.6.39"
         self.selected_lang = "english"
         self.local_lang_file = "./Main/localization"
         self.cmd_list = {}
@@ -1180,15 +1180,15 @@ class AltruixClient:
             raise
         try:
             if string_sessions := self.config.SESSIONS:
-                self.log("User session was found locally, syncing in progress...")
+                self.log(self.get_string("reading_session"))
                 await self.config.sync_env_to_db("SESSIONS", string_sessions)
             else:
-                self.log("Searching in DB for a user session...")
+                self.log(self.get_string("search_session_db"))
                 string_sessions = await self.config.get_env_from_db("SESSIONS")
             if not string_sessions:
                 self.training_wheels_protocol = True
                 self.log(
-                    "No User Session found, all the userbot features will be disabled!",
+                    self.get_string("no_session_found"),
                     level=30,
                 )
                 try:
@@ -1205,7 +1205,7 @@ class AltruixClient:
                         level=logging.CRITICAL,
                     )
             else:
-                self.log("User Session found, using it!")
+                self.log(self.get_string("session_found"))
                 total_sessions = len(string_sessions)
                 unloaded_sessions = []
                 loaded_user_ids = set() # Track IDs to prevent dupes
@@ -1240,15 +1240,14 @@ class AltruixClient:
                         is_owner = " [OWNER]" if me.id == OWNER_ID else ""
                         user_id = me.id
                         self.log(
-                            f"[{count + 1}/{total_sessions}] Session Loaded → "
-                            f"ID: {user_id} | {full_name} {username} {is_owner}"
+                            self.get_string("session_loaded").format(count + 1, total_sessions, user_id, full_name, username, is_owner)
                         )
                         self.clients.append(client)
                         if me.id != self.config.OWNER_ID:
                             self.ourselves.append(me)
                     except Exception as err:
-                        self.log(f"[{count + 1}/{total_sessions}] Session Unloaded: {err}", level=50)
-                        self.log("became unusable, please re-add the session using the assistant bot.")
+                        self.log(self.get_string("session_unloaded").format(count + 1, total_sessions, err), level=50)
+                        self.log(self.get_string("session_invalid"))
                         unloaded_sessions.append(each)
                 for bad_session in unloaded_sessions:
                     await self.config.pop_element_from_list("SESSIONS", bad_session)
@@ -1272,7 +1271,7 @@ class AltruixClient:
                     all_clients = [self.bot] + self.clients
                     success_count = 0
                     failed_clients = []
-                    self.log(f"Mencoba kirim startup log dari {len(all_clients)} client ke LOG_CHAT_ID...")
+                    self.log(self.get_string("sending_startup").format(len(all_clients)))
                     for client in all_clients:
                         try:
                             me = client.myself if hasattr(client, "myself") else await client.get_me()
@@ -1327,7 +1326,16 @@ class AltruixClient:
                             )
                             await asyncio.sleep(3)
                             success_count += 1
-                            self.log(f"BERHASIL: [{client_type}] {name} mengirim startup log", level=20)
+                            if client == self.bot:
+                                # Bot logic: [1/1]
+                                log_msg = f"BERHASIL: [1/1] 🤖 Bot: {name} -» mengirim startup msg"
+                            else:
+                                # Userbot logic: [current/total_userbots]
+                                userbot_index = self.clients.index(client) + 1
+                                total_userbots = len(self.clients)
+                                log_msg = f"BERHASIL: [{userbot_index}/{total_userbots}] 🦸🏼 Ubot: {name} -» mengirim startup msg"
+                            
+                            self.log(log_msg, level=20)
                         except FloodWait as e:
                             self.log(f"FloodWait terdeteksi. Menunggu {e.value} detik...", level=30)
                             await asyncio.sleep(e.value + 6)
@@ -1347,27 +1355,27 @@ class AltruixClient:
                         for fail in failed_clients:
                             self.log(f" {fail}", level=30)
                     else:
-                        self.log(f"SEMUA client berhasil mengirim pesan ke LOG_CHAT_ID: {log_chat_id}", level=20)
+                        self.log(self.get_string("startup_summary_success").format(log_chat_id), level=20)
                     if success_count > 0:
                         try:
                             branch = get_current_git_branch()
                             altruix_version = getattr(self, "__version__", "unknown")
                             db_type = "MongoDB" if self.config.DB_URI else "LocalDB"
                             summary = (
-                                "Semua client selesai mengirim startup log!\n"
-                                f"Total Session: <code>{len(self.clients)}</code> user + <code>1</code> bot\n"
-                                f"Berhasil: <code>{success_count}</code> client\n"
-                                f"Gagal: <code>{len(failed_clients)}</code> client\n"
-                                f"Owner ID: <code>{BaseConfig.OWNER_ID}</code>\n"
-                                f"Branch: <code>{branch}</code>\n"
-                                f"Database: <code>{db_type}</code>\n"
-                                f"Versi: <code>{altruix_version}</code>\n"
-                                f"Waktu: <code>{startup_time}</code>"
+                                self.get_string("startup_complete_title") +
+                                self.get_string("startup_total_session").format(len(self.clients)) +
+                                self.get_string("startup_success_count").format(success_count) +
+                                self.get_string("startup_failed_count").format(len(failed_clients)) +
+                                self.get_string("startup_owner_id").format(BaseConfig.OWNER_ID) +
+                                self.get_string("startup_branch").format(branch) +
+                                self.get_string("startup_db").format(db_type) +
+                                self.get_string("startup_ver").format(altruix_version) +
+                                self.get_string("startup_time").format(startup_time)
                             )
                             await self.bot.send_message(log_chat_id, summary)
                             self.log(f"Ringkasan akhir berhasil dikirim. Branch: {branch}, Versi: {altruix_version}, level=20")
                         except Exception as e:
-                            self.log(f"Gagal kirim ringkasan startup log: {e}", level=logging.ERROR)
+                            self.log(self.get_string("startup_summary_fail").format(e), level=logging.ERROR)
         except Exception as e:
             self.log(f"CRITICAL: Session initialization failed: {e}", level=50)
             raise

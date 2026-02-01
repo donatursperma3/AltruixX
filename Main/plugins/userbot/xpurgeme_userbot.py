@@ -309,7 +309,8 @@ async def purgeme_cmd(client: Client, message: Message):
             "processed": 0,
             "start_time": 0,
             "dashboard_msg_id": None, 
-            "dashboard_chat_id": None
+            "dashboard_chat_id": None,
+            "notify": True
         }
         # Pause event is set to True initially (not paused)
         Altruix.PURGEME_STATE[unique_id]["pause_event"].set()
@@ -330,6 +331,15 @@ async def purgeme_cmd(client: Client, message: Message):
                     results.results[0].id,
                     reply_to_message_id=message.reply_to_message.id if message.reply_to_message else message.id
                 )
+                
+                # IMPORTANT: Track message for cleanup
+                if sent_invite:
+                    state = Altruix.PURGEME_STATE.get(unique_id)
+                    if state:
+                        state["dashboard_msg_id"] = sent_invite.id
+                        state["dashboard_chat_id"] = sent_invite.chat.id
+                        Altruix.log(f"Purgeme: Tracking inline dashboard {sent_invite.id} in {sent_invite.chat.id}")
+
                 # Delete the command message to keep chat clean
                 await message.delete()
             else:
@@ -400,12 +410,18 @@ async def purgeme_cmd(client: Client, message: Message):
         return
 
     # Wait for 'Start' signal from UI
-    state = Altruix.PURGEME_STATE[unique_id]
+    state = Altruix.PURGEME_STATE.get(unique_id)
+    if not state:
+        Altruix.log(f"Purgeme: State lost for {unique_id} before start execution")
+        # cleanup if it was somehow deleted
+        return
+        
     try:
         # Wait up to 5 minutes for configuration
         await asyncio.wait_for(state["event"].wait(), timeout=300)
     except asyncio.TimeoutError:
-        del Altruix.PURGEME_STATE[unique_id]
+        if unique_id in Altruix.PURGEME_STATE:
+            del Altruix.PURGEME_STATE[unique_id]
         return
 
     # Check if cancelled
@@ -427,58 +443,63 @@ async def purgeme_cmd(client: Client, message: Message):
     
     dashboard_chat = chat_id # ALWAYS TARGET CHAT
     
-    try:
-        dash_text = get_purgeme_status_text(state)
-        dash_kb = get_purgeme_control_kb(unique_id, "running")
-        
-        # Try to send via appropriate bot (custom if available, fallback to main Altruix.bot)
-        bot = Altruix.bot_manager.get_bot(client.me.id)
+    # Check if we already have a dashboard message in the target chat (e.g. from Inline menu)
+    if state.get("dashboard_msg_id") and state.get("dashboard_chat_id") == dashboard_chat:
+        Altruix.log(f"Purgeme: Reusing existing dashboard message {state['dashboard_msg_id']} in {dashboard_chat}")
+        # Message already exists and is tracked, just proceed to updates
+    else:
         try:
-            dash_msg = await bot.send_message(
-                dashboard_chat,
-                dash_text,
-                reply_markup=dash_kb,
-                disable_web_page_preview=True
-            )
-        except Exception as bot_err:
-            Altruix.log(f"Purgeme Dashboard Primary Bot Fail: {bot_err}. Trying fallback to main bot.")
+            dash_text = get_purgeme_status_text(state)
+            dash_kb = get_purgeme_control_kb(unique_id, "running")
+            
+            # Try to send via appropriate bot (custom if available, fallback to main Altruix.bot)
+            bot = Altruix.bot_manager.get_bot(client.me.id)
             try:
-                # Fallback to main Altruix.bot if custom bot failed
-                dash_msg = await Altruix.bot.send_message(
-                    dashboard_chat,
-                    dash_text,
-                    reply_markup=dash_kb,
-                    disable_web_page_preview=True
-                )
-            except Exception as main_err:
-                Altruix.log(f"Purgeme Dashboard Main Bot Fail: {main_err}. Trying fallback to PM.")
-                # FALLBACK TO PM (Send to userbot account via bot)
-                dashboard_chat = client.me.id
                 dash_msg = await bot.send_message(
                     dashboard_chat,
                     dash_text,
                     reply_markup=dash_kb,
                     disable_web_page_preview=True
                 )
-            
-        state["dashboard_msg_id"] = dash_msg.id
-        state["dashboard_chat_id"] = dashboard_chat
-    except Exception as e:
-        Altruix.log(f"Purgeme Dashboard Critical Error: {e}")
-        # If all fail to send, try log_chat using main bot
-        if Altruix.log_chat:
-            dashboard_chat = Altruix.log_chat
-            try:
-                dash_msg = await Altruix.bot.send_message(
-                    dashboard_chat,
-                    dash_text,
-                    reply_markup=dash_kb,
-                    disable_web_page_preview=True
-                )
-                state["dashboard_msg_id"] = dash_msg.id
-                state["dashboard_chat_id"] = dashboard_chat
-            except Exception as final_e:
-                 Altruix.log(f"Purgeme Dashboard Final Fallback Fail: {final_e}")
+            except Exception as bot_err:
+                Altruix.log(f"Purgeme Dashboard Primary Bot Fail: {bot_err}. Trying fallback to main bot.")
+                try:
+                    # Fallback to main Altruix.bot if custom bot failed
+                    dash_msg = await Altruix.bot.send_message(
+                        dashboard_chat,
+                        dash_text,
+                        reply_markup=dash_kb,
+                        disable_web_page_preview=True
+                    )
+                except Exception as main_err:
+                    Altruix.log(f"Purgeme Dashboard Main Bot Fail: {main_err}. Trying fallback to PM.")
+                    # FALLBACK TO PM (Send to userbot account via bot)
+                    dashboard_chat = client.me.id
+                    dash_msg = await bot.send_message(
+                        dashboard_chat,
+                        dash_text,
+                        reply_markup=dash_kb,
+                        disable_web_page_preview=True
+                    )
+                
+            state["dashboard_msg_id"] = dash_msg.id
+            state["dashboard_chat_id"] = dashboard_chat
+        except Exception as e:
+            Altruix.log(f"Purgeme Dashboard Critical Error: {e}")
+            # If all fail to send, try log_chat using main bot
+            if Altruix.log_chat:
+                dashboard_chat = Altruix.log_chat
+                try:
+                    dash_msg = await Altruix.bot.send_message(
+                        dashboard_chat,
+                        dash_text,
+                        reply_markup=dash_kb,
+                        disable_web_page_preview=True
+                    )
+                    state["dashboard_msg_id"] = dash_msg.id
+                    state["dashboard_chat_id"] = dashboard_chat
+                except Exception as final_e:
+                     Altruix.log(f"Purgeme Dashboard Final Fallback Fail: {final_e}")
 
     # Execution Loop
     deleted_count = 0
@@ -588,6 +609,13 @@ async def purgeme_cmd(client: Client, message: Message):
         Altruix.log(f"Purgeme Error: {e}")
 
     # Finish
+    if state.get("status") == "cancelled":
+        Altruix.log(f"Purgeme: Task {unique_id} aborted by user.")
+        # Cleanup state and exit
+        if unique_id in Altruix.PURGEME_STATE:
+            del Altruix.PURGEME_STATE[unique_id]
+        return
+
     state["status"] = "finished"
     await update_dashboard(state)
     
@@ -677,49 +705,50 @@ async def purgeme_cmd(client: Client, message: Message):
                 disable_web_page_preview=True
             )
             
-            # Send completion notification to target chat (auto-delete after 6s)
-            try:
-                title = Altruix.get_string("purgeme_title") or "🗑 <b>Userbot Purgeme</b>"
-                completion_msg = (
-                    f"{title}\n"
-                    f"✅ <b>Task telah berhasil di eksekusi!</b>\n"
-                    f"Dihapus: <b>{deleted_count}</b> pesan | "
-                    f"Mode: <b>{mode.capitalize()}</b> | "
-                    f"Durasi: <b>{duration_str}</b>"
-                )
-                
-                # Determine which bot to use for the notification
-                target_bot = Altruix.bot_manager.get_bot(client.me.id)
+            # Send completion notification to target chat (auto-delete after 9s)
+            if state.get("notify", True):
                 try:
-                    target_notif = await target_bot.send_message(
-                        chat_id,
-                        completion_msg,
-                        parse_mode=enums.ParseMode.HTML,
-                        disable_web_page_preview=True
+                    title = Altruix.get_string("purgeme_title") or "🗑 <b>Userbot Purgeme</b>"
+                    completion_msg = (
+                        f"{title}\n"
+                        f"✅ <b>The task has been completed in execution!</b>\n"
+                        f"Deleted: <b>{deleted_count}</b> messages | "
+                        f"Mode: <b>{mode.capitalize()}</b> | "
+                        f"Duration: <b>{duration_str}</b>"
                     )
-                except:
-                    # Fallback to main bot or Userbot (Client) if custom bot fails
+                    
+                    # Determine which bot to use for the notification
+                    target_bot = Altruix.bot_manager.get_bot(client.me.id)
                     try:
-                        target_notif = await Altruix.bot.send_message(
+                        target_notif = await target_bot.send_message(
                             chat_id,
                             completion_msg,
                             parse_mode=enums.ParseMode.HTML,
                             disable_web_page_preview=True
                         )
                     except:
-                        # Final Fallback: Use Userbot itself as it's guaranteed to be in the chat
-                        target_notif = await client.send_message(
-                            chat_id,
-                            completion_msg,
-                            parse_mode=enums.ParseMode.HTML,
-                            disable_web_page_preview=True
-                        )
-                
-                # Auto-delete after 9 seconds as requested
-                await asyncio.sleep(9)
-                await target_notif.delete()
-            except Exception as notif_err:
-                Altruix.log(f"Failed to send target chat notification: {notif_err}")
+                        # Fallback to main bot or Userbot (Client) if custom bot fails
+                        try:
+                            target_notif = await Altruix.bot.send_message(
+                                chat_id,
+                                completion_msg,
+                                parse_mode=enums.ParseMode.HTML,
+                                disable_web_page_preview=True
+                            )
+                        except:
+                            # Final Fallback: Use Userbot itself as it's guaranteed to be in the chat
+                            target_notif = await client.send_message(
+                                chat_id,
+                                completion_msg,
+                                parse_mode=enums.ParseMode.HTML,
+                                disable_web_page_preview=True
+                            )
+                    
+                    # Auto-delete after 9 seconds as requested
+                    await asyncio.sleep(9)
+                    await target_notif.delete()
+                except Exception as notif_err:
+                    Altruix.log(f"Failed to send target chat notification: {notif_err}")
     except Exception as log_err:
         Altruix.log(f"Failed to send Purgeme completion log: {log_err}")
     

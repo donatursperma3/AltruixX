@@ -173,6 +173,7 @@ async def handle_reply_input(c: Client, m: RawMessage):
     btn_prefix = "pmlu"
     if waiting_id.startswith("pmlb_"): btn_prefix = "pmlb"
     elif waiting_id.startswith("mentions_"): btn_prefix = "mentions"
+    elif waiting_id.startswith("mntlb_"): btn_prefix = "mntlb" # ✅ Added for bot mentions
     
     buttons = [
         [
@@ -216,8 +217,10 @@ async def pmlu_confirm_send_callback(c: Client, cb: CallbackQuery):
             waiting_id = cb.data.replace("pmlu_confirm_", "")
         elif cb.data.startswith("pmlb_confirm_"):
             waiting_id = cb.data.replace("pmlb_confirm_", "")
-        else:
+        elif cb.data.startswith("mentions_confirm_"):
             waiting_id = cb.data.replace("mentions_confirm_", "")
+        else: # mntlb
+            waiting_id = cb.data.replace("mntlb_confirm_", "")
         
         if waiting_id not in REPLY_AS_MENTIONED_WAITING:
             # Try numeric waiting_id if it's stored as int (legacy)
@@ -341,7 +344,7 @@ async def pmlu_confirm_send_callback(c: Client, cb: CallbackQuery):
         logger.error(f"ReplyManager Error: {e}")
         await cb.answer(f"❌ Error: {e}", show_alert=True)
 
-@Altruix.bot.on_callback_query(filters.regex(r"^(pmlu|mentions)_cancel_"))
+@Altruix.bot.on_callback_query(filters.regex(r"^(pmlu|mentions|pmlb|mntlb)_cancel_"))
 @log_errors
 async def pmlu_cancel_send_callback(c: Client, cb: CallbackQuery):
     """Cancel the reply session."""
@@ -355,8 +358,12 @@ async def pmlu_cancel_send_callback(c: Client, cb: CallbackQuery):
 
         if cb.data.startswith("pmlu_cancel_"):
             waiting_id = cb.data.replace("pmlu_cancel_", "")
-        else:
+        elif cb.data.startswith("pmlb_cancel_"):
+            waiting_id = cb.data.replace("pmlb_cancel_", "")
+        elif cb.data.startswith("mentions_cancel_"):
             waiting_id = cb.data.replace("mentions_cancel_", "")
+        else: # mntlb
+            waiting_id = cb.data.replace("mntlb_cancel_", "")
 
         if waiting_id not in REPLY_AS_MENTIONED_WAITING:
             if waiting_id.isdigit() and int(waiting_id) in REPLY_AS_MENTIONED_WAITING:

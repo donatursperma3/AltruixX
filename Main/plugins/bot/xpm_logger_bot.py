@@ -161,6 +161,10 @@ asyncio.create_task(load_settings())
 )
 @log_errors
 async def pmlb_settings_handler(c: Client, m: AltruixMessage):
+    from Main.utils.access_control import is_authorized_user
+    if not is_authorized_user(m.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+        return await m.reply_msg("⛔ Akses Ditolak!")
+        
     global REPLY_FROM_ALL_ACCESSIBLE
     user_input = (m.user_input or "").lower().strip()
     
@@ -228,6 +232,10 @@ async def pmlb_settings_handler(c: Client, m: AltruixMessage):
 )
 @log_errors
 async def pml_status_bot_handler(c: Client, m: AltruixMessage):
+    from Main.utils.access_control import is_authorized_user
+    if not is_authorized_user(m.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+        return await m.reply_msg("⛔ Akses Ditolak!")
+        
     # Bot status
     b_enabled = PM_LOGGER_BOT_DATA.get("enabled", False)
     

@@ -192,6 +192,11 @@ async def load_settings():
                     PM_LOGGER_FILTERS = data.get("filters", PM_LOGGER_FILTERS)
                     REPLY_FROM_ALL_ACCESSIBLE = data.get("reply_from_all_accessible", True)
                     REPLY_ACCESS_MODE = data.get("reply_access_mode", "sudo")
+                    
+                    # Ensure auto_create_topic exists
+                    if "auto_create_topic" not in PM_LOGGER_USER_DATA:
+                         PM_LOGGER_USER_DATA["auto_create_topic"] = False # Default Disable
+
     except Exception as e:
         logger.error(f"Failed to load PM Logger User settings: {e}")
 
@@ -215,150 +220,26 @@ asyncio.run_coroutine_threadsafe(load_settings(), asyncio.get_event_loop())
 @Altruix.register_on_cmd(
     ["pmlu"],
     cmd_help={
-        "help": "Manage PM Logger settings and modes.",
-        "usage": ".pmlu [on/off/mode/replyall/filter]",
-        "example": ".pmlu on | .pmlu mode bot | .pmlu replyall off",
-        "user_args": {
-            "on": "Enable PM Logger User",
-            "off": "Disable PM Logger User",
-            "mode <bot/user/both>": "Set logging mode (bot only, user only, or both)",
-            "replyall <on/off>": "Enable/disable reply from all feature",
-            "filter": "Show current message type filters",
-            "filter <source> <type> <on/off>": "Toggle specific filter (e.g., .pmlu filter bot text off)",
-        },
-        "detail": (
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "💬 **PM LOGGER USER COMMANDS**\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "• `.pmlu on` : Aktifkan pencatatan PM Userbot.\n"
-            "• `.pmlu off`: Nonaktifkan pencatatan PM Userbot.\n\n"
-            "🛠 **Logger Mode:**\n"
-            "• `.pmlu mode user`: Catat PM masuk ke User saja.\n"
-            "• `.pmlu mode bot` : Catat PM masuk ke Bot saja.\n"
-            "• `.pmlu mode both `: Catat PM dari keduanya (Default).\n\n"
-            "👥 **Interactive Tools:**\n"
-            "• `.pmlu replyall on` : Izinkan tombol 'Reply From All'.\n"
-            "• `.pmlu replyall off`: Sembunyikan tombol 'Reply From All'.\n\n"
-            "📊 **Filter Type Pesan:**\n"
-            "• `.pmlu filter`: Lihat filter tipe pesan saat ini.\n"
-            "• `.pmlu filter <user/bot> <tipe> <on/off>`: Atur filter spesifik.\n\n"
-            "📊 **General Status:**\n"
-            "• `.pmlstatus`: Lihat detail status seluruh logger (User & Bot)."
-        )
+        "help": "Manage PM Logger User settings.",
+        "usage": ".pmlu",
+        "example": ".pmlu",
     },
     group_only=False,
     requires_input=False,
 )
 @log_errors
 async def pmlu_settings_handler(c: Client, m: AltruixMessage):
-    global REPLY_FROM_ALL_ACCESSIBLE
-    user_input = (m.user_input or "").lower().strip()
-    
-    if not user_input:
-        is_enabled = PM_LOGGER_USER_DATA.get("enabled", False)
-        # PERBAIKAN: Definisikan variabel status berdasarkan is_enabled
-        status = "ENABLED ✅" if is_enabled else "DISABLED ❌"
-        mode = PM_LOGGER_USER_DATA.get("mode", "both").upper()
-        ra_status = "ENABLED ✅" if REPLY_FROM_ALL_ACCESSIBLE else "DISABLED ❌"
-        log_chat = Altruix.log_chat or "Not Configured ⚠️"
-        
-        # Check if bot can actually send to log_chat
-        bot_access = "Checking..."
-        if Altruix.log_chat:
-            try:
-                await Altruix.bot.get_chat(Altruix.log_chat)
-                bot_access = "OK ✅"
-            except Exception as e:
-                bot_access = f"FAILED ❌ ({str(e)})"
+    """Handler for managing PM Logger User settings via interactive menu."""
+    msg = await m.handle_message("PROCESSING")
+    try:
+        text, markup = generate_pmlu_menu(c.me.id)
+        if markup:
+            await msg.edit_msg(text, reply_markup=markup)
         else:
-            bot_access = "N/A"
-
-        res = (
-            f"📊 **PM Logger User Status Detail**\n"
-            f"• **Status:** {status}\n"
-            f"• **Logger Mode:** `{mode}`\n"
-            f"• **Reply From All:** {ra_status}\n"
-            f"• **Log Group ID:** ` {log_chat} `\n"
-            f"• **Bot Access:** {bot_access}\n\n"
-            f"Commands:\n"
-            f"• `.pmlu on/off` - Global Toggle\n"
-            f"• `.pmlu mode user/bot/both` - Set Mode\n"
-            f"• `.pmlu replyall on/off` - Toggle ReplyAll\n"
-            f"• `.pmlu filter` - View Filters"
-        )
-        return await m.reply_msg(res)
-
-    if user_input.startswith("filter"):
-        args = user_input.split()
-        if len(args) == 1:
-            # Show current filters
-            res = "📑 **PM Logger Message Type Filters**\n\n"
-            for source in ["from_user", "from_bot"]:
-                label = "👤 **User Messages**" if source == "from_user" else "🤖 **Bot Messages**"
-                res += f"{label}:\n"
-                for m_type, allowed in PM_LOGGER_FILTERS[source].items():
-                    status_icon = "✅" if allowed else "❌"
-                    res += f"  {status_icon} `{m_type}`\n"
-                res += "\n"
-            res += "Usage: `.pmlu filter <user/bot> <type> <on/off>`"
-            return await m.reply_msg(res)
-        
-        if len(args) == 4:
-            source_arg = args[1].lower()
-            type_arg = args[2].lower()
-            state_arg = args[3].lower()
-            
-            source_key = "from_user" if source_arg == "user" else "from_bot" if source_arg == "bot" else None
-            if not source_key:
-                return await m.reply_msg("❌ **Invalid Source!** Use `user` or `bot`.")
-                
-            if type_arg not in PM_LOGGER_FILTERS[source_key]:
-                return await m.reply_msg(f"❌ **Invalid Type!** Valid types: `{', '.join(PM_LOGGER_FILTERS[source_key].keys())}`")
-                
-            new_state = True if state_arg in ["on", "yes", "true"] else False if state_arg in ["off", "no", "false"] else None
-            if new_state is None:
-                return await m.reply_msg("❌ **Invalid State!** Use `on` or `off`.")
-                
-            PM_LOGGER_FILTERS[source_key][type_arg] = new_state
-            await save_settings()
-            status_icon = "✅" if new_state else "❌"
-            return await m.reply_msg(f"{status_icon} **Filter Updated:** `{type_arg}` from `{source_arg}` is now **{'ENABLED' if new_state else 'DISABLED'}**")
-            
-        return await m.reply_msg("❌ **Invalid Arguments!**\nUsage: `.pmlu filter <user/bot> <type> <on/off>`")
-
-    if user_input.startswith("mode"):
-        arg = user_input.replace("mode", "").strip()
-        if arg in ["user", "bot", "both"]:
-            PM_LOGGER_USER_DATA["mode"] = arg
-            await save_settings()
-            return await m.reply_msg(f"✅ **PM Logger mode set to: `{arg.upper()}`**")
-        else:
-            return await m.reply_msg("❌ **Invalid Mode!** Use `user`, `bot`, or `both`.")
-
-    if user_input.startswith("replyall"):
-        arg = user_input.replace("replyall", "").strip()
-        if arg in ["on", "yes"]:
-            REPLY_FROM_ALL_ACCESSIBLE = True
-            msg_text = "✅ **Reply From All (PM) is now ACCESSIBLE**"
-        elif arg in ["off", "no"]:
-            REPLY_FROM_ALL_ACCESSIBLE = False
-            msg_text = "❌ **Reply From All (PM) is now RESTRICTED**"
-        else:
-            return await m.reply_msg("Usage: `.pmlu replyall on/off`")
-        await save_settings()
-        return await m.reply_msg(msg_text)
-
-    if user_input in ["on", "yes"]:
-        PM_LOGGER_USER_DATA["enabled"] = True
-        status = "ENABLED ✅"
-    elif user_input in ["off", "no"]:
-        PM_LOGGER_USER_DATA["enabled"] = False
-        status = "DISABLED ❌"
-    else:
-        return await m.reply_msg("INVALID_INPUT")
-    
-    await save_settings()
-    await m.reply_msg(f"**PM Logger User (All Accounts) is now {status}**")
+            await msg.edit_msg("❌ Failed to generate menu.")
+    except Exception as e:
+        logger.error(f"PMLU Settings Error: {e}")
+        await msg.edit_msg(f"❌ Error: {str(e)[:100]}")
 
 @Altruix.register_on_cmd(
     ["pmlstatus", "pmlustatus"],
@@ -449,7 +330,11 @@ async def pm_logger_user_handler(c: Client, m: RawMessage):
             is_globally_on = session_settings.get("enabled", False)
             log_from_user = session_settings.get("log_from_user", is_globally_on)
             log_from_bot = session_settings.get("log_from_bot", is_globally_on)
+            log_from_bot = session_settings.get("log_from_bot", is_globally_on)
             session_filters = session_settings.get("filters", {})
+
+        # ✅ Check Auto Create Topic Logic
+        auto_create_topic = PM_LOGGER_USER_DATA.get("auto_create_topic", False) # Default Disable
 
         if not (log_from_user or log_from_bot):
             return
@@ -563,11 +448,28 @@ async def pm_logger_user_handler(c: Client, m: RawMessage):
         )
 
         # Get topic: "pm logger"
-        try:
-            topic_id = await get_or_create_topic(Altruix.bot, Altruix.log_chat, "pm logger", userbot_client=c)
-        except Exception as e:
-            logger.debug(f"PMLU Topic creation failed: {e}")
-            topic_id = None
+        topic_id = None
+        if auto_create_topic:
+            try:
+                # Validate channel first to prevent CHANNEL_INVALID spam
+                try:
+                    chat_info = await Altruix.bot.get_chat(Altruix.log_chat)
+                    # Only create topic if it's a forum
+                    if getattr(chat_info, "is_forum", False):
+                         topic_id = await get_or_create_topic(Altruix.bot, Altruix.log_chat, "pm logger", userbot_client=c)
+                    else:
+                         topic_id = None # Not a forum
+                except Exception as e:
+                     logger.warning(f"PMLU: Invalid Log Channel {Altruix.log_chat}: {e}")
+                     return # Stop logging if channel invalid
+
+            except Exception as e:
+                logger.debug(f"PMLU Topic creation failed: {e}")
+                topic_id = None
+        else:
+             # If auto create is disabled, check if standard topics exist or just send as normal message
+             # For now, we set topic_id to None to send to General/Default
+             topic_id = None
 
         # ─── BUTTONS ───
         # Main consolidated button using direct callback (skipping menu)
@@ -701,6 +603,145 @@ async def pm_logger_user_edit_handler(c: Client, m: RawMessage):
         
     except Exception as e:
         logger.error(f"Error in PM Logger User Edit: {e}")
+
+# ✅ NEW: Interactive Config Handlers with Client ID Support
+
+def generate_pmlu_menu(client_id):
+    """Generates the PM Logger configuration menu for a specific client ID."""
+    try:
+        user_id = str(client_id)
+        
+        is_enabled = PM_LOGGER_USER_DATA.get("enabled", False)
+        status = "ENABLED ✅" if is_enabled else "DISABLED ❌"
+        mode = PM_LOGGER_USER_DATA.get("mode", "both").upper()
+        ra_status = "ENABLED ✅" if REPLY_FROM_ALL_ACCESSIBLE else "DISABLED ❌"
+        log_chat = Altruix.log_chat or "Not Configured ⚠️"
+        
+        apply_val = PM_LOGGER_USER_DATA.get("apply_types", {}).get(user_id, "per_account").upper().replace('_', ' ')
+        auto_topic = PM_LOGGER_USER_DATA.get("auto_create_topic", False) # Default False
+        auto_topic_val = "ENABLED" if auto_topic else "DISABLED"
+        auto_topic_btn = "ON" if auto_topic else "OFF"
+        
+        # Check if bot can actually send to log_chat (Basic Check)
+        bot_access = "OK ✅" if Altruix.log_chat else "N/A"
+
+        buttons = [
+             [
+                 InlineKeyboardButton(f"Status: {status}", callback_data=f"pmlu_cfg_toggle_enable_{client_id}"),
+                 InlineKeyboardButton(f"Mode: {mode}", callback_data=f"pmlu_cfg_toggle_mode_{client_id}")
+             ],
+             [
+                 InlineKeyboardButton(f"Apply Type: {apply_val}", callback_data=f"pmlu_cfg_toggle_apply_{client_id}"),
+                 InlineKeyboardButton(f"Auto Topic: {auto_topic_btn}", callback_data=f"pmlu_cfg_toggle_autotopic_{client_id}")
+             ],
+             [
+                 InlineKeyboardButton(f"ReplyAll: {ra_status}", callback_data=f"pmlu_cfg_toggle_replyall_{client_id}"),
+             ],
+             [
+                 InlineKeyboardButton("❌ Close", callback_data="bot_controls_menu") # Back to Bot Controls if opened from there
+             ]
+        ]
+        
+        res = (
+            f"📊 **PM Logger Configuration (Client {client_id})**\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"• **Status:** {status}\n"
+            f"• **Logger Mode:** `{mode}`\n"
+            f"• **Apply Type:** `{PM_LOGGER_USER_DATA.get('apply_types', {}).get(user_id, 'per_account')}`\n"
+            f"• **Auto Topic:** {auto_topic_val}\n"
+            f"• **Reply From All:** {ra_status}\n"
+            f"• **Log Group:** ` {log_chat} `\n"
+            f"• **Bot Access:** {bot_access}\n\n"
+            f"<i>Click buttons below to change settings.</i>"
+        )
+        return res, InlineKeyboardMarkup(buttons)
+    except Exception as e:
+        logger.error(f"Menu gen error: {e}")
+        return f"Error: {e}", None
+
+@Altruix.bot.on_callback_query(filters.regex(r"^open_pmlu_settings_owner$"))
+@log_errors
+async def open_pmlu_settings_owner_handler(c: Client, cb: CallbackQuery):
+    try:
+        from Main.utils.access_control import is_authorized_user
+        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+            return await cb.answer("⛔ Akses Ditolak!", show_alert=True)
+            
+        await cb.answer()
+        owner_id = Altruix.config.OWNER_ID
+        text, markup = generate_pmlu_menu(owner_id)
+        if markup:
+            await cb.message.edit(text, reply_markup=markup, parse_mode=enums.ParseMode.HTML)
+        else:
+            await cb.answer("Failed to generate menu", show_alert=True)
+            
+    except Exception as e:
+        logger.error(f"Failed to open PMLU settings: {e}")
+        await cb.answer(f"Error: {e}", show_alert=True)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^pmlu_cfg_(toggle_enable|toggle_mode|toggle_replyall|toggle_autotopic|toggle_apply)(?:_(\d+))?$"))
+@log_errors
+async def pmlu_config_callback(c: Client, cb: CallbackQuery):
+    try:
+        from Main.utils.access_control import is_authorized_user
+        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+            return await cb.answer("⛔ Akses Ditolak!", show_alert=True)
+            
+        action = cb.matches[0].group(1)
+        # Get Client ID from callback data or default to Bot ID
+        client_id = int(cb.matches[0].group(2)) if cb.matches[0].group(2) else c.me.id
+        
+        await load_settings() # Refresh data
+        
+        text = "Updated"
+        
+        if action == "toggle_enable":
+            current = PM_LOGGER_USER_DATA.get("enabled", False)
+            PM_LOGGER_USER_DATA["enabled"] = not current
+            text = "✅ PM Logger Enabled" if not current else "❌ PM Logger Disabled"
+            
+        elif action == "toggle_mode":
+            modes = ["user", "bot", "both"]
+            current = PM_LOGGER_USER_DATA.get("mode", "both")
+            try:
+                idx = modes.index(current)
+            except: idx = 2
+            new_mode = modes[(idx + 1) % len(modes)]
+            PM_LOGGER_USER_DATA["mode"] = new_mode
+            text = f"🔄 Mode set to: {new_mode.upper()}"
+            
+        elif action == "toggle_replyall":
+            global REPLY_FROM_ALL_ACCESSIBLE
+            REPLY_FROM_ALL_ACCESSIBLE = not REPLY_FROM_ALL_ACCESSIBLE
+            text = f"🔄 Reply From All: {'ACCESSIBLE' if REPLY_FROM_ALL_ACCESSIBLE else 'RESTRICTED'}"
+            
+        elif action == "toggle_autotopic":
+            current = PM_LOGGER_USER_DATA.get("auto_create_topic", False) # Default to False if missing
+            PM_LOGGER_USER_DATA["auto_create_topic"] = not current
+            text = f"🔄 Auto Topic: {'ENABLED' if not current else 'DISABLED'}"
+            
+        elif action == "toggle_apply":
+            # Toggle global/per_account for SPECIFIC client
+            user_id = str(client_id)
+            if "apply_types" not in PM_LOGGER_USER_DATA:
+                PM_LOGGER_USER_DATA["apply_types"] = {}
+                
+            current = PM_LOGGER_USER_DATA["apply_types"].get(user_id, "per_account")
+            new_type = "global" if current == "per_account" else "per_account"
+            PM_LOGGER_USER_DATA["apply_types"][user_id] = new_type
+            text = f"🔄 Apply Type for {client_id}: {new_type.upper().replace('_', ' ')}"
+
+        await save_settings()
+        await cb.answer(text)
+        
+        # Refresh menu
+        text, markup = generate_pmlu_menu(client_id)
+        if markup:
+            await cb.message.edit(text, reply_markup=markup, parse_mode=enums.ParseMode.HTML)
+                
+    except Exception as e:
+        logger.error(f"PMLU Config Error: {e}")
+        await cb.answer(f"Error: {str(e)[:50]}", show_alert=True)
 
 # Callback Handlers for PMLU
 @Altruix.bot.on_callback_query(filters.regex(r"^pmlu_react_"))
@@ -917,6 +958,10 @@ async def pmlu_back_callback(c: Client, cb: CallbackQuery):
 @log_errors
 async def pmlu_replyall_callback(c: Client, cb: CallbackQuery):
     try:
+        from Main.utils.access_control import is_authorized_user
+        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+            return await cb.answer("⛔ Akses Ditolak!", show_alert=True)
+            
         if not REPLY_FROM_ALL_ACCESSIBLE:
             return await cb.answer("❌ Fitur ini sedang dinonaktifkan.", show_alert=True)
 
