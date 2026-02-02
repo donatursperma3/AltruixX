@@ -18,7 +18,21 @@ from datetime import datetime
 
 # Import module directly to ensure we always get the fresh dict after reloads
 from Main.plugins.userbot import xpm_logger_user
+import json
+import os
+
 logger = logging.getLogger("altruix.reply_manager")
+
+def should_log():
+    filename = "reply_manager_settings.json"
+    if os.path.exists(filename):
+        try:
+            with open(filename, "r") as f:
+                data = json.load(f)
+                return data.get("enabled", False)
+        except:
+            pass
+    return False
 
 @Altruix.bot.on_message(filters.chat(Altruix.log_chat) & filters.reply, group=1)
 @log_errors
@@ -31,7 +45,9 @@ async def handle_reply_input(c: Client, m: RawMessage):
     if not m.reply_to_message:
         return
         
-    logger.info(f"ReplyManager: Detected reply in log chat {m.chat.id} from {m.from_user.id if m.from_user else 'None'}. Altruix.log_chat={Altruix.log_chat}")
+    do_log = should_log()
+    if do_log:
+        logger.info(f"ReplyManager: Detected reply in log chat {m.chat.id} from {m.from_user.id if m.from_user else 'None'}. Altruix.log_chat={Altruix.log_chat}")
 
     # Access shared state from Altruix object (PERSISTENT across reloads)
     REPLY_AS_MENTIONED_WAITING = Altruix.REPLY_AS_MENTIONED_WAITING
@@ -41,13 +57,15 @@ async def handle_reply_input(c: Client, m: RawMessage):
     # FORCE RELOAD from persistent storage to ensure we have sessions from before restart
     xpm_logger_user.SessionManager.load()
     
-    logger.info(f"ReplyManager: Current items after forced load: {len(REPLY_AS_MENTIONED_WAITING)}")
-    if len(REPLY_AS_MENTIONED_WAITING) > 0:
-        logger.debug(f"ReplyManager: Current waiting IDs: {list(REPLY_AS_MENTIONED_WAITING.keys())}")
+    if do_log:
+        logger.info(f"ReplyManager: Current items after forced load: {len(REPLY_AS_MENTIONED_WAITING)}")
+        if len(REPLY_AS_MENTIONED_WAITING) > 0:
+            logger.debug(f"ReplyManager: Current waiting IDs: {list(REPLY_AS_MENTIONED_WAITING.keys())}")
 
     # Security: Verify if user is authorized to reply
     is_auth = is_authorized_user(m.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS)
-    logger.info(f"ReplyManager: User {m.from_user.id} authorized: {is_auth}")
+    if do_log:
+        logger.info(f"ReplyManager: User {m.from_user.id} authorized: {is_auth}")
     if not is_auth:
         return 
     
@@ -58,14 +76,15 @@ async def handle_reply_input(c: Client, m: RawMessage):
     
     # Debug: Print full reply info
     r_msg = m.reply_to_message
-    logger.info(
-        f"ReplyManager: Checking reply.\n"
-        f"  - Current Msg ID: {m.id}\n"
-        f"  - Reply To ID: {reply_to_id}\n"
-        f"  - Thread ID: {thread_id}\n"
-        f"  - Reply From ID: {r_msg.from_user.id if r_msg.from_user else 'None'}\n"
-        f"  - Reply Text snippet: {str(r_msg.text or r_msg.caption)[:30]}"
-    )
+    if do_log:
+        logger.info(
+            f"ReplyManager: Checking reply.\n"
+            f"  - Current Msg ID: {m.id}\n"
+            f"  - Reply To ID: {reply_to_id}\n"
+            f"  - Thread ID: {thread_id}\n"
+            f"  - Reply From ID: {r_msg.from_user.id if r_msg.from_user else 'None'}\n"
+            f"  - Reply Text snippet: {str(r_msg.text or r_msg.caption)[:30]}"
+        )
     
     # Force reload if empty
     if not REPLY_AS_MENTIONED_WAITING:
@@ -123,10 +142,11 @@ async def handle_reply_input(c: Client, m: RawMessage):
         for wid, d in list(REPLY_AS_MENTIONED_WAITING.items()):
             active_ids.append(f"{wid} -> instr:{d.get('instruction_msg_id')}|log:{d.get('log_msg_id')}|fwd:{d.get('fwd_msg_id')}|thread:{d.get('thread_id')}")
         
-        logger.warning(
-            f"ReplyManager: No active session for message_id {reply_to_id}.\n"
-            f"  - Checked {len(REPLY_AS_MENTIONED_WAITING)} sessions: {active_ids}"
-        )
+        if do_log:
+            logger.warning(
+                f"ReplyManager: No active session for message_id {reply_to_id}.\n"
+                f"  - Checked {len(REPLY_AS_MENTIONED_WAITING)} sessions: {active_ids}"
+            )
         # Only reply if user is owner/sudo and it was a direct reply attempt
         if is_auth:
              await m.reply(
@@ -244,7 +264,9 @@ async def pmlu_confirm_send_callback(c: Client, cb: CallbackQuery):
         client_id = int(data.get("client_id", 0)) if data.get("client_id") else 0
         admin_reply_id = data.get("admin_reply_msg_id")
         
-        logger.info(f"ReplyManager: Starting delivery for session {waiting_id}. Target User: {chat_id}, ReplyMsg ID: {msg_id}, AdminReply ID: {admin_reply_id}, ClientID: {client_id}")
+        do_log = should_log()
+        if do_log:
+            logger.info(f"ReplyManager: Starting delivery for session {waiting_id}. Target User: {chat_id}, ReplyMsg ID: {msg_id}, AdminReply ID: {admin_reply_id}, ClientID: {client_id}")
 
         if not admin_reply_id:
             return await cb.answer("❌ Admin reply message not found.", show_alert=True)
@@ -295,7 +317,8 @@ async def pmlu_confirm_send_callback(c: Client, cb: CallbackQuery):
                         break
             
             if target_client:
-                logger.info(f"ReplyManager: Sending via target client {target_client.me.id if target_client.me else 'Bot'}")
+                if do_log:
+                    logger.info(f"ReplyManager: Sending via target client {target_client.me.id if target_client.me else 'Bot'}")
                 try:
                     sent = await target_client.copy_message(
                         chat_id=chat_id, 
@@ -303,7 +326,8 @@ async def pmlu_confirm_send_callback(c: Client, cb: CallbackQuery):
                         message_id=admin_reply_id,
                         reply_to_message_id=msg_id
                     )
-                    logger.info(f"ReplyManager: Copy successful. Sent ID {sent.id} to user {chat_id}")
+                    if do_log:
+                        logger.info(f"ReplyManager: Copy successful. Sent ID {sent.id} to user {chat_id}")
                     sent_count = 1
                     PM_LOG_CACHE[msg_key]["last_replies"].append((target_client.me.id, sent.id))
                 except Exception as e:

@@ -367,6 +367,34 @@ class Message:
 
     async def delete_if_self(self, **kwargs):
         if self.from_user and self.from_user.is_self or self.outgoing:
+            # ✅ CHECK AUTO-DELETE COMMAND SETTING
+            try:
+                # Use getattr to avoid potential client initialization issues
+                client_id = (getattr(self._client, 'myself', None) or self._client.me).id
+                
+                # Get session index
+                index = -1
+                for i, c in enumerate(Altruix.clients):
+                    try:
+                        c_id = (getattr(c, 'myself', None) or c.me).id
+                        if c_id == client_id:
+                            index = i
+                            break
+                    except: continue
+                
+                if index != -1:
+                    apply_type = await Altruix.config.get_env(f"AUTO_DELETE_CMD_TYPE_{index}") or "per_account"
+                    if apply_type == "global":
+                        enabled = await Altruix.config.get_env("AUTO_DELETE_CMD_GLOBAL")
+                    else:
+                        enabled = await Altruix.config.get_env(f"AUTO_DELETE_CMD_STATUS_{index}")
+                    
+                    # If explicitly false, do not delete
+                    if enabled is False:
+                        return self
+            except Exception as e:
+                Altruix.log(f"Error checking auto-delete setting: {e}", level=40)
+
             try:
                 return await self.delete(**kwargs)
             except Exception as e:

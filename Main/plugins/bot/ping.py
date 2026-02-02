@@ -20,7 +20,7 @@ from pyrogram.types import (
 
 
 @Altruix.bot.on_message(
-    filters.command("ping", "/") & filters.user(Altruix.config.OWNER_ID)
+    filters.command("ping", Altruix.bot_handler) & filters.user(Altruix.config.OWNER_ID)
 )
 @log_errors
 async def restart_command_handler(c: Client, m: Message):

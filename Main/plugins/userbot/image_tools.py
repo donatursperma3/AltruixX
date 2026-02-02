@@ -121,7 +121,7 @@ async def logo(c: Client, m: Message):
         )
     else:
         msg = await c.send_document(m.chat.id, document=file_name, file_name="logo.png")
-    await m.delete()
+    await m.delete_if_self()
     if exists(file_name):
         remove(file_name)
     await msg.edit_msg(f"Took <code>{round(pc()-start_, 2)}</code>s.")

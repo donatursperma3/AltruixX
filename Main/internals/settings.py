@@ -11,12 +11,12 @@ from Main import Altruix
 from Main.core.config import BaseConfig
 from typing import List, Tuple, Dict, Any, Union, Optional
 from pyrogram import Client, filters, raw
-from Main.core.decorators import log_errors
+from Main.core.decorators import log_errors, iuser_check
 from Main.core.types.message import Message
 from pyrogram.types import (
     CallbackQuery, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove,
     InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions, User,
-    Chat, MessageEntity
+    Chat, MessageEntity, InlineQuery, InlineQueryResultArticle, InputTextMessageContent
 )
 import json
 
@@ -67,6 +67,25 @@ async def check_authorization(cb: CallbackQuery) -> bool:
         return False
     return True
 
+async def edit_cb(cb: CallbackQuery, text: str, **kwargs):
+    """
+    Helper to edit callback query message.
+    Handles both regular and inline query messages.
+    """
+    if "parse_mode" not in kwargs:
+        kwargs["parse_mode"] = ParseMode.HTML
+    
+    try:
+        if cb.message:
+            return await cb.message.edit(text, **kwargs)
+        else:
+            return await cb.edit_message_text(text, **kwargs)
+    except Exception as e:
+        if "MESSAGE_NOT_MODIFIED" in str(e):
+            return True
+        logger.error(f"Error in edit_cb: {e}")
+        return False
+
 import pyrogram
 
 # ─── LOGGER KHUSUS PLUGIN ───────────────────────────────────────────────
@@ -74,7 +93,7 @@ import logging
 
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "settings"
-PLUGIN_VERSION = "1.1.0"  # ✅ REFACTORED: Purge Enhancements & UI Consolidation
+PLUGIN_VERSION = "0.0.6.58"  # ✅ REFACTORED: Settings Menu Repairs
 
 logger = logging.getLogger("altruix.settings")
 logger.setLevel(logging.INFO)
@@ -194,7 +213,11 @@ STRINGS = {
         "remove_bot": "🗑️ Remove Custom Bot",
         "bot_info": "ℹ️ Bot Info",
         "cache_log_title": "🧹 <b>Cache Cleaning Notification</b>",
-        "cache_log_desc": "Kirim notifikasi ke log group saat cache dibersihkan"
+        "cache_log_desc": "Kirim notifikasi ke log group saat cache dibersihkan",
+        "cmd_settings": "Pengaturan Perintah",
+        "auto_delete_cmd": "Auto-Delete Input",
+        "cmd_settings_text": "<b>🛠️ Pengaturan Perintah</b>",
+        "auto_delete_desc": "Hapus otomatis pesan perintah (prefix) setelah eksekusi."
     },
     "english": {
         "sessions": "Sessions",
@@ -276,7 +299,11 @@ STRINGS = {
         "remove_bot": "🗑️ Remove Custom Bot",
         "bot_info": "ℹ️ Bot Info",
         "cache_log_title": "🧹 <b>Cache Cleaning Notification</b>",
-        "cache_log_desc": "Send notification to log group when cache is cleaned"
+        "cache_log_desc": "Send notification to log group when cache is cleaned",
+        "cmd_settings": "🛠️ Command Settings",
+        "auto_delete_cmd": "Auto-Delete Input",
+        "cmd_settings_text": "<b>🛠️ Command Settings</b>",
+        "auto_delete_desc": "Automatically delete command prefix messages after execution."
     }
 }
 
@@ -386,53 +413,12 @@ async def send_log_notification(
     except Exception as e:
         Altruix.log(f"Error sending log notification: {e}", level=logging.ERROR)
 
-@Altruix.bot.on_callback_query(group=-1)
-async def central_callback_logger(c: Client, cb: CallbackQuery):
-    """Central dynamic logger for all callback button interactions."""
-    try:
-        # Check if enabled
-        settings_file = "callback_logger_settings.json"
-        is_enabled = True # On by default
-        if os.path.exists(settings_file):
-            try:
-                with open(settings_file, "r") as f:
-                    data = json.load(f)
-                    is_enabled = data.get("settings", {}).get("enabled", True)
-            except: pass
-        
-        if not is_enabled:
-            return
-
-        user = cb.from_user
-        user_info = f"👤 {user.first_name} (@{user.username})" if user.username else f"👤 {user.first_name}"
-        user_id = user.id
-        cb_data = cb.data
-        if cb.message:
-            msg_text = cb.message.text or cb.message.caption or "[No Text]"
-        else:
-            msg_text = "[Inline/No Message]"
-        
-        log_msg = (
-            f"🎯 <b>Callback Button Clicked</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"• <b>User:</b> {user_info}\n"
-            f"• <b>User ID:</b> <code>{user_id}</code>\n"
-            f"• <b>Data:</b> <code>{cb_data}</code>\n"
-            f"• <b>Message:</b>\n<blockquote>{html.escape(str(msg_text)[:500])}</blockquote>\n"
-            f"🕒 {datetime.now().strftime('%H:%M:%S')}"
-        )
-        
-        if Altruix.log_chat:
-            await Altruix.bot.send_message(Altruix.log_chat, log_msg, parse_mode=ParseMode.HTML)
-            
-    except Exception as e:
-        logger.error(f"Callback Logger Error: {e}")
 
 
-@Altruix.bot.on_callback_query(filters.regex("configs_home"))
+@Altruix.bot.on_callback_query(filters.regex(r"^configs_home$"))
+@iuser_check
 @log_errors
 async def configs_menu_cb_handler(c: Client, cb: CallbackQuery):
-    if not await check_authorization(cb): return
     await cb.answer()
     
     text = (
@@ -449,11 +435,59 @@ async def configs_menu_cb_handler(c: Client, cb: CallbackQuery):
             InlineKeyboardButton("🔙 Back to Settings", callback_data="settings_menu"),
         ]
     ]
+    await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^cb_logger_settings$"))
+@iuser_check
+@log_errors
+async def cb_logger_settings_handler(c: Client, cb: CallbackQuery):
+    await cb.answer()
+    log_type = (await Altruix.config.get_env("CALLBACK_LOGGER_TYPE") or "all").lower()
     
-    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    text = (
+        "<b>🔘 Callback Logger Settings</b>\n\n"
+        "Pilih siapa yang akan dicatat aktivitas callback-nya:\n"
+        f"• Status Saat Ini: <code>{log_type.upper()}</code>\n\n"
+        "💡 <b>Deskripsi:</b>\n"
+        "• <b>All</b>: Catat semua user.\n"
+        "• <b>Sudo</b>: Hanya catat sudo user.\n"
+        "• <b>Non-Sudo</b>: Hanya catat user biasa.\n"
+        "• <b>Off</b>: Matikan logging callback."
+    )
+    
+    buttons = [
+        [
+            InlineKeyboardButton("✅ All" if log_type == "all" else "All", callback_data="set_cb_log_all"),
+            InlineKeyboardButton("✅ Sudo" if log_type == "sudo" else "Sudo", callback_data="set_cb_log_sudo"),
+        ],
+        [
+            InlineKeyboardButton("✅ Non-Sudo" if log_type == "non_sudo" else "Non-Sudo", callback_data="set_cb_log_non_sudo"),
+            InlineKeyboardButton("❌ Off" if log_type == "off" else "Off", callback_data="set_cb_log_off"),
+        ],
+        [
+            InlineKeyboardButton("🔙 Back", callback_data="bot_controls_menu"),
+        ]
+    ]
+    
+    await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
 
 
-@Altruix.bot.on_callback_query(filters.regex("settings_menu"))
+@Altruix.bot.on_callback_query(filters.regex(r"set_cb_log_(all|sudo|non_sudo|off)"))
+@iuser_check
+@log_errors
+async def set_cb_log_type_handler(c: Client, cb: CallbackQuery):
+    new_type = cb.matches[0].group(1)
+    # Save to persistent DB
+    await Altruix.config.sync_env_to_db("CALLBACK_LOGGER_TYPE", new_type, upsert=True)
+    # Update local state for immediate effect
+    os.environ["CALLBACK_LOGGER_TYPE"] = new_type
+    
+    await cb.answer(f"✅ Callback Logger set to: {new_type.upper()}", show_alert=True)
+    await cb_logger_settings_handler(c, cb)
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^settings_menu$"))
 @log_errors
 async def settings_menu_cb_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
@@ -471,10 +505,10 @@ async def settings_menu_cb_handler(c: Client, cb: CallbackQuery):
         f"<i>Select a category below to configure your userbot.</i>"
     )
 
-    await cb.message.edit(
+    await edit_cb(
+        cb,
         text=full_text,
-        reply_markup=InlineKeyboardMarkup(settings_menu_buttons),
-        parse_mode=ParseMode.HTML
+        reply_markup=InlineKeyboardMarkup(settings_menu_buttons)
     )
 
 
@@ -562,6 +596,59 @@ async def settings_command_handler(c: Client, m: Message):
     except Exception as e:
         logger.error(f"Gagal kirim notifikasi ke log: {e}")
 
+
+        logger.error(f"Gagal kirim notifikasi ke log: {e}")
+
+
+@Altruix.bot.on_inline_query(filters.regex(r"^settings$"))
+@log_errors
+async def settings_inline_handler(c: Client, iq: InlineQuery):
+    """Handler untuk menyediakan menu settings via inline (untuk userbot)"""
+    try:
+        # Check authorization (only owner/sudo)
+        if iq.from_user.id not in Altruix.auth_users:
+            return await iq.answer(
+                results=[
+                    InlineQueryResultArticle(
+                        title="🚫 Akses Ditolak",
+                        input_message_content=InputTextMessageContent(
+                            "⛔ Anda tidak diizinkan mengakses menu pengaturan ini."
+                        )
+                    )
+                ],
+                cache_time=0,
+                is_personal=True
+            )
+
+        total_sessions = len(Altruix.clients) if hasattr(Altruix, 'clients') else 0
+        default_bots = 1
+        custom_bots = len(Altruix.bot_manager.custom_bots) if hasattr(Altruix, 'bot_manager') and hasattr(Altruix.bot_manager, 'custom_bots') else 0
+        total_bots = default_bots + custom_bots
+        
+        full_text = (
+            f"{gt('settings_text')}\n\n"
+            f"• <b>Total Sessions:</b> <code>{total_sessions}</code>\n"
+            f"• <b>Total Bots:</b> <code>{total_bots}</code> (Default: {default_bots}, Custom: {custom_bots})\n\n"
+            f"<i>Select a category below to configure your userbot.</i>"
+        )
+
+        await iq.answer(
+            results=[
+                InlineQueryResultArticle(
+                    title="Userbot Settings",
+                    input_message_content=InputTextMessageContent(
+                        full_text,
+                        parse_mode=ParseMode.HTML
+                    ),
+                    reply_markup=InlineKeyboardMarkup(settings_menu_buttons)
+                )
+            ],
+            cache_time=0,
+            is_personal=True
+        )
+    except Exception as e:
+        logger.error(f"Error in settings_inline_handler: {e}")
+
 # ✅ HANDLER GLOBAL UNTUK KONFIRMASI EDIT (INLINE)
 @Altruix.bot.on_callback_query(filters.regex(r"^edit_confirm_(yes|no)_(\d+)"))
 @log_errors
@@ -576,7 +663,7 @@ async def edit_confirm_cb_handler(c: Client, cb: CallbackQuery):
         user_edit_confirmation_state.pop(user_id, None)
         user_profile_edit_state.pop(user_id, None)
         await cb.answer("Dibatalkan.", show_alert=True)
-        await cb.message.edit("❌ Aksi dibatalkan oleh pengguna.")
+        await edit_cb(cb, "❌ Aksi dibatalkan oleh pengguna.")
         return
 
     # Jika PROSES (Yes)
@@ -631,13 +718,14 @@ async def edit_confirm_cb_handler(c: Client, cb: CallbackQuery):
         
         # Hapus pesan konfirmasi inline
         try:
-            await cb.message.delete()
+            if cb.message:
+                if cb.message: await cb.message.delete()
         except:
             pass
             
     except Exception as e:
         logger.error(f"Error in edit_confirm_cb_handler: {e}")
-        await cb.message.edit(f"❌ Terjadi kesalahan: {str(e)}")
+        await edit_cb(cb, f"❌ Terjadi kesalahan: {str(e)}")
         await m.reply("❌ Terjadi error saat memproses command.")
 
 
@@ -719,7 +807,8 @@ async def sessions_menu_cb_handler(c: Client, cb: CallbackQuery):
     end_session = min(page * sessions_per_page, total_sessions)
     
     try:
-        await cb.message.edit(
+        await edit_cb(
+            cb,
             text=f"<b>📋 Sessions List</b>\n\n"
                  f"<b>Total Sessions:</b> <code>{total_sessions}</code>\n"
                  f"<b>Showing:</b> <code>{start_session}-{end_session}</code>\n"
@@ -737,7 +826,7 @@ async def sessions_menu_cb_handler(c: Client, cb: CallbackQuery):
             f"• Time: {datetime.now().strftime('%d-%m-%Y %H:%M:%S')}",
             parse_mode=ParseMode.HTML
         )
-        await cb.message.edit("❌ Failed to load menu. Owner has been notified.")
+        await edit_cb(cb, "❌ Failed to load menu. Owner has been notified.")
 
 
 # ====================== BULK JOIN FEATURE ======================
@@ -770,7 +859,7 @@ async def bulk_join_menu_handler(c: Client, cb: CallbackQuery):
         ]
     ]
     
-    await cb.message.edit(
+    await edit_cb(cb, 
         text="<b>👥 Bulk Join Settings</b>\n\n"
              "Pilih jeda waktu antara join (untuk menghindari flood wait):\n\n"
              "⚠️ <b>Note:</b>\n"
@@ -804,7 +893,7 @@ async def bulk_leave_menu_handler(c: Client, cb: CallbackQuery):
         ]
     ]
     
-    await cb.message.edit(
+    await edit_cb(cb, 
         text="<b>🏃 Bulk Leave Settings</b>\n\n"
              "Pilih jeda waktu antara keluar dari chat:\n\n"
              "⚠️ <b>Note:</b>\n"
@@ -832,7 +921,7 @@ async def bulk_leave_delay_handler(c: Client, cb: CallbackQuery):
         'step': 'waiting_chat'
     }
     
-    await cb.message.edit(
+    await edit_cb(cb, 
         text=f"<b>🏃 Bulk Leave - Delay {delay} detik</b>\n\n"
              "Silakan kirim Chat ID atau Username grup/channel yang akan ditinggalkan:\n\n"
              "❌ <b>Cancel:</b> Ketik /cancel",
@@ -864,7 +953,7 @@ async def bulk_report_menu_handler(c: Client, cb: CallbackQuery):
         ]
     ]
     
-    await cb.message.edit(
+    await edit_cb(cb, 
         text="<b>🚩 Bulk Report Settings</b>\n\n"
              "Pilih jeda waktu antar report:\n\n"
              "⚠️ <b>Note:</b>\n"
@@ -892,7 +981,7 @@ async def bulk_report_delay_handler(c: Client, cb: CallbackQuery):
         'step': 'waiting_target'
     }
     
-    await cb.message.edit(
+    await edit_cb(cb, 
         text=f"<b>🚩 Bulk Report - Delay {delay} detik</b>\n\n"
              "Silakan kirim Chat ID atau Username target yang akan di-report:\n\n"
              "❌ <b>Cancel:</b> Ketik /cancel",
@@ -919,7 +1008,7 @@ async def bulk_join_delay_handler(c: Client, cb: CallbackQuery):
         'step': 'waiting_link'
     }
     
-    await cb.message.edit(
+    await edit_cb(cb, 
         text=f"<b>👥 Bulk Join - Delay {delay} detik</b>\n\n"
              "Silakan kirim link grup yang akan di-join:\n\n"
              "🔗 <b>Format Link:</b>\n"
@@ -1843,9 +1932,30 @@ async def user_text_handler(c: Client, m: Message):
             return
             
         elif action == 'add_value' or action == 'edit_value':
-            # Final Step: Dapatkan value dan minta konfirmasi simpan
+            # Final Step: Dapatkan value
+            new_val = text
+            source_info = ""
+            
+            if m.document:
+                # Handle file upload
+                if m.document.file_size > 1024 * 1024: # Limit 1MB for safety
+                     await m.reply("❌ File terlalu besar. Maksimal 1MB.")
+                     return
+                
+                download_path = await m.download()
+                try:
+                    with open(download_path, 'r', encoding='utf-8') as f:
+                        new_val = f.read()
+                    source_info = f"\n📄 <b>Source:</b> <code>File ({m.document.file_name})</code>"
+                except Exception as e:
+                    await m.reply(f"❌ Gagal membaca file: {e}")
+                    return
+                finally:
+                    if os.path.exists(download_path):
+                        os.remove(download_path)
+            
             env_key = state['env_key']
-            user_env_manager_state[user_id]['new_value'] = text
+            user_env_manager_state[user_id]['new_value'] = new_val
             
             confirm_btns = [
                 [
@@ -1854,10 +1964,16 @@ async def user_text_handler(c: Client, m: Message):
                 ]
             ]
             
+            # Preview value
+            preview = new_val
+            if len(preview) > 1000:
+                preview = preview[:1000] + "..."
+            
             await m.reply(
                 f"<b>❓ Konfirmasi Simpan ENV</b>\n\n"
                 f"🔑 <b>Key:</b> <code>{env_key}</code>\n"
-                f"📝 <b>Value:</b> <code>{html.escape(text)}</code>\n\n"
+                f"📝 <b>Value Preview:</b>\n<code>{html.escape(preview)}</code>\n"
+                f"📏 <b>Total Length:</b> <code>{len(new_val)}</code>{source_info}\n\n"
                 f"Apakah Anda yakin ingin menyimpan perubahan ini?",
                 reply_markup=InlineKeyboardMarkup(confirm_btns),
                 parse_mode=ParseMode.HTML
@@ -2064,7 +2180,7 @@ async def bulk_join_confirm_handler(c: Client, cb: CallbackQuery):
         if user_id in user_bulk_join_state:
             del user_bulk_join_state[user_id]
         
-        await cb.message.edit(
+        await edit_cb(cb, 
             text="❌ Bulk join dibatalkan.",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔙 Back to Sessions", callback_data="sessions_list_1")]
@@ -2100,7 +2216,7 @@ async def execute_bulk_join(c: Client, cb: CallbackQuery, delay: int, link: str)
         await cb.message.edit("❌ No sessions available to join.")
         return
     
-    await cb.message.edit(f"🔄 Starting bulk join for <b>{total_sessions}</b> sessions...\n\n"
+    await edit_cb(cb, f"🔄 Starting bulk join for <b>{total_sessions}</b> sessions...\n\n"
                          f"• Delay: <code>{delay}</code> seconds\n"
                          f"• Link: <code>{link}</code>")
     
@@ -2132,7 +2248,7 @@ async def execute_bulk_join(c: Client, cb: CallbackQuery, delay: int, link: str)
                 success_list.append(f"{index+1}. {session_name}")
                 
                 # Update status
-                await cb.message.edit(
+                await edit_cb(cb, 
                     f"🔄 Bulk join in progress...\n"
                     f"• Success: <code>{success_count}</code>\n"
                     f"• Failed: <code>{failed_count}</code>\n"
@@ -2220,7 +2336,7 @@ async def execute_bulk_join(c: Client, cb: CallbackQuery, delay: int, link: str)
     if failed_count > 0:
         result_text += f"⚠️ Some sessions failed to join. Check log group for details."
     
-    await cb.message.edit(
+    await edit_cb(cb, 
         text=result_text,
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("🔙 Back to Sessions", callback_data="sessions_list_1")]
@@ -2288,7 +2404,7 @@ async def bulk_report_reason_handler(c: Client, cb: CallbackQuery):
         ]
     ]
     
-    await cb.message.edit(
+    await edit_cb(cb, 
         text=f"<b>🚩 Confirm Bulk Report</b>\n\n"
              f"• <b>Target:</b> <code>{html.escape(state['target'])}</code>\n"
              f"• <b>Reason:</b> <code>{reason.upper()}</code>\n"
@@ -2333,7 +2449,7 @@ async def execute_bulk_leave(c: Client, cb: CallbackQuery, delay: float, chat_id
     success = 0
     failed = 0
     
-    await cb.message.edit(f"🔄 <b>Bulk Leave in progress...</b>\nTarget: <code>{chat_id}</code>\nTotal: <code>{total}</code> sessions")
+    await edit_cb(cb, f"🔄 <b>Bulk Leave in progress...</b>\nTarget: <code>{chat_id}</code>\nTotal: <code>{total}</code> sessions")
     
     for i, client in enumerate(Altruix.clients):
         try:
@@ -2383,7 +2499,7 @@ async def join_log_group_handler(c: Client, cb: CallbackQuery):
     index = int(cb.matches[0].group(1))
     
     if index >= len(Altruix.clients):
-        await cb.message.edit("Session not found.")
+        await edit_cb(cb, "Session not found.")
         return
     
     session_client = Altruix.clients[index]
@@ -2513,7 +2629,7 @@ async def export_all_sessions_confirmation_handler(c: Client, cb: CallbackQuery)
         ]
     ]
     
-    await cb.message.edit(
+    await edit_cb(cb, 
         text="❓ <b>Export All Sessions Confirmation</b>\n\n"
              "Are you sure you want to export ALL session strings?\n\n"
              "⚠️ <b>WARNING:</b>\n"
@@ -2558,7 +2674,7 @@ async def export_all_sessions_confirm_yes_handler(c: Client, cb: CallbackQuery):
     
     await cb.answer()
     
-    await cb.message.edit(
+    await edit_cb(cb, 
         text="🔐 <b>Security Verification Required</b>\n\n"
              "Please type <code>ok</code> in this chat to confirm export all sessions.\n\n"
              "⚠️ This is an additional security step to prevent accidental exports.\n"
@@ -2591,7 +2707,7 @@ async def export_all_phones_confirmation_handler(c: Client, cb: CallbackQuery):
         ]
     ]
     
-    await cb.message.edit(
+    await edit_cb(cb, 
         text="❓ <b>Export All Phone Numbers Confirmation</b>\n\n"
              "Are you sure you want to export ALL phone numbers?\n\n"
              "⚠️ <b>NOTE:</b>\n"
@@ -2636,7 +2752,7 @@ async def export_all_phones_confirm_yes_handler(c: Client, cb: CallbackQuery):
     
     await cb.answer()
     
-    await cb.message.edit(
+    await edit_cb(cb, 
         text="🔐 <b>Security Verification Required</b>\n\n"
              "Please type <code>ok</code> in this chat to confirm export all phone numbers.\n\n"
              "⚠️ This is an additional security step to prevent accidental exports.\n"
@@ -2945,7 +3061,7 @@ async def test_ping_all_confirmation_handler(c: Client, cb: CallbackQuery):
             InlineKeyboardButton("❌ No", callback_data="test_ping_all_confirm_no")
         ]
     ]
-    await cb.message.edit(
+    await edit_cb(cb, 
         text="❓ Are you sure you want to test ping all sessions?",
         reply_markup=InlineKeyboardMarkup(confirmation_buttons)
     )
@@ -3022,7 +3138,7 @@ async def test_ping_all_execute_handler(c: Client, cb: CallbackQuery):
         except Exception:
             failed_count += 1
 
-        await cb.message.edit(
+        await edit_cb(cb, 
             f"✅ Ping test in progress...\n"
             f"• Berhasil: <code>{success_count}</code>\n"
             f"• Gagal: <code>{failed_count}</code>\n"
@@ -3043,7 +3159,7 @@ async def test_ping_all_execute_handler(c: Client, cb: CallbackQuery):
         link_preview_options=LinkPreviewOptions(is_disabled=True)
     )
     
-    await cb.message.edit(
+    await edit_cb(cb, 
         f"✅ Ping all test completed!\n"
         f"• Berhasil: <code>{success_count}</code>\n"
         f"• Gagal: <code>{failed_count}</code>\n"
@@ -3053,8 +3169,8 @@ async def test_ping_all_execute_handler(c: Client, cb: CallbackQuery):
 
 @Altruix.bot.on_callback_query(filters.regex(r"^session_info_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
+@iuser_check
 async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = None, callback_page: int = None, button_page: int = 1):
-    if not await check_authorization(cb): return
     try:
         await cb.answer()
     except:
@@ -3073,7 +3189,7 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
         button_page = int(data.group(3))
 
     if index >= len(Altruix.clients):
-        await cb.message.edit("Session not found.")
+        await edit_cb(cb, "Session not found.")
         return
 
     session_client = Altruix.clients[index]
@@ -3083,7 +3199,7 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
         try:
             session_info = await session_client.get_me()
         except Exception as e:
-            await cb.message.edit(f"Error getting session info: {str(e)}")
+            await edit_cb(cb, f"Error getting session info: {str(e)}")
             return
 
     is_premium = getattr(session_info, 'is_premium', False)
@@ -3137,6 +3253,7 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
         InlineKeyboardButton(gt("mention_control"), f"mnt_menu_{index}_{callback_page}"),
         InlineKeyboardButton(gt("join_logger_control"), f"joinl_menu_{index}_{callback_page}"),
         InlineKeyboardButton(gt("cmd_logger_control"), f"cmdl_menu_{index}_{callback_page}"),
+        InlineKeyboardButton(gt("cmd_settings"), f"cmd_settings_menu_{index}_{callback_page}"),
         InlineKeyboardButton(gt("recent_messages"), f"gen_conf_recent_messages_menu_{index}_{callback_page}"),
         InlineKeyboardButton(gt("view_mentions"), f"gen_conf_view_mentions_menu_{index}_{callback_page}"),
         InlineKeyboardButton(gt("join_log_group"), f"join_log_group_{index}"),
@@ -3163,7 +3280,7 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
 
     txt = (
         f"{gt('session_info_title')}\n\n"
-        f"👤 <b>User:</b> <b>{html.escape(session_info.first_name or '')}</b>\n"
+        f"👤 <b>User:</b> <a href='tg://user?id={session_info.id}'>{html.escape((session_info.first_name or '') + ' ' + (session_info.last_name or '')).strip() or 'No name'}</a>\n"
         f"🆔 <b>ID:</b> <spoiler>{session_info.id}</spoiler>\n"
         f"✍️ <b>Bio:</b> <code>{html.escape(bio or 'None')}</code>\n"
         f"💠 <b>DC:</b> <code>{session_info.dc_id or 'N/A'}</code>\n"
@@ -3197,7 +3314,7 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
     # Final row: Back
     kb_buttons.append([InlineKeyboardButton(f"🔙 Back [{callback_page}]", f"sessions_list_{callback_page}")])
 
-    await cb.message.edit(
+    await edit_cb(cb, 
         text=txt,
         reply_markup=InlineKeyboardMarkup(kb_buttons),
         parse_mode=ParseMode.HTML
@@ -3206,10 +3323,10 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
 
 # ✅ HANDLER BARU: Menu Ganti Nama
 @Altruix.bot.on_callback_query(filters.regex(r"change_name_menu_(\d+)_(\d+)"))
+@iuser_check
 @log_errors
 async def change_name_menu_handler(c: Client, cb: CallbackQuery):
     """Handler untuk menu ganti nama (First/Last)"""
-    if not await check_authorization(cb): return
     await cb.answer()
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
@@ -3224,7 +3341,7 @@ async def change_name_menu_handler(c: Client, cb: CallbackQuery):
         ]
     ]
     
-    await cb.message.edit(
+    await edit_cb(cb, 
         text="<b>✏️ Ganti Nama</b>\n\n"
              "Pilih bagian nama yang ingin Anda ubah:",
         reply_markup=InlineKeyboardMarkup(buttons),
@@ -3249,7 +3366,7 @@ async def dl_content_input_handler(c: Client, cb: CallbackQuery):
     session_client = Altruix.clients[index]
     session_info = getattr(session_client, 'myself', None) or await session_client.get_me()
     
-    await cb.message.edit(
+    await edit_cb(cb, 
         f"📥 <b>Download Konten</b>\n\n"
         f"Akun pengeksekusi: <b>{html.escape(session_info.first_name)}</b>\n\n"
         f"Silakan kirim <b>Link Pesan</b> (misal: <code>https://t.me/username/123</code>).\n"
@@ -3360,10 +3477,10 @@ async def process_download_content(c, cb, session_client, link, index, page):
 
 # ✅ HANDLER BARU: Menu Pesan Terbaru
 @Altruix.bot.on_callback_query(filters.regex(r"recent_messages_menu_(\d+)_(\d+)"))
+@iuser_check
 @log_errors
 async def recent_messages_menu_handler(c: Client, cb: CallbackQuery):
     """Handler untuk menu pesan terbaru"""
-    if not await check_authorization(cb): return
     await cb.answer()
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
@@ -3386,7 +3503,7 @@ async def recent_messages_menu_handler(c: Client, cb: CallbackQuery):
         ]
     ]
     
-    await cb.message.edit(
+    await edit_cb(cb, 
         text="<b>📨 Pesan Terbaru</b>\n\n"
              "Pilih jumlah pesan terbaru yang akan ditampilkan (dari chat private):\n\n"
              "⚠️ <b>Note:</b>\n"
@@ -3479,7 +3596,7 @@ async def recent_messages_quick_handler(c: Client, cb: CallbackQuery):
             [InlineKeyboardButton("🔙 Back", callback_data=f"session_info_{index}_{page}")]
         ]
         
-        await cb.message.edit(
+        await edit_cb(cb, 
             text=result_text,
             reply_markup=InlineKeyboardMarkup(buttons),
             parse_mode=ParseMode.HTML
@@ -3525,7 +3642,7 @@ async def recent_messages_custom_handler(c: Client, cb: CallbackQuery):
         'step': 'waiting_count'
     }
     
-    await cb.message.edit(
+    await edit_cb(cb, 
         text="<b>📨 Pesan Terbaru (Custom)</b>\n\n"
              "Silakan kirim jumlah pesan yang ingin ditampilkan (1-50):\n\n"
              "❌ <b>Cancel:</b> Ketik /cancel",
@@ -3535,10 +3652,10 @@ async def recent_messages_custom_handler(c: Client, cb: CallbackQuery):
 
 # ✅ HANDLER BARU: Menu Lihat Mention
 @Altruix.bot.on_callback_query(filters.regex(r"view_mentions_menu_(\d+)_(\d+)"))
+@iuser_check
 @log_errors
 async def view_mentions_menu_handler(c: Client, cb: CallbackQuery):
     """Handler untuk menu lihat mention"""
-    if not await check_authorization(cb): return
     await cb.answer()
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
@@ -3550,7 +3667,7 @@ async def view_mentions_menu_handler(c: Client, cb: CallbackQuery):
         'step': 'waiting_group'
     }
     
-    await cb.message.edit(
+    await edit_cb(cb, 
         text="<b>🔔 Lihat Mention</b>\n\n"
              "Silakan kirim username atau ID group (contoh: @username atau -1001234567890):\n\n"
              "❌ <b>Cancel:</b> Ketik /cancel",
@@ -3637,7 +3754,7 @@ async def mention_count_handler(c: Client, cb: CallbackQuery):
         # Tambahkan tombol kembali
         buttons.append([InlineKeyboardButton("🔙 Back", callback_data=f"session_info_{index}_{page}")])
         
-        await cb.message.edit(
+        await edit_cb(cb, 
             text=text,
             reply_markup=InlineKeyboardMarkup(buttons),
             parse_mode=ParseMode.HTML
@@ -3726,7 +3843,7 @@ async def send_profile_photo_handler(c: Client, cb: CallbackQuery):
         if os.path.exists(photo_path):
             os.remove(photo_path)
         
-        await cb.message.edit(
+        await edit_cb(cb, 
             f"✅ Foto profil telah dikirim ke pesan pribadi Anda.",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]])
         )
@@ -3768,7 +3885,7 @@ async def leave_chat_input_handler(c: Client, cb: CallbackQuery):
     session_client = Altruix.clients[index]
     session_info = getattr(session_client, 'myself', None) or await session_client.get_me()
     
-    prompt = await cb.message.edit(
+    prompt = await edit_cb(cb, 
         f"🏃 <b>Leave Group/Channel</b>\n\n"
         f"Akun: <b>{html.escape(session_info.first_name)}</b>\n\n"
         f"Silakan kirim <b>Username</b> (misal: @groupname) atau <b>Chat ID</b> grup yang ingin ditinggalkan.\n\n"
@@ -3799,7 +3916,7 @@ async def leave_chat_input_handler(c: Client, cb: CallbackQuery):
             ]
         ]
         
-        await cb.message.edit(
+        await edit_cb(cb, 
             f"❓ <b>Konfirmasi Keluar</b>\n\n"
             f"Apakah Anda yakin ingin menyuruh akun <b>{html.escape(session_info.first_name)}</b> keluar dari <code>{target}</code>?",
             reply_markup=InlineKeyboardMarkup(confirm_buttons),
@@ -3873,7 +3990,7 @@ async def send_message_input_handler(c: Client, cb: CallbackQuery):
     session_client = Altruix.clients[index]
     session_info = getattr(session_client, 'myself', None) or await session_client.get_me()
     
-    await cb.message.edit(
+    await edit_cb(cb, 
         f"✉️ <b>Send Message Direct</b>\n\n"
         f"Akun pengirim: <b>{html.escape(session_info.first_name)}</b>\n\n"
         f"Silakan kirim <b>Target</b> (Username @... atau ID).\n"
@@ -3897,7 +4014,7 @@ async def send_message_input_handler(c: Client, cb: CallbackQuery):
         await msg_target.delete()
         
         # Minta isi pesan
-        await cb.message.edit(
+        await edit_cb(cb, 
             f"✉️ <b>Send Message Direct</b>\n\n"
             f"Target: <code>{target}</code>\n\n"
             f"Sekarang kirim <b>Pesan</b> yang ingin dikirim.\n"
@@ -3927,14 +4044,14 @@ async def send_message_input_handler(c: Client, cb: CallbackQuery):
         # Untuk simplicity di sini saya pakai temp state
         user_limit_check_state[user_id] = {'target': target, 'text': text_to_send}
         
-        await cb.message.edit(
-            f"❓ <b>Konfirmasi Kirim Pesan</b>\n\n"
+        await edit_cb(
+            cb,
+            text=f"❓ <b>Konfirmasi Kirim Pesan</b>\n\n"
             f"<b>Pengirim:</b> {html.escape(session_info.first_name)}\n"
             f"<b>Target:</b> <code>{target}</code>\n"
             f"<b>Pesan:</b>\n<i>{html.escape(text_to_send[:100])}{'...' if len(text_to_send) > 100 else ''}</i>\n\n"
             f"Apakah Anda yakin?",
-            reply_markup=InlineKeyboardMarkup(confirm_buttons),
-            parse_mode=ParseMode.HTML
+            reply_markup=InlineKeyboardMarkup(confirm_buttons)
         )
         
     except asyncio.TimeoutError:
@@ -3972,7 +4089,7 @@ async def send_msg_confirm_handler(c: Client, cb: CallbackQuery):
     
     try:
         await session_client.send_message(target, text)
-        await cb.message.edit(f"✅ Pesan berhasil dikirim ke <code>{target}</code>")
+        await edit_cb(cb, f"✅ Pesan berhasil dikirim ke <code>{target}</code>")
         
         # Log
         await send_log_notification(
@@ -3987,7 +4104,7 @@ async def send_msg_confirm_handler(c: Client, cb: CallbackQuery):
         await sessions_info_cb_handler(c, cb)
         
     except Exception as e:
-        await cb.message.edit(f"❌ Gagal mengirim pesan ke {target}: {str(e)}")
+        await edit_cb(cb, f"❌ Gagal mengirim pesan ke {target}: {str(e)}")
         await send_log_notification(
             c, 'send_direct_message', index, cb.from_user,
             False, str(e), {'Target': target}
@@ -3996,10 +4113,10 @@ async def send_msg_confirm_handler(c: Client, cb: CallbackQuery):
 
 # ✅ HANDLER BARU: Ganti Nama Depan dengan konfirmasi
 @Altruix.bot.on_callback_query(filters.regex(r"change_first_name_(\d+)_(\d+)"))
+@iuser_check
 @log_errors
 async def change_first_name_handler(c: Client, cb: CallbackQuery):
     """Handler untuk mengganti nama depan (dengan konfirmasi)"""
-    if not await check_authorization(cb): return
     await cb.answer()
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
@@ -4011,14 +4128,14 @@ async def change_first_name_handler(c: Client, cb: CallbackQuery):
         'page': page
     }
     
-    await cb.message.edit(
+    await edit_cb(
+        cb,
         text="✏️ <b>Ganti Nama Depan</b>\n\n"
              "Silakan kirim nama depan baru untuk akun ini.\n\n"
              "⚠️ <b>Note:</b>\n"
              "• Nama depan maksimal 64 karakter\n"
              "• Tidak boleh mengandung karakter khusus\n\n"
-             "❌ <b>Cancel:</b> Kirim /cancel",
-        parse_mode=ParseMode.HTML
+             "❌ <b>Cancel:</b> Kirim /cancel"
     )
 
 
@@ -4039,15 +4156,15 @@ async def change_last_name_handler(c: Client, cb: CallbackQuery):
         'page': page
     }
     
-    await cb.message.edit(
+    await edit_cb(
+        cb,
         text="✏️ <b>Ganti Nama Belakang</b>\n\n"
              "Silakan kirim nama belakang baru untuk akun ini.\n"
              "Kirim 'kosong' atau string kosong untuk menghapus nama belakang.\n\n"
              "⚠️ <b>Note:</b>\n"
              "• Nama belakang maksimal 64 karakter\n"
              "• Kosongkan untuk menghapus nama belakang\n\n"
-             "❌ <b>Cancel:</b> Kirim /cancel",
-        parse_mode=ParseMode.HTML
+             "❌ <b>Cancel:</b> Kirim /cancel"
     )
 
 
@@ -4068,15 +4185,15 @@ async def change_bio_handler(c: Client, cb: CallbackQuery):
         'page': page
     }
     
-    await cb.message.edit(
+    await edit_cb(
+        cb,
         text="📝 <b>Ganti Bio</b>\n\n"
              "Silakan kirim bio baru untuk akun ini.\n"
              "Maksimal 70 karakter.\n\n"
              "⚠️ <b>Note:</b>\n"
              "• Bio akan tampil di profil\n"
              "• Bisa berisi emoji dan link\n\n"
-             "❌ <b>Cancel:</b> Kirim /cancel",
-        parse_mode=ParseMode.HTML
+             "❌ <b>Cancel:</b> Kirim /cancel"
     )
 
 
@@ -4097,7 +4214,7 @@ async def change_username_handler(c: Client, cb: CallbackQuery):
         'page': page
     }
     
-    await cb.message.edit(
+    await edit_cb(cb, 
         text="👤 <b>Ganti Username</b>\n\n"
              "Silakan kirim username baru (tanpa @).\n"
              "Contoh: username_baru\n\n"
@@ -4128,7 +4245,7 @@ async def change_profile_photo_handler(c: Client, cb: CallbackQuery):
         'page': page
     }
     
-    await cb.message.edit(
+    await edit_cb(cb, 
         text="🖼️ <b>Ganti Foto Profil</b>\n\n"
              "Silakan kirim foto baru untuk profil akun ini.\n\n"
              "⚠️ <b>Note:</b>\n"
@@ -4161,7 +4278,7 @@ async def delete_all_profile_photos_handler(c: Client, cb: CallbackQuery):
     }
     
     # Tampilkan konfirmasi
-    await cb.message.edit(
+    await edit_cb(cb, 
         text="🗑️ <b>Konfirmasi Hapus Semua Foto Profil</b>\n\n"
              "Apakah Anda yakin ingin menghapus SEMUA foto profil akun ini?\n\n"
              "⚠️ <b>PERINGATAN TINGGI:</b>\n"
@@ -4328,7 +4445,7 @@ async def check_limit_confirmation_handler(c: Client, cb: CallbackQuery):
         ]
     ]
 
-    await cb.message.edit(
+    await edit_cb(cb, 
         text="🔍 <b>Konfirmasi Check Limit</b>\n\n"
              "Akun ini akan mengirim pesan ke @SpamBot untuk mengecek status limit.\n\n"
              "⚠️ <b>Catatan:</b>\n"
@@ -4376,7 +4493,7 @@ async def check_limit_execute_handler(c: Client, cb: CallbackQuery):
         else:
             result_text = "❌ Tidak ada respons dari @SpamBot (mungkin belum pernah di-start)."
 
-        await cb.message.edit(
+        await edit_cb(cb, 
             text=f"<b>🔍 Hasil Check Limit</b>\n\n"
                  f"<b>Akun:</b> {html.escape(session_info.first_name or 'Unknown')}\n"
                  f"<b>ID:</b> <code>{session_info.id}</code>\n\n"
@@ -4438,7 +4555,7 @@ async def test_ping_cb_handler(c: Client, cb: CallbackQuery):
             link_preview_options=LinkPreviewOptions(is_disabled=True)
         )
         
-        await cb.message.edit(
+        await edit_cb(cb, 
             f"✅ Ping berhasil! Pesan dikirim ke grup log.\n"
             f"Akun: <a href='tg://user?id={session_user.id}'>{html.escape(session_user.first_name or '')} {html.escape(session_user.last_name or '')}</a>",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}")]]) ,
@@ -4587,7 +4704,7 @@ async def export_phone_cb_handler(c: Client, cb: CallbackQuery):
             }
         )
         
-        await cb.message.edit(
+        await edit_cb(cb, 
             f"✅ Nomor HP untuk sesi {index + 1} telah dikirim ke pesan pribadi Anda.",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}")]])
         )
@@ -4658,7 +4775,7 @@ async def export_session_cb_handler(c: Client, cb: CallbackQuery):
             True, None, {'Aksi': 'Export session berhasil'}
         )
         
-        await cb.message.edit(
+        await edit_cb(cb, 
             "✅ Session dikirim ke pesan pribadi Anda.",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}")]])
         )
@@ -4676,7 +4793,7 @@ async def export_session_cb_handler(c: Client, cb: CallbackQuery):
         except Exception:
             pass
 
-        await cb.message.edit("❌ Gagal mengekspor session. Owner telah diberi tahu.")
+        await edit_cb(cb, "❌ Gagal mengekspor session. Owner telah diberi tahu.")
         Altruix.log(f"Error mengekspor session: {e}", level=logging.ERROR)
         
         # ✅ BARU: Kirim notifikasi error ke log group
@@ -4686,11 +4803,12 @@ async def export_session_cb_handler(c: Client, cb: CallbackQuery):
         )
 
 
-@Altruix.bot.on_callback_query(filters.regex(r"^refresh_session_info_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^refresh_session_info_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def refresh_session_info_cb_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2)) if cb.matches[0].group(2) else 1
     
     if not hasattr(Altruix, 'ourselves'):
         Altruix.ourselves = []
@@ -4707,10 +4825,10 @@ async def refresh_session_info_cb_handler(c: Client, cb: CallbackQuery):
         return
 
     await cb.answer("Data refreshed!")
-    await sessions_info_cb_handler(c, cb, index=index, callback_page=1)
+    await sessions_info_cb_handler(c, cb, index=index, callback_page=page)
 
 
-@Altruix.bot.on_callback_query(filters.regex(r"^unlink_session_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^unlink_session_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def unlink_session_cb_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
@@ -4728,7 +4846,7 @@ async def unlink_session_cb_handler(c: Client, cb: CallbackQuery):
         ]
     ]
 
-    await cb.message.edit(
+    await edit_cb(cb, 
         f"❓ <b>{gt('unlink_session')}</b>\n\n"
         f"Apakah Anda yakin ingin menghapus/unlink session index <b>{index + 1}</b>?\n"
         f"<i>{gt('unlink_explain')}</i>\n\n"
@@ -4785,7 +4903,7 @@ async def view_all_sessions_handler(c: Client, cb: CallbackQuery):
         auths = auths_obj.authorizations
         
         if not auths:
-            await cb.message.edit(
+            await edit_cb(cb, 
                 text="ℹ️ Tidak ada sesi aktif selain ini.",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]
@@ -4801,7 +4919,7 @@ async def view_all_sessions_handler(c: Client, cb: CallbackQuery):
             out += f" ├ IP: <code>{s.ip or 'Unknown'}</code> • {s.country or 'Unknown'}\n"
             out += f" └ Login: <code>{s.date_created or 'Unknown'}</code>\n\n"
 
-        await cb.message.edit(
+        await edit_cb(cb, 
             text=out,
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]
@@ -4816,7 +4934,7 @@ async def view_all_sessions_handler(c: Client, cb: CallbackQuery):
         )
 
     except Exception as e:
-        await cb.message.edit(
+        await edit_cb(cb, 
             text=f"❌ Gagal mengambil data sesi: {html.escape(str(e))}",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]
@@ -4847,7 +4965,7 @@ async def join_chat_input_handler(c: Client, cb: CallbackQuery):
         'is_single': True
     }
     
-    await cb.message.edit(
+    await edit_cb(cb, 
         text="<b>➕ Join Group/Channel</b>\n\n"
              "Silakan kirimkan link group/channel atau username.\n\n"
              "Contoh:\n"
@@ -4882,7 +5000,7 @@ async def join_chat_confirm_handler(c: Client, cb: CallbackQuery):
     if action == "no":
         del user_bulk_join_state[user_id]
         await cb.answer("Dibatalkan")
-        await cb.message.delete()
+        if cb.message: await cb.message.delete()
         return
         
     await cb.answer("⏳ Mencoba join...", show_alert=False)
@@ -4902,7 +5020,7 @@ async def join_chat_confirm_handler(c: Client, cb: CallbackQuery):
             await session_client.join_chat(link)
         
         success = True
-        await cb.message.edit(
+        await edit_cb(cb, 
             text=f"✅ <b>Berhasil Join!</b>\n\nSesi {index+1} telah bergabung ke <code>{link}</code>.",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]
@@ -4911,7 +5029,7 @@ async def join_chat_confirm_handler(c: Client, cb: CallbackQuery):
         )
     except UserAlreadyParticipant:
         success = True # Already in
-        await cb.message.edit(
+        await edit_cb(cb, 
             text=f"ℹ️ <b>Sudah Bergabung</b>\n\nSesi {index+1} sudah menjadi anggota di <code>{link}</code>.",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]
@@ -5216,6 +5334,108 @@ async def joinl_toggle_type_handler(c: Client, cb: CallbackQuery):
         await cb.answer(f"Apply Type: {new_val.upper()}")
         await joinl_menu_handler(c, cb, index=index, page=page)
     except Exception as e: await cb.answer(f"Error: {e}", show_alert=True)
+
+
+# ✅ HANDLER BARU: Command Settings Menu
+@Altruix.bot.on_callback_query(filters.regex(r"^cmd_settings_menu_(\d+)_(\d+)$"))
+@log_errors
+async def cmd_settings_menu_handler(c: Client, cb: CallbackQuery):
+    if not await check_authorization(cb): return
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    
+    try:
+        await cb.answer()
+    except: pass
+    
+    # Get session info
+    session_client = Altruix.clients[index]
+    user_id_str = str((getattr(session_client, 'myself', None) or session_client.me).id)
+    
+    # Load settings
+    apply_type = await Altruix.config.get_env(f"AUTO_DELETE_CMD_TYPE_{index}") or "per_account"
+    if apply_type == "global":
+        status = await Altruix.config.get_env("AUTO_DELETE_CMD_GLOBAL")
+    else:
+        status = await Altruix.config.get_env(f"AUTO_DELETE_CMD_STATUS_{index}")
+    
+    # Default is True (matches current userbot behavior)
+    if status is None: status = True
+    
+    type_label = gt("global") if apply_type == "global" else gt("per_account")
+    status_label = "✅ ON" if status else "❌ OFF"
+    
+    text = (
+        f"{gt('cmd_settings_text')}\n\n"
+        f"• 🗑️ <b>{gt('auto_delete_cmd')}:</b> {status_label}\n"
+        f"• ⚙️ <b>{gt('apply_type')}:</b> <code>{type_label}</code>\n\n"
+        f"<i>{gt('auto_delete_desc')}</i>"
+    )
+    
+    buttons = [
+        [
+            InlineKeyboardButton(f"🗑️ {gt('auto_delete_cmd')}: {'OFF' if status else 'ON'}", f"cmd_toggle_{index}_{page}"),
+        ],
+        [
+            InlineKeyboardButton(f"⚙️ {gt('apply_type')}: {type_label}", f"cmd_toggle_type_{index}_{page}"),
+            InlineKeyboardButton(gt("set_as_global"), f"cmd_set_global_{index}_{page}"),
+        ],
+        [InlineKeyboardButton("🔙 Back to Session Info", f"session_info_{index}_{page}")]
+    ]
+    
+    await cb.message.edit(text=text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^cmd_toggle_(\d+)_(\d+)$"))
+@log_errors
+async def cmd_toggle_handler(c: Client, cb: CallbackQuery):
+    if not await check_authorization(cb): return
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    
+    apply_type = await Altruix.config.get_env(f"AUTO_DELETE_CMD_TYPE_{index}") or "per_account"
+    
+    if apply_type == "global":
+        current = await Altruix.config.get_env("AUTO_DELETE_CMD_GLOBAL")
+        if current is None: current = True
+        new_val = not current
+        await Altruix.config.sync_env_to_db("AUTO_DELETE_CMD_GLOBAL", new_val, upsert=True)
+    else:
+        current = await Altruix.config.get_env(f"AUTO_DELETE_CMD_STATUS_{index}")
+        if current is None: current = True
+        new_val = not current
+        await Altruix.config.sync_env_to_db(f"AUTO_DELETE_CMD_STATUS_{index}", new_val, upsert=True)
+    
+    await cb.answer(f"{gt('auto_delete_cmd')}: {'ON' if new_val else 'OFF'}")
+    await cmd_settings_menu_handler(c, cb)
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^cmd_toggle_type_(\d+)_(\d+)$"))
+@log_errors
+async def cmd_toggle_type_handler(c: Client, cb: CallbackQuery):
+    if not await check_authorization(cb): return
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    
+    current = await Altruix.config.get_env(f"AUTO_DELETE_CMD_TYPE_{index}") or "per_account"
+    new_val = "global" if current == "per_account" else "per_account"
+    
+    await Altruix.config.sync_env_to_db(f"AUTO_DELETE_CMD_TYPE_{index}", new_val, upsert=True)
+    await cb.answer(f"Apply Type: {new_val.upper()}")
+    await cmd_settings_menu_handler(c, cb)
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^cmd_set_global_(\d+)_(\d+)$"))
+@log_errors
+async def cmd_set_global_handler(c: Client, cb: CallbackQuery):
+    if not await check_authorization(cb): return
+    index = int(cb.matches[0].group(1))
+    
+    current = await Altruix.config.get_env(f"AUTO_DELETE_CMD_STATUS_{index}")
+    if current is None: current = True
+    
+    await Altruix.config.sync_env_to_db("AUTO_DELETE_CMD_GLOBAL", current, upsert=True)
+    await cb.answer("✅ Successfully set as GLOBAL!", show_alert=True)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^joinl_set_global_(\d+)_(\d+)$"))
 @log_errors
@@ -5602,7 +5822,7 @@ async def mnt_menu_handler(c: Client, cb: CallbackQuery, index: int = None, page
         ]
     ]
 
-    await cb.message.edit(
+    await edit_cb(cb, 
         desc_text,
         reply_markup=InlineKeyboardMarkup(buttons),
         parse_mode=ParseMode.HTML
@@ -5626,7 +5846,7 @@ async def dlstory_session_input_handler(c: Client, cb: CallbackQuery):
     session_client = Altruix.clients[index]
     session_info = getattr(session_client, 'myself', None) or await session_client.get_me()
     
-    await cb.message.edit(
+    await edit_cb(cb, 
         f"📥 <b>{gt('download_story')}</b>\n\n"
         f"Akun pengeksekusi: <b>{html.escape(session_info.first_name)}</b>\n\n"
         f"Silakan kirim <b>Link Story Aktif</b> (misal: <code>https://t.me/username/s/1</code>).\n"
@@ -5934,10 +6154,10 @@ async def gen_confirm_handler(c: Client, cb: CallbackQuery):
         ]
     ]
     
-    await cb.message.edit(
+    await edit_cb(
+        cb,
         text=f"<b>❓ {gt('confirm_action')}</b>\n\n{gt('confirm_msg')}\n\nAksi: <code>{real_data.replace('_', ' ').title()}</code>",
-        reply_markup=InlineKeyboardMarkup(confirm_buttons),
-        parse_mode=ParseMode.HTML
+        reply_markup=InlineKeyboardMarkup(confirm_buttons)
     )
 
 
@@ -5957,14 +6177,14 @@ async def dl_uphoto_start_handler(c: Client, cb: CallbackQuery):
         'step': 'waiting_target'
     }
     
-    await cb.message.edit(
+    await edit_cb(
+        cb,
         text="<b>🖼️ Download Photo Profil</b>\n\n"
              "Silakan kirim <b>Username</b> atau <b>Chat ID</b> user yang ingin didownload fotonya.\n\n"
              "Ketik /cancel untuk membatalkan.",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton(gt("cancel"), f"session_info_{index}_{page}")]
-        ]),
-        parse_mode=ParseMode.HTML
+        ])
     )
 
 # ✅ HANDLER BARU: Purge Amount Handler
@@ -5987,8 +6207,9 @@ async def purge_amt_handler(c: Client, cb: CallbackQuery):
     
     if amt_choice == "custom":
         state['step'] = 'waiting_custom_amount'
-        await cb.message.edit(
-            f"<b>🧹 Purge My Message</b>\n\n"
+        await edit_cb(
+            cb,
+            text=f"<b>🧹 Purge My Message</b>\n\n"
             f"Chat: <code>{html.escape(state['chat_id'])}</code>\n\n"
             f"Silakan kirim <b>angka</b> jumlah pesan yang ingin dihapus.\n\n"
             f"Ketik /cancel untuk membatalkan.",
@@ -6017,8 +6238,9 @@ async def purge_amt_handler(c: Client, cb: CallbackQuery):
         ]
     ]
     
-    await cb.message.edit(
-        f"<b>🧹 Purge My Message</b>\n\n"
+    await edit_cb(
+        cb,
+        text=f"<b>🧹 Purge My Message</b>\n\n"
         f"Chat: <code>{html.escape(state['chat_id'])}</code>\n"
         f"Jumlah: <code>{state['amount']}</code>\n\n"
         f"Pilih jeda (delay) antar setiap penghapusan pesan:",
@@ -6042,8 +6264,9 @@ async def purge_del_handler(c: Client, cb: CallbackQuery):
     
     if delay_val == "custom":
         state['step'] = 'waiting_custom_delay'
-        await cb.message.edit(
-            f"<b>🧹 Purge My Message</b>\n\n"
+        await edit_cb(
+            cb,
+            text=f"<b>🧹 Purge My Message</b>\n\n"
             f"Chat: <code>{html.escape(state['chat_id'])}</code>\n"
             f"Jumlah: <code>{state['amount']}</code>\n\n"
             f"{gt('custom_delay_prompt')}\n\n"
@@ -6069,8 +6292,9 @@ async def purge_del_handler(c: Client, cb: CallbackQuery):
         ]
     ]
     
-    await cb.message.edit(
-        f"<b>🧹 Purge My Message</b>\n\n"
+    await edit_cb(
+        cb,
+        text=f"<b>🧹 Purge My Message</b>\n\n"
         f"Chat: <code>{html.escape(state['chat_id'])}</code>\n"
         f"Jumlah: <code>{state['amount']}</code>\n"
         f"Jeda: <code>{delay}s</code>\n\n"
@@ -6106,8 +6330,9 @@ async def purge_mode_handler(c: Client, cb: CallbackQuery):
         ]
     ]
     
-    await cb.message.edit(
-        f"<b>🧹 Konfirmasi Purge</b>\n\n"
+    await edit_cb(
+        cb,
+        text=f"<b>🧹 Konfirmasi Purge</b>\n\n"
         f"• <b>Sesi:</b> <code>{state['session_index'] + 1}</code>\n"
         f"• <b>Chat:</b> <code>{html.escape(state['chat_id'])}</code>\n"
         f"• <b>Jumlah:</b> <code>{state['amount']}</code>\n"
@@ -6140,7 +6365,7 @@ async def purge_exec_handler(c: Client, cb: CallbackQuery):
         
     session_client = Altruix.clients[session_index]
     
-    await cb.message.edit(f"⏳ <b>Memulai Purge pada {html.escape(chat_id)}...</b>", parse_mode=ParseMode.HTML)
+    await edit_cb(cb, f"⏳ <b>Memulai Purge pada {html.escape(chat_id)}...</b>")
     
     try:
         # Resolve chat properly (handle numerical strings)
@@ -6169,10 +6394,10 @@ async def purge_exec_handler(c: Client, cb: CallbackQuery):
             msgs_to_delete.reverse()
             
         if not msgs_to_delete:
-            await cb.message.edit("❌ <b>Tidak ada pesan Anda yang ditemukan untuk dihapus.</b>")
+            await edit_cb(cb, "❌ <b>Tidak ada pesan Anda yang ditemukan untuk dihapus.</b>")
             return
 
-        await cb.message.edit(f"🧹 <b>Menghapus {len(msgs_to_delete)} pesan...</b>")
+        await edit_cb(cb, f"🧹 <b>Menghapus {len(msgs_to_delete)} pesan...</b>")
         
         total_to_purge = len(msgs_to_delete)
         for mid in msgs_to_delete:
@@ -6271,7 +6496,7 @@ async def dl_uphoto_exec_handler(c: Client, cb: CallbackQuery):
                 os.remove(photo)
             
             page = state.get('page', 1)
-            await cb.message.edit(
+            await edit_cb(cb, 
                 f"✅ <b>Foto profil {html.escape(user.first_name)} telah dikirim ke Log Group!</b>",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton(gt("back"), f"session_info_{session_index}_{page}")]
@@ -6309,7 +6534,7 @@ async def purge_msg_start_handler(c: Client, cb: CallbackQuery):
         'step': 'waiting_chat'
     }
     
-    await cb.message.edit(
+    await edit_cb(cb, 
         text="<b>🧹 Purge My Message</b>\n\n"
              "Fitur ini akan menghapus pesan yang dikirim oleh session ini pada chat tertentu.\n\n"
              "Silakan kirim <b>Username</b> atau <b>Chat ID</b> target chat.\n\n"
@@ -6338,7 +6563,7 @@ async def rpm_conf_handler(c: Client, cb: CallbackQuery):
         ]
     ]
     
-    await cb.message.edit(
+    await edit_cb(cb, 
         text="<b>❓ Konfirmasi Reply ke PM</b>\n\n"
              "Apakah Anda yakin ingin membalas mention ini melalui Personal Chat (PM) "
              "dengan menyertakan tag quote dari pesan asli?\n\n"
@@ -6418,7 +6643,7 @@ async def sys_ctrl_cb_handler(c: Client, cb: CallbackQuery):
 
     readable_action = "Restart" if action == "restart" else "Shutdown"
     
-    await cb.message.edit(
+    await edit_cb(cb, 
         f"⚠️ <b>Force {readable_action}</b>\n\n"
         f"Anda yakin ingin melakukan paksa {readable_action.lower()} pada bot?\n"
         f"Aksi ini akan menghentikan proses bot saat ini.\n\n"
@@ -6447,7 +6672,7 @@ async def sys_ctrl_1_handler(c: Client, cb: CallbackQuery):
         "step": "waiting_code"
     }
     
-    await cb.message.edit(
+    await edit_cb(cb, 
         f"🔒 <b>Keamanan Tingkat Lanjut</b>\n\n"
         f"Untuk konfirmasi akhir <b>{readable_action}</b>, silakan ketik password berikut:\n\n"
         f"👉 <code>{required_code}</code>\n\n"
@@ -6476,7 +6701,7 @@ async def eval_session_start_handler(c: Client, cb: CallbackQuery):
         "step": "waiting_code"
     }
     
-    await cb.message.edit(
+    await edit_cb(cb, 
         f"🐍 <b>Eval Python (Session {index + 1})</b>\n\n"
         f"Silakan kirim kode Python yang ingin dieksekusi.\n"
         f"Kode akan dijalankan di dalam context session tersebut.\n\n"
@@ -6576,7 +6801,7 @@ async def eval_exec_confirm_handler(c: Client, cb: CallbackQuery):
          )
     except: pass
     
-    await cb.message.edit(
+    await edit_cb(cb, 
         f"🐍 <b>Eval Result</b>\n\n{final_output}",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("🔙 Back", callback_data=f"session_info_{index}_{state['page']}")]
@@ -6602,7 +6827,7 @@ async def exec_session_start_handler(c: Client, cb: CallbackQuery):
         "step": "waiting_command"
     }
     
-    await cb.message.edit(
+    await edit_cb(cb, 
         f"🖥️ <b>Exec Terminal (Session {index + 1})</b>\n\n"
         f"Silakan kirim perintah terminal (shell) yang ingin dieksekusi.\n"
         f"Perintah akan dijalankan di server host bot ini.\n\n"
@@ -6671,7 +6896,7 @@ async def exec_term_handler(c: Client, cb: CallbackQuery):
          )
     except: pass
     
-    await cb.message.edit(
+    await edit_cb(cb, 
         f"🖥️ <b>Exec Result</b>\n\n{final_output}",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("🔙 Back", callback_data=f"session_info_{index}_{state['page']}")]
@@ -6713,7 +6938,7 @@ async def sessions_menu_cb_handler(c: Client, cb: CallbackQuery):
         ]
     ]
     
-    await cb.message.edit(
+    await edit_cb(cb, 
         text="<b>🔒 Privacy & Security Settings</b>\n\n"
              "Kelola privasi dan keamanan akun Anda dari sini.\n"
              "• <b>Block/Unblock:</b> Blokir atau buka blokir pengguna.\n"
@@ -6742,7 +6967,7 @@ async def block_unblock_input_handler(c: Client, cb: CallbackQuery):
     
     readable_action = "Blokir (Block)" if action == "block" else "Buka Blokir (Unblock)"
     
-    await cb.message.edit(
+    await edit_cb(cb, 
         text=f"<b>🚫 {readable_action} User</b>\n\n"
              "Silakan kirim <b>Username</b> atau <b>User ID</b> target.\n\n"
              "Contoh: <code>@username</code> atau <code>123456789</code>\n\n"
@@ -6837,7 +7062,7 @@ async def phone_privacy_menu_handler(c: Client, cb: CallbackQuery):
         ]
     ]
     
-    await cb.message.edit(
+    await edit_cb(cb, 
         text="<b>📞 Phone Number Privacy</b>\n\n"
              "Atur siapa yang bisa melihat nomor telepon Anda dan siapa yang bisa menemukan Anda via nomor telepon.\n\n"
              "⚠️ <i>Perubahan akan langsung diterapkan ke Telegram.</i>",
@@ -6921,7 +7146,7 @@ async def group_privacy_menu_handler(c: Client, cb: CallbackQuery):
         ]
     ]
     
-    await cb.message.edit(
+    await edit_cb(cb, 
         text="<b>👥 Group & Channel Privacy</b>\n\n"
              "<b>Who can add me to group chats?</b>\n"
              "Atur siapa yang bisa menambahkan Anda ke grup dan channel secara otomatis.",
@@ -7490,7 +7715,7 @@ async def help_info_custom_input_handler(c: Client, cb: CallbackQuery):
         'step': 'waiting_help_custom_msg'
     }
     
-    await cb.message.edit(
+    await edit_cb(cb, 
         f"⌨️ <b>Input Custom Help Message</b>\n\n"
         f"Silakan kirim pesan help menu kustom Anda sekarang.\n"
         f"Gunakan placeholders seperti <code>(userbot version)</code>, <code>{{ub_version}}</code> dll.\n\n"
@@ -7550,12 +7775,12 @@ async def startup_custom_input_handler(c: Client, cb: CallbackQuery):
         'step': 'waiting_startup_custom_msg'
     }
     
-    await cb.message.edit(
-        f"⌨️ <b>Input Custom Startup Message</b>\n\n"
+    await edit_cb(
+        cb,
+        text=f"⌨️ <b>Input Custom Startup Message</b>\n\n"
         f"Silakan kirim pesan kustom Anda sekarang.\n"
         f"Gunakan placeholders seperti <code>{{mention_first_name}}</code> dll.\n\n"
         f"Ketik <code>/cancel</code> untuk membatalkan.",
-        parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("cancel"), f"startup_custom_menu_{index}_{page}")]])
     )
 
@@ -7582,13 +7807,14 @@ async def bot_controls_menu_handler(c: Client, cb: CallbackQuery):
         ],
         [
             InlineKeyboardButton(Altruix.get_string("custom_bot_manager"), "custom_bot_manager"),
+            InlineKeyboardButton("🔘 Callback Logger", callback_data="cb_logger_settings"),
         ],
         [
             InlineKeyboardButton(Altruix.get_string("back"), "settings_menu"),
         ]
     ]
     
-    await cb.message.edit(txt, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    await edit_cb(cb, txt, reply_markup=InlineKeyboardMarkup(buttons))
 
 
 @Altruix.bot.on_callback_query(filters.regex(r"^default_bot_settings$"))
@@ -7616,6 +7842,7 @@ async def default_bot_settings_handler(c: Client, cb: CallbackQuery):
     mnt_status = get_status("mention_logger_bot_settings.json", nested=True)  # Bot mention logger
     join_status = get_status("join_logger_settings.json")
     cb_status = get_status("callback_logger_settings.json", nested=True)
+    rml_status = get_status("reply_manager_settings.json")
     
     # Generate timestamp to avoid MESSAGE_NOT_MODIFIED
     ts = datetime.now().strftime("%H:%M:%S")
@@ -7626,7 +7853,7 @@ async def default_bot_settings_handler(c: Client, cb: CallbackQuery):
         f"• <b>PM Log:</b> {pm_status}\n"
         f"• <b>Mention Log:</b> {mnt_status}\n"
         f"• <b>Join Log:</b> {join_status}\n"
-        f"• <b>Callback Log:</b> {cb_status}\n\n"
+        f"• <b>Reply Manager Log:</b> {rml_status}\n\n"
         f"<i>Last Update: {ts}</i>"
     )
     
@@ -7639,9 +7866,7 @@ async def default_bot_settings_handler(c: Client, cb: CallbackQuery):
         ],
         [
             InlineKeyboardButton(f"🤖 Join Log: {join_status}", "bot_log_joinl_toggle"),
-        ],
-        [
-            InlineKeyboardButton(f"🤖 Callback Log: {cb_status}", "bot_log_cbl_toggle"),
+            InlineKeyboardButton(f"🤖 Reply Log: {rml_status}", "bot_log_rml_toggle"),
         ],
         [
             InlineKeyboardButton("📤 Export Log Group Link", "export_log_link_confirmation"),
@@ -7651,9 +7876,9 @@ async def default_bot_settings_handler(c: Client, cb: CallbackQuery):
         ]
     ]
     
-    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
 
-@Altruix.bot.on_callback_query(filters.regex(r"^bot_log_(pml|mnt|joinl|cbl)_toggle$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^bot_log_(pml|mnt|joinl|cbl|rml)_toggle$"))
 @log_errors
 async def bot_logger_toggle_handler(c: Client, cb: CallbackQuery):
     # Authorization check
@@ -7666,7 +7891,8 @@ async def bot_logger_toggle_handler(c: Client, cb: CallbackQuery):
         "pml": "pm_logger_bot_settings.json",
         "mnt": "mention_logger_bot_settings.json",  # Bot mention logger (independent from userbot)
         "joinl": "join_logger_settings.json",
-        "cbl": "callback_logger_settings.json"
+        "cbl": "callback_logger_settings.json",
+        "rml": "reply_manager_settings.json"
     }
     
     filename = file_map.get(target)
@@ -7724,14 +7950,14 @@ async def export_log_link_confirmation_handler(c: Client, cb: CallbackQuery):
         ]
     ]
     
-    await cb.message.edit(
+    await edit_cb(
+        cb,
         text="<b>📤 Konfirmasi Export Log Link</b>\n\n"
              "Apakah Anda yakin ingin mengekspor link invite Log Group?\n\n"
              "⚠️ <b>Catatan:</b>\n"
              "• Link ini akan dikirim ke chat ini\n"
              "• Aksi ini akan dicatat di log group",
-        reply_markup=InlineKeyboardMarkup(confirmation_buttons),
-        parse_mode=ParseMode.HTML
+        reply_markup=InlineKeyboardMarkup(confirmation_buttons)
     )
 
 
@@ -7762,12 +7988,12 @@ async def export_log_link_execute_handler(c: Client, cb: CallbackQuery):
         if not link:
             raise Exception("Tidak dapat mendapatkan link invite. Pastikan bot adalah admin di log group.")
 
-        await cb.message.edit(
+        await edit_cb(
+            cb,
             text=f"<b>✅ Log Group Invite Link</b>\n\n"
                  f"Link: <code>{link}</code>\n\n"
                  f"⚠️ Harap simpan link ini dengan aman.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", "bot_controls_menu")]]),
-            parse_mode=ParseMode.HTML
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", "bot_controls_menu")]])
         )
         
         # Kirim notifikasi log
@@ -7778,10 +8004,10 @@ async def export_log_link_execute_handler(c: Client, cb: CallbackQuery):
         
     except Exception as e:
         error_msg = str(e)
-        await cb.message.edit(
+        await edit_cb(
+            cb,
             text=f"❌ <b>Gagal Export Link:</b>\n<code>{html.escape(error_msg)}</code>",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", "bot_controls_menu")]]),
-            parse_mode=ParseMode.HTML
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", "bot_controls_menu")]])
         )
         
         # Kirim notifikasi error ke log group
@@ -7880,15 +8106,15 @@ async def track_profile_start_cb_handler(c: Client, cb: CallbackQuery):
     }
     
     await cb.answer()
-    await cb.message.edit(
-        f"🔍 <b>Track Profile (Session {index + 1})</b>\n\n"
+    await edit_cb(
+        cb,
+        text=f"🔍 <b>Track Profile (Session {index + 1})</b>\n\n"
         f"Silakan kirimkan <b>User ID</b> atau <b>Username</b> user yang ingin dilacak.\n"
         f"Userbot akan mengirimkan perintah <code>/id</code> ke @SangMata_beta_bot.\n\n"
         f"Ketik /cancel untuk membatalkan.",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("🔙 Back", callback_data=f"session_info_{index}_{page}")]
-        ]),
-        parse_mode=ParseMode.HTML
+        ])
     )
 
 @Altruix.bot.on_callback_query(filters.regex(r"^track_profile_confirm_(yes|no)_(\d+)$"))
@@ -7914,7 +8140,7 @@ async def track_profile_confirm_cb_handler(c: Client, cb: CallbackQuery):
         return
         
     await cb.answer("Memproses pelacakan...", show_alert=False)
-    await cb.message.edit(f"⏳ Mengirim perintah track untuk <code>{html.escape(target_id)}</code>...")
+    await edit_cb(cb, f"⏳ Mengirim perintah track for <code>{html.escape(target_id)}</code>...")
     
     try:
         session_client = Altruix.clients[index]
@@ -7936,7 +8162,7 @@ async def track_profile_confirm_cb_handler(c: Client, cb: CallbackQuery):
             if session_client.me.id in Altruix.SANGMATA_WAITING:
                 del Altruix.SANGMATA_WAITING[session_client.me.id]
 
-        await cb.message.edit(
+        await edit_cb(cb, 
             f"🔍 <b>Track Profile Result</b>\n\n"
             f"{status_summary}\n\n"
             f"<i>Perintah dikirim via Session {index + 1}.</i>",
@@ -7989,7 +8215,7 @@ async def env_manager_list_handler(c: Client, cb: CallbackQuery):
     all_envs = sorted(list(all_envs))
     
     if not all_envs:
-        await cb.message.edit(
+        await edit_cb(cb, 
             "ℹ️ <b>ENV Manager</b>\n\nDatabase environment variables kosong.",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("➕ Add New ENV", callback_data="env_manager_add")],
@@ -8047,9 +8273,9 @@ async def env_view_handler(c: Client, cb: CallbackQuery):
     is_in_db = await Altruix.config.env_col.find_one({"_id": env_key}) is not None
     
     # Format value agar tidak terlalu panjang di UI
-    display_value = str(value)
-    if len(display_value) > 500:
-        display_value = display_value[:500] + "..."
+    val_str = str(value)
+    is_long = len(val_str) > 500
+    display_value = val_str[:500] + "..." if is_long else val_str
     
     text = (
         f"<b>📄 ENV Detail</b>\n\n"
@@ -8066,11 +8292,39 @@ async def env_view_handler(c: Client, cb: CallbackQuery):
         [InlineKeyboardButton("🔙 Back to List", callback_data=f"env_manager_list_{page}")]
     ]
     
+    # Tambahkan tombol Download jika panjang
+    if is_long:
+        buttons[0].insert(0, InlineKeyboardButton("📥 Get Full Value", callback_data=f"env_download_{env_key}"))
+    
     # Hanya tampilkan tombol Delete jika variabel ada di database
     if is_in_db:
         buttons[0].append(InlineKeyboardButton("🗑️ Delete", callback_data=f"env_delete_confirm_{env_key}_{page}"))
     
-    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^env_download_(.+)$"))
+@log_errors
+async def env_download_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk mendownload nilai ENV sebagai file"""
+    if not await check_authorization(cb): return
+    env_key = cb.matches[0].group(1)
+    await cb.answer(f"📥 Preparing {env_key}.txt...")
+    
+    value = await Altruix.config.get_env(env_key)
+    file_content = str(value)
+    
+    # Buat file in-memory
+    file_io = io.BytesIO(file_content.encode('utf-8'))
+    file_io.name = f"{env_key}.txt"
+    
+    await c.send_document(
+        chat_id=cb.message.chat.id if cb.message else cb.from_user.id,
+        document=file_io,
+        caption=f"📄 <b>Full Value of ENV:</b> <code>{env_key}</code>\n"
+                f"💡 <b>Size:</b> <code>{len(file_content)}</code> characters",
+        parse_mode=ParseMode.HTML
+    )
 
 
 @Altruix.bot.on_callback_query(filters.regex(r"^env_manager_add$"))
@@ -8086,7 +8340,7 @@ async def env_manager_add_handler(c: Client, cb: CallbackQuery):
         'timestamp': datetime.now()
     }
     
-    await cb.message.edit(
+    await edit_cb(cb, 
         "<b>➕ Add New ENV (Step 1/2)</b>\n\n"
         "Silakan kirimkan <b>NAMA (Key)</b> untuk environment variable baru.\n"
         "Contoh: <code>CUSTOM_API_KEY</code>\n\n"
@@ -8113,7 +8367,7 @@ async def env_edit_handler(c: Client, cb: CallbackQuery):
         'timestamp': datetime.now()
     }
     
-    await cb.message.edit(
+    await edit_cb(cb, 
         f"<b>✏️ Edit ENV Value:</b> <code>{env_key}</code>\n\n"
         f"Silakan kirimkan <b>NILAI (Value)</b> baru untuk variabel ini.\n\n"
         f"Ketik <code>/cancel</code> untuk membatalkan.",
@@ -8138,7 +8392,7 @@ async def env_delete_confirm_handler(c: Client, cb: CallbackQuery):
         ]
     ]
     
-    await cb.message.edit(
+    await edit_cb(cb, 
         f"<b>⚠️ Konfirmasi Hapus ENV</b>\n\n"
         f"Apakah Anda yakin ingin menghapus variabel <code>{env_key}</code> dari database?\n\n"
         f"🔥 <b>PERINGATAN:</b> Aksi ini tidak dapat dibatalkan.",
@@ -8163,7 +8417,7 @@ async def env_delete_exec_handler(c: Client, cb: CallbackQuery):
             if hasattr(Altruix.config, env_key):
                 delattr(Altruix.config, env_key)
             
-            await cb.message.edit(
+            await edit_cb(cb, 
                 f"✅ Variabel <code>{env_key}</code> berhasil dihapus dari database.",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to List", callback_data=f"env_manager_list_{page}")]]),
                 parse_mode=ParseMode.HTML
@@ -8175,7 +8429,7 @@ async def env_delete_exec_handler(c: Client, cb: CallbackQuery):
                 True, None, {'Key': env_key}
             )
         else:
-            await cb.message.edit(
+            await edit_cb(cb, 
                 f"❌ Gagal menghapus <code>{env_key}</code>. Mungkin sudah dihapus.",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data=f"env_manager_list_{page}")]]),
                 parse_mode=ParseMode.HTML
@@ -8221,7 +8475,7 @@ async def env_save_confirm_handler(c: Client, cb: CallbackQuery):
         processed_val = Altruix.config.digit_wrap(new_value)
         setattr(Altruix.config, env_key, processed_val)
         
-        await cb.message.edit(
+        await edit_cb(cb, 
             f"✅ <b>Berhasil Disimpan!</b>\n\n"
             f"🔑 <b>Key:</b> <code>{env_key}</code>\n"
             f"📝 <b>Value:</b> <code>{html.escape(str(new_value))}</code>",

@@ -21,7 +21,7 @@ from pyrogram.types import (
 
 
 @Altruix.bot.on_message(
-    filters.command("paste", "/") & filters.user(Altruix.config.OWNER_ID)
+    filters.command("paste", Altruix.bot_handler) & filters.user(Altruix.config.OWNER_ID)
 )
 @log_errors
 async def paste_bot_cmd_handler(_, m: Message):

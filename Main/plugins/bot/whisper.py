@@ -20,6 +20,21 @@ from pyrogram.types import (
 MSGS_DICT = {}
 
 
+@Altruix.register_on_cmd(
+    cmd="whisper",
+    cmd_help={
+        "help": Altruix.get_string("WHISPER_HELP"),
+        "example": "whisper @username, hello",
+        "detail": Altruix.get_string("WHISPER_USAGE")
+    },
+)
+def whisper_doc():
+    """Documenting whisper plugin"""
+    pass
+
+Altruix.plugin_categories["whisper"] = "extra"
+
+
 @Altruix.bot.on_inline_query(filters.regex("^whisper"))
 @log_errors
 async def whisper(c: Client, iq: InlineQuery):

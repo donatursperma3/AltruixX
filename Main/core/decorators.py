@@ -7,7 +7,9 @@
 # All rights reserved.
 
 import os
+import html
 import traceback
+from datetime import datetime
 from Main import Altruix
 from typing import Union
 from functools import wraps
@@ -27,8 +29,8 @@ async def send_log_message(text: str):
     Kirim pesan ke LOG_CHAT_ID (dari .env) atau fallback ke OWNER_ID.
     Digunakan untuk logging error & aktivitas penting.
     """
-    # ✅ PERBAIKAN: Gunakan LOG_CHAT_ID dari .env, bukan Altruix.log_chat (yg bisa None)
     log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
+    
     try:
         await Altruix.bot.send_message(
             log_chat_id,
@@ -64,16 +66,105 @@ def iuser_check(func):
         user_id = user.id
         username = f"@{user.username}" if user.username else "No username"
         full_name = f"{user.first_name or ''} {user.last_name or ''}".strip() or "No name"
+        
+        # ✅ CALLBACK LOGGER CONFIGURATION
+        # type: all / sudo / non_sudo / off
+        log_type = (os.getenv("CALLBACK_LOGGER_TYPE") or "all").lower()
+        is_sudo = user_id in Altruix.auth_users
+        
+        should_log = False
+        if log_type == "all":
+            should_log = True
+        elif log_type == "sudo" and is_sudo:
+            should_log = True
+        elif log_type == "non_sudo" and not is_sudo:
+            should_log = True
+        elif log_type == "off":
+            should_log = False
 
-        # ✅ KIRIM NOTIFIKASI AKTIVITAS KE LOG (opsional, bisa dinonaktifkan)
-        await send_log_message(
-            f"🔘 <b>Callback Ditekan</b>\n"
-            f"• User: {full_name} ({username})\n"
-            f"• ID: <code>{user_id}</code>\n"
-            f"• Fungsi: <code>{func.__name__}</code>"
-        )
+        if should_log:
+            chat_info = "N/A"
+            chat_id = "N/A"
+            cb_data = "N/A"
+            msg_text = "N/A"
+            
+            if isinstance(update, CallbackQuery):
+                cb_data = update.data or "No Data"
+                if update.message:
+                    chat = update.message.chat
+                    chat_id = chat.id
+                    
+                    from pyrogram.enums import ChatType
+                    
+                    # Chat Label/Hyperlink
+                    if chat.type == ChatType.PRIVATE:
+                        chat_type_str = "👤 Private"
+                        chat_label = f"{chat.first_name or ''} {chat.last_name or ''}".strip() or "User"
+                    elif chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
+                        chat_type_str = "👥 Group"
+                        chat_label = chat.title or "Unknown Group"
+                    elif chat.type == ChatType.CHANNEL:
+                        chat_type_str = "📢 Channel"
+                        chat_label = chat.title or "Unknown Channel"
+                    else:
+                        chat_type_str = "💬 Chat"
+                        chat_label = chat.title or "Unknown"
 
-        if user_id in Altruix.auth_users:
+                    if chat.username:
+                        chat_info = f"{chat_type_str}: <a href='https://t.me/{chat.username}'>{html.escape(chat_label)}</a>"
+                    elif chat.id:
+                        # For privates/groups without username
+                        chat_info = f"{chat_type_str}: <b>{html.escape(chat_label)}</b>"
+                    else:
+                        chat_info = f"{chat_type_str}: <b>{html.escape(chat_label)}</b>"
+                    
+                    msg_text = update.message.text or update.message.caption or "[No Text/Media]"
+                else:
+                    # ✅ HANDLE INLINE CALLBACKS (Where update.message is None)
+                    chat_info = "📱 Inline Interface"
+                    chat_id = "Inline"
+                    
+                    # Try to extract chat ID from data or via inline_message_id if possible
+                    # (Help often contains si={index}&cid={chat_id})
+                    import re
+                    if cid_match := re.search(r"cid=(-?\d+)", cb_data):
+                        extracted_cid = cid_match.group(1)
+                        chat_id = extracted_cid
+                        chat_info = f"📱 Inline Chat (ID: <code>{extracted_cid}</code>)"
+                    
+                    msg_text = "[Inline Callback Result]"
+            elif isinstance(update, InlineQuery):
+                cb_data = f"Inline Query: {update.query}"
+                chat_info = "Inline Query"
+            
+            time_now = datetime.now().strftime("%H:%M:%S")
+            
+            # Accurate Bot Identification
+            me = getattr(client, "me", None)
+            if not me:
+                try: me = await client.get_me()
+                except: me = None
+            
+            bot_username = f"@{me.username}" if me and me.username else "Unknown Bot"
+            if me and not getattr(me, "is_bot", False):
+                bot_username = f"Userbot Session ({bot_username})"
+            
+            log_message = (
+                f"🎯 <b>Callback Button Clicked</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"• Bot: 🤖 {bot_username}\n"
+                f"• User: 👤 <a href='tg://user?id={user_id}'>{html.escape(full_name)}</a>\n"
+                f"• Username: <code>{username}</code>\n"
+                f"• User ID: <code>{user_id}</code>\n"
+                f"• Chat: {chat_info}\n"
+                f"• Chat ID: <code>{chat_id}</code>\n"
+                f"• Data: <code>{cb_data}</code>\n"
+                f"• Message:\n<blockquote>{html.escape(str(msg_text)[:1000])}</blockquote>\n"
+                f"🕒 Time: <code>{time_now}</code>"
+            )
+            await send_log_message(log_message)
+
+        if is_sudo:
             try:
                 return await func(client, update)
             except MessageNotModified:

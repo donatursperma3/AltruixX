@@ -76,7 +76,11 @@ def get_purgeme_status_text(state):
     elif status == "finished":
         start_time = state.get("start_time", 0)
         duration = time.time() - start_time if start_time > 0 else 0
-        return f"{title}\n\n✅ <b>Finished!</b>\nDeleted: {processed} messages\nTime: {round(duration, 2)}s\nChat: {chat_name}\nAccount: {account_name}"
+        
+        chat_link = state.get("chat_link")
+        chat_display = f"<a href='{chat_link}'>{chat_name}</a>" if chat_link else f"<b>{chat_name}</b>"
+        
+        return f"{title}\n\n✅ <b>Finished!</b>\nDeleted: {processed} messages\nTime: {round(duration, 2)}s\nChat: {chat_display}\nAccount: {account_name}"
 
     elif status == "cancelled":
         return f"{title}\n\n❌ <b>Cancelled</b>"
@@ -288,7 +292,7 @@ async def purgeme_cmd(client: Client, message: Message):
     except:
         chat_name = f"Chat {chat_id}"
         
-    account_name = client.me.first_name or f"User {client.me.id}"
+    account_name = f"{client.me.first_name or ''} {client.me.last_name or ''}".strip() or f"User {client.me.id}"
 
     # Initialize State
     async with STATE_LOCK:
@@ -319,91 +323,112 @@ async def purgeme_cmd(client: Client, message: Message):
     try:
         bot_username = Altruix.bot_manager.get_bot_username(client.me.id)
         
-        # Inline query trigger to get the menu
-        try:
-            results = await client.get_inline_bot_results(bot_username, f"purgeme_menu_{unique_id}")
-            
-            if results.results:
-                # Send the inline result to the chat (Self-destructing menu prompt)
-                sent_invite = await client.send_inline_bot_result(
-                    message.chat.id,
-                    results.query_id,
-                    results.results[0].id,
-                    reply_to_message_id=message.reply_to_message.id if message.reply_to_message else message.id
-                )
-                
-                # IMPORTANT: Track message for cleanup
-                if sent_invite:
-                    state = Altruix.PURGEME_STATE.get(unique_id)
-                    if state:
-                        state["dashboard_msg_id"] = sent_invite.id
-                        state["dashboard_chat_id"] = sent_invite.chat.id
-                        Altruix.log(f"Purgeme: Tracking inline dashboard {sent_invite.id} in {sent_invite.chat.id}")
-
-                # Delete the command message to keep chat clean
-                await message.delete()
-            else:
-                 raise Exception("Empty inline results")
-
-        except Exception as inner_e:
-            Altruix.log(f"Purgeme Inline Fail: {inner_e} - Triggering Log & PM Fallback")
-            
-            # Send /start ONLY on failure to ensure bot is active for the user
-            try:
-                await client.send_message(bot_username, "/start")
-            except Exception as start_err:
-                Altruix.log(f"Purgeme: Auto-start bot failed: {start_err}")
-            
-            # 1. Notify Log Group
-            try:
-                await send_log_notification(
-                    client, "purgeme_inline_restricted", 0, client.me, False,
-                    error_msg=f"Inline Restricted in {chat_name} ({chat_id})",
-                    additional_info={"Reason": str(inner_e)}
-                )
-            except: pass
-
-            # 2. Prepare Fallback Menu for PM
+        # 1. PM Logic: Use direct message via Bot assistant (Deletable)
+        if message.chat.type == enums.ChatType.PRIVATE:
             from Main.plugins.bot.xpurgeme_bot import get_purgeme_text, get_purgeme_keyboard
-            
             menu_text = get_purgeme_text(Altruix.PURGEME_STATE[unique_id])
-            kb = get_purgeme_keyboard(chat_id, client.me.id, unique_id)
+            kb = get_purgeme_keyboard(chat_id, user_id, unique_id)
             
-            # 3. Send Direct PM via Bot Assistant
+            bot = Altruix.bot_manager.get_bot(client.me.id)
+            sent_invite = await bot.send_message(
+                message.chat.id,
+                menu_text,
+                reply_markup=kb,
+                parse_mode=enums.ParseMode.HTML,
+                disable_web_page_preview=True
+            )
+            
+            if sent_invite:
+                state = Altruix.PURGEME_STATE.get(unique_id)
+                if state:
+                    state["dashboard_msg_id"] = sent_invite.id
+                    state["dashboard_chat_id"] = sent_invite.chat.id
+            
+            await message.delete_if_self()
+            
+        # 2. Group Logic: Use Inline Query (Bypass membership)
+        else:
             try:
-                await Altruix.bot.send_message(
-                    client.me.id,
-                    f"⚠️ <b>Inline Mode Restricted</b> in {chat_name}\n\n"
-                    f"Direct Menu:\n{menu_text}",
-                    reply_markup=kb,
-                    parse_mode=enums.ParseMode.HTML,
-                    disable_web_page_preview=True
-                )
-                
-                # Notify in group that menu was sent to PM
-                msg_notif = await message.reply(
-                    "⚠️ <b>Inline Mode Restricted</b>\n"
-                    "Menu konfigurasi telah dikirim ke <b>Private Message (PM)</b> bot assistant anda.",
-                    parse_mode=enums.ParseMode.HTML,
-                    disable_web_page_preview=True
-                )
-                await message.delete()
-                # Auto delete notification after 9 seconds
-                await asyncio.sleep(9)
-                await msg_notif.delete()
-            except Exception as pm_err:
-                Altruix.log(f"Purgeme: Failed to send direct PM: {pm_err}")
-                # FALLBACK URL if PM also fails or bot not started
-                url = f"https://t.me/{bot_username}?start=purgeme_{unique_id}"
-                msg_notif = await message.reply(
-                    "⚠️ <b>Inline Mode Restricted</b>\n"
-                    f"Silakan <a href='{url}'>Klik Disini</a> untuk konfigurasi via PM.",
-                    parse_mode=enums.ParseMode.HTML,
-                    disable_web_page_preview=True
-                )
-                # Auto delete notification after 9 seconds
-                await asyncio.sleep(9)
-                await msg_notif.delete()
+                results = await client.get_inline_bot_results(bot_username, f"purgeme_menu_{unique_id}")
+                if results.results:
+                    sent_invite = await client.send_inline_bot_result(
+                        message.chat.id,
+                        results.query_id,
+                        results.results[0].id,
+                        reply_to_message_id=message.reply_to_message.id if message.reply_to_message else message.id
+                    )
+                    
+                    if sent_invite:
+                        state = Altruix.PURGEME_STATE.get(unique_id)
+                        if state:
+                            state["dashboard_msg_id"] = sent_invite.id
+                            state["dashboard_chat_id"] = sent_invite.chat.id
+
+                    await message.delete_if_self()
+                else:
+                    raise Exception("Empty inline results")
+            except Exception as inline_e:
+                raise inline_e
+
+    except Exception as inner_e:
+        Altruix.log(f"Purgeme Inline Fail: {inner_e} - Triggering Log & PM Fallback")
+        
+        # Send /start ONLY on failure to ensure bot is active for the user
+        try:
+            await client.send_message(bot_username, "/start")
+        except Exception as start_err:
+            Altruix.log(f"Purgeme: Auto-start bot failed: {start_err}")
+        
+        # 1. Notify Log Group
+        try:
+            await send_log_notification(
+                client, "purgeme_inline_restricted", 0, client.me, False,
+                error_msg=f"Inline Restricted in {chat_name} ({chat_id})",
+                additional_info={"Reason": str(inner_e)}
+            )
+        except: pass
+
+        # 2. Prepare Fallback Menu for PM
+        from Main.plugins.bot.xpurgeme_bot import get_purgeme_text, get_purgeme_keyboard
+        
+        menu_text = get_purgeme_text(Altruix.PURGEME_STATE[unique_id])
+        kb = get_purgeme_keyboard(chat_id, client.me.id, unique_id)
+        
+        # 3. Send Direct PM via Bot Assistant
+        try:
+            await Altruix.bot.send_message(
+                client.me.id,
+                f"⚠️ <b>Inline Mode Restricted</b> in {chat_name}\n\n"
+                f"Direct Menu:\n{menu_text}",
+                reply_markup=kb,
+                parse_mode=enums.ParseMode.HTML,
+                disable_web_page_preview=True
+            )
+            
+            # Notify in group that menu was sent to PM
+            msg_notif = await message.reply(
+                "⚠️ <b>Inline Mode Restricted</b>\n"
+                "Menu konfigurasi telah dikirim ke <b>Private Message (PM)</b> bot assistant anda.",
+                parse_mode=enums.ParseMode.HTML,
+                disable_web_page_preview=True
+            )
+            await message.delete_if_self()
+            # Auto delete notification after 9 seconds
+            await asyncio.sleep(9)
+            await msg_notif.delete()
+        except Exception as pm_err:
+            Altruix.log(f"Purgeme: Failed to send direct PM: {pm_err}")
+            # FALLBACK URL if PM also fails or bot not started
+            url = f"https://t.me/{bot_username}?start=purgeme_{unique_id}"
+            msg_notif = await message.reply(
+                "⚠️ <b>Inline Mode Restricted</b>\n"
+                f"Silakan <a href='{url}'>Klik Disini</a> untuk konfigurasi via PM.",
+                parse_mode=enums.ParseMode.HTML,
+                disable_web_page_preview=True
+            )
+            # Auto delete notification after 9 seconds
+            await asyncio.sleep(9)
+            await msg_notif.delete()
 
     except Exception as e:
         await message.edit(f"❌ Error initiating Purgeme: {e}")

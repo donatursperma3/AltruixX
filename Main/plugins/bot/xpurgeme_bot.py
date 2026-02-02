@@ -5,6 +5,7 @@ Handles the interactive UI for the Userbot Purgeme command.
 """
 
 import re
+import time
 import asyncio
 from pyrogram import Client, filters, enums
 from pyrogram.errors import MessageNotModified
@@ -75,7 +76,11 @@ def get_purgeme_text(state):
     elif status == "finished":
         start_time = state.get("start_time", 0)
         duration = time.time() - start_time if start_time > 0 else 0
-        return f"{title}\n\n✅ <b>Finished!</b>\nDeleted: {processed} messages\nTime: {round(duration, 2)}s\nChat: {chat_name}\nAccount: {account_name}"
+        
+        chat_link = state.get("chat_link")
+        chat_display = f"<a href='{chat_link}'>{chat_name}</a>" if chat_link else f"<b>{chat_name}</b>"
+        
+        return f"{title}\n\n✅ <b>Finished!</b>\nDeleted: {processed} messages\nTime: {round(duration, 2)}s\nChat: {chat_display}\nAccount: {account_name}"
 
     elif status == "cancelled":
         lbl = loc("purgeme_cancelled") or "❌ Cancelled"
@@ -461,13 +466,14 @@ async def purgeme_close(client, cb: CallbackQuery):
     # 3. Final Fallback: Edit message text if it's an inline result and we can't delete
     if not cb.message:
         try:
+            # Try via Bot assistant one more time with inline_message_id
             await cb.edit_message_text("🗑 <b>Purgeme Closed</b>", parse_mode=enums.ParseMode.HTML)
-            await cb.answer("Message close requested.", show_alert=False)
+            await cb.answer("Message closed.", show_alert=False)
             return
         except:
             pass
 
-    await cb.answer("Message already deleted or not found.", show_alert=True)
+    await cb.answer("Message deleted or invalid session.", show_alert=False)
 
 @Altruix.bot.on_message(filters.command("start") & filters.private & filters.regex(r"purgeme_"))
 async def purgeme_start_handler(client: Client, message):

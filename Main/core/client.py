@@ -126,10 +126,11 @@ class AltruixClient:
         self.clients: List[Client] = []
         self.cmd_list = {}
         self.all_lang_strings = {}
-        self.__version__ = "0.0.6.39"
+        self.__version__ = "0.0.6.58"
         self.selected_lang = "english"
         self.local_lang_file = "./Main/localization"
-        self.cmd_list = {}
+        self.cmd_list = {} # {plugin_name: [cmd_data, ...]}
+        self.plugin_categories = {} # {plugin_name: 'userbot'|'bot'|'other'}
         self.start_time = time.time()
         self.app_url_ = None
         self.disabled_sudo_plugin_list = []
@@ -499,7 +500,18 @@ class AltruixClient:
             cmd = [cmd]
         self.cmd_list_s.extend(cmd)
         previous_stack_frame = inspect.stack()[1]
-        file_name = os.path.basename(previous_stack_frame.filename.replace(".py", ""))
+        full_path = previous_stack_frame.filename
+        file_name = os.path.basename(full_path.replace(".py", ""))
+        
+        # ✅ Detect Category based on directory
+        category = "other"
+        if "plugins/userbot" in full_path.replace("\\", "/"):
+            category = "userbot"
+        elif "plugins/bot" in full_path.replace("\\", "/"):
+            category = "bot"
+        
+        self.plugin_categories[file_name.lower()] = category
+
         self.add_help_to_command_list(
             commands=cmd,
             file_name=file_name,
@@ -512,6 +524,13 @@ class AltruixClient:
         )
         def decorator(func):
             async def wrapper(client, message: Message):
+                # ✅ DEDUPLICATION for Multi-Session
+                # If message is incoming but from self (sent from other session/phone),
+                # only the FIRST active session handles it to avoid double responses.
+                if not message.outgoing and message.from_user and message.from_user.is_self:
+                    if self.clients and client != self.clients[0]:
+                        return
+
                 if str(message.chat.type).lower().startswith("chattype."):
                     chat_type = str(
                         (str(message.chat.type).lower()).split("chattype.")[1]
@@ -665,26 +684,33 @@ class AltruixClient:
                 & ~filters.forwarded
             )
             for client in self.clients:
-                # ✅ DEDUPLICATION Logic
+                # ✅ DEDUPLICATION Logic for Sessions
                 if cmd:
-                    if isinstance(cmd, list): cmd_key = tuple(sorted(cmd))
-                    elif isinstance(cmd, str): cmd_key = (cmd,)
-                    else: cmd_key = tuple(cmd)
+                    if isinstance(cmd, (list, tuple)): cmd_key = tuple(sorted(list(cmd)))
+                    else: cmd_key = (cmd,)
                     
-                    registry_key = (client.name, cmd_key, handler_type.__name__)
+                    registry_key = (f"session_{client.me.id if hasattr(client, 'me') else client.name}", cmd_key, handler_type.__name__)
                     if registry_key in self.handler_registry:
-                        self.log(f"⚠️ SKIPPED duplicate: {cmd_key} on {client.name}", level=10)
                         continue
                     
                     self.handler_registry.add(registry_key)
-                    self.log(f"✅ REGISTERED: {cmd_key} on {client.name}", level=10)
 
                 client.add_handler(
                     handler_type(func_, filters=basic_filters), group=group
                 )
                 
         if self.bot_mode and not bot_mode_unsupported and not self.loaded_bot_cmds:
-            # Similar check for Bot could be done, but bot loads once usually.
+            # ✅ DEDUPLICATION Logic for Bot Assistant
+            if cmd:
+                if isinstance(cmd, (list, tuple)): cmd_key = tuple(sorted(list(cmd)))
+                else: cmd_key = (cmd,)
+                
+                bot_registry_key = ("bot_assistant", cmd_key, handler_type.__name__)
+                if bot_registry_key in self.handler_registry:
+                    return # Already registered to bot
+                
+                self.handler_registry.add(bot_registry_key)
+
             bot_f = filter_s or filters.user(self.auth_users) & filters.command(
                 list(cmd) if cmd else [], ["/", "|"] # removed "!" to avoid conflict with userbot sudo handler
             )
@@ -694,7 +720,11 @@ class AltruixClient:
             if hasattr(self, 'bot_manager') and self.bot_manager.custom_bots:
                 for custom_bot in self.bot_manager.custom_bots.values():
                     try:
-                        custom_bot.add_handler(handler_type(func_, filters=bot_f), group=group)
+                        # Deduplication for custom bots
+                        cb_reg_key = (f"custom_bot_{custom_bot.me.id if hasattr(custom_bot, 'me') else 'pending'}", cmd_key, handler_type.__name__)
+                        if cb_reg_key not in self.handler_registry:
+                            custom_bot.add_handler(handler_type(func_, filters=bot_f), group=group)
+                            self.handler_registry.add(cb_reg_key)
                     except Exception as e:
                         self.log(f"⚠️ Failed to add handler to custom bot: {e}", level=logging.WARNING)
 
@@ -758,6 +788,7 @@ class AltruixClient:
         await self.setup_localization()
         self.sudo_cmd_handler = await self.config.get_env("SUDO_CMD_HANDLER") or "!"
         self.user_command_handler = await self.config.get_env("CMD_HANDLER") or "."
+        self.bot_handler = await self.config.get_env("BOT_HANDLER") or "/"
         self.disabled_sudo_plugin_list = await self.config.get_env(
             "DISABLED_SUDO_CMD_LIST", []
         )
