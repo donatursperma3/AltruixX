@@ -794,10 +794,7 @@ async def confirm_start_handler(c: Client, cb):
             else:
                 Altruix.log(f"[WARN] Konfirmasi sudah tidak ada saat cancel: {temp_id}", level=30)
             await safe_cb_answer(cb, "❌ Pembuatan task dibatalkan.", show_alert=True)
-            try:
-                await cb.message.delete()
-            except Exception as e:
-                Altruix.log(f"[DEBUG] Gagal hapus pesan konfirmasi: {e}", level=20)
+            await Altruix.delete_cb(cb)
         else:
             await safe_cb_answer(cb, "Aksi tidak dikenali.", show_alert=True)
             Altruix.log(f"[WARN] Aksi tidak dikenali: {action}", level=30)
@@ -1288,10 +1285,7 @@ async def set_emoji_handler(c: Client, cb):
     except Exception as e:
         Altruix.log(f"Gagal update tombol reaction: {e}", level=40)
     EMOJI_SELECTION_WAITING.pop(chat_id, None)
-    try:
-        await cb.message.delete()
-    except:
-        pass
+    await Altruix.delete_cb(cb)
 
 @Altruix.bot.on_callback_query(filters.regex(r"cancel_emoji_(-?\d+)"))
 @log_errors
@@ -1305,10 +1299,7 @@ async def cancel_emoji_handler(c: Client, cb):
     chat_id = data.split("_")[-1]
     EMOJI_SELECTION_WAITING.pop(chat_id, None)
     await safe_cb_answer(cb, "Pemilihan emoji dibatalkan", show_alert=True)
-    try:
-        await cb.message.delete()
-    except:
-        pass
+    await Altruix.delete_cb(cb)
 
 @Altruix.bot.on_callback_query(filters.regex(r"adjust_purge_(-?\d+)"))
 @log_errors

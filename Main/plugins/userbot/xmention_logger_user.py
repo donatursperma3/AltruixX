@@ -47,7 +47,7 @@ logger = logging.getLogger("altruix.mentions")
 logger.setLevel(logging.INFO)
 
 # 🔥 LOG STARTUP
-logger.info(f"🚀 Initializing mentions plugin {PLUGIN_VERSION}")
+# logger.info(f"🚀 Initializing mentions plugin {PLUGIN_VERSION}")
 
 
 # ============================================================================
@@ -57,7 +57,7 @@ try:
     from Main.utils.cache_manager import cache_manager, init_cache
     CACHE_MANAGER_AVAILABLE = True
     logger_info = "✅ Cache manager imported successfully from Main.utils"
-    logger.info(f"[DEBUG] {logger_info}")
+    # logger.info(f"[DEBUG] {logger_info} to {__plugin_name__}")
 except ImportError as e:
     # Coba cara alternatif jika gagal
     try:
@@ -70,11 +70,11 @@ except ImportError as e:
         from Main.utils.cache_manager import cache_manager, init_cache
         CACHE_MANAGER_AVAILABLE = True
         logger_info = "✅ Cache manager imported with path adjustment"
-        logger.info(f"[DEBUG] ✅ {logger_info}")
+        # logger.info(f"[DEBUG] ✅ {logger_info} to {__plugin_name__}")
     except ImportError as e2:
         CACHE_MANAGER_AVAILABLE = False
         logger_info = f"⚠️ Cache manager import failed: {e2}"
-        logger.info(f"[DEBUG] ✅ {logger_info}")
+        # logger.info(f"[DEBUG] ✅ {logger_info} to {__plugin_name__}")
         
         # Fallback definitions
         cache_manager = None
@@ -890,7 +890,7 @@ async def open_mentions_settings_owner_handler(c: Client, cb: CallbackQuery):
         owner_id = Altruix.config.OWNER_ID
         text, markup = await generate_mnt_menu_async(owner_id)
         if markup:
-            await cb.message.edit(text, reply_markup=markup, parse_mode=enums.ParseMode.HTML)
+            await Altruix.edit_cb(cb, text, reply_markup=markup, parse_mode=enums.ParseMode.HTML)
     except Exception as e:
         logger.error(f"Open Mentions Error: {e}")
         await cb.answer(f"Error: {e}", show_alert=True)
@@ -948,7 +948,7 @@ async def mnt_config_callback(c: Client, cb: CallbackQuery):
         # Refresh Menu
         res_text, markup = await generate_mnt_menu_async(client_id)
         if markup:
-            await cb.message.edit(res_text, reply_markup=markup, parse_mode=enums.ParseMode.HTML)
+            await Altruix.edit_cb(cb, res_text, reply_markup=markup, parse_mode=enums.ParseMode.HTML)
         
     except Exception as e:
         await cb.answer(f"Cfg Error: {e}", show_alert=True)

@@ -719,7 +719,7 @@ async def pmlb_reply_menu_callback(c: Client, cb: CallbackQuery):
         await cb.answer(f"❌ Error: {e}", show_alert=True)
 
 # ==================== LOG SUKSES LOADING ====================
-try:
-    Altruix.log(f"[DEBUG] Loaded → {__plugin_name__} {PLUGIN_VERSION}", level=20)
-except Exception as e:
-    logger.info(f"[DEBUG] Loaded → {__plugin_name__} {PLUGIN_VERSION}")
+# try:
+#     Altruix.log(f"[DEBUG] Loaded → {__plugin_name__} {PLUGIN_VERSION}", level=20)
+# except Exception as e:
+#     logger.info(f"[DEBUG] Loaded → {__plugin_name__} {PLUGIN_VERSION}")

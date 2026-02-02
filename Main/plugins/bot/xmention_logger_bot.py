@@ -226,7 +226,7 @@ async def mention_mute_handler(c: Client, cb: CallbackQuery):
 
 
 # Log successful loading
-try:
-    Altruix.log(f"[DEBUG] Loaded → {__plugin_name__} {PLUGIN_VERSION}", level=20)
-except Exception as e:
-    logger.info(f"[DEBUG] Loaded → {__plugin_name__} {PLUGIN_VERSION}")
+# try:
+#     Altruix.log(f"[DEBUG] Loaded → {__plugin_name__} {PLUGIN_VERSION}", level=20)
+# except Exception as e:
+#     logger.info(f"[DEBUG] Loaded → {__plugin_name__} {PLUGIN_VERSION}")

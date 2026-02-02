@@ -126,7 +126,7 @@ class AltruixClient:
         self.clients: List[Client] = []
         self.cmd_list = {}
         self.all_lang_strings = {}
-        self.__version__ = "0.0.6.58"
+        self.__version__ = "0.0.6.85"
         self.selected_lang = "english"
         self.local_lang_file = "./Main/localization"
         self.cmd_list = {} # {plugin_name: [cmd_data, ...]}
@@ -342,6 +342,34 @@ class AltruixClient:
                 if args
                 else str_ing
             )
+
+    async def edit_cb(self, cb: CallbackQuery, text: str, **kwargs):
+        """
+        Helper to edit callback query message safely.
+        Handles both regular and inline query messages.
+        """
+        if "parse_mode" not in kwargs:
+            kwargs["parse_mode"] = ParseMode.HTML
+        
+        try:
+            if cb.message:
+                return await cb.message.edit(text, **kwargs)
+            else:
+                return await cb.edit_message_text(text, **kwargs)
+        except Exception as e:
+            if "MESSAGE_NOT_MODIFIED" in str(e):
+                return True
+            logger.error(f"Error in edit_cb: {e}")
+            return False
+
+    async def delete_cb(self, cb: CallbackQuery):
+        """Helper to delete callback query message safely."""
+        try:
+            if cb.message:
+                return await cb.message.delete()
+        except Exception as e:
+            logger.error(f"Error in delete_cb: {e}")
+            return False
 
     def on_message(self, custom_filters, group=1, bot_mode_unsupported=False):
         custom_filters &= ~filters.command(

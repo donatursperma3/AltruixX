@@ -362,7 +362,8 @@ async def purgeme_callback_handler(client: Client, cb: CallbackQuery):
                     state["dashboard_msg_id"] = cb.message.id
                     state["dashboard_chat_id"] = cb.message.chat.id
                     
-                await cb.edit_message_text(
+                await Altruix.edit_cb(
+                    cb,
                     f"{title}\n⏳ <i>Task is in progress...</i>",
                     parse_mode=enums.ParseMode.HTML,
                     disable_web_page_preview=True,
@@ -381,20 +382,16 @@ async def purgeme_callback_handler(client: Client, cb: CallbackQuery):
             state["stop_event"].set()
             await cb.answer("🛑 Proses purgeme dihentikan!", show_alert=True)
             title = Altruix.get_string("purgeme_title") or "🗑 <b>Userbot Purgeme</b>"
-            await cb.edit_message_text(f"{title}\n❌ <b>Task Cancelled / Aborted</b>")
+            await Altruix.edit_cb(cb, f"{title}\n❌ <b>Task Cancelled / Aborted</b>")
             await asyncio.sleep(3)
-            try:
-                await cb.message.delete()
-            except: pass
+            await Altruix.delete_cb(cb)
             return # Prevent further processing
 
         elif "cancel" in data:
             state["status"] = "cancelled"
             state["event"].set()
             state["stop_event"].set()
-            try:
-                await cb.message.delete()
-            except: pass
+            await Altruix.delete_cb(cb)
             return # Prevent further processing
 
         elif "stop" in data:
@@ -416,7 +413,8 @@ async def purgeme_callback_handler(client: Client, cb: CallbackQuery):
         new_text = get_purgeme_text(state)
         
         try:
-            await cb.edit_message_text(
+            await Altruix.edit_cb(
+                cb,
                 new_text,
                 reply_markup=new_kb,
                 parse_mode=enums.ParseMode.HTML,
@@ -445,12 +443,8 @@ async def purgeme_close(client, cb: CallbackQuery):
     unique_id = data.replace("purgeme_close_", "", 1) if "_" in data else None
     
     # 1. Primary Attempt: Standard message delete
-    if cb.message:
-        try:
-            await cb.message.delete()
-            return
-        except:
-            pass
+    if await Altruix.delete_cb(cb):
+        return
 
     # 2. Secondary Attempt: Delete via Userbot/State (For Inline Results)
     if unique_id:
@@ -467,7 +461,7 @@ async def purgeme_close(client, cb: CallbackQuery):
     if not cb.message:
         try:
             # Try via Bot assistant one more time with inline_message_id
-            await cb.edit_message_text("🗑 <b>Purgeme Closed</b>", parse_mode=enums.ParseMode.HTML)
+            await Altruix.edit_cb(cb, "🗑 <b>Purgeme Closed</b>", parse_mode=enums.ParseMode.HTML)
             await cb.answer("Message closed.", show_alert=False)
             return
         except:

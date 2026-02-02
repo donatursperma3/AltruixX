@@ -359,6 +359,7 @@ async def pm_logger_user_handler(c: Client, m: RawMessage):
         sender_hyperlink = f'<a href="tg://user?id={sender_id}">{html.escape(sender_name)}</a>'
         
         msg_type_str = "text"
+        msg_text = ""
         if m.service:
             if m.service == enums.MessageServiceType.PHONE_CALL_ENDED:
                 msg_type_str = "phone_call"
@@ -671,7 +672,7 @@ async def open_pmlu_settings_owner_handler(c: Client, cb: CallbackQuery):
         owner_id = Altruix.config.OWNER_ID
         text, markup = generate_pmlu_menu(owner_id)
         if markup:
-            await cb.message.edit(text, reply_markup=markup, parse_mode=enums.ParseMode.HTML)
+            await Altruix.edit_cb(cb, text, reply_markup=markup, parse_mode=enums.ParseMode.HTML)
         else:
             await cb.answer("Failed to generate menu", show_alert=True)
             
@@ -737,7 +738,7 @@ async def pmlu_config_callback(c: Client, cb: CallbackQuery):
         # Refresh menu
         text, markup = generate_pmlu_menu(client_id)
         if markup:
-            await cb.message.edit(text, reply_markup=markup, parse_mode=enums.ParseMode.HTML)
+            await Altruix.edit_cb(cb, text, reply_markup=markup, parse_mode=enums.ParseMode.HTML)
                 
     except Exception as e:
         logger.error(f"PMLU Config Error: {e}")
@@ -1288,7 +1289,7 @@ async def resource_monitor():
 asyncio.create_task(resource_monitor())
 
 # ==================== LOG SUKSES LOADING ====================
-try:
-    Altruix.log(f"[DEBUG] Loaded → {__plugin_name__} {PLUGIN_VERSION}", level=20)
-except Exception as e:
-    logger.info(f"[DEBUG] Loaded → {__plugin_name__} {PLUGIN_VERSION}")
+# try:
+#     Altruix.log(f"[DEBUG] Loaded → {__plugin_name__} {PLUGIN_VERSION}", level=20)
+# except Exception as e:
+#     logger.info(f"[DEBUG] Loaded → {__plugin_name__} {PLUGIN_VERSION}")

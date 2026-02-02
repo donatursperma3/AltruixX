@@ -68,23 +68,12 @@ async def check_authorization(cb: CallbackQuery) -> bool:
     return True
 
 async def edit_cb(cb: CallbackQuery, text: str, **kwargs):
-    """
-    Helper to edit callback query message.
-    Handles both regular and inline query messages.
-    """
-    if "parse_mode" not in kwargs:
-        kwargs["parse_mode"] = ParseMode.HTML
-    
-    try:
-        if cb.message:
-            return await cb.message.edit(text, **kwargs)
-        else:
-            return await cb.edit_message_text(text, **kwargs)
-    except Exception as e:
-        if "MESSAGE_NOT_MODIFIED" in str(e):
-            return True
-        logger.error(f"Error in edit_cb: {e}")
-        return False
+    """Wrapper for Altruix.edit_cb."""
+    return await Altruix.edit_cb(cb, text, **kwargs)
+
+async def delete_cb(cb: CallbackQuery):
+    """Wrapper for Altruix.delete_cb."""
+    return await Altruix.delete_cb(cb)
 
 import pyrogram
 
@@ -93,7 +82,7 @@ import logging
 
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "settings"
-PLUGIN_VERSION = "0.0.6.58"  # ✅ REFACTORED: Settings Menu Repairs
+PLUGIN_VERSION = "0.0.6.85"  # ✅ FIXED: Global Audit & Version Sync
 
 logger = logging.getLogger("altruix.settings")
 logger.setLevel(logging.INFO)
@@ -102,7 +91,7 @@ logger.setLevel(logging.INFO)
 from Main.internals.get_session import add_session_cb_handler
 
 # 🔥 LOG STARTUP
-logger.info(f"🚀 Initializing settings plugin v{PLUGIN_VERSION}")
+# logger.info(f"🚀 Initializing settings plugin v{PLUGIN_VERSION}")
 
 # Dictionary untuk menyimpan state konfirmasi user
 # ✅ SHARED STATES (Using client-instantiated dictionaries)
@@ -148,6 +137,7 @@ STRINGS = {
         "view_sessions": "📱 Sesi Login",
         "recent_messages": "📨 Pesan Terbaru",
         "view_mentions": "🔔 Lihat Mention",
+        "env_edit_file": "📁 Edit via File",
         "mention_control": "🔔 Mention Control",
         "pm_logger_control": "📟 PM Logger Controls",
         "join_group": "➕ Join Group/Ch",
@@ -217,7 +207,8 @@ STRINGS = {
         "cmd_settings": "Pengaturan Perintah",
         "auto_delete_cmd": "Auto-Delete Input",
         "cmd_settings_text": "<b>🛠️ Pengaturan Perintah</b>",
-        "auto_delete_desc": "Hapus otomatis pesan perintah (prefix) setelah eksekusi."
+        "auto_delete_desc": "Hapus otomatis pesan perintah setelah eksekusi.",
+        "env_edit_file": "📁 Edit via File"
     },
     "english": {
         "sessions": "Sessions",
@@ -234,6 +225,7 @@ STRINGS = {
         "view_sessions": "📱 Login Sessions",
         "recent_messages": "📨 Recent Messages",
         "view_mentions": "🔔 View Mentions",
+        "env_edit_file": "📁 Edit via File",
         "mention_control": "🔔 Mention Control",
         "pm_logger_control": "📟 PM Logger Controls",
         "join_group": "➕ Join Group/Ch",
@@ -308,7 +300,13 @@ STRINGS = {
 }
 
 def gt(key):
-    """Get Translated string"""
+    """Get Translated string with global YAML support fallback"""
+    # 1. Try global Altruix strings (YAML)
+    val = Altruix.get_string(key)
+    if val and val != key:
+        return val
+        
+    # 2. Fallback to local STRINGS dictionary
     lang = SETTINGS_LANG if SETTINGS_LANG in STRINGS else "english"
     return STRINGS[lang].get(key, STRINGS["english"].get(key, key))
 
@@ -1021,12 +1019,18 @@ async def bulk_join_delay_handler(c: Client, cb: CallbackQuery):
 
 
 # ✅ PERUBAHAN: Handler untuk menerima input teks (dengan konfirmasi)
-@Altruix.bot.on_message(filters.text & filters.private & filters.user(Altruix.auth_users))
+@Altruix.bot.on_message((filters.text | filters.document) & filters.private & filters.user(Altruix.auth_users))
 @log_errors
 async def user_text_handler(c: Client, m: Message):
     """Handler untuk menerima input teks dari user (dengan konfirmasi)"""
     user_id = m.from_user.id
-    text = m.text.strip()
+    text = (m.text or m.caption or "").strip()
+    
+    # ✅ PERBAIKAN: Izinkan flag/command bot agar tidak di-intersep bila tidak perlu
+    # Jika pesan dimulai dengan '/' dan bukan '/cancel', biarkan Handler Command yang memproses.
+    if text.startswith("/") and text.lower() != "/cancel":
+        m.continue_propagation()
+        return
     
     # ✅ NEW: Handle Privacy State (Block/Unblock)
     if user_id in user_privacy_state:
@@ -1931,7 +1935,7 @@ async def user_text_handler(c: Client, m: Message):
             )
             return
             
-        elif action == 'add_value' or action == 'edit_value':
+        elif action in ['add_value', 'edit_value', 'edit_value_file']:
             # Final Step: Dapatkan value
             new_val = text
             source_info = ""
@@ -1969,12 +1973,13 @@ async def user_text_handler(c: Client, m: Message):
             if len(preview) > 1000:
                 preview = preview[:1000] + "..."
             
+            # Use localized strings for confirmation
             await m.reply(
-                f"<b>❓ Konfirmasi Simpan ENV</b>\n\n"
-                f"🔑 <b>Key:</b> <code>{env_key}</code>\n"
-                f"📝 <b>Value Preview:</b>\n<code>{html.escape(preview)}</code>\n"
-                f"📏 <b>Total Length:</b> <code>{len(new_val)}</code>{source_info}\n\n"
-                f"Apakah Anda yakin ingin menyimpan perubahan ini?",
+                Altruix.get_string("env_preview_title") + "\n\n" +
+                Altruix.get_string("env_preview_key").format(env_key) + "\n" +
+                Altruix.get_string("env_preview_val").format(html.escape(preview)) + "\n" +
+                Altruix.get_string("env_preview_info").format(len=len(new_val), name=m.document.file_name if m.document else "Text") +
+                "\n\n" + Altruix.get_string("confirm_msg"),
                 reply_markup=InlineKeyboardMarkup(confirm_btns),
                 parse_mode=ParseMode.HTML
             )
@@ -2190,7 +2195,7 @@ async def bulk_join_confirm_handler(c: Client, cb: CallbackQuery):
     
     # Proses bulk join
     if user_id not in user_bulk_join_state:
-        await cb.message.edit("❌ Data tidak ditemukan. Silakan ulangi.")
+        await edit_cb(cb, "❌ Data tidak ditemukan. Silakan ulangi.")
         return
     
     state = user_bulk_join_state[user_id]
@@ -2213,7 +2218,7 @@ async def execute_bulk_join(c: Client, cb: CallbackQuery, delay: int, link: str)
     total_sessions = len(Altruix.clients) if hasattr(Altruix, 'clients') else 0
     
     if total_sessions == 0:
-        await cb.message.edit("❌ No sessions available to join.")
+        await edit_cb(cb, "❌ No sessions available to join.")
         return
     
     await edit_cb(cb, f"🔄 Starting bulk join for <b>{total_sessions}</b> sessions...\n\n"
@@ -2276,7 +2281,7 @@ async def execute_bulk_join(c: Client, cb: CallbackQuery, delay: int, link: str)
                 failed_list.append(f"{index+1}. {session_name} - {type(e).__name__}")
                 # Jika error karena link tidak valid, berhenti
                 if isinstance(e, (InviteHashInvalid, InviteHashExpired, UsernameNotOccupied)):
-                    await cb.message.edit(f"❌ Link invalid/expired. Stopping...")
+                    await edit_cb(cb, f"❌ Link invalid/expired. Stopping...")
                     break
             
             except Exception as e:
@@ -2357,12 +2362,12 @@ async def bulk_leave_confirm_handler(c: Client, cb: CallbackQuery):
     if choice == "no":
         if user_id in user_bulk_leave_state:
             del user_bulk_leave_state[user_id]
-        await cb.message.edit("❌ Bulk leave dibatalkan.", 
+        await edit_cb(cb, "❌ Bulk leave dibatalkan.", 
                              reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="sessions_list_1")]]))
         return
     
     if user_id not in user_bulk_leave_state:
-        await cb.message.edit("❌ Data tidak ditemukan.")
+        await edit_cb(cb, "❌ Data tidak ditemukan.")
         return
     
     state = user_bulk_leave_state[user_id]
@@ -2381,12 +2386,12 @@ async def bulk_report_reason_handler(c: Client, cb: CallbackQuery):
     reason = cb.matches[0].group(2)
     
     if user_id not in user_bulk_report_state:
-        await cb.message.edit("❌ Session expired. Silakan ulangi.")
+        await edit_cb(cb, "❌ Session expired. Silakan ulangi.")
         return
     
     if reason == "custom":
         user_bulk_report_state[user_id]['step'] = 'waiting_custom_reason'
-        await cb.message.edit("✍️ Silakan ketik alasan report custom Anda:", 
+        await edit_cb(cb, "✍️ Silakan ketik alasan report custom Anda:", 
                              reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancel", callback_data="sessions_list_1")]]))
         return
     
@@ -2429,12 +2434,12 @@ async def bulk_report_confirm_handler(c: Client, cb: CallbackQuery):
     if choice == "no":
         if user_id in user_bulk_report_state:
             del user_bulk_report_state[user_id]
-        await cb.message.edit("❌ Bulk report dibatalkan.", 
+        await edit_cb(cb, "❌ Bulk report dibatalkan.", 
                              reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="sessions_list_1")]]))
         return
     
     if user_id not in user_bulk_report_state:
-        await cb.message.edit("❌ Data tidak ditemukan.")
+        await edit_cb(cb, "❌ Data tidak ditemukan.")
         return
     
     state = user_bulk_report_state[user_id]
@@ -2460,10 +2465,9 @@ async def execute_bulk_leave(c: Client, cb: CallbackQuery, delay: float, chat_id
         
         if i < total - 1:
             await asyncio.sleep(delay)
-            await cb.message.edit(f"🔄 <b>Bulk Leave in progress...</b>\nSuccess: <code>{success}</code>\nFailed: <code>{failed}</code>\nRemaining: <code>{total - (i+1)}</code>")
+            await edit_cb(cb, f"🔄 <b>Bulk Leave in progress...</b>\nSuccess: <code>{success}</code>\nFailed: <code>{failed}</code>\nRemaining: <code>{total - (i+1)}</code>")
 
-    await cb.message.edit(f"✅ <b>Bulk Leave Completed</b>\n\nTarget: <code>{chat_id}</code>\nSuccess: <code>{success}</code>\nFailed: <code>{failed}</code>", 
-                         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="sessions_list_1")]]))
+    await edit_cb(cb, f"✅ <b>Bulk Leave Completed</b>\n\nTarget: <code>{chat_id}</code>\nSuccess: <code>{success}</code>\nFailed: <code>{failed}</code>")
 
 
 async def execute_bulk_report(c: Client, cb: CallbackQuery, delay: float, target: str, reason: str):
@@ -2472,7 +2476,7 @@ async def execute_bulk_report(c: Client, cb: CallbackQuery, delay: float, target
     success = 0
     failed = 0
     
-    await cb.message.edit(f"🔄 <b>Bulk Report in progress...</b>\nTarget: <code>{target}</code>\nTotal: <code>{total}</code> sessions")
+    await edit_cb(cb, f"🔄 <b>Bulk Report in progress...</b>\nTarget: <code>{target}</code>\nTotal: <code>{total}</code> sessions")
     
     for i, client in enumerate(Altruix.clients):
         try:
@@ -2483,10 +2487,9 @@ async def execute_bulk_report(c: Client, cb: CallbackQuery, delay: float, target
         
         if i < total - 1:
             await asyncio.sleep(delay)
-            await cb.message.edit(f"🔄 <b>Bulk Report in progress...</b>\nSuccess: <code>{success}</code>\nFailed: <code>{failed}</code>\nRemaining: <code>{total - (i+1)}</code>")
+            await edit_cb(cb, f"🔄 <b>Bulk Report in progress...</b>\nSuccess: <code>{success}</code>\nFailed: <code>{failed}</code>\nRemaining: <code>{total - (i+1)}</code>")
 
-    await cb.message.edit(f"✅ <b>Bulk Report Completed</b>\n\nTarget: <code>{target}</code>\nSuccess: <code>{success}</code>\nFailed: <code>{failed}</code>", 
-                         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="sessions_list_1")]]))
+    await edit_cb(cb, f"✅ <b>Bulk Report Completed</b>\n\nTarget: <code>{target}</code>\nSuccess: <code>{success}</code>\nFailed: <code>{failed}</code>")
 
 
 # ====================== JOIN LOG GROUP FEATURE ======================
@@ -2509,7 +2512,7 @@ async def join_log_group_handler(c: Client, cb: CallbackQuery):
         try:
             session_info = await session_client.get_me()
         except Exception as e:
-            await cb.message.edit(f"Error getting session info: {str(e)}")
+            await edit_cb(cb, f"Error getting session info: {str(e)}")
             # Kirim notifikasi error ke log group
             await send_log_notification(
                 c, 'join_log_group', index, cb.from_user, 
@@ -2538,7 +2541,7 @@ async def join_log_group_handler(c: Client, cb: CallbackQuery):
                 if not link:
                     raise Exception("No invite link available")
             except Exception:
-                await cb.message.edit("❌ Cannot get invite link for log group. Make sure bot is admin.")
+                await edit_cb(cb, "❌ Cannot get invite link for log group. Make sure bot is admin.")
                 # Kirim notifikasi error ke log group
                 await send_log_notification(
                     c, 'join_log_group', index, cb.from_user, 
@@ -2563,7 +2566,7 @@ async def join_log_group_handler(c: Client, cb: CallbackQuery):
                 link_preview_options=LinkPreviewOptions(is_disabled=True)
             )
             
-            await cb.message.edit("✅ Successfully joined log group!")
+            await edit_cb(cb, "✅ Successfully joined log group!")
             
             # ✅ BARU: Kirim notifikasi ke log group via fungsi
             await send_log_notification(
@@ -2572,7 +2575,7 @@ async def join_log_group_handler(c: Client, cb: CallbackQuery):
             )
             
         except UserAlreadyParticipant:
-            await cb.message.edit("ℹ️ This session is already in the log group.")
+            await edit_cb(cb, "ℹ️ This session is already in the log group.")
             # ✅ BARU: Kirim notifikasi ke log group
             await send_log_notification(
                 c, 'join_log_group', index, cb.from_user, 
@@ -2580,7 +2583,7 @@ async def join_log_group_handler(c: Client, cb: CallbackQuery):
             )
             
         except Exception as e:
-            await cb.message.edit(f"❌ Failed to join log group: {str(e)}")
+            await edit_cb(cb, f"❌ Failed to join log group: {str(e)}")
             
             # Log error
             await Altruix.bot.send_message(
@@ -2599,7 +2602,7 @@ async def join_log_group_handler(c: Client, cb: CallbackQuery):
             )
     
     except Exception as e:
-        await cb.message.edit(f"❌ Error: {str(e)}")
+        await edit_cb(cb, f"❌ Error: {str(e)}")
         # ✅ BARU: Kirim notifikasi error ke log group
         await send_log_notification(
             c, 'join_log_group', index, cb.from_user, 
@@ -3088,10 +3091,10 @@ async def test_ping_all_execute_handler(c: Client, cb: CallbackQuery):
     total_sessions = len(Altruix.clients) if hasattr(Altruix, 'clients') else 0
     
     if total_sessions == 0:
-        await cb.message.edit("❌ No sessions available to ping.")
+        await edit_cb(cb, "❌ No sessions available to ping.")
         return
 
-    await cb.message.edit(f"✅ Starting ping test for <b>{total_sessions}</b> sessions...")
+    await edit_cb(cb, f"✅ Starting ping test for <b>{total_sessions}</b> sessions...")
     
     for index, client in enumerate(Altruix.clients):
         try:
@@ -3382,7 +3385,7 @@ async def dl_content_input_handler(c: Client, cb: CallbackQuery):
         
         if msg.text.lower() == 'cancel':
             await msg.delete()
-            await cb.message.edit("❌ Dibatalkan.")
+            await edit_cb(cb, "❌ Dibatalkan.")
             await asyncio.sleep(2)
             await sessions_info_cb_handler(c, cb)
             return
@@ -3390,13 +3393,13 @@ async def dl_content_input_handler(c: Client, cb: CallbackQuery):
         link = msg.text.strip()
         await msg.delete()
         
-        await cb.message.edit("🔄 <b>Sedang memproses...</b>")
+        await edit_cb(cb, "🔄 <b>Sedang memproses...</b>")
         await process_download_content(c, cb, session_client, link, index, page)
         
     except asyncio.TimeoutError:
-        await cb.message.edit("⏳ Waktu habis. Silakan coba lagi.")
+        await edit_cb(cb, "⏳ Waktu habis. Silakan coba lagi.")
     except Exception as e:
-        await cb.message.edit(f"❌ Error: {str(e)}")
+        await edit_cb(cb, f"❌ Error: {str(e)}")
 
 
 async def process_download_content(c, cb, session_client, link, index, page):
@@ -3404,7 +3407,7 @@ async def process_download_content(c, cb, session_client, link, index, page):
     try:
         # Simple link parsing
         if "t.me/" not in link:
-            await cb.message.edit("❌ <b>Link tidak valid!</b>")
+            await edit_cb(cb, "❌ <b>Link tidak valid!</b>")
             return
 
         parts = link.split("/")
@@ -3419,16 +3422,16 @@ async def process_download_content(c, cb, session_client, link, index, page):
         # Try to get message
         msg = await session_client.get_messages(target, msg_id)
         if not msg:
-            await cb.message.edit("❌ <b>Pesan tidak ditemukan!</b>")
+            await edit_cb(cb, "❌ <b>Pesan tidak ditemukan!</b>")
             return
 
         # Attempt to copy first
         try:
             await msg.copy(log_chat_id)
-            await cb.message.edit("✅ <b>Berhasil!</b> Konten telah disalin ke Log Group.")
+            await edit_cb(cb, "✅ <b>Berhasil!</b> Konten telah disalin ke Log Group.")
         except Exception:
             # Fallback for restricted: Download and Upload
-            await cb.message.edit("🔄 <b>Copy gagal, mencoba Bypass (Download & Upload)...</b>")
+            await edit_cb(cb, "🔄 <b>Copy gagal, mencoba Bypass (Download & Upload)...</b>")
             file_path = await session_client.download_media(msg)
             if file_path:
                 try:
@@ -3446,7 +3449,7 @@ async def process_download_content(c, cb, session_client, link, index, page):
                     elif msg.animation:
                         await c.send_animation(log_chat_id, file_path, caption=caption)
                     
-                    await cb.message.edit("✅ <b>Bypass Berhasil!</b> Konten telah diupload ke Log Group.")
+                    await edit_cb(cb, "✅ <b>Bypass Berhasil!</b> Konten telah diupload ke Log Group.")
                 finally:
                     if os.path.exists(file_path):
                         os.remove(file_path)
@@ -3454,9 +3457,9 @@ async def process_download_content(c, cb, session_client, link, index, page):
                 # Text only?
                 if msg.text:
                     await c.send_message(log_chat_id, f"📥 <b>Text Content:</b>\n\n{msg.text}")
-                    await cb.message.edit("✅ <b>Berhasil!</b> Teks telah disalin ke Log Group.")
+                    await edit_cb(cb, "✅ <b>Berhasil!</b> Teks telah disalin ke Log Group.")
                 else:
-                    await cb.message.edit("❌ <b>Gagal mendownload media.</b>")
+                    await edit_cb(cb, "❌ <b>Gagal mendownload media.</b>")
 
         # Log
         await send_log_notification(
@@ -3465,7 +3468,7 @@ async def process_download_content(c, cb, session_client, link, index, page):
         )
 
     except Exception as e:
-        await cb.message.edit(f"❌ <b>Gagal:</b> {str(e)}")
+        await edit_cb(cb, f"❌ <b>Gagal:</b> {str(e)}")
         await send_log_notification(
             c, 'download_content', index, cb.from_user,
             False, str(e), {'Link': link}
@@ -3534,11 +3537,11 @@ async def recent_messages_quick_handler(c: Client, cb: CallbackQuery):
     }
     
     # Langsung proses
-    await cb.message.edit(f"🔄 Mengambil {count} pesan terbaru...")
+    await edit_cb(cb, f"🔄 Mengambil {count} pesan terbaru...")
     
     try:
         if index >= len(Altruix.clients):
-            await cb.message.edit("❌ Session tidak ditemukan.")
+            await edit_cb(cb, "❌ Session tidak ditemukan.")
             if user_id in user_recent_messages_state:
                 del user_recent_messages_state[user_id]
             return
@@ -3558,7 +3561,7 @@ async def recent_messages_quick_handler(c: Client, cb: CallbackQuery):
         messages.sort(key=lambda x: x['date'], reverse=True)
         
         if not messages:
-            await cb.message.edit("❌ Tidak ada pesan terbaru ditemukan.")
+            await edit_cb(cb, "❌ Tidak ada pesan terbaru ditemukan.")
             return
         
         # Ambil jumlah yang diminta
@@ -3610,7 +3613,7 @@ async def recent_messages_quick_handler(c: Client, cb: CallbackQuery):
         
     except Exception as e:
         error_msg = f"Gagal mengambil pesan: {str(e)}"
-        await cb.message.edit(f"❌ {error_msg}")
+        await edit_cb(cb, f"❌ {error_msg}")
         Altruix.log(f"Error recent_messages session {index}: {e}", level=logging.ERROR)
         
         # Kirim notifikasi error ke log group
@@ -3686,7 +3689,7 @@ async def mention_count_handler(c: Client, cb: CallbackQuery):
     count = int(cb.matches[0].group(2))
     
     if user_id not in user_mentions_state:
-        await cb.message.edit("❌ Session tidak ditemukan atau state expired.")
+        await edit_cb(cb, "❌ Session tidak ditemukan atau state expired.")
         return
     
     state = user_mentions_state[user_id]
@@ -3695,7 +3698,7 @@ async def mention_count_handler(c: Client, cb: CallbackQuery):
     group = state.get('group')
     
     if index >= len(Altruix.clients):
-        await cb.message.edit("❌ Session tidak ditemukan.")
+        await edit_cb(cb, "❌ Session tidak ditemukan.")
         if user_id in user_mentions_state:
             del user_mentions_state[user_id]
         return
@@ -3703,14 +3706,14 @@ async def mention_count_handler(c: Client, cb: CallbackQuery):
     session_client = Altruix.clients[index]
     session_info = getattr(session_client, 'myself', None) or await session_client.get_me()
     
-    await cb.message.edit(f"🔔 Mencari mention di {group}...")
+    await edit_cb(cb, f"🔔 Mencari mention di {group}...")
     
     try:
         # Resolve group
         try:
             chat = await session_client.get_chat(group)
         except Exception as e:
-            await cb.message.edit(f"❌ Gagal mendapatkan group: {str(e)}")
+            await edit_cb(cb, f"❌ Gagal mendapatkan group: {str(e)}")
             if user_id in user_mentions_state:
                 del user_mentions_state[user_id]
             return
@@ -3733,7 +3736,7 @@ async def mention_count_handler(c: Client, cb: CallbackQuery):
                             break
         
         if not messages:
-            await cb.message.edit(f"❌ Tidak ditemukan mention untuk @{session_info.username} di group {chat.title}.")
+            await edit_cb(cb, f"❌ Tidak ditemukan mention untuk @{session_info.username} di group {chat.title}.")
             if user_id in user_mentions_state:
                 del user_mentions_state[user_id]
             return
@@ -3767,7 +3770,7 @@ async def mention_count_handler(c: Client, cb: CallbackQuery):
         )
         
     except Exception as e:
-        await cb.message.edit(f"❌ Gagal mencari mention: {str(e)}")
+        await edit_cb(cb, f"❌ Gagal mencari mention: {str(e)}")
         Altruix.log(f"Error view_mentions session {index}: {e}", level=logging.ERROR)
         await send_log_notification(
             c, 'view_mentions', index, cb.from_user,
@@ -3790,7 +3793,7 @@ async def cancel_mention_handler(c: Client, cb: CallbackQuery):
     if user_id in user_mentions_state:
         del user_mentions_state[user_id]
     await cb.answer("Cancelled.")
-    await cb.message.edit("❌ Lihat mention dibatalkan.")
+    await edit_cb(cb, "❌ Lihat mention dibatalkan.")
 
 
 # ✅ HANDLER BARU: Kirim Foto Profil
@@ -3819,7 +3822,7 @@ async def send_profile_photo_handler(c: Client, cb: CallbackQuery):
             photos.append(photo)
         
         if not photos:
-            await cb.message.edit("❌ Akun ini tidak memiliki foto profil.")
+            await edit_cb(cb, "❌ Akun ini tidak memiliki foto profil.")
             # Kirim log
             await send_log_notification(
                 c, 'send_profile_photo', index, cb.from_user,
@@ -3855,13 +3858,13 @@ async def send_profile_photo_handler(c: Client, cb: CallbackQuery):
         )
         
     except FloodWait as e:
-        await cb.message.edit(f"⏳ FloodWait: Tunggu {e.value} detik.")
+        await edit_cb(cb, f"⏳ FloodWait: Tunggu {e.value} detik.")
         await send_log_notification(
             c, 'send_profile_photo', index, cb.from_user,
             False, f"FloodWait {e.value}s", {'Aksi': 'Kirim foto profil gagal'}
         )
     except Exception as e:
-        await cb.message.edit(f"❌ Gagal mengirim foto profil: {str(e)}")
+        await edit_cb(cb, f"❌ Gagal mengirim foto profil: {str(e)}")
         Altruix.log(f"Error send_profile_photo session {index}: {e}", level=logging.ERROR)
         await send_log_notification(
             c, 'send_profile_photo', index, cb.from_user,
@@ -3900,7 +3903,7 @@ async def leave_chat_input_handler(c: Client, cb: CallbackQuery):
         
         if msg.text.lower() == 'cancel':
             await msg.delete()
-            await cb.message.edit("❌ Dibatalkan.")
+            await edit_cb(cb, "❌ Dibatalkan.")
             await asyncio.sleep(2)
             await sessions_info_cb_handler(c, cb)
             return
@@ -3924,9 +3927,9 @@ async def leave_chat_input_handler(c: Client, cb: CallbackQuery):
         )
         
     except asyncio.TimeoutError:
-        await cb.message.edit("⏳ Waktu habis. Silakan coba lagi.")
+        await edit_cb(cb, "⏳ Waktu habis. Silakan coba lagi.")
     except Exception as e:
-        await cb.message.edit(f"❌ Error: {str(e)}")
+        await edit_cb(cb, f"❌ Error: {str(e)}")
 
 @Altruix.bot.on_callback_query(filters.regex(r"leave_chat_confirm_(\d+)_(\d+)_(.+)"))
 @log_errors
@@ -3955,7 +3958,7 @@ async def leave_chat_confirm_handler(c: Client, cb: CallbackQuery):
         
         await session_client.leave_chat(target)
         
-        await cb.message.edit(f"✅ Berhasil keluar dari <b>{html.escape(str(chat_title))}</b>")
+        await edit_cb(cb, f"✅ Berhasil keluar dari <b>{html.escape(str(chat_title))}</b>")
         
         # Log
         await send_log_notification(
@@ -3967,7 +3970,7 @@ async def leave_chat_confirm_handler(c: Client, cb: CallbackQuery):
         await sessions_info_cb_handler(c, cb)
         
     except Exception as e:
-        await cb.message.edit(f"❌ Gagal keluar dari {target}: {str(e)}")
+        await edit_cb(cb, f"❌ Gagal keluar dari {target}: {str(e)}")
         await send_log_notification(
             c, 'leave_chat', index, cb.from_user,
             False, str(e), {'Target': target}
@@ -4005,7 +4008,7 @@ async def send_message_input_handler(c: Client, cb: CallbackQuery):
         
         if msg_target.text.lower() == 'cancel':
             await msg_target.delete()
-            await cb.message.edit("❌ Dibatalkan.")
+            await edit_cb(cb, "❌ Dibatalkan.")
             await asyncio.sleep(2)
             await sessions_info_cb_handler(c, cb)
             return
@@ -4026,7 +4029,7 @@ async def send_message_input_handler(c: Client, cb: CallbackQuery):
         
         if msg_text.text.lower() == 'cancel':
             await msg_text.delete()
-            await cb.message.edit("❌ Dibatalkan.")
+            await edit_cb(cb, "❌ Dibatalkan.")
             return
             
         text_to_send = msg_text.text
@@ -4055,9 +4058,9 @@ async def send_message_input_handler(c: Client, cb: CallbackQuery):
         )
         
     except asyncio.TimeoutError:
-        await cb.message.edit("⏳ Waktu habis. Silakan coba lagi.")
+        await edit_cb(cb, "⏳ Waktu habis. Silakan coba lagi.")
     except Exception as e:
-        await cb.message.edit(f"❌ Error: {str(e)}")
+        await edit_cb(cb, f"❌ Error: {str(e)}")
 
 @Altruix.bot.on_callback_query(filters.regex(r"send_msg_confirm_(\d+)_(\d+)"))
 @log_errors
@@ -4467,13 +4470,13 @@ async def check_limit_execute_handler(c: Client, cb: CallbackQuery):
     page = int(cb.matches[0].group(2))
 
     if index >= len(Altruix.clients):
-        await cb.message.edit("❌ Session tidak ditemukan.")
+        await edit_cb(cb, "❌ Session tidak ditemukan.")
         return
 
     session_client = Altruix.clients[index]
     session_info = getattr(session_client, 'myself', None) or await session_client.get_me()
 
-    await cb.message.edit("🔄 Mengirim /start ke @SpamBot...")
+    await edit_cb(cb, "🔄 Mengirim /start ke @SpamBot...")
 
     try:
         # Kirim /start ke SpamBot untuk memicu respons
@@ -4505,13 +4508,13 @@ async def check_limit_execute_handler(c: Client, cb: CallbackQuery):
         )
 
     except BotBlocked:
-        await cb.message.edit("❌ Akun ini diblokir oleh @SpamBot (kemungkinan limit permanen atau sebelumnya terkena spam berat).")
+        await edit_cb(cb, "❌ Akun ini diblokir oleh @SpamBot (kemungkinan limit permanen atau sebelumnya terkena spam berat).")
 
     except FloodWait as e:
-        await cb.message.edit(f"⏳ FloodWait! Akun ini harus menunggu {e.value} detik sebelum bisa mengirim pesan lagi.")
+        await edit_cb(cb, f"⏳ FloodWait! Akun ini harus menunggu {e.value} detik sebelum bisa mengirim pesan lagi.")
 
     except Exception as e:
-        await cb.message.edit(f"❌ Gagal mengecek limit: {html.escape(str(e))}")
+        await edit_cb(cb, f"❌ Gagal mengecek limit: {html.escape(str(e))}")
         Altruix.log(f"Error check limit session {index}: {e}", level=logging.ERROR)
 
 
@@ -4572,7 +4575,7 @@ async def test_ping_cb_handler(c: Client, cb: CallbackQuery):
 
     except FloodWait as e:
         await asyncio.sleep(e.value)
-        await cb.message.edit(f"⏳ FloodWait terdeteksi. Tunggu {e.value} detik.")
+        await edit_cb(cb, f"⏳ FloodWait terdeteksi. Tunggu {e.value} detik.")
         Altruix.log(f"FloodWait saat test ping session {index}: {e.value}s")
         
         # ✅ BARU: Kirim notifikasi error ke log group
@@ -4583,7 +4586,7 @@ async def test_ping_cb_handler(c: Client, cb: CallbackQuery):
 
     except (PeerIdInvalid, UserIsBlocked, ChatWriteForbidden) as e:
         error_msg = "❌ Gagal mengirim ping: Bot tidak bisa mengirim pesan ke grup log."
-        await cb.message.edit(error_msg)
+        await edit_cb(cb, error_msg)
         Altruix.log(f"Error izin saat test ping session {index}: {e}")
 
         try:
@@ -4607,7 +4610,7 @@ async def test_ping_cb_handler(c: Client, cb: CallbackQuery):
 
     except SlowmodeWait as e:
         error_msg = f"❌ Slowmode aktif. Tunggu {e.value} detik."
-        await cb.message.edit(error_msg)
+        await edit_cb(cb, error_msg)
         Altruix.log(f"SlowmodeWait saat test ping session {index}: {e.value}s")
         try:
             await Altruix.bot.send_message(
@@ -4628,7 +4631,7 @@ async def test_ping_cb_handler(c: Client, cb: CallbackQuery):
         )
 
     except Exception as e:
-        await cb.message.edit("❌ Gagal menguji ping. Owner telah diberi tahu.")
+        await edit_cb(cb, "❌ Gagal menguji ping. Owner telah diberi tahu.")
         Altruix.log(f"Error umum saat test ping session {index}: {e}")
 
         try:
@@ -4673,7 +4676,7 @@ async def export_phone_cb_handler(c: Client, cb: CallbackQuery):
         user_info = await session_client.get_me()
 
         if not user_info.phone_number:
-            await cb.message.edit("❌ Akun ini tidak memiliki nomor telepon yang terdaftar.")
+            await edit_cb(cb, "❌ Akun ini tidak memiliki nomor telepon yang terdaftar.")
             # ✅ BARU: Kirim notifikasi ke log group
             await send_log_notification(
                 c, 'export_phone', index, cb.from_user, 
@@ -4722,7 +4725,7 @@ async def export_phone_cb_handler(c: Client, cb: CallbackQuery):
         except Exception:
             pass
 
-        await cb.message.edit("❌ Gagal mengekspor nomor telepon. Owner telah diberi tahu.")
+        await edit_cb(cb, "❌ Gagal mengekspor nomor telepon. Owner telah diberi tahu.")
         Altruix.log(f"Error mengekspor nomor telepon: {e}", level=logging.ERROR)
         
         # ✅ BARU: Kirim notifikasi error ke log group
@@ -4864,7 +4867,7 @@ async def unlink_confirm_handler(c: Client, cb: CallbackQuery):
     index = int(cb.matches[0].group(1))
     
     try:
-        await cb.message.edit(f"⏳ {gt('unlink_session')}...")
+        await edit_cb(cb, f"⏳ {gt('unlink_session')}...")
         await Altruix.remove_session(index, user=cb.from_user)
         
         # Answer only once at the end with the success alert
@@ -4879,7 +4882,7 @@ async def unlink_confirm_handler(c: Client, cb: CallbackQuery):
             await cb.answer(f"❌ Error: {e}", show_alert=True)
         except:
             pass
-        await cb.message.edit(f"❌ Gagal menghapus sesi: {e}")
+        await edit_cb(cb, f"❌ Gagal menghapus sesi: {e}")
 
 
 # ✅ HANDLER BARU: Lihat Semua Sesi Login
@@ -4892,7 +4895,7 @@ async def view_all_sessions_handler(c: Client, cb: CallbackQuery):
     page = int(cb.matches[0].group(2))
 
     if index >= len(Altruix.clients):
-        await cb.message.edit("❌ Session tidak ditemukan.")
+        await edit_cb(cb, "❌ Session tidak ditemukan.")
         return
 
     session_client = Altruix.clients[index]
@@ -5004,7 +5007,7 @@ async def join_chat_confirm_handler(c: Client, cb: CallbackQuery):
         return
         
     await cb.answer("⏳ Mencoba join...", show_alert=False)
-    await cb.message.edit(f"🔄 Sesi {index+1} sedang mencoba join ke <code>{link}</code>...", parse_mode=ParseMode.HTML)
+    await edit_cb(cb, f"🔄 Sesi {index+1} sedang mencoba join ke <code>{link}</code>...", parse_mode=ParseMode.HTML)
     
     session_client = Altruix.clients[index]
     success = False
@@ -5038,13 +5041,13 @@ async def join_chat_confirm_handler(c: Client, cb: CallbackQuery):
         )
     except (InviteHashInvalid, InviteHashExpired):
         error_msg = "Link kadaluarsa atau tidak valid"
-        await cb.message.edit(f"❌ <b>Gagal!</b>\n\nLink tidak valid atau kadaluarsa.", parse_mode=ParseMode.HTML)
+        await edit_cb(cb, f"❌ <b>Gagal!</b>\n\nLink tidak valid atau kadaluarsa.", parse_mode=ParseMode.HTML)
     except FloodWait as e:
         error_msg = f"FloodWait {e.value}s"
-        await cb.message.edit(f"⏳ <b>FloodWait!</b>\n\nHarus menunggu {e.value} detik.", parse_mode=ParseMode.HTML)
+        await edit_cb(cb, f"⏳ <b>FloodWait!</b>\n\nHarus menunggu {e.value} detik.", parse_mode=ParseMode.HTML)
     except Exception as e:
         error_msg = str(e)
-        await cb.message.edit(f"❌ <b>Error:</b>\n\n<code>{html.escape(str(e))}</code>", parse_mode=ParseMode.HTML)
+        await edit_cb(cb, f"❌ <b>Error:</b>\n\n<code>{html.escape(str(e))}</code>", parse_mode=ParseMode.HTML)
     
     # Kirim notifikasi log
     await send_log_notification(
@@ -5134,7 +5137,7 @@ async def pml_menu_handler(c: Client, cb: CallbackQuery, index: int = None, page
         [InlineKeyboardButton("🔙 Back to Session Info", f"session_info_{index}_{page}")]
     ]
     
-    await cb.message.edit(text=text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    await edit_cb(cb, text=text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
 
 # ✅ HANDLER BARU: Toggle PM Logger Settings
@@ -5311,7 +5314,7 @@ async def joinl_menu_handler(c: Client, cb: CallbackQuery, index: int = None, pa
         ],
         [InlineKeyboardButton("🔙 Back to Session Info", f"session_info_{index}_{page}")]
     ]
-    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
 
 @Altruix.bot.on_callback_query(filters.regex(r"^joinl_toggle_type_(\d+)_(\d+)$"))
 @log_errors
@@ -5383,7 +5386,7 @@ async def cmd_settings_menu_handler(c: Client, cb: CallbackQuery):
         [InlineKeyboardButton("🔙 Back to Session Info", f"session_info_{index}_{page}")]
     ]
     
-    await cb.message.edit(text=text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    await edit_cb(cb, text=text, reply_markup=InlineKeyboardMarkup(buttons))
 
 
 @Altruix.bot.on_callback_query(filters.regex(r"^cmd_toggle_(\d+)_(\d+)$"))
@@ -5532,7 +5535,7 @@ async def cmdl_menu_handler(c: Client, cb: CallbackQuery, index: int = None, pag
         ],
         [InlineKeyboardButton("🔙 Back to Session Info", f"session_info_{index}_{page}")]
     ]
-    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
 
 @Altruix.bot.on_callback_query(filters.regex(r"^cmdl_toggle_type_(\d+)_(\d+)$"))
 @log_errors
@@ -5630,7 +5633,7 @@ async def pml_filters_menu_handler(c: Client, cb: CallbackQuery):
         ],
         [InlineKeyboardButton("🔙 Back to PM Logger", f"pml_menu_{index}_{page}")]
     ]
-    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^pmlfl_(user|bot)_(user|bot)_(\d+)_(\d+)$"))
 @log_errors
@@ -5670,7 +5673,7 @@ async def pmlf_list_handler(c: Client, cb: CallbackQuery):
             row = []
     if row: buttons.append(row)
     buttons.append([InlineKeyboardButton("🔙 Back to Filters Menu", f"pmlf_menu_{logger_type}_{index}_{page}")])
-    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^pmlft_(user|bot)_(user|bot)_(.+)_(\d+)_(\d+)$"))
 @log_errors
@@ -5862,11 +5865,11 @@ async def dlstory_session_input_handler(c: Client, cb: CallbackQuery):
         
         link = msg.text.strip()
         
-        await cb.message.edit("🔄 <b>Sedang memproses...</b>")
+        await edit_cb(cb, "🔄 <b>Sedang memproses...</b>")
         
         # Parse link
         if "t.me/" not in link or "/s/" not in link:
-            await cb.message.edit("❌ <b>Format link tidak valid!</b>")
+            await edit_cb(cb, "❌ <b>Format link tidak valid!</b>")
             await asyncio.sleep(3)
             await sessions_info_cb_handler(c, cb, index=index, callback_page=page)
             return
@@ -5892,7 +5895,7 @@ async def dlstory_session_input_handler(c: Client, cb: CallbackQuery):
                 except Exception:
                     pass
                     
-                await cb.message.edit(f"✅ <b>Berhasil!</b> Story telah disalin ke Log Group.")
+                await edit_cb(cb, f"✅ <b>Berhasil!</b> Story telah disalin ke Log Group.")
                 await cb.answer("✅ Success!", show_alert=False)
             except Exception as e:
                 err_str = str(e)
@@ -5902,12 +5905,12 @@ async def dlstory_session_input_handler(c: Client, cb: CallbackQuery):
                 if not bypass and isinstance(e, FloodWait):
                      raise e
                 
-                await cb.message.edit(f"🔄 <b>Copy gagal, mencoba Bypass (Download & Re-upload)...</b>")
+                await edit_cb(cb, f"🔄 <b>Copy gagal, mencoba Bypass (Download & Re-upload)...</b>")
                 
                 # ✅ BYPASS: Download and Re-upload
                 story = await session_client.get_stories(target, story_id)
                 if not story:
-                    await cb.message.edit("❌ <b>Story tidak ditemukan atau sudah kadaluarsa.</b>")
+                    await edit_cb(cb, "❌ <b>Story tidak ditemukan atau sudah kadaluarsa.</b>")
                     try:
                         await cb.answer("❌ Story Not Found", show_alert=True)
                     except Exception:
@@ -5928,7 +5931,7 @@ async def dlstory_session_input_handler(c: Client, cb: CallbackQuery):
                 async def progress(current, total):
                     try:
                         percent = (current / total) * 100
-                        await cb.message.edit(f"🔄 <b>Downloading Media... {percent:.1f}%</b>")
+                        await edit_cb(cb, f"🔄 <b>Downloading Media... {percent:.1f}%</b>")
                     except Exception:
                         pass
 
@@ -5962,7 +5965,7 @@ async def dlstory_session_input_handler(c: Client, cb: CallbackQuery):
                         else:
                             await session_client.send_photo(log_chat_id, file_path, caption=final_caption, caption_entities=final_entities)
                         
-                        await cb.message.edit("✅ <b>Bypass Berhasil!</b> Story telah diupload ke Log Group.")
+                        await edit_cb(cb, "✅ <b>Bypass Berhasil!</b> Story telah diupload ke Log Group.")
                         try:
                             await cb.answer("✅ Bypass Success!", show_alert=False)
                         except Exception:
@@ -5971,7 +5974,7 @@ async def dlstory_session_input_handler(c: Client, cb: CallbackQuery):
                         if os.path.exists(file_path):
                             os.remove(file_path)
                 else:
-                    await cb.message.edit("❌ <b>Gagal mendownload media story untuk bypass.</b>")
+                    await edit_cb(cb, "❌ <b>Gagal mendownload media story untuk bypass.</b>")
                     try:
                         await cb.answer("❌ Download Media Failed", show_alert=True)
                     except Exception:
@@ -5985,7 +5988,7 @@ async def dlstory_session_input_handler(c: Client, cb: CallbackQuery):
             
         except Exception as e:
             err_msg = str(e)
-            await cb.message.edit(f"❌ <b>Gagal:</b> {err_msg}")
+            await edit_cb(cb, f"❌ <b>Gagal:</b> {err_msg}")
             await cb.answer(f"❌ Failed: {err_msg[:30]}", show_alert=True)
             await send_log_notification(
                 c, 'dlstory_session', index, cb.from_user,
@@ -5996,9 +5999,9 @@ async def dlstory_session_input_handler(c: Client, cb: CallbackQuery):
         await sessions_info_cb_handler(c, cb, index=index, callback_page=page)
         
     except asyncio.TimeoutError:
-        await cb.message.edit("⏳ Waktu habis. Silakan coba lagi.")
+        await edit_cb(cb, "⏳ Waktu habis. Silakan coba lagi.")
     except Exception as e:
-        await cb.message.edit(f"❌ Error: {str(e)}")
+        await edit_cb(cb, f"❌ Error: {str(e)}")
 
 
 @Altruix.bot.on_callback_query(filters.regex(r"^mnt_toggle_type_(\d+)_(\d+)$"))
@@ -6406,7 +6409,7 @@ async def purge_exec_handler(c: Client, cb: CallbackQuery):
                 count += 1
                 if count % 5 == 0 or count == total_to_purge:
                     try:
-                        await cb.message.edit(gt("purge_progress").format(count=count, total=total_to_purge))
+                        await edit_cb(cb, gt("purge_progress").format(count=count, total=total_to_purge))
                     except:
                         pass
                 await asyncio.sleep(delay)
@@ -6422,7 +6425,7 @@ async def purge_exec_handler(c: Client, cb: CallbackQuery):
             count=count,
             error=error_count
         )
-        await cb.message.edit(final_text)
+        await edit_cb(cb, final_text)
         
         # Generate Chat Link if possible
         chat_link = f"https://t.me/{target.username}" if target.username else None
@@ -6448,7 +6451,7 @@ async def purge_exec_handler(c: Client, cb: CallbackQuery):
         )
         
     except Exception as e:
-        await cb.message.edit(f"❌ <b>Error saat Purge:</b> <code>{str(e)}</code>")
+        await edit_cb(cb, f"❌ <b>Error saat Purge:</b> <code>{str(e)}</code>")
         await send_log_notification(
             c, 'purge_my_message', session_index, cb.from_user,
             False, str(e), {'Target': chat_id}
@@ -6473,7 +6476,7 @@ async def dl_uphoto_exec_handler(c: Client, cb: CallbackQuery):
         return
         
     session_client = Altruix.clients[session_index]
-    await cb.message.edit(f"⏳ <b>Mendownload foto profil {html.escape(str(target))}...</b>")
+    await edit_cb(cb, f"⏳ <b>Mendownload foto profil {html.escape(str(target))}...</b>")
     
     try:
         # FIX: Convert to int if target is a chat ID (digits)
@@ -6509,10 +6512,10 @@ async def dl_uphoto_exec_handler(c: Client, cb: CallbackQuery):
                 True, None, {'Target': f"{user.first_name} ({user.id})"}
             )
         else:
-            await cb.message.edit("❌ <b>User tidak memiliki foto profil.</b>")
+            await edit_cb(cb, "❌ <b>User tidak memiliki foto profil.</b>")
             
     except Exception as e:
-        await cb.message.edit(f"❌ <b>Gagal mendownload foto:</b> <code>{str(e)}</code>")
+        await edit_cb(cb, f"❌ <b>Gagal mendownload foto:</b> <code>{str(e)}</code>")
         await send_log_notification(
             c, 'download_user_photo', session_index, cb.from_user,
             False, str(e), {'Target': target}
@@ -6610,7 +6613,7 @@ async def rpm_exec_handler(c: Client, cb: CallbackQuery):
         # Kirim PM
         await session_client.send_message(target_user.id, quote_reply, parse_mode=ParseMode.HTML)
         
-        await cb.message.edit(f"✅ Berhasil mengirim reply PM ke {html.escape(target_user.first_name)}.")
+        await edit_cb(cb, f"✅ Berhasil mengirim reply PM ke {html.escape(target_user.first_name)}.")
         
         # Kirim log
         await send_log_notification(
@@ -6623,7 +6626,7 @@ async def rpm_exec_handler(c: Client, cb: CallbackQuery):
         )
         
     except Exception as e:
-        await cb.message.edit(f"❌ Gagal mengirim reply PM: {str(e)}")
+        await edit_cb(cb, f"❌ Gagal mengirim reply PM: {str(e)}")
         await send_log_notification(
             c, 'reply_mention_to_pm', index, cb.from_user,
             False, str(e), {'Chat_ID': chat_id, 'Msg_ID': msg_id}
@@ -6731,7 +6734,7 @@ async def eval_exec_confirm_handler(c: Client, cb: CallbackQuery):
         await cb.answer("No code found.", show_alert=True)
         return
         
-    await cb.message.edit("⏳ <b>Executing...</b>")
+    await edit_cb(cb, "⏳ <b>Executing...</b>")
     
     session_client = Altruix.clients[index]
     
@@ -6857,7 +6860,7 @@ async def exec_term_handler(c: Client, cb: CallbackQuery):
         await cb.answer("No command found.", show_alert=True)
         return
         
-    await cb.message.edit("⏳ <b>Executing...</b>")
+    await edit_cb(cb, "⏳ <b>Executing...</b>")
     
     status = "Success"
     output = ""
@@ -6907,8 +6910,6 @@ async def exec_term_handler(c: Client, cb: CallbackQuery):
     del user_exec_state[user_id]
 
 
-# Log sukses loading
-logger.info(f"✅ Loaded → {__plugin_name__} v{PLUGIN_VERSION}")
 
 # ============================================================================
 # PRIVACY & SECURITY HANDLERS
@@ -7252,7 +7253,7 @@ async def chat_stats_scan_handler(c: Client, cb: CallbackQuery):
     
     scanning_msg = None
     try:
-         scanning_msg = await cb.message.edit(f"🔍 <b>Scanning chats... (0 found)</b>")
+         scanning_msg = await edit_cb(cb, f"🔍 <b>Scanning chats... (0 found)</b>")
     except: pass
 
     count = 0
@@ -7368,7 +7369,7 @@ async def display_chat_stats(c, cb, session_info, stats, index, page, cached=Fal
         ]
     ]
     
-    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
 
 # ============================================================================
@@ -7451,7 +7452,7 @@ async def startup_menu_handler(c: Client, cb: CallbackQuery):
         ]
     ]
     
-    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^startup_set_val_(\d+)_(\d+)$"))
 @log_errors
@@ -7547,7 +7548,7 @@ async def help_info_menu_handler(c: Client, cb: CallbackQuery):
         ]
     ]
     
-    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^help_info_set_val_(\d+)_(\d+)$"))
 @log_errors
@@ -7644,7 +7645,7 @@ async def startup_custom_menu_handler(c: Client, cb: CallbackQuery):
         ]
     ]
     
-    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
 
 @Altruix.bot.on_callback_query(filters.regex(r"^help_info_custom_menu_(\d+)_(\d+)$"))
@@ -7696,7 +7697,7 @@ async def help_info_custom_menu_handler(c: Client, cb: CallbackQuery):
         ]
     ]
     
-    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
 
 @Altruix.bot.on_callback_query(filters.regex(r"^help_info_custom_input_(\d+)_(\d+)$"))
@@ -8035,7 +8036,7 @@ async def mnt_filters_menu_handler(c: Client, cb: CallbackQuery):
         ],
         [InlineKeyboardButton("🔙 Back to Mention Menu", f"mnt_menu_{index}_{page}")]
     ]
-    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^mntfl_list_(\d+)_(\d+)$"))
 @log_errors
@@ -8063,7 +8064,7 @@ async def mntf_list_handler(c: Client, cb: CallbackQuery):
             row = []
     if row: buttons.append(row)
     buttons.append([InlineKeyboardButton("🔙 Back to Filters Menu", f"mntf_menu_{index}_{page}")])
-    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^mntft_toggle_(.+)_(\d+)_(\d+)$"))
 @log_errors
@@ -8185,7 +8186,7 @@ async def track_profile_confirm_cb_handler(c: Client, cb: CallbackQuery):
         
     except Exception as e:
         logger.error(f"Track Profile error: {e}")
-        await cb.message.edit(f"❌ <b>Gagal melacak:</b> {str(e)}")
+        await edit_cb(cb, f"❌ <b>Gagal melacak:</b> {str(e)}")
         
     del Altruix.user_track_state[user_id]
 
@@ -8254,7 +8255,8 @@ async def env_manager_list_handler(c: Client, cb: CallbackQuery):
     buttons.append([InlineKeyboardButton("➕ Add New ENV", callback_data="env_manager_add")])
     buttons.append([InlineKeyboardButton("🔙 Back to Configs", callback_data="configs_home")])
     
-    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
+
 
 
 @Altruix.bot.on_callback_query(filters.regex(r"^env_view_(.+)_(\d+)$"))
@@ -8287,6 +8289,7 @@ async def env_view_handler(c: Client, cb: CallbackQuery):
     
     buttons = [
         [
+            InlineKeyboardButton(gt("env_edit_file"), callback_data=f"env_edit_file_{env_key}_{page}"),
             InlineKeyboardButton("✏️ Edit Value", callback_data=f"env_edit_{env_key}_{page}")
         ],
         [InlineKeyboardButton("🔙 Back to List", callback_data=f"env_manager_list_{page}")]
@@ -8346,6 +8349,30 @@ async def env_manager_add_handler(c: Client, cb: CallbackQuery):
         "Contoh: <code>CUSTOM_API_KEY</code>\n\n"
         "Ketik <code>/cancel</code> untuk membatalkan.",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Batal", callback_data="env_manager_list_1")]]),
+        parse_mode=ParseMode.HTML
+    )
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^env_edit_file_(.+)_(\d+)$"))
+@log_errors
+async def env_edit_file_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk memulai proses pengeditan nilai ENV via file"""
+    if not await check_authorization(cb): return
+    env_key = cb.matches[0].group(1)
+    page = int(cb.matches[0].group(2))
+    await cb.answer()
+    
+    user_id = cb.from_user.id
+    user_env_manager_state[user_id] = {
+        'action': 'edit_value_file',
+        'env_key': env_key,
+        'page': page,
+        'timestamp': datetime.now()
+    }
+    
+    await edit_cb(cb, 
+        Altruix.get_string("env_upload_prompt").format(key=env_key),
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("cancel"), callback_data=f"env_view_{env_key}_{page}")]]) ,
         parse_mode=ParseMode.HTML
     )
 
@@ -8435,7 +8462,7 @@ async def env_delete_exec_handler(c: Client, cb: CallbackQuery):
                 parse_mode=ParseMode.HTML
             )
     except Exception as e:
-        await cb.message.edit(f"❌ <b>Error:</b> {str(e)}")
+        await edit_cb(cb, f"❌ <b>Error:</b> {str(e)}")
         await send_log_notification(
             c, 'del_env', 0, cb.from_user, 
             False, str(e), {'Key': env_key}
@@ -8458,7 +8485,7 @@ async def env_save_confirm_handler(c: Client, cb: CallbackQuery):
     if action == "no":
         del user_env_manager_state[user_id]
         await cb.answer("Dibatalkan")
-        await cb.message.edit("❌ Aksi dibatalkan.", 
+        await edit_cb(cb, "❌ Aksi dibatalkan.", 
                              reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="env_manager_list_1")]]))
         return
         
@@ -8490,7 +8517,7 @@ async def env_save_confirm_handler(c: Client, cb: CallbackQuery):
         )
         
     except Exception as e:
-        await cb.message.edit(f"❌ <b>Error Simpan:</b> {str(e)}")
+        await edit_cb(cb, f"❌ <b>Error Simpan:</b> {str(e)}")
         await send_log_notification(
             c, 'save_env', 0, cb.from_user, 
             False, str(e), {'Key': state.get('env_key')}
@@ -8537,7 +8564,7 @@ async def custom_bot_manager_handler(c: Client, cb: CallbackQuery):
 
     buttons.append([InlineKeyboardButton(Altruix.get_string("back"), "bot_controls_menu")])
     
-    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
 
 
 # ✅ HANDLER BARU: Manage Custom Bot
@@ -8579,7 +8606,7 @@ async def manage_custom_bot_handler(c: Client, cb: CallbackQuery):
         ]
     ]
     
-    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
 # ✅ HANDLER BARU: Custom Bot Actions (Stop/Delete)
 @Altruix.bot.on_callback_query(filters.regex(r"^action_custom_bot_(stop|delete)_(\d+)$"))
@@ -8614,3 +8641,7 @@ async def check_authorization_message(m: Message) -> bool:
     sudo_users = getattr(Altruix.config, 'SUDO_USERS', [])
     
     return user_id == owner_id or user_id in sudo_users
+
+
+# Log sukses loading
+logger.info(f"✅ Loaded → {__plugin_name__} v{PLUGIN_VERSION}")
