@@ -82,7 +82,7 @@ import logging
 
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "settings"
-PLUGIN_VERSION = "0.0.6.85"  # ✅ FIXED: Global Audit & Version Sync
+PLUGIN_VERSION = "0.0.6.86"  # ✅ FIXED: Global Audit & Version Sync
 
 logger = logging.getLogger("altruix.settings")
 logger.setLevel(logging.INFO)
@@ -317,6 +317,7 @@ settings_menu_buttons = [
     ],
     [
         InlineKeyboardButton("⚙️ Configs", callback_data="configs_home"),
+        InlineKeyboardButton("❇️ Help Menu", callback_data="re_open"),
     ],
 ]
 
@@ -606,12 +607,28 @@ async def settings_menu_cb_handler(c: Client, cb: CallbackQuery):
     custom_bots = len(Altruix.bot_manager.custom_bots) if hasattr(Altruix, 'bot_manager') and hasattr(Altruix.bot_manager, 'custom_bots') else 0
     total_bots = default_bots + custom_bots
         
-    full_text = (
-        f"{gt('settings_text')}\n\n"
-        f"• <b>Total Sessions:</b> <code>{total_sessions}</code>\n"
-        f"• <b>Total Bots:</b> <code>{total_bots}</code> (Default: {default_bots}, Custom: {custom_bots})\n\n"
-        f"<i>Select a category below to configure your userbot.</i>"
-    )
+    # Get Module Stats
+    ub_mods = 0
+    bot_mods = 0
+    xtra_mods = 0
+    xtra_features = 0
+    
+    for plugin, cat in Altruix.plugin_categories.items():
+        if cat == "userbot":
+            ub_mods += 1
+        elif cat == "bot":
+            bot_mods += 1
+        else:
+            xtra_mods += 1
+            if plugin in Altruix.cmd_list:
+                for cmd_info in Altruix.cmd_list[plugin]:
+                    xtra_features += len(cmd_info.get("commands", []))
+                    
+    total_mods = ub_mods + bot_mods + xtra_mods
+
+    full_text = f"{gt('settings_text')}\n\n" + gt('settings_stats').format(
+        total_sessions, total_bots, default_bots, custom_bots, xtra_features, total_mods, ub_mods, bot_mods, xtra_mods
+    ) + f"\n\n<i>{gt('select_category')}</i>"
 
     await edit_cb(
         cb,
@@ -688,12 +705,28 @@ async def settings_command_handler(c: Client, m: Message):
         custom_bots = len(Altruix.bot_manager.custom_bots) if hasattr(Altruix, 'bot_manager') and hasattr(Altruix.bot_manager, 'custom_bots') else 0
         total_bots = default_bots + custom_bots
         
-        full_text = (
-            f"{gt('settings_text')}\n\n"
-            f"• <b>Total Sessions:</b> <code>{total_sessions}</code>\n"
-            f"• <b>Total Bots:</b> <code>{total_bots}</code> (Default: {default_bots}, Custom: {custom_bots})\n\n"
-            f"<i>Select a category below to configure your userbot.</i>"
-        )
+        # Get Module Stats
+        ub_mods = 0
+        bot_mods = 0
+        xtra_mods = 0
+        xtra_features = 0
+        
+        for plugin, cat in Altruix.plugin_categories.items():
+            if cat == "userbot":
+                ub_mods += 1
+            elif cat == "bot":
+                bot_mods += 1
+            else:
+                xtra_mods += 1
+                if plugin in Altruix.cmd_list:
+                    for cmd_info in Altruix.cmd_list[plugin]:
+                        xtra_features += len(cmd_info.get("commands", []))
+                        
+        total_mods = ub_mods + bot_mods + xtra_mods
+
+        full_text = f"{gt('settings_text')}\n\n" + gt('settings_stats').format(
+            total_sessions, total_bots, default_bots, custom_bots, xtra_features, total_mods, ub_mods, bot_mods, xtra_mods
+        ) + f"\n\n<i>{gt('select_category')}</i>"
         
         await m.reply(
             full_text,
@@ -733,12 +766,28 @@ async def settings_inline_handler(c: Client, iq: InlineQuery):
         custom_bots = len(Altruix.bot_manager.custom_bots) if hasattr(Altruix, 'bot_manager') and hasattr(Altruix.bot_manager, 'custom_bots') else 0
         total_bots = default_bots + custom_bots
         
-        full_text = (
-            f"{gt('settings_text')}\n\n"
-            f"• <b>Total Sessions:</b> <code>{total_sessions}</code>\n"
-            f"• <b>Total Bots:</b> <code>{total_bots}</code> (Default: {default_bots}, Custom: {custom_bots})\n\n"
-            f"<i>Select a category below to configure your userbot.</i>"
-        )
+        # Get Module Stats
+        ub_mods = 0
+        bot_mods = 0
+        xtra_mods = 0
+        xtra_features = 0
+        
+        for plugin, cat in Altruix.plugin_categories.items():
+            if cat == "userbot":
+                ub_mods += 1
+            elif cat == "bot":
+                bot_mods += 1
+            else:
+                xtra_mods += 1
+                if plugin in Altruix.cmd_list:
+                    for cmd_info in Altruix.cmd_list[plugin]:
+                        xtra_features += len(cmd_info.get("commands", []))
+                        
+        total_mods = ub_mods + bot_mods + xtra_mods
+
+        full_text = f"{gt('settings_text')}\n\n" + gt('settings_stats').format(
+            total_sessions, total_bots, default_bots, custom_bots, xtra_features, total_mods, ub_mods, bot_mods, xtra_mods
+        ) + f"\n\n<i>{gt('select_category')}</i>"
 
         await iq.answer(
             results=[
@@ -3391,6 +3440,15 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
     custom_bot_username = Altruix.bot_manager.get_bot_username(session_info.id)
     custom_bot_info = f"🤖 <b>Custom Bot:</b> <spoiler>@{custom_bot_username}</spoiler>\n" if custom_bot_username else ""
 
+    # Count plugins by category
+    ub_count = sum(1 for cat in Altruix.plugin_categories.values() if cat == "userbot")
+    bot_count = sum(1 for cat in Altruix.plugin_categories.values() if cat == "bot")
+    xtra_count = sum(1 for cat in Altruix.plugin_categories.values() if cat == "other")
+    total_modules = ub_count + bot_count + xtra_count
+    
+    # Count Xtra-Features (inline buttons)
+    xtra_features_count = len(all_buttons)
+
     txt = (
         f"{gt('session_info_title')}\n\n"
         f"👤 <b>User:</b> <a href='tg://user?id={session_info.id}'>{html.escape((session_info.first_name or '') + ' ' + (session_info.last_name or '')).strip() or 'No name'}</a>\n"
@@ -3400,7 +3458,9 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
         f"❤️‍🔥 <b>Premium:</b> <code>{'Yes' if is_premium else 'No'}</code>\n"
         f"📊 <b>Session Index:</b> <code>{index + 1}</code>\n"
         f"🏷 <b>Username:</b> <spoiler>@{session_info.username or 'None'}</spoiler>\n"
-        f"{custom_bot_info}\n"
+        f"{custom_bot_info}"
+        f"⚙️ <b>Xtra-Features:</b> <code>{xtra_features_count}</code>\n"
+        f"🔘 <b>Total Modul:</b> <code>{total_modules}</code> <i>(UB mod {ub_count}, Bot mod {bot_count}, Xtra mod {xtra_count})</i>\n\n"
         f"<i>Manage this session ({button_page}/{total_pages}):</i>"
     )
     

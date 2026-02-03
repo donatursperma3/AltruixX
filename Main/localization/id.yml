@@ -306,7 +306,9 @@ purgeme_cancelled: "❌ Purgeme Dibatalkan."
 purgeme_unauth: "🚫 Anda tidak diizinkan menggunakan menu ini."
 purgeme_mode_latest: "Terbaru"
 purgeme_mode_oldest: "Terlama"
-purgeme_collecting: "🔎 Mengumpulkan pesan lama... {}/{}"
+purgeme_collecting: "🔎 Mengumpulkan pesan terlama... {}/{}"
+purgeme_info_btn: "ℹ️ Info"
+purgeme_info_text: "<b>ℹ️ Panduan Konfigurasi Purgeme</b>\n\n• <b>Count:</b> Total pesan yang akan dipindai/dihapus.\n• <b>Delay:</b> Waktu jeda antara penghapusan individu (0s = cepat).\n• <b>Batch:</b> Jumlah pesan yang dihapus dalam satu kali proses (Default 60).\n• <b>DelayBc:</b> Waktu jeda antar batch untuk mencegah banjir request (cth: 2m).\n• <b>Offset:</b> Lewati N pesan pertama (berguna untuk menyimpan chat terbaru).\n• <b>Mode:</b> Terlama (bawah ke atas) atau Terbaru (atas ke bawah).\n• <b>Types:</b> Filter konten (Gambar, Video, dll).\n• <b>Notif:</b> Toggle notifikasi penyelesaian."
     
 # Startup & System
 reading_session: "Sesi Pengguna ditemukan secara lokal, sedang sinkronisasi..."
@@ -358,4 +360,7 @@ pmlb_mode_sudo: "Sudo Saja"
 pmlb_mode_nonsudo: "Non-Sudo Saja"
 pmlb_mode_off: "OFF (Nonaktif)"
 pmlb_mode_changed: "✅ <b>Mode Bot PM Logger diubah menjadi:</b> {}"
+settings_stats: "• <b>Total Sesi:</b> <code>{}</code>\n• <b>Total Bot:</b> <code>{}</code> (Default: {}, Custom: {})\n• <b>Fitur-Xtra:</b> <code>{}</code>\n• <b>Modul:</b> <code>{}</code> (Mod UB {}, Mod Bot {}, Mod Xtra {})"
+help_menu: "❇️ Menú Bantuan"
+select_category: "Pilih kategori di bawah ini untuk mengonfigurasi userbot Anda."
 

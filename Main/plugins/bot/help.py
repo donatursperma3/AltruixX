@@ -208,12 +208,18 @@ async def get_help_menu(return_all: bool = False, user_id: int = None, chat_id: 
                 if i.text == str(index + 1):
                     i.text = f"> {i.text} <"
             page.append(page_buttons)
-            page.append([InlineKeyboardButton("Close", close_data)])
+            page.append([
+                InlineKeyboardButton("Settings", "settings_menu"),
+                InlineKeyboardButton("Close", close_data)
+            ])
     else:
         # Wrap buttons to ensure it's a list of lists if not already (for non-multipaged)
         # Actually it's already a list of lists from [ikb[i : i + columns] ...]
         buttons.insert(0, tabs)
-        buttons.append([InlineKeyboardButton("Close", close_data)])
+        buttons.append([
+            InlineKeyboardButton("Settings", "settings_menu"),
+            InlineKeyboardButton("Close", close_data)
+        ])
         
     if multi_pages and not return_all:
         return help_msg, buttons[0], parse_mode

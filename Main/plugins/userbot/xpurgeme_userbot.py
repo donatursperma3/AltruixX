@@ -107,7 +107,7 @@ def get_purgeme_control_kb(unique_id, status):
         ])
     return None
 
-async def collect_user_messages_optimized(client: Client, chat_id: int, user_id: int, target_types: list, limit: int = 100, state_callback=None):
+async def collect_user_messages_optimized(client: Client, chat_id: int, user_id: int, target_types: list, limit: int = 100, offset: int = 0, state_callback=None):
     """
     OPTIMIZED: Collect user's message IDs using search_messages (async generator).
     state_callback: function to call for UI updates (passed with state dict)
@@ -124,7 +124,8 @@ async def collect_user_messages_optimized(client: Client, chat_id: int, user_id:
             async for msg in client.search_messages(
                 chat_id=chat_id,
                 from_user=user_id,
-                limit=limit
+                limit=limit,
+                offset=offset
             ):
                 scanned_total += 1
                 
@@ -172,7 +173,7 @@ async def collect_user_messages_optimized(client: Client, chat_id: int, user_id:
         max_scan = max(5000, limit * 50)
         
         try:
-            async for msg in client.get_chat_history(chat_id):
+            async for msg in client.get_chat_history(chat_id, offset=offset):
                 scanned_total += 1
                 
                 if scanned_total >= max_scan:
@@ -252,7 +253,9 @@ The command triggers an interactive UI via your Assistant Bot.
     }
 )
 async def purgeme_cmd(client: Client, message: Message):
-    if not message.from_user or not message.from_user.is_self:
+    # Sudo & Owner Check
+    from Main.utils.access_control import is_authorized_user
+    if not is_authorized_user(message.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
         return
 
     # Check for target chat input
@@ -297,10 +300,13 @@ async def purgeme_cmd(client: Client, message: Message):
     # Initialize State
     async with STATE_LOCK:
         Altruix.PURGEME_STATE[unique_id] = {
-            "count": 10,
-            "delay": 0,
+            "count": 20, # Default changed to 20
+            "delay": 1.0, # Default changed to 1.0s
             "types": ["all"],
             "mode": "oldest",
+            "batch_size": 60,
+            "batch_delay": 0, # Default 0 (only active if toggled)
+            "offset": 0,
             "status": "config",
             "event": asyncio.Event(),
             "stop_event": asyncio.Event(),
@@ -442,8 +448,8 @@ async def purgeme_cmd(client: Client, message: Message):
         return
         
     try:
-        # Wait up to 5 minutes for configuration
-        await asyncio.wait_for(state["event"].wait(), timeout=300)
+        # Wait up to 10 minutes (600s) for configuration to prevent "Session not found" too early
+        await asyncio.wait_for(state["event"].wait(), timeout=600)
     except asyncio.TimeoutError:
         if unique_id in Altruix.PURGEME_STATE:
             del Altruix.PURGEME_STATE[unique_id]
@@ -458,7 +464,10 @@ async def purgeme_cmd(client: Client, message: Message):
     state["status"] = "running"
     state["start_time"] = time.time()
     count = state["count"]
-    delay = state["delay"]
+    delay = state["delay"] 
+    batch_size = state.get("batch_size", 60)
+    batch_delay = state.get("batch_delay", 0)
+    offset = state.get("offset", 0)
     target_types = state["types"]
     mode = state.get("mode", "latest")
     
@@ -551,6 +560,7 @@ async def purgeme_cmd(client: Client, message: Message):
             user_id, 
             target_types, 
             limit=count,
+            offset=offset,
             state_callback=collection_callback
         )
         
@@ -574,58 +584,65 @@ async def purgeme_cmd(client: Client, message: Message):
             asyncio.create_task(update_dashboard(state))
             
             # ---------------------------------------------------------
-            # DELETION PHASE
+            # DELETION PHASE (BATCH SUPPORTED)
             # ---------------------------------------------------------
-            chunk_size = 1 if delay > 0 else 100
             
-            for i in range(0, len(collected_ids), chunk_size):
+            # Outer loop for Batches
+            for b_idx in range(0, len(collected_ids), batch_size):
                 if state["stop_event"].is_set():
-                    Altruix.log("Purgeme Optimized: Stop event triggered")
                     break
+                    
+                # Get current batch
+                batch_ids = collected_ids[b_idx : b_idx + batch_size]
                 
                 # Check Pause
                 if not state["pause_event"].is_set():
+                    last_status = state["status"]
                     state["status"] = "paused"
                     asyncio.create_task(update_dashboard(state))
                     await state["pause_event"].wait()
-                    state["status"] = "running"
+                    state["status"] = last_status # Restore running
                     asyncio.create_task(update_dashboard(state))
 
-                chunk = collected_ids[i:i+chunk_size]
+                # Process the batch (sub-chunking if delay is present)
+                inner_chunk_size = 1 if delay > 0 else 100
                 
-                # Retry logic for each chunk
-                delete_success = False
-                retry_count = 0
-                max_retries = 3
-                
-                while not delete_success and retry_count < max_retries:
-                    try:
-                        await client.delete_messages(chat_id, chunk)
-                        deleted_count += len(chunk)
-                        state["processed"] = deleted_count
-                        delete_success = True
-                        
-                        Altruix.log(f"Purgeme Optimized: Deleted chunk of {len(chunk)}, total: {deleted_count}/{len(collected_ids)}")
-                        
-                        if deleted_count % 10 == 0 or delay > 0:
-                            asyncio.create_task(update_dashboard(state))
-                            
-                        if delay > 0: 
-                            await asyncio.sleep(delay)
-                            
-                    except FloodWait as fw:
-                        retry_count += 1
-                        wait_time = fw.value
-                        Altruix.log(f"Purgeme Optimized: FloodWait {wait_time}s (attempt {retry_count}/{max_retries})")
-                        await asyncio.sleep(wait_time)
-                    except Exception as e:
-                        retry_count += 1
-                        Altruix.log(f"Purgeme Optimized: Delete error (attempt {retry_count}/{max_retries}): {e}")
-                        if retry_count >= max_retries:
-                            Altruix.log(f"Purgeme Optimized: Max retries reached for chunk, skipping")
+                for i in range(0, len(batch_ids), inner_chunk_size):
+                    chunk = batch_ids[i:i+inner_chunk_size]
+                    
+                    retry_count = 0
+                    max_retries = 3
+                    delete_success = False
+
+                    while not delete_success and retry_count < max_retries:
+                        try:
+                            await client.delete_messages(chat_id, chunk)
+                            deleted_count += len(chunk)
+                            state["processed"] = deleted_count
                             delete_success = True
-                        else:
-                            await asyncio.sleep(2)
+                            
+                            # UI Update (Throttle)
+                            if deleted_count % 10 == 0 or delay > 0:
+                                asyncio.create_task(update_dashboard(state))
+                                
+                            if delay > 0: 
+                                await asyncio.sleep(delay)
+                                
+                        except FloodWait as fw:
+                            retry_count += 1
+                            Altruix.log(f"Purgeme FloodWait: {fw.value}s")
+                            await asyncio.sleep(fw.value)
+                        except Exception as e:
+                            retry_count += 1
+                            Altruix.log(f"Purgeme Delete Error: {e}")
+                            await asyncio.sleep(1)
+                
+                # End of Batch Delay
+                if (b_idx + batch_size < len(collected_ids)) and batch_delay > 0:
+                    Altruix.log(f"Purgeme: Batch delay {batch_delay}s...")
+                    # Optional: Update status to show Waiting???
+                    # For now just sleep
+                    await asyncio.sleep(batch_delay)
 
 
     except FloodWait as e:
@@ -778,7 +795,8 @@ async def purgeme_cmd(client: Client, message: Message):
         Altruix.log(f"Failed to send Purgeme completion log: {log_err}")
     
     # Wait a bit then clean up
-    await asyncio.sleep(5)
+    # EXTENDED CLEANUP DELAY to allow user to see result/click Close (300s = 5 mins)
+    await asyncio.sleep(300)
     if unique_id in Altruix.PURGEME_STATE:
         del Altruix.PURGEME_STATE[unique_id]
 

@@ -307,6 +307,8 @@ purgeme_unauth: "🚫 You are not authorized to use this menu."
 purgeme_mode_latest: "Newest"
 purgeme_mode_oldest: "Oldest"
 purgeme_collecting: "🔎 Collecting oldest messages... {}/{}"
+purgeme_info_btn: "ℹ️ Info"
+purgeme_info_text: "<b>ℹ️ Purgeme Configuration Guide</b>\n\n• <b>Count:</b> Total messages to scan/delete.\n• <b>Delay:</b> Sleep time between individual deletions (0s = fast).\n• <b>Batch:</b> Number of messages to delete in one chunk (Default 60).\n• <b>DelayBc:</b> Sleep time between batches to prevent floods (e.g., 2m).\n• <b>Offset:</b> Skip the first N messages (useful to keep recent chat).\n• <b>Mode:</b> Oldest (bottom-up) or Newest (top-down).\n• <b>Types:</b> Filter content (Images, Videos, etc).\n• <b>Notif:</b> Toggle completion notifications."
 
 # Startup & System
 reading_session: "User session was found locally, syncing in progress..."
@@ -358,4 +360,7 @@ pmlb_mode_sudo: "Sudo Only"
 pmlb_mode_nonsudo: "Non-Sudo Only"
 pmlb_mode_off: "OFF (Disabled)"
 pmlb_mode_changed: "✅ <b>Bot PM Logger Mode changed to:</b> {}"
+settings_stats: "• <b>Total Sessions:</b> <code>{}</code>\n• <b>Total Bots:</b> <code>{}</code> (Default: {}, Custom: {})\n• <b>Xtra-Features:</b> <code>{}</code>\n• <b>Module:</b> <code>{}</code> (UB mod {}, Bot mod {}, Xtra mod {})"
+help_menu: "❇️ Help Menu"
+select_category: "Select a category below to configure your userbot."
 

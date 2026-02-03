@@ -126,7 +126,7 @@ class AltruixClient:
         self.clients: List[Client] = []
         self.cmd_list = {}
         self.all_lang_strings = {}
-        self.__version__ = "0.0.7.5"
+        self.__version__ = "0.0.7.75"
         self.selected_lang = "english"
         self.local_lang_file = "./Main/localization"
         self.cmd_list = {} # {plugin_name: [cmd_data, ...]}
@@ -552,6 +552,21 @@ class AltruixClient:
         )
         def decorator(func):
             async def wrapper(client, message: Message):
+                # ✅ MULTI-CLIENT CROSS-EXECUTION PREVENTION
+                # Prevent Client B from executing commands sent by Client A
+                # when both are active in the same instance.
+                if message.from_user:
+                    sender_id = message.from_user.id
+                    current_client_id = client.me.id
+                    
+                    # If sender is NOT the current client
+                    if sender_id != current_client_id:
+                        # Check if sender is another active client in this instance
+                        other_client_ids = [c.me.id for c in self.clients if hasattr(c, 'me')]
+                        if sender_id in other_client_ids:
+                            # Sender is another active client, IGNORE to prevent double response
+                            return
+                
                 # ✅ DEDUPLICATION for Multi-Session
                 # If message is incoming but from self (sent from other session/phone),
                 # only the FIRST active session handles it to avoid double responses.

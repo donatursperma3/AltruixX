@@ -106,6 +106,9 @@ async def disabled_ps_func(c: Client, m: Message):
         input_ = [x.strip() for x in input_.split(",")]
     await Altruix.config.sync_env_to_db("DISABLED_SUDO_CMD_LIST", input_, push_=True)
     await msg.edit_msg("DISABLED_SUDO_CMD", string_args=(input_))
+    # Delete input only if response is reply (not inline edit)
+    if msg.id != m.id:
+        await m.delete_if_self()
 
 
 @Altruix.register_on_cmd(
@@ -121,6 +124,9 @@ async def remove_disabled_ps_func(c: Client, m: Message):
         input_ = [x.strip() for x in input_.split(",")]
     await Altruix.config.unsync_env_to_db("DISABLED_SUDO_CMD_LIST", input_)
     await msg.edit_msg("UNDISABLED_SUDO_CMD", string_args=(input_))
+    # Delete input only if response is reply (not inline edit)
+    if msg.id != m.id:
+        await m.delete_if_self()
 
 
 @Altruix.register_on_cmd(
@@ -135,15 +141,30 @@ async def add_sudo_func(c: Client, m: Message):
     msg = await m.handle_message("PROCESSING")
     user, _, is_channel = m.get_user
     if not user or is_channel:
-        return await msg.edit_msg("INVALID_USER")
+        await msg.edit_msg("INVALID_USER")
+        # Only delete input if response was inline (edit mode)
+        if msg.id == m.id:
+            await m.delete_if_self()
+        return
     try:
         user_id = await c.get_users(user)
     except Exception:
-        return await msg.edit_msg("INVALID_USER")
+        await msg.edit_msg("INVALID_USER")
+        # Only delete input if response was inline (edit mode)
+        if msg.id == m.id:
+            await m.delete_if_self()
+        return
     if user_id.id in (await Altruix.config.get_sudo()):
-        return await msg.edit_msg("ALREADY_IN_SUDO")
+        await msg.edit_msg("ALREADY_IN_SUDO")
+        # Delete input only if response is reply
+        if msg.id != m.id:
+            await m.delete_if_self()
+        return
     await Altruix.config.add_sudo(user_id.id)
     await msg.edit_msg("ADDED_SUDO", string_args=(user_id.mention))
+    # Delete input only if response is reply (not inline edit)
+    if msg.id != m.id:
+        await m.delete_if_self()
 
 
 @Altruix.register_on_cmd(
@@ -175,17 +196,39 @@ async def rm_sudo_func(c: Client, m: Message):
                     count += 1
                 except BaseException:
                     pass
-            return await msg.edit_msg("DEL_SUDO_A", string_args=(count, lacg))
+            await msg.edit_msg("DEL_SUDO_A", string_args=(count, lacg))
+            # Delete input only if response is reply
+            if msg.id != m.id:
+                await m.delete_if_self()
+            return
     if not user or is_channel:
-        return await msg.edit_msg("INVALID_USER")
+        await msg.edit_msg("INVALID_USER")
+        # Only delete input if response was inline (edit mode)
+        if msg.id == m.id:
+            await m.delete_if_self()
+        # Delete input only if response is reply (not inline edit)
+        if msg.id != m.id:
+            await m.delete_if_self()
+        return
     try:
         user_id = await c.get_users(user)
     except Exception:
-        return await msg.edit_msg("INVALID_USER")
+        await msg.edit_msg("INVALID_USER")
+        # Delete input only if response is reply (not inline edit)
+        if msg.id != m.id:
+            await m.delete_if_self()
+        return
     if user_id.id not in acg:
-        return await msg.edit_msg("NOT_IN_SUDO")
+        await msg.edit_msg("NOT_IN_SUDO")
+        # Delete input only if response is reply (not inline edit)
+        if msg.id != m.id:
+            await m.delete_if_self()
+        return
     await Altruix.config.del_sudo(user_id.id)
     await msg.edit_msg("DEL_SUDO", string_args=(user_id.mention))
+    # Delete input only if response is reply (not inline edit)
+    if msg.id != m.id:
+        await m.delete_if_self()
 
 
 @Altruix.register_on_cmd(
@@ -199,12 +242,16 @@ async def list_sudo_func(c: Client, m: Message):
     sudo_ids = await Altruix.config.get_sudo()
 
     if not sudo_ids:
-        return await msg.edit_msg(
+        await msg.edit_msg(
             "<b>Sudo Users (Total: 0)</b>\n\n"
             "<b>Aktif Users (0)</b>:\n<i>Tidak ada user aktif.</i>\n\n"
             "<b>Unfetchable Users (0)</b>:\n<i>Tidak ada user yang gagal diambil.</i>\n\n"
             "<b>Deleted Users (0)</b>:\n<i>Tidak ada akun terhapus.</i>"
         )
+        # Delete input only if response is reply
+        if msg.id != m.id:
+            await m.delete_if_self()
+        return
 
     active_users = []
     unfetchable_users = []
@@ -231,6 +278,9 @@ async def list_sudo_func(c: Client, m: Message):
             unfetchable_users.append(dummy_user)
 
     await msg.edit_msg(format_sudo_list(active_users, unfetchable_users, deleted_users))
+    # Delete input only if response is reply (not inline edit)
+    if msg.id != m.id:
+        await m.delete_if_self()
 
 # # Log sukses loading
 # logger.info(f"✅ Loaded → {__plugin_name__} v{PLUGIN_VERSION}")

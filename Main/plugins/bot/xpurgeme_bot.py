@@ -26,6 +26,9 @@ def get_purgeme_text(state):
     processed = state.get("processed", 0)
     scanned = state.get("scanned", 0) # Track scanned messages
     delay = state["delay"]
+    batch_size = state.get("batch_size", 60)
+    batch_delay = state.get("batch_delay", 120)  # stored in seconds
+    offset = state.get("offset", 0)
     types = state["types"]
     start_time = state.get("start_time", 0)
     mode = state.get("mode", "latest")
@@ -56,7 +59,8 @@ def get_purgeme_text(state):
     # Common Header for active states
     header = f"{title}\n" \
              f"<b>Mode:</b> {mode.capitalize()} | <b>Type:</b> {types[0].upper() if types else 'ALL'}\n" \
-             f"<b>Target:</b> {count} messages\n" \
+             f"<b>Target:</b> {count} messages | <b>Offset:</b> {offset}\n" \
+             f"<b>Batch:</b> {batch_size} | <b>DelayBc:</b> {int(batch_delay/60)}m\n" \
              f"<b>Chat:</b> {chat_name}\n" \
              f"<b>Account:</b> {account_name}"
         
@@ -82,6 +86,10 @@ def get_purgeme_text(state):
         
         return f"{title}\n\n✅ <b>Finished!</b>\nDeleted: {processed} messages\nTime: {round(duration, 2)}s\nChat: {chat_display}\nAccount: {account_name}"
 
+    elif status == "info":
+        info_text = loc("purgeme_info_text") or "ℹ️ Info Text Not Found"
+        return f"{title}\n\n{info_text}"
+        
     elif status == "cancelled":
         lbl = loc("purgeme_cancelled") or "❌ Cancelled"
         return f"{title}\n\n{lbl}"
@@ -94,8 +102,12 @@ def get_purgeme_keyboard(chat_id, user_id, unique_id):
         return InlineKeyboardMarkup([[InlineKeyboardButton("❌ Session Ended", callback_data="purgeme_close")]])
 
     status = state["status"]
+    status = state["status"]
     count = state["count"]
     delay = state["delay"]
+    batch_size = state.get("batch_size", 60)
+    batch_delay = state.get("batch_delay", 120)
+    offset = state.get("offset", 0)
     types = state["types"]
 
     buttons = []
@@ -139,12 +151,38 @@ def get_purgeme_keyboard(chat_id, user_id, unique_id):
         ])
         
         # Row 4: Notification Toggle
+        # Row 4: Notification Toggle
         notify_active = state.get("notify", True)
-        notif_lbl = f"Notif: {'Yes' if notify_active else 'No'}"
+        notif_lbl = f"🔔 Notif: ON" if notify_active else "🔕 Notif: OFF"
         buttons.append([
-            InlineKeyboardButton(notif_lbl, callback_data="noop"),
-            InlineKeyboardButton(f"{'✅' if notify_active else '☑️'} Yes", callback_data=f"pg_notify_yes_{unique_id}"),
-            InlineKeyboardButton(f"{'✅' if not notify_active else '☑️'} No", callback_data=f"pg_notify_no_{unique_id}"),
+            InlineKeyboardButton(notif_lbl, callback_data=f"pg_notify_{unique_id}"),
+        ])
+
+        # Batch Controls
+        batch_lbl = f"Batch: {batch_size}"
+        buttons.append([
+            InlineKeyboardButton(batch_lbl, callback_data="noop"),
+            InlineKeyboardButton("-10", callback_data=f"pg_btc_sub_10_{unique_id}"),
+            InlineKeyboardButton("+10", callback_data=f"pg_btc_add_10_{unique_id}"),
+        ])
+
+        # Batch Delay Controls
+        bd_min = int(batch_delay / 60)
+        bd_lbl = f"DelayBc: {bd_min}m"
+        buttons.append([
+            InlineKeyboardButton(bd_lbl, callback_data="noop"),
+            InlineKeyboardButton("-2m", callback_data=f"pg_dbc_sub_2m_{unique_id}"),
+            InlineKeyboardButton("+2m", callback_data=f"pg_dbc_add_2m_{unique_id}"),
+            InlineKeyboardButton("+10m", callback_data=f"pg_dbc_add_10m_{unique_id}"),
+        ])
+
+        # Offset Controls
+        off_lbl = f"Offset: {offset}"
+        buttons.append([
+            InlineKeyboardButton(off_lbl, callback_data="noop"),
+            InlineKeyboardButton("-5", callback_data=f"pg_off_sub_5_{unique_id}"),
+            InlineKeyboardButton("+5", callback_data=f"pg_off_add_5_{unique_id}"),
+            InlineKeyboardButton("Reset", callback_data=f"pg_off_reset_{unique_id}"),
         ])
         
         # Type Toggles
@@ -186,11 +224,14 @@ def get_purgeme_keyboard(chat_id, user_id, unique_id):
         buttons.append(type_row_3)
         
         # Action Buttons
-        start_lbl = loc("purgeme_start_purge", "🚀 Start Purge")
+        # Action Buttons
+        start_lbl = loc("purgeme_start_purge", "🚀 Start Purgeme")
         cancel_lbl = loc("purgeme_cancel_purge", "❌ Cancel")
+        info_lbl = loc("purgeme_info_btn", "ℹ️ Info")
         buttons.append([
             InlineKeyboardButton(start_lbl, callback_data=f"pg_start_{unique_id}"),
             InlineKeyboardButton(cancel_lbl, callback_data=f"pg_cancel_{unique_id}"),
+            InlineKeyboardButton(info_lbl, callback_data=f"pg_info_{unique_id}"),
         ])
     
     elif status == "running":
@@ -214,6 +255,10 @@ def get_purgeme_keyboard(chat_id, user_id, unique_id):
             InlineKeyboardButton(stop_lbl, callback_data=f"pg_stop_{unique_id}"),
         ])
         buttons.append([InlineKeyboardButton(refresh_lbl, callback_data=f"pg_refresh_{unique_id}")])
+
+    elif status == "info":
+        back_lbl = loc("back", "🔙 Back")
+        buttons.append([InlineKeyboardButton(back_lbl, callback_data=f"pg_back_{unique_id}")])
 
     elif status == "finished":
         close_lbl = loc("purgeme_close", "Close")
@@ -276,8 +321,10 @@ async def purgeme_callback_handler(client: Client, cb: CallbackQuery):
     # Format map: pg_{action}_{params}_{unique_id}
     prefix_map = {
         "cnt_add": 4, "cnt_sub": 4, "dly_add": 4, "dly_sub": 4, "dly_reset": 3,
+        "btc_add": 4, "btc_sub": 4, "dbc_add": 4, "dbc_sub": 4,
+        "off_add": 4, "off_sub": 4, "off_reset": 3,
         "typ": 3, "start": 2, "cancel": 2, "stop": 2, "pause": 2,
-        "resume": 2, "refresh": 2, "mode": 3, "notify": 3, "abort": 2
+        "resume": 2, "refresh": 2, "mode": 3, "notify": 2, "abort": 2, "info": 2, "back": 2
     }
     
     curr_prefix = None
@@ -301,7 +348,12 @@ async def purgeme_callback_handler(client: Client, cb: CallbackQuery):
 
     state = Altruix.PURGEME_STATE.get(unique_id)
     if not state:
-         return await cb.answer("⚠️ Session not found. It may have finished or timed out.", show_alert=True)
+         # ─── 2. FIX: Session Not Found Friendly Handling ───
+         try:
+            await Altruix.edit_cb(cb, "⚠️ <b>Session Expired</b>\n\nSesi ini telah berakhir atau tidak ditemukan. Silakan mulai perintah <code>.purgeme</code> lagi.", parse_mode=enums.ParseMode.HTML)
+            return
+         except:
+            return await cb.answer("⚠️ Session Expired.", show_alert=True)
 
     # Capture message details for dashboard updates and cleanup
     if cb.message:
@@ -332,9 +384,9 @@ async def purgeme_callback_handler(client: Client, cb: CallbackQuery):
             mode = parts[2]
             state["mode"] = mode
 
-        elif "notify_" in data:
-            option = parts[2]
-            state["notify"] = (option == "yes")
+        elif "notify" in data:
+            # ─── 3. FIX: Toggle Notification Logic ───
+            state["notify"] = not state.get("notify", True)
 
         elif "typ_" in data:
             t_type = parts[2]
@@ -350,6 +402,47 @@ async def purgeme_callback_handler(client: Client, cb: CallbackQuery):
                 else:
                     state["types"].append(t_type)
                 if not state["types"]: state["types"] = ["all"]
+        
+        elif "btc_add" in data:
+            val = int(parts[3])
+            state["batch_size"] = state.get("batch_size", 60) + val
+        
+        elif "btc_sub" in data:
+            val = int(parts[3])
+            curr = state.get("batch_size", 60)
+            state["batch_size"] = max(10, curr - val)
+
+        elif "dbc_add" in data:
+            val_str = parts[3].replace('m', '')
+            val_min = int(val_str)
+            val_sec = val_min * 60
+            state["batch_delay"] = state.get("batch_delay", 120) + val_sec
+
+        elif "dbc_sub" in data:
+            val_str = parts[3].replace('m', '')
+            val_min = int(val_str)
+            val_sec = val_min * 60
+            curr = state.get("batch_delay", 120)
+            state["batch_delay"] = max(0, curr - val_sec)
+
+        elif "off_add" in data:
+            val = int(parts[3])
+            state["offset"] = state.get("offset", 0) + val
+
+        elif "off_sub" in data:
+            val = int(parts[3])
+            curr = state.get("offset", 0)
+            state["offset"] = max(0, curr - val)
+
+        elif "off_reset" in data:
+            state["offset"] = 0
+
+        elif "info" in data:
+            # ─── 1. FIX: Info Page Logic ───
+            state["status"] = "info"
+            
+        elif "back" in data:
+            state["status"] = "config"
 
         elif "start" in data:
             if not state["event"].is_set(): 
@@ -391,21 +484,35 @@ async def purgeme_callback_handler(client: Client, cb: CallbackQuery):
             state["status"] = "cancelled"
             state["event"].set()
             state["stop_event"].set()
-            await Altruix.delete_cb(cb)
+            # Try to delete, but answer callback regardless
+            try:
+                await Altruix.delete_cb(cb)
+            except:
+                # If deletion fails (e.g., inline result), edit to show cancellation
+                try:
+                    title = Altruix.get_string("purgeme_title") or "🗑 <b>Userbot Purgeme</b>"
+                    await Altruix.edit_cb(cb, f"{title}\n❌ <b>Cancelled</b>")
+                except:
+                    pass
+            await cb.answer("❌ Cancelled", show_alert=False)
             return # Prevent further processing
 
         elif "stop" in data:
             state["stop_event"].set()
+            await cb.answer("⏹ Stopped", show_alert=False)
 
         elif "pause" in data:
             state["status"] = "paused"
             state["pause_event"].clear()
+            # No need to answer here, will be answered by general update below
 
         elif "resume" in data:
             state["status"] = "running"
             state["pause_event"].set()
+            # No need to answer here, will be answered by general update below
 
         elif "refresh" in data:
+            # Just trigger UI update, answer will be handled below
             pass
 
         # General Keyboard Update

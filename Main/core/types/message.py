@@ -366,6 +366,7 @@ class Message:
             return await self.reply("❌ Gagal menangani pesan.", **kwargs)
 
     async def delete_if_self(self, **kwargs):
+        # Only delete if sender is self (userbot), NOT sudo users
         if self.from_user and self.from_user.is_self or self.outgoing:
             # ✅ CHECK AUTO-DELETE COMMAND SETTING
             try:
@@ -399,6 +400,7 @@ class Message:
                 return await self.delete(**kwargs)
             except Exception as e:
                 Altruix.log(f"Failed to delete own message: {e}", level=40)
+                return self
 
     async def delete_if_sudo(self, **kwargs):
         sudo_ = Altruix.config.SUDO_USERS
