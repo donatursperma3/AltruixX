@@ -310,16 +310,54 @@ def gt(key):
     lang = SETTINGS_LANG if SETTINGS_LANG in STRINGS else "english"
     return STRINGS[lang].get(key, STRINGS["english"].get(key, key))
 
-settings_menu_buttons = [
-    [
-        InlineKeyboardButton("📱 Sessions", callback_data="sessions_list_1"),
-        InlineKeyboardButton("🤖 Bot Controls", callback_data="bot_controls_menu"),
-    ],
-    [
-        InlineKeyboardButton("⚙️ Configs", callback_data="configs_home"),
-        InlineKeyboardButton("❇️ Help Menu", callback_data="re_open"),
-    ],
-]
+def get_settings_buttons(user_id=None):
+    custom_data = get_user_custom_link(user_id) if user_id else get_custom_link_data()["global"]
+    return [
+        [
+            InlineKeyboardButton("📱 Sessions", callback_data="sessions_list_1"),
+            InlineKeyboardButton("🤖 Bot Controls", callback_data="bot_controls_menu"),
+        ],
+        [
+            InlineKeyboardButton("⚙️ Configs", callback_data="configs_home"),
+            InlineKeyboardButton("❇️ Help Menu", callback_data="re_open"),
+        ],
+        [
+            InlineKeyboardButton(
+                custom_data.get("text", "Repo"), 
+                url=custom_data.get("link", "https://t.me/AlphaXProject")
+            ),
+        ],
+    ]
+
+
+# ✅ HELPER: Custom Link Settings
+CUSTOM_LINK_FILE = "custom_button_settings.json"
+
+def get_custom_link_data():
+    if not os.path.exists(CUSTOM_LINK_FILE):
+        return {
+            "global": {"text": "Repo", "link": "https://t.me/AlphaXProject"},
+            "sessions": {},
+            "apply_types": {}
+        }
+    with open(CUSTOM_LINK_FILE, "r") as f:
+        try:
+            return json.load(f)
+        except:
+            return {"global": {"text": "Repo", "link": "https://t.me/AlphaXProject"}, "sessions": {}, "apply_types": {}}
+
+def save_custom_link_data(data):
+    with open(CUSTOM_LINK_FILE, "w") as f:
+        json.dump(data, f, indent=4)
+
+def get_user_custom_link(user_id):
+    data = get_custom_link_data()
+    apply_type = data.get("apply_types", {}).get(str(user_id), "global")
+    
+    if apply_type == "per_account" and str(user_id) in data.get("sessions", {}):
+        return data["sessions"][str(user_id)]
+    return data["global"]
+
 
 # ✅ FUNGSI BARU: Kirim notifikasi ke log group
 async def send_log_notification(
@@ -464,12 +502,103 @@ async def bot_controls_menu_handler(c: Client, cb: CallbackQuery):
         ],
         [
             InlineKeyboardButton("👽 Custom Bot Manager", callback_data="custom_bot_manager"),
+            InlineKeyboardButton("🔘 Custom Link/Text", callback_data="custom_link_settings"),
         ],
         [
             InlineKeyboardButton("🔙 Back to Settings", callback_data="settings_menu"),
         ]
+
     ]
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
+
+
+# ✅ HANDLER: Custom Link Settings Menu
+@Altruix.bot.on_callback_query(filters.regex(r"^custom_link_settings$"))
+@iuser_check
+@log_errors
+async def custom_link_settings_handler(c: Client, cb: CallbackQuery):
+    await cb.answer()
+    user_id = cb.from_user.id
+    data = get_custom_link_data()
+    
+    apply_type = data.get("apply_types", {}).get(str(user_id), "global")
+    current_link = get_user_custom_link(user_id)
+    
+    apply_text = gt("custom_link_global") if apply_type == "global" else gt("custom_link_per_account")
+    
+    msg_body = gt("custom_link_desc").format(
+        current_link.get("text", gt("default_text")),
+        current_link.get("link", gt("default_link")),
+        apply_text
+    )
+    
+    buttons = [
+        [
+            InlineKeyboardButton(gt("edit_button_text"), callback_data="edit_cl_text"),
+            InlineKeyboardButton(gt("edit_button_link"), callback_data="edit_cl_link"),
+        ],
+        [
+            InlineKeyboardButton(gt("apply_type_btn").format(apply_text), callback_data="toggle_cl_apply"),
+            InlineKeyboardButton(gt("reset_default"), callback_data="reset_cl_default"),
+        ],
+        [
+            InlineKeyboardButton(gt("back"), callback_data="settings_menu"),
+        ]
+    ]
+    
+    await edit_cb(cb, gt("custom_link_title") + "\n\n" + msg_body, reply_markup=InlineKeyboardMarkup(buttons))
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^edit_cl_(text|link)$"))
+@iuser_check
+@log_errors
+async def edit_cl_input_handler(c: Client, cb: CallbackQuery):
+    await cb.answer()
+    target = cb.matches[0].group(1)
+    user_id = cb.from_user.id
+    
+    Altruix.user_track_state[user_id] = {"step": f"edit_cl_{target}", "msg_id": cb.message.id}
+    
+    prompt = gt("prompt_edit_text") if target == "text" else gt("prompt_edit_link")
+    
+    await edit_cb(cb, prompt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("cancel"), callback_data="custom_link_settings")]]))
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^toggle_cl_apply$"))
+@iuser_check
+@log_errors
+async def toggle_cl_apply_handler(c: Client, cb: CallbackQuery):
+    user_id = cb.from_user.id
+    data = get_custom_link_data()
+    
+    current = data.get("apply_types", {}).get(str(user_id), "global")
+    new_type = "per_account" if current == "global" else "global"
+    
+    data.setdefault("apply_types", {})[str(user_id)] = new_type
+    save_custom_link_data(data)
+    
+    await cb.answer(gt("apply_type_changed").format(gt(f"custom_link_{new_type}")), show_alert=True)
+    await custom_link_settings_handler(c, cb)
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^reset_cl_default$"))
+@iuser_check
+@log_errors
+async def reset_cl_default_handler(c: Client, cb: CallbackQuery):
+    user_id = cb.from_user.id
+    data = get_custom_link_data()
+    
+    if str(user_id) in data.get("sessions", {}):
+        del data["sessions"][str(user_id)]
+    
+    if str(user_id) in data.get("apply_types", {}):
+        data["apply_types"][str(user_id)] = "global"
+        
+    save_custom_link_data(data)
+    
+    await cb.answer(gt("btn_reset"), show_alert=True)
+    await custom_link_settings_handler(c, cb)
+
 
 
 # ✅ HANDLER: Global Close Button
@@ -626,15 +755,17 @@ async def settings_menu_cb_handler(c: Client, cb: CallbackQuery):
                     
     total_mods = ub_mods + bot_mods + xtra_mods
 
-    full_text = f"{gt('settings_text')}\n\n" + gt('settings_stats').format(
-        total_sessions, total_bots, default_bots, custom_bots, xtra_features, total_mods, ub_mods, bot_mods, xtra_mods
+    full_text = gt('settings_stats').format(
+        total_sessions, total_bots, default_bots, custom_bots, xtra_features, total_mods, ub_mods, bot_mods, xtra_mods, Altruix.total_commands, Altruix.__version__
     ) + f"\n\n<i>{gt('select_category')}</i>"
+
 
     await edit_cb(
         cb,
         text=full_text,
-        reply_markup=InlineKeyboardMarkup(settings_menu_buttons)
+        reply_markup=InlineKeyboardMarkup(get_settings_buttons(cb.from_user.id))
     )
+
 
 
 def arrange_buttons(array: list, no=3) -> List:
@@ -724,15 +855,17 @@ async def settings_command_handler(c: Client, m: Message):
                         
         total_mods = ub_mods + bot_mods + xtra_mods
 
-        full_text = f"{gt('settings_text')}\n\n" + gt('settings_stats').format(
-            total_sessions, total_bots, default_bots, custom_bots, xtra_features, total_mods, ub_mods, bot_mods, xtra_mods
+        full_text = gt('settings_stats').format(
+            total_sessions, total_bots, default_bots, custom_bots, xtra_features, total_mods, ub_mods, bot_mods, xtra_mods, Altruix.total_commands, Altruix.__version__
         ) + f"\n\n<i>{gt('select_category')}</i>"
+
         
         await m.reply(
             full_text,
-            reply_markup=InlineKeyboardMarkup(settings_menu_buttons),
+            reply_markup=InlineKeyboardMarkup(get_settings_buttons(m.from_user.id)),
             quote=True,
         )
+
         logging.info(f"User {m.from_user.id} used /settings command")
     except Exception as e:
         logger.error(f"Gagal kirim notifikasi ke log: {e}")
@@ -785,9 +918,10 @@ async def settings_inline_handler(c: Client, iq: InlineQuery):
                         
         total_mods = ub_mods + bot_mods + xtra_mods
 
-        full_text = f"{gt('settings_text')}\n\n" + gt('settings_stats').format(
-            total_sessions, total_bots, default_bots, custom_bots, xtra_features, total_mods, ub_mods, bot_mods, xtra_mods
+        full_text = gt('settings_stats').format(
+            total_sessions, total_bots, default_bots, custom_bots, xtra_features, total_mods, ub_mods, bot_mods, xtra_mods, Altruix.total_commands, Altruix.__version__
         ) + f"\n\n<i>{gt('select_category')}</i>"
+
 
         await iq.answer(
             results=[
@@ -797,12 +931,13 @@ async def settings_inline_handler(c: Client, iq: InlineQuery):
                         full_text,
                         parse_mode=ParseMode.HTML
                     ),
-                    reply_markup=InlineKeyboardMarkup(settings_menu_buttons)
+                    reply_markup=InlineKeyboardMarkup(get_settings_buttons(iq.from_user.id))
                 )
             ],
             cache_time=0,
             is_personal=True
         )
+
     except Exception as e:
         logger.error(f"Error in settings_inline_handler: {e}")
 
@@ -1201,6 +1336,45 @@ async def user_text_handler(c: Client, m: Message):
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Menu", callback_data=f"privacy_menu_{state['session_index']}_{state['page']}")]])
             )
             return
+
+    # ✅ Custom Link Settings Input
+    if user_id in Altruix.user_track_state:
+        state = Altruix.user_track_state[user_id]
+        step = state.get("step", "")
+        
+        if text.lower() == "/cancel":
+            del Altruix.user_track_state[user_id]
+            await m.reply("❌ Dibatalkan.")
+            return
+
+        if step.startswith("edit_cl_"):
+            target = step.replace("edit_cl_", "") # "text" or "link"
+            data = get_custom_link_data()
+            apply_type = data.get("apply_types", {}).get(str(user_id), "global")
+            
+            if target == "link" and not (text.startswith("http://") or text.startswith("https://")):
+                await m.reply(gt("invalid_link"))
+                return
+            
+            if apply_type == "global":
+                data["global"][target] = text
+            else:
+                data.setdefault("sessions", {}).setdefault(str(user_id), {})[target] = text
+                if target == "text" and "link" not in data["sessions"][str(user_id)]:
+                    data["sessions"][str(user_id)]["link"] = data["global"]["link"]
+                elif target == "link" and "text" not in data["sessions"][str(user_id)]:
+                    data["sessions"][str(user_id)]["text"] = data["global"]["text"]
+            
+            save_custom_link_data(data)
+            del Altruix.user_track_state[user_id]
+            
+            await m.reply(gt("btn_updated").format(target.capitalize()))
+            try:
+                await c.send_message(m.chat.id, gt("custom_link_title"), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("back"), callback_data="custom_link_settings")]]))
+            except:
+                pass
+            return
+
 
         # ✅ Handle Custom Startup Message Input
         if state['step'] == 'waiting_startup_custom_msg':

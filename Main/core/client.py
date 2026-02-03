@@ -126,7 +126,7 @@ class AltruixClient:
         self.clients: List[Client] = []
         self.cmd_list = {}
         self.all_lang_strings = {}
-        self.__version__ = "0.0.7.75"
+        self.__version__ = "0.0.7.82"
         self.selected_lang = "english"
         self.local_lang_file = "./Main/localization"
         self.cmd_list = {} # {plugin_name: [cmd_data, ...]}
@@ -205,6 +205,16 @@ class AltruixClient:
         self.bot_manager = BotManager(self)
         
         self.loop.run_until_complete(self._setup(restart=False, *args, **kwargs))
+
+    @property
+    def total_commands(self) -> int:
+        """Calculate total number of registered command triggers."""
+        total = 0
+        for plugin in self.cmd_list:
+            for cmd_info in self.cmd_list[plugin]:
+                total += len(cmd_info.get("commands", []))
+        return total
+
 
     async def update_cache(self):
         cache = Cache(self.config, self.db, self.clients)
@@ -1699,6 +1709,8 @@ class AltruixClient:
             "bot_plugins": bot_plugins,
             "index": (index + 1) if index is not None and index >= 0 else "N/A",
             "total_sessions": total_sessions,
+            "total_commands": self.total_commands,
+
             
             # Legacy/Requested (userbot version) style
             "(userbot version)": self.__version__,
@@ -1708,6 +1720,8 @@ class AltruixClient:
             "(bot plugins)": bot_plugins,
             "(session index)": (index + 1) if index is not None and index >= 0 else "N/A",
             "(total sessions)": total_sessions,
+            "(total commands)": self.total_commands,
+
         }
         
         if me:

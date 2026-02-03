@@ -130,7 +130,9 @@ async def get_help_menu(return_all: bool = False, user_id: int = None, chat_id: 
                    f"{Altruix.get_string('help_tabs_desc')}\n\n" \
                    f"<b>Userbot version :</b> <code>V{Altruix.__version__}</code>\n" \
                    f"<b>Userbot Plugins :</b> <code>{ub_plugins}</code>\n" \
-                   f"<b>Bot Plugins :</b> <code>{bot_plugins}</code>"
+                   f"<b>Bot Plugins :</b> <code>{bot_plugins}</code>\n" \
+                   f"<b>Total Commands :</b> <code>{Altruix.total_commands}</code>"
+
 
     # Filter plugins based on mode
     all_plugins = sorted(list(Altruix._command_help_message_data.keys()))
