@@ -204,11 +204,16 @@ class Config(BaseConfig):
 
     async def get_env(self, env_key, as_list=False):
         env_key = env_key.strip().upper()
-        return (
-            await self.get_env_from_db(env_key)
-            or self.get_env_(env_key, as_list)
-            or getattr(self, env_key, None)
-        )
+        
+        db_val = await self.get_env_from_db(env_key)
+        if db_val is not None:
+            return db_val
+            
+        env_val = self.get_env_(env_key, as_list)
+        if env_val is not None:
+            return env_val
+            
+        return getattr(self, env_key, None)
 
     def get_env_(self, env_key, as_list):
         env_ = getenv(env_key)

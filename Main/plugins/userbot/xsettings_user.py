@@ -36,7 +36,7 @@ async def ub_settings_handler(c: Client, m):
                 chat_id=chat,
                 query_id=results.query_id,
                 result_id=results.results[0].id,
-                reply_to_message_id=rm.id if rm else None,
+                reply_to_message_id=m.id,
             )
             # 4. Hapus pesan perintah
             await m.delete_if_self()

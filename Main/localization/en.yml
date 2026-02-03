@@ -263,7 +263,7 @@ join_group: "➕ Join Chat"
 status: "Status"
 mention_logic: "Mention Logic"
 apply_type: "Apply Type"
-cmd_settings: "Command Settings"
+cmd_settings: "🛠️ Command Settings"
 auto_delete_cmd: "Auto-Delete Input"
 cmd_settings_text: "<b>🛠️ Command Settings</b>\n\nManage how the userbot handles commands."
 auto_delete_desc: "Delete the input command message after execution."
@@ -349,4 +349,13 @@ REPLY_MANAGER_LOG_DESC: "Enable or disable terminal console logging for Reply Ma
 REPLY_MANAGER_LOG: "Reply Manager Log"
 WHISPER_HELP: "Send a whisper message that only the specified recipient can read."
 WHISPER_USAGE: "Use via inline query:\n<code>@botusername whisper @targetusername, your message</code>\nor\n<code>@botusername whisper user_id, your message</code>"
+
+# Bot PM Logger Settings
+pmlb_menu_title: "🤖 <b>Bot PM Logger Settings</b>"
+pmlb_menu_desc: "Configure how the Bot Assistant logs private messages.\n\n<b>Current Mode:</b> {}"
+pmlb_mode_all: "All Users"
+pmlb_mode_sudo: "Sudo Only"
+pmlb_mode_nonsudo: "Non-Sudo Only"
+pmlb_mode_off: "OFF (Disabled)"
+pmlb_mode_changed: "✅ <b>Bot PM Logger Mode changed to:</b> {}"
 

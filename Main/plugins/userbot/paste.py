@@ -65,7 +65,7 @@ async def paste(c: Client, m: Message):
                 chat_id=m.chat.id,
                 query_id=results.query_id,
                 result_id=results.results[0].id,
-                reply_to_message_id=rm.id if rm else None,
+                reply_to_message_id=rm.id if rm else m.id,
             )
             await m.delete_if_self()
         except ChatSendInlineForbidden:
@@ -83,7 +83,7 @@ async def paste(c: Client, m: Message):
                 chat_id=m.chat.id,
                 query_id=results.query_id,
                 result_id=results.results[0].id,
-                reply_to_message_id=rm.id if rm else None,
+                reply_to_message_id=rm.id if rm else m.id,
             )
             await m.delete_if_self()
         except ChatSendInlineForbidden:

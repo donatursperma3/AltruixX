@@ -106,10 +106,18 @@ async def load_settings():
                 content = await f.read()
                 if content.strip():
                     data = json.loads(content)
-                    PM_LOGGER_BOT_DATA = data.get("settings", {"enabled": False})
+                    PM_LOGGER_BOT_DATA = data.get("settings", {})
+                    # Migration: enabled -> log_mode
+                    if "log_mode" not in PM_LOGGER_BOT_DATA:
+                        enabled = PM_LOGGER_BOT_DATA.get("enabled", True)
+                        PM_LOGGER_BOT_DATA["log_mode"] = "all" if enabled else "off"
+                        
                     PM_LOGGER_FILTERS = data.get("filters", PM_LOGGER_FILTERS)
                     REPLY_FROM_ALL_ACCESSIBLE = data.get("reply_from_all_accessible", True)
                     REPLY_ACCESS_MODE = data.get("reply_access_mode", "sudo")
+        else:
+            # Default
+            PM_LOGGER_BOT_DATA = {"log_mode": "off"}
                     
         # Try to read shared REPLY_ACCESS_MODE from user settings
         shared_file = Path("pm_logger_user_settings.json")
@@ -147,8 +155,7 @@ asyncio.create_task(load_settings())
             "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "🤖 **PM LOGGER BOT COMMANDS**\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "• `/pmlb on` : Aktifkan pencatatan PM Bot.\n"
-            "• `/pmlb off`: Nonaktifkan pencatatan PM Bot.\n\n"
+            "• `/pmlb` : Buka menu pengaturan interaktif.\n\n"
             "👥 **Interactive Tools:**\n"
             "• `/pmlb replyall on` : Izinkan tombol 'Reply From All'.\n"
             "• `/pmlb replyall off`: Sembunyikan tombol 'Reply From All'.\n\n"
@@ -168,33 +175,30 @@ async def pmlb_settings_handler(c: Client, m: AltruixMessage):
     global REPLY_FROM_ALL_ACCESSIBLE
     user_input = (m.user_input or "").lower().strip()
     
-    if not user_input:
-        is_enabled = PM_LOGGER_BOT_DATA.get("enabled", False)
-        status = "ENABLED ✅" if is_enabled else "DISABLED ❌"
-        ra_status = "ENABLED ✅" if REPLY_FROM_ALL_ACCESSIBLE else "DISABLED ❌"
-        log_chat = Altruix.log_chat or "Not Configured ⚠️"
-        
-        # Check if bot can actually send to log_chat
-        bot_access = "Checking..."
-        if Altruix.log_chat:
-            try:
-                await Altruix.bot.get_chat(Altruix.log_chat)
-                bot_access = "OK ✅"
-            except Exception as e:
-                bot_access = f"FAILED ❌ ({str(e)})"
-        else:
-            bot_access = "N/A"
-
-        res = (
-            f"🤖 **PM Logger Bot Status Detail**\n"
-            f"• **Status:** {status}\n"
-            f"• **Reply From All:** {ra_status}\n"
-            f"• **Log Group ID:** ` {log_chat} `\n"
-            f"• **Bot Access:** {bot_access}\n\n"
-            f"Use `.pmlb on` or `.pmlb off` to change status.\n"
-            f"Use `.pmlb replyall on` or `.pmlb replyall off` to toggle feature."
+    # Direct to interactive menu if no arg
+    if not user_input or user_input == "settings":
+        # Simulate button press logic to send menu
+        log_mode = PM_LOGGER_BOT_DATA.get("log_mode", "off")
+        mode_label = Altruix.get_string(f"pmlb_mode_{log_mode}") or log_mode.capitalize()
+        text = (
+            f"{Altruix.get_string('pmlb_menu_title')}\n\n"
+            f"{Altruix.get_string('pmlb_menu_desc').format(mode_label)}\n"
         )
-        return await m.reply_msg(res)
+        buttons = [
+            [
+                InlineKeyboardButton(f"{'✅' if log_mode == 'all' else '⚫️'} {Altruix.get_string('pmlb_mode_all')}", callback_data="pmlb_set_mode_all"),
+                InlineKeyboardButton(f"{'✅' if log_mode == 'sudo' else '⚫️'} {Altruix.get_string('pmlb_mode_sudo')}", callback_data="pmlb_set_mode_sudo"),
+            ],
+            [
+                InlineKeyboardButton(f"{'✅' if log_mode == 'nonsudo' else '⚫️'} {Altruix.get_string('pmlb_mode_nonsudo')}", callback_data="pmlb_set_mode_nonsudo"),
+                InlineKeyboardButton(f"{'✅' if log_mode == 'off' else '⚫️'} {Altruix.get_string('pmlb_mode_off')}", callback_data="pmlb_set_mode_off"),
+            ],
+            [
+                InlineKeyboardButton(f"Reply All: {'✅' if REPLY_FROM_ALL_ACCESSIBLE else '❌'}", callback_data="pmlb_toggle_replyall")
+            ],
+            [InlineKeyboardButton(Altruix.get_string('close') or "Close", callback_data="create_close")]
+        ]
+        return await m.reply_msg(text, reply_markup=InlineKeyboardMarkup(buttons))
 
     if user_input.startswith("replyall"):
         arg = user_input.replace("replyall", "").strip()
@@ -209,17 +213,18 @@ async def pmlb_settings_handler(c: Client, m: AltruixMessage):
         await save_settings()
         return await m.reply_msg(msg_text)
     
-    if user_input in ["on", "yes"]:
-        PM_LOGGER_BOT_DATA["enabled"] = True
-        status = "ENABLED ✅"
-    elif user_input in ["off", "no"]:
-        PM_LOGGER_BOT_DATA["enabled"] = False
-        status = "DISABLED ❌"
+    # Legacy support for on/off args
+    if user_input in ["on", "yes", "enable"]:
+        PM_LOGGER_BOT_DATA["log_mode"] = "all"
+        status = "ALL (Enabled) ✅"
+    elif user_input in ["off", "no", "disable"]:
+        PM_LOGGER_BOT_DATA["log_mode"] = "off"
+        status = "OFF (Disabled) ❌"
     else:
         return await m.reply_msg("INVALID_INPUT")
     
     await save_settings()
-    await m.reply_msg(f"**PM Logger Bot is now {status}**")
+    await m.reply_msg(f"**PM Logger Bot Mode set to:** `{status}`")
 
 @Altruix.register_on_cmd(
     ["pmlstatus", "pmlbstatus"],
@@ -237,7 +242,8 @@ async def pml_status_bot_handler(c: Client, m: AltruixMessage):
         return await m.reply_msg("⛔ Akses Ditolak!")
         
     # Bot status
-    b_enabled = PM_LOGGER_BOT_DATA.get("enabled", False)
+    log_mode = PM_LOGGER_BOT_DATA.get("log_mode", "off")
+    b_enabled = log_mode != "off"
     
     # Userbot settings (import from the other plugin)
     try:
@@ -287,10 +293,21 @@ async def pm_logger_bot_handler(c: Client, m: RawMessage):
         # ✅ Dynamic Reload: Catch UI updates from settings.py
         await load_settings()
 
-        if not PM_LOGGER_BOT_DATA.get("enabled", False):
+        if not PM_LOGGER_BOT_DATA.get("log_mode", "off") != "off":
             return
 
-        # Bot PM Logger is independent - no need to check User PM Logger mode
+        # Filtering Logic
+        log_mode = PM_LOGGER_BOT_DATA.get("log_mode", "all")
+        
+        # Check authorization for Sudo/Non-Sudo modes
+        from Main.utils.access_control import is_authorized_user
+        sender_is_auth = is_authorized_user(m.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS)
+        
+        if log_mode == "sudo" and not sender_is_auth:
+            return # Sudo mode: Only authorized users
+        
+        if log_mode == "nonsudo" and sender_is_auth:
+            return # Non-Sudo mode: Only unauthorized users
             
         # Optional: Check if at least one session has bot logging enabled 
         # (Though usually bot logger is global for the bot assistant anyway)
@@ -298,9 +315,15 @@ async def pm_logger_bot_handler(c: Client, m: RawMessage):
         sender = m.from_user
         if not sender:
             return
+            
+        # Block Bot PMs if coming from another Bot (optional, if you want only user PMs)
+        if sender.is_bot and log_mode == "nonsudo":
+           # Logic choice: Are bots considered non-sudo? typically yes. 
+           # But let's assume 'nonsudo' implies 'regular human users'.
+           pass 
 
         sender_id = sender.id
-        logger.info(f"🤖 Bot Logger triggered for PM from {sender_id}")
+        logger.info(f"🤖 Bot Logger triggered for PM from {sender_id} [Mode: {log_mode}]")
 
         if not Altruix.log_chat:
             logger.warning("🤖 PMLB: log_chat is not configured!")
@@ -436,7 +459,7 @@ async def pm_logger_bot_edit_handler(c: Client, m: RawMessage):
         # ✅ Dynamic Reload
         await load_settings()
 
-        if not PM_LOGGER_BOT_DATA.get("enabled", False):
+        if not PM_LOGGER_BOT_DATA.get("log_mode", "off") != "off":
             return
 
         from Main.plugins.userbot.xpm_logger_user import PM_LOG_CACHE as U_CACHE
@@ -717,6 +740,92 @@ async def pmlb_reply_menu_callback(c: Client, cb: CallbackQuery):
         await cb.answer()
     except Exception as e:
         await cb.answer(f"❌ Error: {e}", show_alert=True)
+
+# ✅ HANDLER: Bot PM Logger Menu Callback (Main Menu)
+@Altruix.bot.on_callback_query(filters.regex(r"^pmlb_menu$"))
+@log_errors
+async def pmlb_menu_callback_handler(c: Client, cb: CallbackQuery):
+    try:
+        from Main.utils.access_control import is_authorized_user
+        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+             msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+             return await cb.answer(msg, show_alert=True)
+             
+        await pmlb_menu_refresh(c, cb)
+    except Exception as e:
+        await cb.answer(f"❌ Error: {e}", show_alert=True)
+
+# ✅ HANDLER: Bot PM Logger Menu Callback
+@Altruix.bot.on_callback_query(filters.regex(r"^pmlb_set_mode_"))
+@log_errors
+async def pmlb_set_mode_callback(c: Client, cb: CallbackQuery):
+    try:
+        from Main.utils.access_control import is_authorized_user
+        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+             msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+             return await cb.answer(msg, show_alert=True)
+             
+        new_mode = cb.data.replace("pmlb_set_mode_", "").strip()
+        if new_mode not in ["all", "sudo", "nonsudo", "off"]:
+             return await cb.answer("Invalid Mode", show_alert=True)
+             
+        PM_LOGGER_BOT_DATA["log_mode"] = new_mode
+        await save_settings()
+        
+        mode_label = Altruix.get_string(f"pmlb_mode_{new_mode}") or new_mode.capitalize()
+        await cb.answer(Altruix.get_string("pmlb_mode_changed").format(mode_label), show_alert=True)
+        
+        # Refresh Menu
+        await pmlb_menu_refresh(c, cb)
+        
+    except Exception as e:
+        await cb.answer(f"❌ Error: {e}", show_alert=True)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^pmlb_toggle_replyall$"))
+@log_errors
+async def pmlb_toggle_replyall_callback(c: Client, cb: CallbackQuery):
+    try:
+        from Main.utils.access_control import is_authorized_user
+        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+             msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+             return await cb.answer(msg, show_alert=True)
+             
+        global REPLY_FROM_ALL_ACCESSIBLE
+        REPLY_FROM_ALL_ACCESSIBLE = not REPLY_FROM_ALL_ACCESSIBLE
+        await save_settings()
+        
+        state = "Enabled" if REPLY_FROM_ALL_ACCESSIBLE else "Disabled"
+        await cb.answer(f"Reply From All: {state}")
+        
+        # Refresh Menu
+        await pmlb_menu_refresh(c, cb)
+    except Exception as e:
+        await cb.answer(f"❌ Error: {e}", show_alert=True)
+
+async def pmlb_menu_refresh(c: Client, cb: CallbackQuery):
+    log_mode = PM_LOGGER_BOT_DATA.get("log_mode", "off")
+    mode_label = Altruix.get_string(f"pmlb_mode_{log_mode}") or log_mode.capitalize()
+    
+    text = (
+        f"{Altruix.get_string('pmlb_menu_title')}\n\n"
+        f"{Altruix.get_string('pmlb_menu_desc').format(mode_label)}\n"
+    )
+    buttons = [
+        [
+            InlineKeyboardButton(f"{'✅' if log_mode == 'all' else '⚫️'} {Altruix.get_string('pmlb_mode_all')}", callback_data="pmlb_set_mode_all"),
+            InlineKeyboardButton(f"{'✅' if log_mode == 'sudo' else '⚫️'} {Altruix.get_string('pmlb_mode_sudo')}", callback_data="pmlb_set_mode_sudo"),
+        ],
+        [
+            InlineKeyboardButton(f"{'✅' if log_mode == 'nonsudo' else '⚫️'} {Altruix.get_string('pmlb_mode_nonsudo')}", callback_data="pmlb_set_mode_nonsudo"),
+            InlineKeyboardButton(f"{'✅' if log_mode == 'off' else '⚫️'} {Altruix.get_string('pmlb_mode_off')}", callback_data="pmlb_set_mode_off"),
+        ],
+        [
+            InlineKeyboardButton(f"Reply All: {'✅' if REPLY_FROM_ALL_ACCESSIBLE else '❌'}", callback_data="pmlb_toggle_replyall")
+        ],
+        [InlineKeyboardButton("🔙 Back", callback_data="bot_controls_menu")]
+    ]
+    await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=enums.ParseMode.HTML)
+
 
 # ==================== LOG SUKSES LOADING ====================
 # try:

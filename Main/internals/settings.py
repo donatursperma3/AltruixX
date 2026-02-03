@@ -436,6 +436,116 @@ async def configs_menu_cb_handler(c: Client, cb: CallbackQuery):
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
 
 
+@Altruix.bot.on_callback_query(filters.regex(r"^bot_controls_menu$"))
+@iuser_check
+@log_errors
+async def bot_controls_menu_handler(c: Client, cb: CallbackQuery):
+    await cb.answer()
+    
+    text = (
+        "<b>🤖 Bot Controls</b>\n\n"
+        "Menu untuk mengatur perilaku Bot Assistant secara global.\n"
+        "Pilih menu di bawah ini:"
+    )
+    
+    buttons = [
+        [
+            InlineKeyboardButton("📟 PM Logger Bot", callback_data="pmlb_menu"),
+            InlineKeyboardButton("🔘 Callback Logger", callback_data="cb_logger_settings"),
+        ],
+        [
+            InlineKeyboardButton("🔔 Mention Logger", callback_data="mntlb_menu"),
+            InlineKeyboardButton("💬 Reply Manager", callback_data="reply_manager_menu"),
+        ],
+        [
+            InlineKeyboardButton("🚪 Join Logger Global", callback_data="joinl_menu_global"),
+            InlineKeyboardButton("🔗 Group Log Link", callback_data="get_log_group_link"),
+        ],
+        [
+            InlineKeyboardButton("👽 Custom Bot Manager", callback_data="custom_bot_manager"),
+        ],
+        [
+            InlineKeyboardButton("🔙 Back to Settings", callback_data="settings_menu"),
+        ]
+    ]
+    await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
+
+
+# ✅ HANDLER: Global Close Button
+@Altruix.bot.on_callback_query(filters.regex(r"^create_close$"))
+async def create_close_handler(c: Client, cb: CallbackQuery):
+    try:
+        await cb.message.delete()
+    except:
+        pass
+
+
+# ✅ HANDLER: Get Log Group Link
+@Altruix.bot.on_callback_query(filters.regex(r"^get_log_group_link$"))
+@iuser_check
+@log_errors
+async def get_log_group_link_handler(c: Client, cb: CallbackQuery):
+    log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
+    try:
+        chat = await c.get_chat(log_chat_id)
+        link = chat.invite_link
+        if not link:
+             link = await c.export_chat_invite_link(log_chat_id)
+        
+        await edit_cb(cb, 
+            f"🔗 <b>Log Group Link</b>\n\nLink: {link}",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="bot_controls_menu")]])
+        )
+    except Exception as e:
+        await cb.answer(f"❌ Error: {e}", show_alert=True)
+
+
+# ✅ HANDLER: Join Logger Global Menu
+@Altruix.bot.on_callback_query(filters.regex(r"^joinl_menu_global$"))
+@iuser_check
+@log_errors
+async def joinl_menu_global_handler(c: Client, cb: CallbackQuery):
+    filename = "join_logger_settings.json"
+    data = {"global": {"enabled": True}, "sessions": {}, "apply_types": {}}
+    if os.path.exists(filename):
+        with open(filename, "r") as f:
+            loaded = json.load(f)
+            if "global" in loaded: data = loaded
+            else: data["global"]["enabled"] = loaded.get("enabled", True)
+            
+    active_enabled = data["global"].get("enabled", True)
+    
+    text = (
+        "<b>🚪 Join Logger Global Settings</b>\n\n"
+        "Pengaturan ini akan berlaku untuk semua akun yang menggunakan tipe 'Global'.\n\n"
+        f"• <b>Status Global:</b> {'✅ ENABLED' if active_enabled else '❌ DISABLED'}"
+    )
+    
+    buttons = [
+        [InlineKeyboardButton(f"{'Disable' if active_enabled else 'Enable'} Globally", "joinl_toggle_global")],
+        [InlineKeyboardButton("🔙 Back", "bot_controls_menu")]
+    ]
+    await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^joinl_toggle_global$"))
+@iuser_check
+@log_errors
+async def joinl_toggle_global_handler(c: Client, cb: CallbackQuery):
+    filename = "join_logger_settings.json"
+    data = {"global": {"enabled": True}, "sessions": {}, "apply_types": {}}
+    if os.path.exists(filename):
+        with open(filename, "r") as f: data = json.load(f)
+        
+    data["global"]["enabled"] = not data["global"].get("enabled", True)
+    
+    with open(filename, "w") as f: json.dump(data, f, indent=4)
+    
+    await cb.answer(f"Global Join Logger: {'Enabled' if data['global']['enabled'] else 'Disabled'}")
+    await joinl_menu_global_handler(c, cb)
+
+
+
 @Altruix.bot.on_callback_query(filters.regex(r"^cb_logger_settings$"))
 @iuser_check
 @log_errors
@@ -8583,16 +8693,44 @@ async def manage_custom_bot_handler(c: Client, cb: CallbackQuery):
         return await custom_bot_manager_handler(c, cb)
         
     me = bot_client.myself if hasattr(bot_client, "myself") else None
+    
+    # Try fetch if missing and connected
+    is_connected = getattr(bot_client, 'is_connected', False)
+    if not me and is_connected:
+        try:
+             me = await bot_client.get_me()
+        except: pass
+
     name = me.first_name if me else f"Bot {bot_id}"
     username = f"@{me.username}" if me and me.username else "No Username"
-    status_text = Altruix.get_string("bot_status_running") if getattr(bot_client, 'is_connected', False) else Altruix.get_string("bot_status_stopped")
+    dc_id = getattr(me, 'dc_id', "N/A") if me else "N/A"
+    status_text = Altruix.get_string("bot_status_running") if is_connected else Altruix.get_string("bot_status_stopped")
     
+    # Find Linked Session
+    linked_session = "None"
+    if hasattr(Altruix, 'bot_manager'):
+        for session_client in Altruix.clients:
+             try:
+                 session_user_id = session_client.me.id
+                 # Check if this session owns this bot
+                 # Assuming bot_manager has a way to map, or we reverse check config
+                 # Checking Env: CUSTOM_BOT_{session_id} == bot_token -> we'd need to know token to match id?
+                 # Or check bot_manager internal map.
+                 # Simplified: Iterate calls to get_bot_username
+                 mapped_username = Altruix.bot_manager.get_bot_username(session_user_id)
+                 if mapped_username and me and mapped_username.lower() == me.username.lower():
+                     linked_session = f"{session_client.me.first_name} ({session_user_id})"
+                     break
+             except: continue
+
     text = (
         f"{Altruix.get_string('manage_custom_bot_title')}\n\n"
         f"• <b>Name:</b> {html.escape(name)}\n"
         f"• <b>Username:</b> {username}\n"
         f"• <b>ID:</b> <code>{bot_id}</code>\n"
+        f"• <b>DC:</b> <code>{dc_id}</code>\n"
         f"• <b>Status:</b> {status_text}\n"
+        f"• <b>Linked Session:</b> {html.escape(linked_session)}\n"
     )
     
     # Actions

@@ -230,3 +230,58 @@ async def mention_mute_handler(c: Client, cb: CallbackQuery):
 #     Altruix.log(f"[DEBUG] Loaded → {__plugin_name__} {PLUGIN_VERSION}", level=20)
 # except Exception as e:
 #     logger.info(f"[DEBUG] Loaded → {__plugin_name__} {PLUGIN_VERSION}")
+# ✅ HANDLER: Mention Logger Bot Settings Menu
+@Altruix.bot.on_callback_query(filters.regex(r"^mntlb_menu$"))
+@log_errors
+async def mntlb_menu_handler(c: Client, cb: CallbackQuery):
+    try:
+        from Main.utils.access_control import is_authorized_user
+        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+             msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+             return await cb.answer(msg, show_alert=True)
+
+        await load_settings()
+        enabled = MENTION_LOGGER_BOT_DATA.get("enabled", False)
+        
+        text = (
+            "<b>🔔 Mention Logger Bot Settings</b>\n\n"
+            "Log mention yang diterima oleh Bot Assistant (bukan Userbot) di grup.\n\n"
+            f"• <b>Status:</b> {'✅ ENABLED' if enabled else '❌ DISABLED'}\n"
+            f"• <b>Reply Mode:</b> {REPLY_ACCESS_MODE.upper()}"
+        )
+        
+        buttons = [
+            [
+                InlineKeyboardButton(f"{'Disable' if enabled else 'Enable'} Logging", callback_data="mntlb_toggle_enabled")
+            ],
+            [
+                InlineKeyboardButton(f"Mode: {REPLY_ACCESS_MODE.upper()}", callback_data="mntlb_toggle_mode")
+            ],
+            [
+                InlineKeyboardButton("🔙 Back", callback_data="bot_controls_menu")
+            ]
+        ]
+        await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=enums.ParseMode.HTML)
+    except Exception as e:
+        await cb.answer(f"❌ Error: {e}", show_alert=True)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^mntlb_toggle_enabled$"))
+@log_errors
+async def mntlb_toggle_enabled_handler(c: Client, cb: CallbackQuery):
+    MENTION_LOGGER_BOT_DATA["enabled"] = not MENTION_LOGGER_BOT_DATA.get("enabled", False)
+    await save_settings()
+    await mntlb_menu_handler(c, cb)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^mntlb_toggle_mode$"))
+@log_errors
+async def mntlb_toggle_mode_handler(c: Client, cb: CallbackQuery):
+    global REPLY_ACCESS_MODE
+    modes = ["sudo", "owner", "all"]
+    try:
+        current_index = modes.index(REPLY_ACCESS_MODE)
+        REPLY_ACCESS_MODE = modes[(current_index + 1) % len(modes)]
+    except:
+        REPLY_ACCESS_MODE = "sudo"
+    
+    await save_settings()
+    await mntlb_menu_handler(c, cb)

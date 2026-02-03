@@ -263,7 +263,7 @@ join_group: "➕ Gabung Chat"
 status: "Status"
 mention_logic: "Logika Mention"
 apply_type: "Tipe Penerapan"
-cmd_settings: "Pengaturan Command"
+cmd_settings: "🛠️ Pengaturan Command"
 auto_delete_cmd: "Hapus Input Otomatis"
 cmd_settings_text: "<b>🛠️ Pengaturan Command</b>\n\nAtur bagaimana userbot menangani perintah input."
 auto_delete_desc: "Hapus pesan perintah input (prefix) setelah eksekusi selesai."
@@ -349,4 +349,13 @@ REPLY_MANAGER_LOG_DESC: "Aktifkan atau matikan log pada terminal console untuk R
 REPLY_MANAGER_LOG: "Reply Manager Log"
 WHISPER_HELP: "Kirim pesan bisikan yang hanya bisa dibaca oleh penerima tertentu."
 WHISPER_USAGE: "Gunakan via inline query:\n<code>@botusername whisper @targetusername, pesan anda</code>\natau\n<code>@botusername whisper user_id, pesan anda</code>"
+
+# Bot PM Logger Settings
+pmlb_menu_title: "🤖 <b>Pengaturan Bot PM Logger</b>"
+pmlb_menu_desc: "Konfigurasi bagaimana Bot Asisten mencatat pesan pribadi.\n\n<b>Mode Saat Ini:</b> {}"
+pmlb_mode_all: "Semua User"
+pmlb_mode_sudo: "Sudo Saja"
+pmlb_mode_nonsudo: "Non-Sudo Saja"
+pmlb_mode_off: "OFF (Nonaktif)"
+pmlb_mode_changed: "✅ <b>Mode Bot PM Logger diubah menjadi:</b> {}"
 

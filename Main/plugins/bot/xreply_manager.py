@@ -409,3 +409,50 @@ async def pmlu_cancel_send_callback(c: Client, cb: CallbackQuery):
         await cb.answer(f"❌ Error: {e}", show_alert=True)
 
 # logger.info("xreply_manager loaded successfully.")
+
+# ✅ HANDLER: Reply Manager Settings Menu
+@Altruix.bot.on_callback_query(filters.regex(r"^reply_manager_menu$"))
+@log_errors
+async def reply_manager_menu_handler(c: Client, cb: CallbackQuery):
+    try:
+        from Main.utils.access_control import is_authorized_user
+        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+             msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+             return await cb.answer(msg, show_alert=True)
+
+        enabled = should_log()
+        
+        text = (
+            "<b>💬 Reply Manager Settings</b>\n\n"
+            "Kontrol apakah Bot Assistant memproses balasan di Log Group untuk diteruskan ke user.\n\n"
+            f"• <b>Status:</b> {'✅ ENABLED' if enabled else '❌ DISABLED'}"
+        )
+        
+        buttons = [
+            [
+                InlineKeyboardButton(f"{'Disable' if enabled else 'Enable'} Manager", callback_data="reply_manager_toggle_enabled")
+            ],
+            [
+                InlineKeyboardButton("🔙 Back", callback_data="bot_controls_menu")
+            ]
+        ]
+        await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=enums.ParseMode.HTML)
+    except Exception as e:
+        await cb.answer(f"❌ Error: {e}", show_alert=True)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^reply_manager_toggle_enabled$"))
+@log_errors
+async def reply_manager_toggle_enabled_handler(c: Client, cb: CallbackQuery):
+    filename = "reply_manager_settings.json"
+    data = {"enabled": False}
+    if os.path.exists(filename):
+        try:
+            with open(filename, "r") as f: data = json.load(f)
+        except: pass
+        
+    data["enabled"] = not data.get("enabled", False)
+    
+    with open(filename, "w") as f:
+        json.dump(data, f, indent=4)
+        
+    await reply_manager_menu_handler(c, cb)

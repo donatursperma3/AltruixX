@@ -524,8 +524,18 @@ async def pm_logger_user_handler(c: Client, m: RawMessage):
                 "last_reply_id": None
             }
         except Exception as e:
-            if "CHANNEL_INVALID" in str(e):
-                logger.warning(f"PMLU Log send failed due to invalid log channel/topic: {e}")
+            if "CHANNEL_INVALID" in str(e) or "PEER_ID_INVALID" in str(e):
+                logger.warning(f"PMLU Error: Invalid Log Channel {Altruix.log_chat}. Disabling Logger.")
+                # Auto-disable to prevent spam
+                PM_LOGGER_USER_DATA["enabled"] = False
+                await save_settings()
+                try:
+                    await c.send_message(
+                        "me", 
+                        f"⚠️ **PMLU DISABLED**\n\nLog Channel (`{Altruix.log_chat}`) tidak valid/tidak dapat diakses.\nLogger dimatikan otomatis untuk mencegah error berulang."
+                    )
+                except:
+                    pass
             else:
                 logger.error(f"PMLU Log send failed: {e}")
 
