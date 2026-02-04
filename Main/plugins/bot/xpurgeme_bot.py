@@ -1,3 +1,4 @@
+PLUGIN_VERSION = "0.0.1"
 
 """
 Purgeme Bot Plugin
@@ -611,4 +612,5 @@ async def purgeme_start_handler(client: Client, message):
                     await message.reply("❌ Invalid Link Format.")
     except Exception as e:
         Altruix.log(f"Purgeme Start Error: {e}")
+
 

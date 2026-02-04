@@ -6,6 +6,8 @@
 #
 # All rights reserved.
 
+
+PLUGIN_VERSION = "0.0.1"
 import os
 import math
 import ffmpeg
@@ -263,3 +265,4 @@ async def get_pack_(c: Client, m: Message):
     if final_text is None:
         return await msg.edit_msg("NO_PACKS_FOUND")
     await msg.edit_msg(final_text)
+

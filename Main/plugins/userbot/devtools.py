@@ -6,6 +6,8 @@
 #
 # All rights reserved.
 
+
+PLUGIN_VERSION = "0.0.1"
 import os
 import aiofiles
 from Main import Altruix
@@ -267,3 +269,4 @@ async def logs(c: Client, m: Message):
     time_taken = round(end - start, 2)
     await MSG.delete()
     await msg.edit_msg(f"Retrieved logs in <code>{time_taken}</code>s.")
+

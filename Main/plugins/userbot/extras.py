@@ -6,6 +6,8 @@
 #
 # All rights reserved.
 
+
+PLUGIN_VERSION = "0.0.1"
 import os
 import re
 import uuid
@@ -157,3 +159,4 @@ async def file_to_b64(c: Altruix, m: Message):
 #     await msg.edit(f"https://graph.org{media_url[0]}")
 #     if os.path.exists(media):
 #         os.remove(media)
+

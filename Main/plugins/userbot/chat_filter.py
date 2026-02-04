@@ -6,6 +6,8 @@
 #
 # All rights reserved.
 
+
+PLUGIN_VERSION = "0.0.1"
 import re
 from Main import Altruix
 from pyrogram import filters
@@ -176,3 +178,4 @@ async def filter(c: Altruix, m: Message):
                 )
             else:
                 await m.reply(str(reply["reply"]), quote=True)
+

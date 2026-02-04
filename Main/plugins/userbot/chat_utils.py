@@ -6,6 +6,8 @@
 #
 # All rights reserved.
 
+
+PLUGIN_VERSION = "0.0.1"
 import os
 from os import remove
 from Main import Altruix
@@ -138,3 +140,4 @@ async def get_group_info_cmd_handler(c: Client, m: Message):
         return
     else:
         await msg.edit("".join(ci_text))
+

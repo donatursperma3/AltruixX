@@ -6,6 +6,8 @@
 #
 # All rights reserved.
 
+
+PLUGIN_VERSION = "0.0.1"
 from Main import Altruix
 from pyrogram import Client
 from Main.utils.paste import Paste
@@ -94,3 +96,4 @@ async def paste(c: Client, m: Message):
             Altruix.get_string("PASTE_TEXT").format(link, name),
             disable_web_page_preview=True,
         )
+

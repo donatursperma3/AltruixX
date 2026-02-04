@@ -1,3 +1,4 @@
+PLUGIN_VERSION = "0.0.2"
 
 """
 Purgeme Interactive Plugin for Altruix Userbot
@@ -917,3 +918,4 @@ async def purgeme_status_cmd(client: Client, message: Message):
         await message.edit(text, disable_web_page_preview=True)
     else:
         await message.edit(f"❌ No active purge session for chat: {chat_id}")
+

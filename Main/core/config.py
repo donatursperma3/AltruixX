@@ -69,7 +69,7 @@ class BaseConfig(object):
 
     UPDATE_ON_STARTUP = (
         False
-        if (getenv("UPDATE_ON_STARTUP", "yes").lower() in ["n", "nope", "false"])
+        if (getenv("UPDATE_ON_STARTUP", "no").lower() in ["n", "nope", "false"])
         else True
     )
     DB_NAME = "mongo"

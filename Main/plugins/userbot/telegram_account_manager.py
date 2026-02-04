@@ -6,6 +6,8 @@
 #
 # All rights reserved.
 
+
+PLUGIN_VERSION = "0.0.1"
 # import os
 # from os import remove
 # from Main import Altruix
@@ -84,3 +86,4 @@
 #             session: Authorization = session
 #             text_ += f"> <b>Device :</b> <code>{session.device_model} {session.platform} V{session.system_version}</code> \n<b>App :</b> <code>{session.app_name} V{session.app_version}</code> \n<b>Region :</b> <code>{session.country} - {session.region} ({session.ip})</code> \n\n"
 #         await m.handle_message(text_)
+

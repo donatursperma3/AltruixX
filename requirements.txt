@@ -3,7 +3,7 @@ bs4
 certifi
 dnspython
 # pyrogram
-kurigram
+kurigram>=2.2.18
 httpx
 markdown
 motor

@@ -7,6 +7,8 @@
 # All rights reserved.
 
 
+
+PLUGIN_VERSION = "0.0.1"
 import time
 from Main import Altruix
 from style import ping_format as pf
@@ -97,3 +99,4 @@ async def ping_inline_handler(c: Client, iq: InlineQuery):
         switch_pm_text=f"{pf['ping_emoji1']} Ping",
         switch_pm_parameter="ping",
     )
+

@@ -381,4 +381,33 @@ default_link: "https://t.me/AlphaXProject"
 help_menu: "❇️ Help Menu"
 select_category: "Select a category below to configure your userbot."
 
+# Change Login Email
+change_login_email: "📧 Change Login Email"
+fetching_security_info: "🔄 Fetching security info..."
+change_login_email_title: "📧 <b>Change Login Email</b>"
+current_email: "• <b>Current Email:</b> {}"
+2fa_password: "• <b>2FA Password:</b> {}"
+active: "✅ ACTIVE"
+inactive: "❌ INACTIVE"
+security_note_email: "⚠️ <b>Security:</b>\nMake sure you have access to the new email. A verification code will be sent to that address."
+confirm_continue: "Are you sure you want to continue?"
+yes_continue: "✅ Yes, Continue"
+change_email_step_1: "📧 <b>Change Login Email (Step 1/2)</b>\n\nPlease send your <b>New Email Address</b>:\nExample: <code>user@example.com</code>\n\n❌ <b>Cancel:</b> Type <code>cancel</code>"
+sending_code_to: "🔄 <b>Sending code to {}...</b>"
+code_sent_step_2: "✅ <b>Code Sent! (Step 2/2)</b>\n\nA verification code has been sent to <code>{}</code>.\nPlease <b>Send the Code</b> you received:\n(Recommended to use hyphens, e.g., <code>1-2-3-4-5-6</code>)\n\n❌ <b>Cancel:</b> Type <code>cancel</code>"
+verifying_code: "🔄 <b>Verifying code...</b>"
+change_email_success: "✅ <b>Success!</b>\nYour login email has been successfully changed to <code>{}</code>."
+email_invalid: "Email is invalid."
+verification_code_invalid: "Verification code is incorrect."
+
+# UI Strings
+change_name: "✏️ Change Name"
+track_profile: "🔍 Track Profile"
+chat_stats: "📊 Chat Stats"
+privacy_security: "🔒 Privacy & Security"
+eval_python: "🐍 Eval Python"
+exec_terminal: "🖥️ Exec Terminal"
+operation_cancelled: "❌ Cancelled."
+timeout_retry: "⏳ Timeout. Please try again."
+
 

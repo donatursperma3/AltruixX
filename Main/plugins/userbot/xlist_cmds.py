@@ -6,6 +6,8 @@
 #
 # All rights reserved.
 
+
+PLUGIN_VERSION = "0.0.1"
 from Main import Altruix
 from pyrogram import Client
 from Main.core.decorators import log_errors
@@ -42,3 +44,4 @@ async def list_all_cmds_handler(c: Client, m):
 
 __MODULE__ = "Command List"
 __HELP__ = f"Use <code>{Altruix.user_command_handler}listcmds</code> to see all available command triggers across all plugins."
+

@@ -7,6 +7,8 @@
 # All rights reserved.
 
 
+
+PLUGIN_VERSION = "0.0.1"
 import uuid
 from Main import Altruix
 from Main.core.decorators import log_errors
@@ -97,3 +99,4 @@ async def whisper_callback(c: Client, cq: CallbackQuery):
             return await cq.answer(MSG, True)
     else:
         await cq.answer(Altruix.get_string("WHISPER_INVALID_USER"))
+

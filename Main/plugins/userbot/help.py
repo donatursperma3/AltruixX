@@ -6,6 +6,8 @@
 #
 # All rights reserved.
 
+
+PLUGIN_VERSION = "0.0.1"
 import sys
 import asyncio
 from Main import Altruix
@@ -63,9 +65,18 @@ async def help_normal(c: Client, m):
             cmd_str = ", ".join([f"<code>{c}</code>" for c in sorted(set(cmds))])
             help_text += f"\n\n<b>Commands in this plugin:</b>\n{cmd_str}"
         
-        await m.handle_message(
-            f"<b>Help for</b> <code>{user_input}</code>\n\n{help_text.strip()}"
-        )
+        # Case-insensitive lookup for version
+        version = "0.0.1"
+        plugin_key = next((k for k in Altruix.cmd_list.keys() if k.lower() == user_input.lower()), None)
+        if plugin_key:
+            version = Altruix.cmd_list[plugin_key][0].get("version")
+            if not version or version == "unknown":
+                version = "0.0.1"
+
+        header = f"<b>❇️ Help for</b> <code>{user_input.title()}</code>\n"
+        header += f"<b>🏷️ Version:</b> <code>v{version}</code>\n\n"
+        
+        await m.handle_message(f"{header}{help_text.strip()}")
     elif not user_input:
         import sys
         import pyrogram
@@ -131,3 +142,4 @@ async def help_normal(c: Client, m):
                 f"<i>Command not found in the list, did you mean?</i> : <code>{preds[:-2]}</code>"
             )
         await m.handle_message("<i>This command is not in the command list!</i>")
+

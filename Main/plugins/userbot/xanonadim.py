@@ -1,3 +1,4 @@
+PLUGIN_VERSION = "0.0.1"
 # xanonadim.py
 # Copyright (C) 2021-present by Altruix@Github, < https://github.com/Altruix >.
 #
@@ -196,3 +197,4 @@ async def unset_admin_anon_handler(c: Client, m: Message):
         await m.reply_msg(f"✅ **Admin {target.user.mention} sekarang TIDAK Anonymous.**")
     except Exception as e:
         await m.reply_msg(f"❌ **Error:** `{str(e)}`")
+

@@ -1,3 +1,4 @@
+PLUGIN_VERSION = "0.0.1"
 # xreply_manager.py
 # Separated logic for handling PM Logger replies to prevent conflicts
 # Copyright (C) 2021-present by Altruix@Github, < https://github.com/Altruix >.
@@ -456,3 +457,4 @@ async def reply_manager_toggle_enabled_handler(c: Client, cb: CallbackQuery):
         json.dump(data, f, indent=4)
         
     await reply_manager_menu_handler(c, cb)
+

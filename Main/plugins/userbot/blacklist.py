@@ -6,6 +6,8 @@
 #
 # All rights reserved.
 
+
+PLUGIN_VERSION = "0.0.1"
 from Main import Altruix
 from pyrogram import Client, filters
 from Main.core.decorators import check_perm
@@ -158,3 +160,4 @@ async def del_blacklisted(c: Client, m: Message):
                 if warn_count:
                     warn_count[m.from_user.id] += 1
             await m.delete()
+

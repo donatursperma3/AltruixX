@@ -7,6 +7,8 @@
 # All rights reserved.
 
 
+
+PLUGIN_VERSION = "0.0.1"
 from Main import Altruix
 from pyrogram.types import Message
 from pyrogram import Client, filters
@@ -272,3 +274,4 @@ async def pm_permit_new_message_listener_handler(c: Client, m: Message):
     if m.from_user.id in __last_message_cache:
         await __last_message_cache[m.from_user.id]._delete()
     __last_message_cache[m.from_user.id] = out
+

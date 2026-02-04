@@ -6,6 +6,8 @@
 #
 # All rights reserved.
 
+
+PLUGIN_VERSION = "0.0.1"
 import asyncio
 from Main import Altruix
 from pyrogram import Client
@@ -46,3 +48,4 @@ async def ub_settings_handler(c: Client, m):
     except Exception as e:
         Altruix.log(f"Error in .settings userbot handler: {e}")
         await m.edit_msg(f"❌ Error: {str(e)}")
+

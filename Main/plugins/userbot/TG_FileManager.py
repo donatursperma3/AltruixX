@@ -6,6 +6,8 @@
 #
 # All rights reserved.
 
+
+PLUGIN_VERSION = "0.0.1"
 import os
 import time
 from Main import Altruix
@@ -65,3 +67,4 @@ async def upload_files_to_telegram(c, m):
     time_taken = round(time.time() - start_time, 2)
     file_size = Essentials.humanbytes(os.stat(input_).st_size)
     await msg.edit_msg("FILE_UPLOAD", string_args=(input_, file_size, time_taken))
+

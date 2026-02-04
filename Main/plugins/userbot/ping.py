@@ -6,6 +6,8 @@
 #
 # All rights reserved.
 
+
+PLUGIN_VERSION = "0.0.1"
 import time
 from Main import Altruix
 from pyrogram import Client
@@ -67,3 +69,4 @@ async def ping_ub_cmd(c: Client, m: Message):
         await m.handle_message(
             "PING_TEXT", string_args=(pf["ping_emoji1"], ms, pf["ping_emoji2"], uptime)
         )
+

@@ -6,6 +6,8 @@
 #
 # All rights reserved.
 
+
+PLUGIN_VERSION = "0.0.1"
 import random
 import requests
 from PIL import Image
@@ -174,3 +176,4 @@ class reverse_search_in_google:
             results["best_guess"] = best.get_text()
         results["url"] = url_
         return results
+

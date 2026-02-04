@@ -6,6 +6,8 @@
 # #
 # # All rights reserved.
 
+
+PLUGIN_VERSION = "0.0.1"
 # import logging
 # from Main import Altruix
 # from ...core.apm import *
@@ -108,3 +110,4 @@
 #     if resp is False:
 #         return await msg.edit_msg("PACKAGE_NOT_INSTALLED", string_args=(pn))
 #     await msg.edit_msg("PACKAGE_REMOVED", string_args=(pn))
+

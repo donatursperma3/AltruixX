@@ -7,6 +7,8 @@
 #
 # All rights reserved.
 
+
+PLUGIN_VERSION = "0.0.1"
 from Main import Altruix
 from pyrogram import Client, filters, enums
 from pyrogram.types import Message
@@ -136,3 +138,4 @@ async def cmd_logger_toggle(c: Client, m: Message):
             f"<b>Command Logger Status (Global):</b> {status}\n\n"
             f"<i>Use</i> <code>.cmdlogger on/off</code> <i>to toggle global status.</i>"
         )
+

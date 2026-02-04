@@ -6,6 +6,8 @@
 #
 # All rights reserved.
 
+
+PLUGIN_VERSION = "0.0.1"
 import os
 from Main import Altruix
 from style import bullets
@@ -79,3 +81,4 @@ async def userinfo(c: Client, m: Message):
             os.remove(photo)
     else:
         await msg.edit("".join(ui_text))
+

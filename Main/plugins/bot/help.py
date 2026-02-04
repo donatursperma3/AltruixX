@@ -7,6 +7,8 @@
 # All rights reserved.
 
 
+
+PLUGIN_VERSION = "0.0.1"
 import re
 import os
 import pyrogram
@@ -128,10 +130,9 @@ async def get_help_menu(return_all: bool = False, user_id: int = None, chat_id: 
             
         help_msg = f"<b><u>❇️ {title}</u></b>\n\n" \
                    f"{Altruix.get_string('help_tabs_desc')}\n\n" \
-                   f"<b>Userbot version :</b> <code>V{Altruix.__version__}</code>\n" \
-                   f"<b>Userbot Plugins :</b> <code>{ub_plugins}</code>\n" \
-                   f"<b>Bot Plugins :</b> <code>{bot_plugins}</code>\n" \
-                   f"<b>Total Commands :</b> <code>{Altruix.total_commands}</code>"
+                   f"<b>⚡ Userbot Version :</b> <code>V{Altruix.__version__}</code>\n" \
+                   f"<b>📦 Total Plugins :</b> <code>{ub_plugins + bot_plugins}</code>\n" \
+                   f"<b>🛠️ Total Commands :</b> <code>{Altruix.total_commands}</code>"
 
 
     # Filter plugins based on mode
@@ -239,7 +240,16 @@ async def get_plugin_data(plugin: str, number: int = 0, sub_page: int = 0, user_
     elif sub_page < 0:
         sub_page = len(pages) - 1
         
-    text = f"<b>Help for</b> <code>{plugin}</code>"
+    # Case-insensitive lookup for version
+    version = "0.0.1"
+    plugin_key = next((k for k in Altruix.cmd_list.keys() if k.lower() == plugin.lower()), None)
+    if plugin_key:
+        version = Altruix.cmd_list[plugin_key][0].get("version")
+        if not version or version == "unknown":
+            version = "0.0.1"
+
+    text = f"<b>❇️ Help for</b> <code>{plugin.title()}</code>\n"
+    text += f"<b>🏷️ Version:</b> <code>v{version}</code>"
     if len(pages) > 1:
         text += f" [Page {sub_page + 1}/{len(pages)}]"
     text += f"\n\n{pages[sub_page]}"
@@ -845,3 +855,4 @@ async def send_plugin_execute(c: Client, cb: CallbackQuery):
     except Exception as e:
         Altruix.log(f"Failed to send plugin {plugin}: {e}", level=40)
         await cb.answer(f"❌ Gagal mengirim plugin: {str(e)[:100]}", show_alert=True)
+

@@ -3557,11 +3557,12 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
         # Account Actions
         InlineKeyboardButton(gt("refresh_data"), f"gen_conf_refresh_session_info_{index}_{callback_page}"),
         InlineKeyboardButton(gt("unlink_session"), f"unlink_session_{index}"),
-        InlineKeyboardButton("✏️ Change Name", f"change_name_menu_{index}_{callback_page}"),
+        InlineKeyboardButton(gt("change_name"), f"change_name_menu_{index}_{callback_page}"),
         InlineKeyboardButton(gt("change_bio"), f"gen_conf_change_bio_{index}_{callback_page}"),
         InlineKeyboardButton(gt("change_username"), f"gen_conf_change_username_{index}_{callback_page}"),
         InlineKeyboardButton(gt("change_profile_photo"), f"gen_conf_change_profile_photo_{index}_{callback_page}"),
         InlineKeyboardButton(gt("delete_all_photos"), f"gen_conf_delete_all_profile_photos_{index}_{callback_page}"),
+        InlineKeyboardButton(gt("change_login_email"), f"change_login_email_{index}_{callback_page}"),
         
         # Tools & Downloads
         InlineKeyboardButton(gt("download_story"), f"gen_conf_dlstory_session_input_{index}_{callback_page}"),
@@ -3573,7 +3574,7 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
         InlineKeyboardButton(gt("export_session"), f"gen_conf_export_session_{index}_{callback_page}"),
         InlineKeyboardButton(gt("export_phone"), f"gen_conf_export_phone_{index}_{callback_page}"),
         InlineKeyboardButton(gt("test_ping"), f"gen_conf_test_ping_{index}_{callback_page}"),
-        InlineKeyboardButton("🔍 Track Profile", f"track_profile_start_{index}_{callback_page}"),
+        InlineKeyboardButton(gt("track_profile"), f"track_profile_start_{index}_{callback_page}"),
         InlineKeyboardButton(gt("check_limit"), f"check_limit_confirm_{index}_{callback_page}"),
         InlineKeyboardButton(gt("view_sessions"), f"gen_conf_view_all_sessions_{index}_{callback_page}"),
         
@@ -3582,7 +3583,7 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
         InlineKeyboardButton(gt("leave_group"), f"gen_conf_leave_chat_input_{index}_{callback_page}"),
         InlineKeyboardButton(gt("purge_my_msg"), f"gen_conf_purge_msg_start_{index}_{callback_page}"),
         InlineKeyboardButton(gt("send_message"), f"gen_conf_send_message_input_{index}_{callback_page}"),
-        InlineKeyboardButton("📊 Chat Stats", f"gen_conf_chat_stats_scan_{index}_{callback_page}"),
+        InlineKeyboardButton(gt("chat_stats"), f"gen_conf_chat_stats_scan_{index}_{callback_page}"),
         
         # Logs & Monitoring
         InlineKeyboardButton(gt("pm_logger_control"), f"pml_menu_{index}_{callback_page}"),
@@ -3596,13 +3597,13 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
         
         # Advanced & Settings
         InlineKeyboardButton(f"🚀 Startup: {startup_status}", f"startup_menu_{index}_{callback_page}"),
-        InlineKeyboardButton("🚀 Create Group", f"laucreate_menu_{index}_{callback_page}"),
+        InlineKeyboardButton(gt("laucreate_menu"), f"laucreate_menu_{index}_{callback_page}"),
         # Removed Edit Startup Msg
-        InlineKeyboardButton("🔒 Privacy & Security", f"privacy_menu_{index}_{callback_page}"),
+        InlineKeyboardButton(gt("privacy_security"), f"privacy_menu_{index}_{callback_page}"),
         InlineKeyboardButton(f"🚀 Help Info: {await Altruix.config.get_env(f'HELP_INFO_{index}') or 'default'}", f"help_info_menu_{index}_{callback_page}"),
         # Removed Edit Help Msg
-        InlineKeyboardButton("🐍 Eval Python", f"eval_session_{index}_{callback_page}"),
-        InlineKeyboardButton("🖥️ Exec Terminal", f"exec_session_{index}_{callback_page}"),
+        InlineKeyboardButton(gt("eval_python"), f"eval_session_{index}_{callback_page}"),
+        InlineKeyboardButton(gt("exec_terminal"), f"exec_session_{index}_{callback_page}"),
         InlineKeyboardButton(gt("custom_bot"), f"custom_bot_menu_{index}_{callback_page}"),
         InlineKeyboardButton(gt("cache_log"), f"cache_log_menu_{index}_{callback_page}"),
     ]
@@ -3659,13 +3660,173 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
         kb_buttons.append(nav_row)
         
     # Final row: Back
-    kb_buttons.append([InlineKeyboardButton(f"🔙 Back [{callback_page}]", f"sessions_list_{callback_page}")])
+    kb_buttons.append([InlineKeyboardButton(f"{gt('back')} [{callback_page}]", f"sessions_list_{callback_page}")])
 
     await edit_cb(cb, 
         text=txt,
         reply_markup=InlineKeyboardMarkup(kb_buttons),
         parse_mode=ParseMode.HTML
     )
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"change_login_email_(\d+)_(\d+)"))
+@iuser_check
+@log_errors
+async def change_login_email_handler(c: Client, cb: CallbackQuery):
+    """Handler awal untuk ganti login email (Review email saat ini)"""
+    gt = Altruix.get_string
+    await cb.answer()
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    
+    if index >= len(Altruix.clients):
+        await edit_cb(cb, "❌ Session tidak ditemukan.")
+        return
+
+    session_client = Altruix.clients[index]
+    
+    await edit_cb(cb, gt("fetching_security_info"))
+    
+    try:
+        # Ambil pattern email saat ini
+        pwd_info = await session_client.invoke(raw.functions.account.GetPassword())
+        email_pattern = getattr(pwd_info, "login_email_pattern", None)
+        has_password = getattr(pwd_info, "has_password", False)
+        
+        email_display = f"<code>{html.escape(email_pattern)}</code>" if email_pattern else f"<i>{gt('inactive')}</i>"
+        
+        text = (
+            f"{gt('change_login_email_title')}\n\n"
+            f"{gt('current_email').format(email_display)}\n"
+            f"{gt('2fa_password').format(gt('active') if has_password else gt('inactive'))}\n\n"
+            f"{gt('security_note_email')}\n\n"
+            f"{gt('confirm_continue')}"
+        )
+        
+        buttons = [
+            [
+                InlineKeyboardButton(gt("yes_continue"), f"change_email_start_{index}_{page}"),
+                InlineKeyboardButton(gt("cancel"), f"session_info_{index}_{page}")
+            ]
+        ]
+        
+        await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+        
+    except FloodWait as e:
+        await edit_cb(cb, f"⏳ FloodWait: {e.value}s")
+    except Exception as e:
+        await edit_cb(cb, f"❌ {str(e)}")
+        Altruix.log(f"Error in change_login_email_handler: {e}", level=logging.ERROR)
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"change_email_start_(\d+)_(\d+)"))
+@iuser_check
+@log_errors
+async def change_email_start_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk memulai input email baru"""
+    gt = Altruix.get_string
+    await cb.answer()
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    user_id = cb.from_user.id
+    
+    if index >= len(Altruix.clients): return
+    session_client = Altruix.clients[index]
+    
+    # Prompt email baru
+    await edit_cb(cb, 
+        gt("change_email_step_1"),
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}")]])
+    )
+    
+    try:
+        # Tunggu input email
+        msg_email = await c.listen(filters.chat(user_id) & filters.text, timeout=120)
+        new_email = msg_email.text.strip().lower()
+        
+        if new_email == "cancel":
+            await msg_email.delete()
+            await edit_cb(cb, gt("operation_cancelled"))
+            await asyncio.sleep(2)
+            await sessions_info_cb_handler(c, cb)
+            return
+
+        # Validasi format email sederhana
+        if "@" not in new_email or "." not in new_email:
+            await msg_email.reply(f"❌ {gt('email_invalid')}")
+            return
+
+        await msg_email.delete()
+        await edit_cb(cb, gt("sending_code_to").format(html.escape(new_email)))
+        
+        # Kirim kode verifikasi
+        try:
+            # Menggunakan SendVerifyEmailCode karena SetLoginEmailAddress tidak tersedia di versi ini
+            # EmailVerifyPurposeLoginChange tidak mengambil argumen di Kurigram 2.2.18
+            purpose = raw.types.EmailVerifyPurposeLoginChange()
+            await session_client.invoke(
+                raw.functions.account.SendVerifyEmailCode(
+                    email=new_email,
+                    purpose=purpose
+                )
+            )
+            
+            # Step 2: Minta kode
+            await edit_cb(cb, 
+                gt("code_sent_step_2").format(html.escape(new_email)),
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}")]])
+            )
+            
+            msg_code = await c.listen(filters.chat(user_id) & filters.text, timeout=180)
+            verify_code = msg_code.text.strip().replace("-", "")
+            
+            if verify_code.lower() == "cancel":
+                await msg_code.delete()
+                await edit_cb(cb, gt("operation_cancelled"))
+                return
+
+            await msg_code.delete()
+            await edit_cb(cb, gt("verifying_code"))
+            
+            # Verifikasi email
+            # Kurigram 2.2.18 requires verification as EmailVerification object
+            verification = raw.types.EmailVerificationCode(code=verify_code)
+            await session_client.invoke(
+                raw.functions.account.VerifyEmail(
+                    purpose=purpose,
+                    verification=verification
+                )
+            )
+            
+            await edit_cb(cb, 
+                gt("change_email_success").format(html.escape(new_email)),
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}")]])
+            )
+            
+            # Log Notification
+            await send_log_notification(
+                c, 'change_login_email', index, cb.from_user,
+                True, None, {'Email Baru': new_email}
+            )
+            
+        except RPCError as e:
+            error_text = str(e)
+            if "EMAIL_INVALID" in error_text:
+                error_text = gt("email_invalid")
+            elif "EMAIL_ID_INVALID" in error_text:
+                error_text = gt("verification_code_invalid")
+            
+            await edit_cb(cb, f"❌ <b>Gagal:</b> {error_text}")
+            await send_log_notification(
+                c, 'change_login_email', index, cb.from_user,
+                False, str(e), {'Email Baru': new_email}
+            )
+            
+    except asyncio.TimeoutError:
+        await edit_cb(cb, gt("timeout_retry"))
+    except Exception as e:
+        await edit_cb(cb, f"❌ <b>Error:</b> {str(e)}")
+        Altruix.log(f"Error in change_email_start_handler: {e}", level=logging.ERROR)
 
 
 # ✅ HANDLER BARU: Menu Ganti Nama
@@ -7261,7 +7422,7 @@ async def exec_term_handler(c: Client, cb: CallbackQuery):
 
 @Altruix.bot.on_callback_query(filters.regex(r"^privacy_menu_(\d+)_(\d+)$"))
 @log_errors
-async def sessions_menu_cb_handler(c: Client, cb: CallbackQuery):
+async def privacy_menu_cb_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     await cb.answer()
     index = int(cb.matches[0].group(1))

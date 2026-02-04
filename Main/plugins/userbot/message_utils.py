@@ -6,6 +6,8 @@
 #
 # All rights reserved.
 
+
+PLUGIN_VERSION = "0.0.1"
 import os
 from Main import Altruix
 from gtts import gTTS, lang
@@ -113,3 +115,4 @@ async def translate_(c, m):
             translation.text,
         ),
     )
+

@@ -7,6 +7,8 @@
 # All rights reserved.
 
 
+
+PLUGIN_VERSION = "0.0.1"
 import os
 from Main import Altruix
 from pyrogram import filters
@@ -120,3 +122,4 @@ async def paste_inline_handler(_, iq: InlineQuery):
             switch_pm_text="Paste Menu",
             switch_pm_parameter="paste",
         )
+

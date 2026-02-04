@@ -7,6 +7,8 @@
 # All rights reserved.
 
 
+
+PLUGIN_VERSION = "0.0.1"
 import time
 import asyncio
 from Main import Altruix
@@ -140,3 +142,4 @@ async def set_unafk(c: Client, m: Message):
         await c.send_message(Altruix.log_chat, text)
         MENTIONED = []
     afk_sanity_check.clear()
+

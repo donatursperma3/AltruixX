@@ -6,6 +6,8 @@
 #
 # All rights reserved.
 
+
+PLUGIN_VERSION = "0.0.1"
 from Main import Altruix
 from style import bullets
 from pyrogram import Client
@@ -154,3 +156,4 @@ async def remove_cmd_handler(c: Client, m: Message):
         await msg.edit(
             f"<b>File,</b> <code>{input_}</code> <b>has been removed successfully.</b>"
         )
+

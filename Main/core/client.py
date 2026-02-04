@@ -126,7 +126,7 @@ class AltruixClient:
         self.clients: List[Client] = []
         self.cmd_list = {}
         self.all_lang_strings = {}
-        self.__version__ = "0.0.7.91"
+        self.__version__ = "0.0.8.52"
         self.selected_lang = "english"
         self.local_lang_file = "./Main/localization"
         self.cmd_list = {} # {plugin_name: [cmd_data, ...]}
@@ -288,30 +288,54 @@ class AltruixClient:
 
     async def resolve_dns(self):
         import dns.resolver
+        self.log("DNS resolution check...", level=logging.INFO)
         try:
-            dns.resolver.resolve("www.google.com")
-        except Exception:
-            self.log("Resolving DNS. Setting to : 8.8.8.8")
+            # Run DNS resolution in executor to avoid blocking the event loop
+            await asyncio.wait_for(
+                self.loop.run_in_executor(None, lambda: dns.resolver.resolve("www.google.com")),
+                timeout=5.0
+            )
+            self.log("DNS resolution: OK", level=logging.INFO)
+        except asyncio.TimeoutError:
+            self.log("DNS resolution timeout. Setting to: 8.8.8.8", level=logging.WARNING)
+            dns.resolver.default_resolver = dns.resolver.Resolver(configure=False)
+            dns.resolver.default_resolver.nameservers = ["8.8.8.8"]
+        except Exception as e:
+            self.log(f"DNS resolution error ({type(e).__name__}). Setting to: 8.8.8.8", level=logging.WARNING)
             dns.resolver.default_resolver = dns.resolver.Resolver(configure=False)
             dns.resolver.default_resolver.nameservers = ["8.8.8.8"]
 
     async def _db_setup(self):
+        self.log("Initializing Database Setup...", level=logging.INFO)
         with contextlib.suppress(Exception):
             await self.update_on_startup()
+        
         await self.resolve_dns()
+        
         if self.config.DB_URI:
+            self.log("Connecting to MongoDB...", level=logging.INFO)
             self.db = MongoDB(self.config.DB_URI)
-            self.log("Initialized Mongo successfully!")
+            self.log("Initialized Mongo successfully!", level=logging.INFO)
         else:
+            self.log("DB_URI not found. Using LocalDatabase.", level=logging.INFO)
             self.db = LocalDatabase()
-            self.log("Initialized LocalDatabase successfully! (No DB_URI found)")
+            self.log("Initialized LocalDatabase successfully!", level=logging.INFO)
             # Start background saver for debounced writing
             self.loop.create_task(self.db.start_background_saver())
-            self.log("Started LocalDatabase background saver.")
+            self.log("Started LocalDatabase background saver.", level=logging.INFO)
             
-        await self.db.ping()
-        self.log("Pinged Database successfully!")
+        self.log("Pinging Database...", level=logging.INFO)
+        try:
+            await asyncio.wait_for(self.db.ping(), timeout=10.0)
+            self.log("Pinged Database successfully!", level=logging.INFO)
+        except asyncio.TimeoutError:
+            self.log("Database ping timeout! Check your connection.", level=logging.ERROR)
+        except Exception as e:
+            self.log(f"Database ping failed: {e}", level=logging.ERROR)
+            
+        self.log("Preparing App URL...", level=logging.INFO)
         self.app_url_ = await prepare_heroku_url()
+        self.log("Database Setup Complete.", level=logging.INFO)
 
     def run_in_exc(self, func_):
         @wraps(func_)
@@ -560,6 +584,21 @@ class AltruixClient:
         
         self.plugin_categories[file_name.lower()] = category
 
+        # ✅ Detect Plugin Version
+        plugin_version = "0.0.1"
+        try:
+            # Check if PLUGIN_VERSION exists in the caller's globals (reliable for decorators)
+            caller_globals = previous_stack_frame.frame.f_globals
+            plugin_version = caller_globals.get("PLUGIN_VERSION", "0.0.1")
+            
+            if plugin_version == "0.0.1":
+                # Fallback: check caller's module if globals didn't work
+                module = inspect.getmodule(previous_stack_frame.frame)
+                if module:
+                    plugin_version = getattr(module, "PLUGIN_VERSION", "0.0.1")
+        except Exception:
+            pass
+
         self.add_help_to_command_list(
             commands=cmd,
             file_name=file_name,
@@ -569,6 +608,7 @@ class AltruixClient:
             group_only=group_only,
             channel_only=channel_only,
             private_only=pm_only,
+            version=plugin_version,
         )
         def decorator(func):
             async def wrapper(client, message: Message):
@@ -686,6 +726,7 @@ class AltruixClient:
         group_only: bool,
         channel_only: bool,
         private_only: bool,
+        version: str = "unknown",
     ):
         example = html.escape(help_map.get("example", "No example available"))
         help_text = html.escape(
@@ -708,6 +749,7 @@ class AltruixClient:
                     "channel_only": channel_only,
                     "private_only": private_only,
                     "detail": detail,
+                    "version": version,
                 }
             ]
         elif commands[0] not in [
@@ -725,6 +767,7 @@ class AltruixClient:
                     "channel_only": channel_only,
                     "private_only": private_only,
                     "detail": detail,
+                    "version": version,
                 }
             )
 
