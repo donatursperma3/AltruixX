@@ -126,7 +126,7 @@ class AltruixClient:
         self.clients: List[Client] = []
         self.cmd_list = {}
         self.all_lang_strings = {}
-        self.__version__ = "0.0.7.82"
+        self.__version__ = "0.0.7.91"
         self.selected_lang = "english"
         self.local_lang_file = "./Main/localization"
         self.cmd_list = {} # {plugin_name: [cmd_data, ...]}
@@ -162,9 +162,19 @@ class AltruixClient:
         if hasattr(asyncio, 'get_event_loop_policy'):
             policy = asyncio.get_event_loop_policy()
             if sys.platform == "win32":
-                logger.info(f"🚀 Using event loop policy: {type(policy).__name__}")
+                try:
+                    import winloop
+                    asyncio.set_event_loop_policy(winloop.EventLoopPolicy())
+                    logger.info("🚀 Using event loop policy: winloop.EventLoopPolicy")
+                except ImportError:
+                    logger.info(f"🚀 Using event loop policy: {type(policy).__name__}")
             else:
-                logger.info(f"🚀 Using event loop policy: {type(policy).__name__}")
+                try:
+                    import uvloop
+                    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+                    logger.info("🚀 Using event loop policy: uvloop.EventLoopPolicy")
+                except ImportError:
+                    logger.info(f"🚀 Using event loop policy: {type(policy).__name__}")
 
         self.loop.run_until_complete(self._db_setup())
         self.executor = ThreadPoolExecutor(max_workers=multiprocessing.cpu_count() * 5)
@@ -1296,6 +1306,11 @@ class AltruixClient:
 
                 for count, each in enumerate(string_sessions):
                     try:
+                        # ✅ STAGGER START: Avoid network burst by staggering connection starts
+                        if count > 0:
+                            wait_stagger = min(5, count * 0.5) 
+                            await asyncio.sleep(wait_stagger)
+
                         client = await Client(
                             f"{count}_instance_Altruix",
                             api_id=self.config.API_ID,

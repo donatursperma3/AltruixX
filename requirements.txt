@@ -21,7 +21,7 @@ requests
 telegraph
 deep-translator
 httpx>=0.27.0
-# tgcrypto
+tgcrypto; sys_platform != 'win32'
 ujson
 natsort
 gitpython

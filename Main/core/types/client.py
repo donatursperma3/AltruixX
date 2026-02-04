@@ -33,15 +33,38 @@ class CustomClientMethods:
     async def invoke(self, *args, **kwargs):
         mmax_ = 5
         max_count = 0
+        backoff = 1
         while True:
             try:
                 return await self.__send_custom__(*args, **kwargs)
             except (FloodWait, SlowmodeWait) as e:
                 if max_count > mmax_:
                     raise e
-                Altruix.log(f"[{e.__class__.__name__}]: sleeping for - {e.value + 3}s.")
-                await asyncio.sleep(e.value + 3)
+                wait_time = e.value + 3
+                Altruix.log(f"[{e.__class__.__name__}]: sleeping for - {wait_time}s.")
+                await asyncio.sleep(wait_time)
                 max_count += 1
+            except (asyncio.TimeoutError, Exception) as e:
+                # Handle TimeoutError specifically from asyncio or Pyrogram's string representation
+                if isinstance(e, asyncio.TimeoutError) or "TimeoutError" in str(type(e)):
+                    if max_count > mmax_:
+                        Altruix.log(f"[TimeoutError]: Max retries reached ({mmax_}). Raising exception.", level=40)
+                        raise e
+                    wait_time = backoff * 2
+                    Altruix.log(f"[TimeoutError]: Retrying ({max_count}/{mmax_}) in {wait_time}s...")
+                    await asyncio.sleep(wait_time)
+                    max_count += 1
+                    backoff *= 2
+                    continue
+                
+                # Log other critical errors but don't loop infinitely unless they are retryable
+                if "updates.GetChannelDifference" in str(e) or "GetForumTopicsByID" in str(e) or "GetChannel" in str(e):
+                    if max_count < mmax_:
+                        Altruix.log(f"[RetryableError]: {type(e).__name__} ({max_count}/{mmax_}). Retrying in 2s...")
+                        await asyncio.sleep(2)
+                        max_count += 1
+                        continue
+                raise e
 
     async def send_file(
         self: Client,
