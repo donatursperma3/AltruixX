@@ -130,6 +130,16 @@ It's not necessary until you host the bot. You can get the String Session after 
 > - <a href="https://www.github.com/N0BLEWOLF">          N0BLEWOLF          </a>
 > - <a href="https://www.github.com/ramanveerji">        ramanveerji        </a>
 > - <a href="https://www.github.com/swatv3nub ">         swatv3nub          </a>
+> - <a href="https://www.github.com/sukri369">           sukri369           </a>
+> - <a href="https://www.github.com/pyrogram">           pyrogram           </a>
+> - <a href="https://www.github.com/KurimuzonAkuma/kurigram">           kurigram           </a>
+> - <a href="https://www.github.com/LonamiWebs/Telethon">           telethon           </a>
+> - <a href="https://www.github.com/TeamUltroid/Ultroid">           ultroid           </a>
+> - <a href="https://www.github.com/Altruix/Altruix">           altruix           </a>
+> - <a href="https://www.github.com/hikariatama/hikka">           hikka           </a>
+> - <a href="https://www.github.com/UsergeTeam/Userge">           userge          </a>
+> - <a href="https://www.github.com/FridayDevs/Friday">           friday          </a>
+> - <a href="https://www.github.com/vckyou/GeezProjects">           geez          </a>
 
 <p align="center">
   <img width="500" src="https://telegra.ph/file/5ee1e2ff5437b97aabf2e.png">
