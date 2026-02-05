@@ -115,31 +115,54 @@ It's not necessary until you host the bot. You can get the String Session after 
 
 ## Credits
 
-> - <a href="https://www.github.com/EverythingSuckz">    EverythingSuckz    </a>
-> - <a href="https://www.github.com/StarkGang">          StarkGang          </a>
-> - <a href="https://www.github.com/BilakshanP">         BilakshanP         </a>
-> - <a href="https://www.github.com/Reeshuxd">           Reeshuxd           </a>
-> - <a href="https://www.github.com/Rohith-Sreedharan">       Rohithaditya       </a>
-> - <a href="https://www.github.com/StarkBotIndustries"> StarkBotIndustries </a>
-> - <a href="https://www.github.com/sohag02">            sohag02            </a>
-> - <a href="https://www.github.com/SHRE-YANSH">         SHRE-YANSH         </a>
-> - <a href="https://www.github.com/lostb053">           lostb053           </a>
-> - <a href="https://www.github.com/Nksama">             Nksama             </a>
-> - <a href="https://www.github.com/Crackexy">           Crackexy           </a>
-> - <a href="https://www.github.com/anonyindian">        anonyindian        </a>
-> - <a href="https://www.github.com/N0BLEWOLF">          N0BLEWOLF          </a>
-> - <a href="https://www.github.com/ramanveerji">        ramanveerji        </a>
-> - <a href="https://www.github.com/swatv3nub ">         swatv3nub          </a>
-> - <a href="https://www.github.com/sukri369">           sukri369           </a>
-> - <a href="https://www.github.com/pyrogram">           pyrogram           </a>
-> - <a href="https://www.github.com/KurimuzonAkuma/kurigram">           kurigram           </a>
-> - <a href="https://www.github.com/LonamiWebs/Telethon">           telethon           </a>
-> - <a href="https://www.github.com/TeamUltroid/Ultroid">           ultroid           </a>
-> - <a href="https://www.github.com/Altruix/Altruix">           altruix           </a>
-> - <a href="https://www.github.com/hikariatama/hikka">           hikka           </a>
-> - <a href="https://www.github.com/UsergeTeam/Userge">           userge          </a>
-> - <a href="https://www.github.com/FridayDevs/Friday">           friday          </a>
-> - <a href="https://www.github.com/vckyou/GeezProjects">           geez          </a>
+<details>
+<summary><b>Core Contributors</b></summary>
+
+> - <a href="https://www.github.com/EverythingSuckz">EverythingSuckz</a>
+> - <a href="https://www.github.com/StarkGang">StarkGang</a>
+> - <a href="https://www.github.com/BilakshanP">BilakshanP</a>
+> - <a href="https://www.github.com/Reeshuxd">Reeshuxd</a>
+> - <a href="https://www.github.com/Rohith-Sreedharan">Rohithaditya</a>
+> - <a href="https://www.github.com/StarkBotIndustries">StarkBotIndustries</a>
+
+</details>
+
+<details>
+<summary><b>Additional Contributors</b></summary>
+
+> - <a href="https://www.github.com/sohag02">sohag02</a>
+> - <a href="https://www.github.com/SHRE-YANSH">SHRE-YANSH</a>
+> - <a href="https://www.github.com/lostb053">lostb053</a>
+> - <a href="https://www.github.com/Nksama">Nksama</a>
+> - <a href="https://www.github.com/Crackexy">Crackexy</a>
+> - <a href="https://www.github.com/anonyindian">anonyindian</a>
+> - <a href="https://www.github.com/N0BLEWOLF">N0BLEWOLF</a>
+> - <a href="https://www.github.com/ramanveerji">ramanveerji</a>
+> - <a href="https://www.github.com/swatv3nub">swatv3nub</a>
+> - <a href="https://www.github.com/sukri369">sukri369</a>
+
+</details>
+
+<details>
+<summary><b>Libraries & Frameworks</b></summary>
+
+> - <a href="https://www.github.com/pyrogram">Pyrogram</a>
+> - <a href="https://www.github.com/KurimuzonAkuma/kurigram">Kurigram</a>
+> - <a href="https://www.github.com/LonamiWebs/Telethon">Telethon</a>
+
+</details>
+
+<details>
+<summary><b>Inspired By</b></summary>
+
+> - <a href="https://www.github.com/TeamUltroid/Ultroid">Ultroid</a>
+> - <a href="https://www.github.com/Altruix/Altruix">Altruix</a>
+> - <a href="https://www.github.com/hikariatama/hikka">Hikka</a>
+> - <a href="https://www.github.com/UsergeTeam/Userge">Userge</a>
+> - <a href="https://www.github.com/FridayDevs/Friday">Friday</a>
+> - <a href="https://www.github.com/vckyou/GeezProjects">Geez</a>
+
+</details>
 
 <p align="center">
   <img width="500" src="https://telegra.ph/file/5ee1e2ff5437b97aabf2e.png">
