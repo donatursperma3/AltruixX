@@ -23,11 +23,20 @@ class Paste:
         file_ext: str = None,
         service: str = None,
     ) -> None:
-        self.httpx = httpx.AsyncClient(
-            http2=True,
-            follow_redirects=True,
-            headers={"User-Agent": "AltruixUserbot/0.0.8"}
-        )
+        # Try HTTP/2 first, fallback to HTTP/1.1 if h2 package is not installed
+        try:
+            self.httpx = httpx.AsyncClient(
+                http2=True,
+                follow_redirects=True,
+                headers={"User-Agent": "AltruixUserbot/0.0.8"}
+            )
+        except ImportError:
+            # h2 package not installed, use HTTP/1.1
+            self.httpx = httpx.AsyncClient(
+                http2=False,
+                follow_redirects=True,
+                headers={"User-Agent": "AltruixUserbot/0.0.8"}
+            )
         self.text: str = text
         self.title: str = title or "Altruix Paste"
         self.author: str = author or "Altruix"
