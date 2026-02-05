@@ -8,10 +8,10 @@
 # All rights reserved.
 
 
-PLUGIN_VERSION = "0.0.1"
+PLUGIN_VERSION = "0.0.3"
 from Main import Altruix
 from pyrogram import Client, filters, enums
-from pyrogram.types import Message
+from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from Main.core.decorators import log_errors
 from datetime import datetime
 import json
@@ -73,21 +73,42 @@ async def join_logger_handler(c: Client, m: Message):
 
         if not is_enabled:
             return
+
+        # ✅ Refresh 'me' to ensure nickname is up-to-date
+        me = await c.get_me()
             
         # Check if this is about the current userbot
         for new_member in m.new_chat_members:
-            if new_member.id == c.me.id:
+            if new_member.id == me.id:
                 chat = m.chat
                 invited_by = m.from_user
                 
                 # Determine chat type
                 chat_type = "Channel" if chat.type == enums.ChatType.CHANNEL else "Group"
                 
+                # Generate Chat Link
+                if chat.username:
+                    chat_link = f"https://t.me/{chat.username}/{m.id}"
+                    group_link = f"https://t.me/{chat.username}"
+                else:
+                    # Private chat: t.me/c/123456789/msg_id
+                    # Strip -100 prefix if present
+                    chat_id_str = str(chat.id)
+                    if chat_id_str.startswith("-100"):
+                        real_id = chat_id_str[4:]
+                    else:
+                        real_id = chat_id_str.replace("-", "")
+                    
+                    chat_link = f"https://t.me/c/{real_id}/{m.id}"
+                    # Cannot link to private group title easily without invite link, 
+                    # but we can try making the name a text link to the message for now
+                    group_link = chat_link 
+
                 # Build log message
                 log_message = (
                     f"🔔 <b>Join Event Detected</b>\n\n"
-                    f"👤 <b>Account:</b> {c.me.mention(style=enums.ParseMode.HTML)}\n"
-                    f"💬 <b>{chat_type}:</b> {chat.title} (<code>{chat.id}</code>)\n"
+                    f"👤 <b>Account:</b> {me.mention(style=enums.ParseMode.HTML)} (<code>{me.id}</code>)\n"
+                    f"💬 <b>{chat_type}:</b> <a href='{group_link}'>{chat.title}</a> (<code>{chat.id}</code>)\n"
                 )
                 
                 if invited_by:
@@ -102,7 +123,10 @@ async def join_logger_handler(c: Client, m: Message):
                 await bot.send_message(
                     Altruix.log_chat,
                     log_message,
-                    parse_mode=enums.ParseMode.HTML
+                    parse_mode=enums.ParseMode.HTML,
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("Go to Chat ↗️", url=chat_link)]
+                    ])
                 )
                 break  # Only log once per join event
             
@@ -146,4 +170,3 @@ async def join_logger_toggle(c: Client, m: Message):
             f"<b>Join Logger Status (Global):</b> {status}\n\n"
             f"<i>Use</i> <code>.joinlogger on/off</code> <i>to toggle global status.</i>"
         )
-

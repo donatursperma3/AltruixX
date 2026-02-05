@@ -40,7 +40,7 @@ from Main.utils.topic_utils import get_or_create_topic
 # ============================================================================
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "tags"  # Renamed from mentions
-PLUGIN_VERSION = "1.7.2-TAG"  # ✅ Added block/unblock, send message features
+PLUGIN_VERSION = "1.7.3-TAG"  # ✅ Added block/unblock, send message features
 
 # Gunakan logger Altruix jika tersedia, atau buat baru yang konsisten
 logger = logging.getLogger("altruix.mentions")
@@ -1100,6 +1100,9 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
         
         # Add Chat with User button
         chat_user_button = [InlineKeyboardButton("💬 Chat with User", url=f"tg://user?id={mentioner_id}")]
+        
+        # ✅ FIX: Define keyboard
+        keyboard = [chat_user_button]
         
         # Get topic if any (use userbot to create if needed)
         # Check auto_create_topic setting

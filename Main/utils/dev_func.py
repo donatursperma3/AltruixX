@@ -66,23 +66,21 @@ async def eval_py(client: Client, code: str, m: Message):
 async def exec_terminal(command: str):
     success = True
     return_code = 0
-    command = shlex.split(command)
     output = ""
     try:
-        process = await asyncio.create_subprocess_exec(
-            *command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        process = await asyncio.create_subprocess_shell(
+            command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
-        return_code = process.returncode
         stdout, stderr = await process.communicate()
+        return_code = process.returncode
         output += stdout.decode("utf-8").strip()
         if stderr:
             output += "\n" + stderr.decode("utf-8").strip()
         success = True
-    except Exception:
-        exc_type, exc_obj, exc_tb = sys.exc_info()
-        errors = traceback.format_exception(etype=exc_type, value=exc_obj, tb=exc_tb)
+    except Exception as e:
+        errors = traceback.format_exception(type(e), e, e.__traceback__)
         success = False
-        output += errors[-1]
+        output += "".join(errors)
     return success, output, return_code
 
 

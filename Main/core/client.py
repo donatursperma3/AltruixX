@@ -126,7 +126,7 @@ class AltruixClient:
         self.clients: List[Client] = []
         self.cmd_list = {}
         self.all_lang_strings = {}
-        self.__version__ = "0.0.8.52"
+        self.__version__ = "0.0.8.82"
         self.selected_lang = "english"
         self.local_lang_file = "./Main/localization"
         self.cmd_list = {} # {plugin_name: [cmd_data, ...]}
@@ -1343,6 +1343,11 @@ class AltruixClient:
                     )
             else:
                 self.log(self.get_string("session_found"))
+                # ✅ FIX: Ensure string_sessions is always a list. 
+                # If retrieved as string from DB, split it by spaces.
+                if isinstance(string_sessions, str):
+                    string_sessions = [i for i in string_sessions.split(" ") if i.strip()]
+                
                 total_sessions = len(string_sessions)
                 unloaded_sessions = []
                 loaded_user_ids = set() # Track IDs to prevent dupes

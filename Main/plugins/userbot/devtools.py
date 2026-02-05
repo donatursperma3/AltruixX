@@ -7,7 +7,7 @@
 # All rights reserved.
 
 
-PLUGIN_VERSION = "0.0.1"
+PLUGIN_VERSION = "0.0.3"
 import os
 import aiofiles
 from Main import Altruix
@@ -42,6 +42,11 @@ from Main.core.decorators import log_errors
                 "help": "Sends the output to log chat and deletes the command.",
                 "requires_input": False,
             },
+            {
+                "arg": "d",
+                "help": "Uploads the output as a document if it's too long.",
+                "requires_input": False,
+            },
         ],
     },
 )
@@ -50,13 +55,19 @@ async def get_json_message_handler(c: Client, m: Message):
     user_args = m.user_args
     msg_id = m.id
     rm = m.reply_to_message
-    m_ = await m.handle_message("PROCESSING")
+    m_ = await m.reply_msg("PROCESSING")
     jsonified = f"<code>{rm or m}</code>"
     cmd_ = "<b>jsonified</b>"
+    
+    # ✅ FIX: user_args is a list of Arg objects, not strings.
+    # We extract keys for flag checking.
+    arg_keys = [a.key.lower() for a in user_args]
+    
     await m_.edit_msg(
         jsonified,
-        force_paste="p" in user_args,
-        force_file=f"message.json;{cmd_}" if "f" in user_args else None,
+        force_paste="p" in arg_keys,
+        force_file=f"message.json;{cmd_}" if "f" in arg_keys else None,
+        too_long_as_file="message.json" if "d" in arg_keys else False,
         reply_to_message_id=msg_id,
     )
 
@@ -180,7 +191,7 @@ async def terminal(c: Client, m: Message):
             )
         elif "f" in user_args or len(out_text) >= TGLIMITS.MESSAGE_TEXT:
             file_path = f"out_bash_{m.id}.txt"
-            async with aiofiles.open(file_path, "w") as f:
+            async with aiofiles.open(file_path, "w", encoding="utf-8") as f:
                 await f.write(_out_text)
             msg = await c.send_document(Altruix.log_chat, file_path, caption=caption_)
             if os.path.exists(file_path):
@@ -198,9 +209,11 @@ async def terminal(c: Client, m: Message):
 
 
 async def paste_logs(log_path):
-    async with aiofiles.open(log_path, mode="r") as f:
+    async with aiofiles.open(log_path, mode="r", encoding="utf-8", errors="replace") as f:
         file_c = await f.read()
         name, link = await Paste(file_c).paste()
+    if not link:
+        return "<b>PASTE FAILED!</b> Could not upload logs to any service."
     return f"<b>LOGS HAS BEEN PASTED TO {name.upper()}</b> : [View]({link})"
 
 

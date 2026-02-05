@@ -144,9 +144,10 @@ class Message:
         force_paste=False,
         force_file=None,
         reply_to_message_id=None,
-        message_thread_id=None,  # ✅ ADDED
+        message_thread_id=None,
         ttwp=None,
         del_in=None,
+        too_long_as_file=False, # ✅ NEW
         **args,
     ):
         headers = ttwp or "<b>OUTPUT</b>"
@@ -172,18 +173,31 @@ class Message:
         if force_paste:
             text = Essentials.md_to_text(text)
             service, paste_link = await Paste(text).paste()
-            _p = f"{headers.format(service.title())} : <b><a href='{paste_link}'>PREVIEW</a></b>"
-            # ✅ GUNAKAN reply_params JIKA TERSEDIA
-            edit_kwargs = {}
-            if reply_params:
-                edit_kwargs['reply_parameters'] = reply_params
-            else:
-                edit_kwargs['reply_to_message_id'] = reply_to_message_id
             
-            if message_thread_id: # ✅ Passing thread id
-                edit_kwargs['message_thread_id'] = message_thread_id
+            # ✅ Fallback if paste fails
+            if not paste_link or not str(paste_link).startswith("http"):
+                 force_file = "paste_error.txt;📄 <b>Paste failed, sending as file...</b>"
+                 return await self.edit_msg(
+                    text,
+                    force_file=force_file,
+                    reply_to_message_id=reply_to_message_id, 
+                    message_thread_id=message_thread_id,
+                    **args
+                )
 
-            return await self.edit(_p, disable_web_page_preview=True, **args, **edit_kwargs)
+            service_name = service.title() if service else "Paste"
+            _p = f"{headers.format(service_name)} : <b><a href='{paste_link}'>PREVIEW</a></b>"
+            # ✅ FIX: Pyrogram's edit_text does NOT support reply_parameters or reply_to_message_id.
+            # We ONLY use those for send_message/send_document (replying).
+            # For editing, we just edit the message content.
+            args.pop("reply_to_message_id", None)
+            args.pop("message_thread_id", None)
+            args.pop("reply_parameters", None)
+            return await self.edit(
+                _p, 
+                disable_web_page_preview=True, 
+                **args
+            )
         if force_file:
             if ";" in force_file:
                 force_file, caption = force_file.split(";", 1)
@@ -216,26 +230,72 @@ class Message:
                 # Fallback: kirim sebagai teks
                 return await self.reply(text, **args)
         try:
+            # ✅ Prune before first edit attempt
+            args.pop("reply_to_message_id", None)
+            args.pop("message_thread_id", None)
+            args.pop("reply_parameters", None)
             msg_ = await self.edit(text, **args)
         except MessageTooLong:
             text = Essentials.md_to_text(text)
             service, paste_link = await Paste(text).paste()
-            _p = f"{headers.format(service.title())} : <b><a href='{paste_link}'>PREVIEW</a></b>"
-            # ✅ GUNAKAN reply_params JIKA TERSEDIA
-            edit_kwargs = {}
-            if reply_params:
-                edit_kwargs['reply_parameters'] = reply_params
-            else:
-                edit_kwargs['reply_to_message_id'] = reply_to_message_id
-            
-            if message_thread_id: # ✅ Passing thread id
-                edit_kwargs['message_thread_id'] = message_thread_id
+            service_name = service.title() if service else "Paste"
+            _p = f"{headers.format(service_name)} : <b><a href='{paste_link}'>PREVIEW</a></b>"
 
-            msg_ = await self.edit(_p, disable_web_page_preview=True, **args, **edit_kwargs)
+            # ✅ UPLOAD SEBAGAI FILE JIKA OPSI AKTIF
+            if too_long_as_file:
+                force_file = too_long_as_file if isinstance(too_long_as_file, str) else "message.txt"
+                if ";" not in force_file:
+                    force_file = f"{force_file};{_p}"
+                
+                # Gunakan rekursi terbatas untuk kirim file
+                return await self.edit_msg(
+                    text, 
+                    force_file=force_file, 
+                    reply_to_message_id=reply_to_message_id, 
+                    message_thread_id=message_thread_id,
+                    **args
+                )
+
+            # ✅ Final attempt: edit with paste link
+            try:
+                args.pop("reply_to_message_id", None)
+                args.pop("message_thread_id", None)
+                args.pop("reply_parameters", None)
+                msg_ = await self.edit(_p, disable_web_page_preview=True, **args)
+            except Exception as e:
+                # If even this fails (e.g. message deleted), we give up
+                Altruix.log(f"Final edit failed: {e}", level=40)
+                return self
         except Exception as e:
             Altruix.log(f"Failed to edit message: {e}", level=40)
-            # Fallback: kirim sebagai reply
-            return await self.reply(text, **args)
+            # Fallback: kirim sebagai reply jika gagal edit biasa (bukan karena panjang)
+            try:
+                return await self.reply_msg(text, too_long_as_file=too_long_as_file, **args)
+            except MessageTooLong:
+                # Jika reply pun terlalu panjang, paksa paste atau file
+                text = Essentials.md_to_text(text)
+                service, paste_link = await Paste(text).paste()
+                
+                # ✅ Fallback if paste fails
+                if not paste_link or not str(paste_link).startswith("http"):
+                     force_file = too_long_as_file if isinstance(too_long_as_file, str) else "message.txt"
+                     if ";" not in force_file:
+                         force_file = f"{force_file};📄 <b>Paste failed, sending as file...</b>"
+                     return await self.reply_msg(text, force_file=force_file, **args)
+
+
+                service_name = service.title() if service else "Paste"
+                _p = f"{headers.format(service_name)} : <b><a href='{paste_link}'>PREVIEW</a></b>"
+                
+                if too_long_as_file:
+                    force_file = too_long_as_file if isinstance(too_long_as_file, str) else "message.txt"
+                    if ";" not in force_file:
+                        force_file = f"{force_file};{_p}"
+                    return await self.reply_msg(text, force_file=force_file, **args)
+
+                return await self.reply(_p, disable_web_page_preview=True, **args)
+            except Exception:
+                return self
         if del_in and isinstance(del_in, int):
             await asyncio.sleep(del_in)
             await msg_.delete()
@@ -251,9 +311,10 @@ class Message:
         text,
         force_paste=False,
         force_file=None,
-        message_thread_id=None, # ✅ ADDED
+        message_thread_id=None,
         ttwp=None,
         del_in=None,
+        too_long_as_file=False, # ✅ NEW
         **args,
     ):
         message_thread_id = message_thread_id or self.message_thread_id # ✅ Preserve thread
@@ -268,7 +329,19 @@ class Message:
         if force_paste:
             text = Essentials.md_to_text(text)
             service, paste_link = await Paste(text).paste()
-            _p = f"{headers.format(service.title())} : <b><a href='{paste_link}'>PREVIEW</a></b>"
+            
+            # ✅ Fallback if paste fails
+            if not paste_link or not str(paste_link).startswith("http"):
+                 force_file = "paste_error.txt;📄 <b>Paste failed, sending as file...</b>"
+                 return await self.reply_msg(
+                    text, 
+                    force_file=force_file, 
+                    message_thread_id=message_thread_id,
+                    **args
+                )
+
+            service_name = service.title() if service else "Paste"
+            _p = f"{headers.format(service_name)} : <b><a href='{paste_link}'>PREVIEW</a></b>"
             # ✅ GUNAKAN quote=True (bawaan reply)
             try:
                 return await self.reply(
@@ -310,7 +383,8 @@ class Message:
         except MessageTooLong:
             text = Essentials.md_to_text(text)
             service, paste_link = await Paste(text).paste()
-            _p = f"{headers.format(service.title())} : <b><a href='{paste_link}'>PREVIEW</a></b>"
+            service_name = service.title() if service else "Paste"
+            _p = f"{headers.format(service_name)} : <b><a href='{paste_link}'>PREVIEW</a></b>"
             try:
                 msg_ = await self.reply(
                     _p, 
@@ -327,6 +401,12 @@ class Message:
         if del_in and isinstance(del_in, int):
             await asyncio.sleep(del_in)
             await msg_.delete()
+        
+        # ✅ NEW: Attach sent message to self for error logger tracking
+        try:
+            self.wait_msg = msg_
+        except: pass
+        
         return msg_
 
     # 
@@ -353,8 +433,8 @@ class Message:
             if not self.from_user or not self.from_user.id:
                 return await self.edit_msg(text_, **kwargs)
             if int(self.from_user.id) in sudo_users:
-                if self.reply_to_message:
-                    return await self.reply_to_message.reply_msg(text_, **kwargs)
+                # ✅ FIX: Always reply to the command message (self) for sudo users,
+                # even if the command itself was a reply to another message.
                 return await self.reply_msg(text_, **kwargs)
             return await self.edit_msg(text_, **kwargs)
         except AttributeError as e:

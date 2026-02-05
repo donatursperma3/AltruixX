@@ -18,35 +18,51 @@ from pyrogram.types import Message, InlineQuery, CallbackQuery
 from pyrogram import Client, StopPropagation, ContinuePropagation
 from pyrogram.errors import (
     MessageEmpty, MessageIdInvalid, BotInlineDisabled, MessageNotModified,
-    UserNotParticipant
+    UserNotParticipant, MessageTooLong # ✅ Added
 )
-from pyrogram.types import LinkPreviewOptions
+from pyrogram.types import LinkPreviewOptions, ReplyParameters
+from Main.utils.file_helpers import make_file_from_text # ✅ Added
 
 
 # ─── UTIL: KIRIM PESAN KE GRUP LOG (AMAN DARI ERROR) ────────────────────
-async def send_log_message(text: str):
+async def send_log_message(text: str, filename: str = "log_error.txt"):
     """
     Kirim pesan ke LOG_CHAT_ID (dari .env) atau fallback ke OWNER_ID.
     Digunakan untuk logging error & aktivitas penting.
+    Returns: Message object or None
     """
     log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
     
     try:
-        await Altruix.bot.send_message(
+        return await Altruix.bot.send_message(
             log_chat_id,
             text,
             link_preview_options=LinkPreviewOptions(is_disabled=True)
         )
+    except MessageTooLong:
+        # ✅ FIX: Handle text that exceeds Telegram limit by sending as file
+        try:
+            file_path = await make_file_from_text(text, file_name=filename)
+            msg = await Altruix.bot.send_document(
+                log_chat_id,
+                file_path,
+                caption=f"📄 <b>Log message too long</b>\nTime: <code>{datetime.now().strftime('%H:%M:%S')}</code>"
+            )
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            return msg
+        except Exception as e:
+            Altruix.log(f"Failed to send long log file: {e}", level=40)
     except Exception:
         # Jika gagal ke LOG_CHAT_ID, coba ke OWNER_ID langsung
         try:
-            await Altruix.bot.send_message(
+            return await Altruix.bot.send_message(
                 Altruix.config.OWNER_ID,
                 f"⚠️ [FALLBACK LOG]\n{text}",
                 link_preview_options=LinkPreviewOptions(is_disabled=True)
             )
         except Exception:
-            pass  # gagal total? abaikan
+            pass
 
 
 # ─── DECORATOR: DEBUG SETIAP INTERAKSI CALLBACK/INLINE ──────────────────
@@ -220,16 +236,141 @@ def log_errors(func):
         except ContinuePropagation as e:
             raise ContinuePropagation from e
         except Exception as _be:
-            # ✅ KIRIM ERROR LENGKAP KE LOG
+            # ✅ KIRIM ERROR LENGKAP KE LOG DENGAN METADATA DETAIL
+            c = None
+            u = None
+            
+            # Extract client and update from args
+            for arg in args:
+                if isinstance(arg, Client):
+                    c = arg
+                elif isinstance(arg, (Message, CallbackQuery)):
+                    u = arg
+            
+            if not c and Altruix.clients:
+                c = Altruix.clients[0]
+            
+            # Common Info
+            time_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            plugin_ver = "Unknown"
+            module_name = func.__module__
+            
+            # Try to get plugin version from the function's module
+            try:
+                import sys
+                module = sys.modules.get(module_name)
+                if module:
+                    plugin_ver = getattr(module, "PLUGIN_VERSION", "Unknown")
+            except: pass
+
+            msg_info = "N/A"
+            chat_info = "N/A"
+            user_info = "N/A"
+            acc_info = "N/A"
+            reply_info = "" # ✅ NEW: Reply info container
+            
+            if u:
+                # Chat ID/Link
+                chat = getattr(u, "chat", None)
+                if not chat and hasattr(u, "message"): # CallbackQuery
+                    chat = u.message.chat
+                
+                if chat:
+                    chat_id = chat.id
+                    chat_title = chat.title or chat.first_name or "Chat"
+                    if chat.username:
+                        chat_info = f"<a href='https://t.me/{chat.username}'>{html.escape(str(chat_title))}</a> (<code>{chat_id}</code>)"
+                    else:
+                        chat_info = f"<b>{html.escape(str(chat_title))}</b> (<code>{chat_id}</code>)"
+                
+                # Executed By
+                user = u.from_user
+                if user:
+                    user_id = user.id
+                    full_name = f"{user.first_name or ''} {user.last_name or ''}".strip() or "User"
+                    status = "Owner (Self)" if user_id == Altruix.config.OWNER_ID else ("Sudo" if user_id in Altruix.auth_users else "User")
+                    user_info = f"<a href='tg://user?id={user_id}'>{html.escape(full_name)}</a> [<code>{user_id}</code>] (<b>{status}</b>)"
+                
+                # Command
+                if isinstance(u, Message):
+                    msg_info = u.text or u.caption or "[Media/No Text]"
+                    
+                    # ✅ CHECK REPLY
+                    if u.reply_to_message:
+                        rm_id = u.reply_to_message.id
+                        rm_user = u.reply_to_message.from_user
+                        rm_user_info = "False"
+                        if rm_user:
+                            rm_full_name = f"{rm_user.first_name or ''} {rm_user.last_name or ''}".strip()
+                            rm_user_info = f"<a href='tg://user?id={rm_user.id}'>{html.escape(rm_full_name)}</a>"
+                        
+                        reply_info = (
+                            f"↩️ <b>Reply to msg ID:</b> <code>{rm_id}</code>\n"
+                            f"👤 <b>Reply to user:</b> {rm_user_info}\n"
+                        )
+                    else:
+                        reply_info = "↩️ <b>Reply to msg ID:</b> False\n👤 <b>Reply to user:</b> False\n"
+
+                elif isinstance(u, CallbackQuery):
+                    msg_info = f"Callback: <code>{u.data}</code>"
+
+            if c:
+                # Account
+                me = c.me
+                me_name = f"{me.first_name or ''} {me.last_name or ''}".strip() or "Userbot"
+                idx = "N/A"
+                for i, client in enumerate(Altruix.clients):
+                    if client == c:
+                        idx = i + 1
+                        break
+                acc_info = f"<b>{html.escape(me_name)}</b> [<code>{me.id}</code>] Account #{idx}"
+
             error_detail = (
-                f"<b>AN ERROR OCCURRED:</b>\n"
-                f"Exception: <i>{_be}</i>\n"
-                f"Occurred in: <code>{func.__name__}</code>\n\n"
-                f"<pre>{traceback.format_exc()}</pre>"
+                f"#LOG_ERROR\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"🎯 <b>CMD:</b> <code>{html.escape(str(msg_info)[:500])}</code>\n"
+                f"👤 <b>CMD BY:</b> {user_info}\n"
+                f"🤖 <b>ACCOUNT:</b> {acc_info}\n"
+                f"💬 <b>CHAT:</b> {chat_info}\n"
+                f"{reply_info}" # ✅ Inject reply info
+                f"🕒 <b>TIME:</b> <code>{time_now}</code>\n"
+                f"🔌 <b>PLUGIN VER:</b> <code>{plugin_ver}</code>\n"
+                f"🛰 <b>USERBOT VER:</b> <code>{Altruix.__version__}</code>\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"💥 <b>ERROR:</b> <code>{_be}</code>\n"
+                f"📍 <b>IN:</b> <code>{module_name}.{func.__name__}</code>\n\n"
+                f"📑 <b>TRACEBACK:</b>\n"
+                f"<pre>{html.escape(traceback.format_exc())}</pre>"
             )
-            await send_log_message(error_detail)
-            # Jangan lempar ulang kecuali dalam dev mode
-            # raise _be  # optional
+            
+            sent_log = await send_log_message(error_detail, filename=f"error_{func.__name__}.txt")
+            
+            # ✅ Notify user if possible (Edit "Processing..." message)
+            # Check if there is a tracked "wait_msg" (Processing...) attached to the input message
+            target_msg = getattr(u, "wait_msg", None)
+            
+            # Fallback to editing the command itself if no wait_msg, ONLY if it's self-authored
+            if not target_msg and isinstance(u, Message) and u.from_user and u.from_user.is_self:
+                target_msg = u
+
+            if target_msg and isinstance(target_msg, Message):
+                try:
+                    # Construct Log Link
+                    log_link = "Check Log Group"
+                    if sent_log and sent_log.chat and sent_log.chat.username:
+                        log_link = f"<a href='https://t.me/{sent_log.chat.username}/{sent_log.id}'>Check Log Message</a>"
+                    elif sent_log and sent_log.chat:
+                         # Private/Private Group link format
+                        log_link = f"<a href='https://t.me/c/{str(sent_log.chat.id)[4:]}/{sent_log.id}'>Check Log Message</a>"
+
+                    await target_msg.edit(
+                        f"<b>💥 Error Occurred!</b>\n"
+                        f"Command failed during execution.\n"
+                        f"👉 {log_link}",
+                        disable_web_page_preview=True
+                    )
+                except Exception:
+                    pass
 
     return wrapper
 
