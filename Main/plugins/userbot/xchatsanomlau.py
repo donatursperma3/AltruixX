@@ -66,7 +66,9 @@ except AttributeError:
 LAUCREATE_TASKS: Dict[str, Dict[str, Any]] = {}
 COMPLETED_LAUCREATE_TASKS: Dict[str, Dict[str, Any]] = {}
 CREATE_LOCK = asyncio.Lock()
-STORAGE_FILE = "xchatsanomlau_cache.json"
+from Main.utils.file_helpers import get_db_path
+
+STORAGE_FILE = get_db_path("xchatsanomlau_cache.json")
 PENDING_CONFIRMATIONS = {}
 
 async def save_laucreate_cache():

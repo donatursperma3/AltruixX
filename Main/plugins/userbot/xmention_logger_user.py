@@ -309,7 +309,7 @@ async def _fallback_cache_exists(key: str) -> bool:
 async def _save_fallback_cache():
     """Save fallback cache to file."""
     try:
-        file_path = Path("mentions_cache_fallback.json")
+        file_path = Path(get_db_path("mentions_cache_fallback.json"))
         data = {
             "cache": MENTION_LOG_CACHE,
             "meta": {
@@ -325,7 +325,7 @@ async def _save_fallback_cache():
 async def _load_fallback_cache():
     """Load fallback cache from file."""
     try:
-        file_path = Path("mentions_cache_fallback.json")
+        file_path = Path(get_db_path("mentions_cache_fallback.json"))
         if file_path.exists():
             async with aiofiles.open(file_path, 'r', encoding='utf-8') as f:
                 content = await f.read()
@@ -617,6 +617,8 @@ async def init_mentions_cache():
 # Start cache initialization
 asyncio.create_task(init_mentions_cache())
 
+from Main.utils.file_helpers import get_db_path
+
 # ============================================================================
 # 🔥 LOAD SETTINGS DARI CACHE PADA STARTUP
 # ============================================================================
@@ -632,24 +634,9 @@ async def load_settings_on_startup():
             logger.info(f"Loaded REPLY_FROM_ALL_ACCESSIBLE from cache: {REPLY_FROM_ALL_ACCESSIBLE}")
         
         # Load MENTIONS_DATA dari local JSON (fallback)
-        LOCAL_STORAGE_FILE = Path("mentions_settings.json")
-        if LOCAL_STORAGE_FILE.exists():
-            async with aiofiles.open(LOCAL_STORAGE_FILE, 'r', encoding='utf-8') as f:
-                content = await f.read()
-                if content.strip():
-                    data = json.loads(content)
-                    MENTIONS_DATA = data.get("settings", {})
-                    AUTO_REPLY_ENABLED = data.get("auto_reply", False)
-                    logger.info(f"Loaded {len(MENTIONS_DATA)} settings, auto_reply: {AUTO_REPLY_ENABLED}")
+        await load_local_storage()
     except Exception as e:
         logger.error(f"Failed to load settings from cache: {e}")
-
-asyncio.create_task(load_settings_on_startup())
-
-# ============================================================================
-# 🔥 LOCAL JSON STORAGE (untuk backward compatibility)
-# ============================================================================
-LOCAL_STORAGE_FILE = Path("mentions_settings.json")
 
 async def load_local_storage():
     """Load data dari local JSON file."""
@@ -678,6 +665,13 @@ async def load_local_storage():
                     logger.info(f"Loaded {len(MENTIONS_DATA)} settings, {len(MENTION_APPLY_TYPES)} apply types")
     except Exception as e:
         logger.error(f"Failed to load local storage: {e}")
+
+asyncio.create_task(load_settings_on_startup())
+
+# ============================================================================
+# 🔥 LOCAL JSON STORAGE (untuk backward compatibility)
+# ============================================================================
+LOCAL_STORAGE_FILE = Path(get_db_path("mentions_settings.json"))
 
 async def save_local_storage():
     """Save data ke local JSON file."""
@@ -964,6 +958,11 @@ async def mnt_config_callback(c: Client, cb: CallbackQuery):
 async def send_mention_log_handler(c: Client, m: RawMessage):
     """Handler utama untuk menangkap mention dan mengirim notifikasi ke LOG_CHAT."""
     try:
+        # ✅ FIX: Ignore mentions in log group to prevent auto-reply loop
+        if Altruix.log_chat and m.chat.id == Altruix.log_chat:
+            logger.debug(f"⚠️ Ignoring mention in log group {m.chat.id}")
+            return
+        
         msg_key = f"{m.chat.id}_{m.id}"
         
         # Cek apakah sudah ada di cache PERSISTEN

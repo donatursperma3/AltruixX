@@ -24,6 +24,7 @@ from datetime import datetime
 import re
 from collections import defaultdict
 from Main.utils.topic_utils import get_or_create_topic
+from Main.utils.file_helpers import get_db_path
 
 # ─── LOGGER KHUSUS PLUGIN ───────────────────────────────────────────────
 
@@ -37,7 +38,7 @@ logger.setLevel(logging.INFO)
 
 PLUGIN_NAME = __plugin_name__ 
 PLUGIN_VERSION = "1.3.2"  # ✅ Added message type filters
-STORAGE_FILE = Path("pm_logger_bot_settings.json")
+STORAGE_FILE = Path(get_db_path("pm_logger_bot_settings.json"))
 
 # Settings Cache
 PM_LOGGER_BOT_DATA = {}

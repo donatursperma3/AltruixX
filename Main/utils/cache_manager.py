@@ -13,6 +13,7 @@ from typing import Any, Dict, Optional, Union
 from datetime import datetime, timedelta
 import aiofiles
 import time
+from Main.utils.file_helpers import get_db_path
 
 # Try imports for external databases
 try:
@@ -42,7 +43,7 @@ class CacheManager:
         self.mongo_collection = None
         
         # Path untuk JSON cache
-        self.json_file = Path(self.config.get("json_cache_path", "mentions_cache.json"))
+        self.json_file = Path(get_db_path(self.config.get("json_cache_path", "mentions_cache.json")))
         
         # In-memory fallback
         self.memory_cache = {}

@@ -93,6 +93,8 @@ from Main.internals.get_session import add_session_cb_handler
 # 🔥 LOG STARTUP
 # logger.info(f"🚀 Initializing settings plugin v{PLUGIN_VERSION}")
 
+from Main.utils.file_helpers import get_db_path
+
 # Dictionary untuk menyimpan state konfirmasi user
 # ✅ SHARED STATES (Using client-instantiated dictionaries)
 user_confirmation_state = {}
@@ -331,7 +333,7 @@ def get_settings_buttons(user_id=None):
 
 
 # ✅ HELPER: Custom Link Settings
-CUSTOM_LINK_FILE = "custom_button_settings.json"
+CUSTOM_LINK_FILE = get_db_path("custom_button_settings.json")
 
 def get_custom_link_data():
     if not os.path.exists(CUSTOM_LINK_FILE):
@@ -402,7 +404,8 @@ async def send_log_notification(
             'recent_messages': 'Pesan Terbaru',  # ✅ BARU
             'view_mentions': 'Lihat Mention',  # ✅ BARU
             'send_profile_photo': 'Kirim Foto Profil',  # ✅ BARU
-            'purge_my_message': 'Purge My Message'  # ✅ BARU
+            'purge_my_message': 'Purge My Message',  # ✅ BARU
+            'gpurgeme_completed': 'Global Purgeme'   # ✅ BARU
         }
         
         action_text = action_map.get(action, action)
@@ -635,7 +638,7 @@ async def get_log_group_link_handler(c: Client, cb: CallbackQuery):
 @iuser_check
 @log_errors
 async def joinl_menu_global_handler(c: Client, cb: CallbackQuery):
-    filename = "join_logger_settings.json"
+    filename = get_db_path("join_logger_settings.json")
     data = {"global": {"enabled": True}, "sessions": {}, "apply_types": {}}
     if os.path.exists(filename):
         with open(filename, "r") as f:
@@ -662,7 +665,7 @@ async def joinl_menu_global_handler(c: Client, cb: CallbackQuery):
 @iuser_check
 @log_errors
 async def joinl_toggle_global_handler(c: Client, cb: CallbackQuery):
-    filename = "join_logger_settings.json"
+    filename = get_db_path("join_logger_settings.json")
     data = {"global": {"enabled": True}, "sessions": {}, "apply_types": {}}
     if os.path.exists(filename):
         with open(filename, "r") as f: data = json.load(f)
@@ -3582,6 +3585,7 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
         InlineKeyboardButton(gt("join_group"), f"gen_conf_join_chat_input_{index}_{callback_page}"),
         InlineKeyboardButton(gt("leave_group"), f"gen_conf_leave_chat_input_{index}_{callback_page}"),
         InlineKeyboardButton(gt("purge_my_msg"), f"gen_conf_purge_msg_start_{index}_{callback_page}"),
+        InlineKeyboardButton(gt("global_purgeme"), f"gpurgeme_menu_{index}_{callback_page}"),
         InlineKeyboardButton(gt("send_message"), f"gen_conf_send_message_input_{index}_{callback_page}"),
         InlineKeyboardButton(gt("chat_stats"), f"gen_conf_chat_stats_scan_{index}_{callback_page}"),
         
@@ -3605,7 +3609,9 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
         InlineKeyboardButton(gt("eval_python"), f"eval_session_{index}_{callback_page}"),
         InlineKeyboardButton(gt("exec_terminal"), f"exec_session_{index}_{callback_page}"),
         InlineKeyboardButton(gt("custom_bot"), f"custom_bot_menu_{index}_{callback_page}"),
-        InlineKeyboardButton(gt("cache_log"), f"cache_log_menu_{index}_{callback_page}"),
+        InlineKeyboardButton(gt("cache_log_menu"), f"cache_log_menu_{index}_{callback_page}"),
+        InlineKeyboardButton(gt("sudo_settings"), f"sudo_settings_menu_{index}_{callback_page}"),
+        InlineKeyboardButton(gt("prefix_settings"), f"prefix_settings_menu_{index}_{callback_page}"),
     ]
 
     # Pagination Logic
@@ -5582,8 +5588,9 @@ async def pml_menu_handler(c: Client, cb: CallbackQuery, index: int = None, page
     
     # Load settings
     try:
-        if os.path.exists("pm_logger_user_settings.json"):
-            with open("pm_logger_user_settings.json", "r") as f:
+        f_path = get_db_path("pm_logger_user_settings.json")
+        if os.path.exists(f_path):
+            with open(f_path, "r") as f:
                 data = json.load(f)
                 sessions_data = data.get("sessions", {}) or data.get("settings", {})
                 reply_access_mode = data.get("reply_access_mode", "sudo") # Default to sudo
@@ -5653,7 +5660,7 @@ async def pml_toggle_type_handler(c: Client, cb: CallbackQuery):
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
     user_id_str = str(Altruix.clients[index].me.id)
-    filename = "pm_logger_user_settings.json"
+    filename = get_db_path("pm_logger_user_settings.json")
     
     try:
         if os.path.exists(filename):
@@ -5682,7 +5689,7 @@ async def pml_set_global_handler(c: Client, cb: CallbackQuery):
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
     user_id_str = str(Altruix.clients[index].me.id)
-    filename = "pm_logger_user_settings.json"
+    filename = get_db_path("pm_logger_user_settings.json")
     
     try:
         if os.path.exists(filename):
@@ -5710,7 +5717,7 @@ async def pml_toggle_handler(c: Client, cb: CallbackQuery):
     index = int(cb.matches[0].group(2))
     page = int(cb.matches[0].group(3))
     
-    filename = "pm_logger_user_settings.json"
+    filename = get_db_path("pm_logger_user_settings.json")
     
     try:
         if os.path.exists(filename):
@@ -5785,7 +5792,7 @@ async def joinl_menu_handler(c: Client, cb: CallbackQuery, index: int = None, pa
     if index is None: index = int(cb.matches[0].group(1))
     if page is None: page = int(cb.matches[0].group(2))
     
-    filename = "join_logger_settings.json"
+    filename = get_db_path("join_logger_settings.json")
     data = {"global": {"enabled": True}, "sessions": {}, "apply_types": {}}
     if os.path.exists(filename):
         with open(filename, "r") as f:
@@ -5828,7 +5835,7 @@ async def joinl_toggle_type_handler(c: Client, cb: CallbackQuery):
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
     user_id_str = str(Altruix.clients[index].me.id)
-    filename = "join_logger_settings.json"
+    filename = get_db_path("join_logger_settings.json")
     try:
         if os.path.exists(filename):
             with open(filename, "r") as f: data = json.load(f)
@@ -5952,7 +5959,7 @@ async def joinl_set_global_handler(c: Client, cb: CallbackQuery):
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
     user_id_str = str(Altruix.clients[index].me.id)
-    filename = "join_logger_settings.json"
+    filename = get_db_path("join_logger_settings.json")
     try:
         if os.path.exists(filename):
             with open(filename, "r") as f: data = json.load(f)
@@ -5970,7 +5977,7 @@ async def joinl_set_global_handler(c: Client, cb: CallbackQuery):
 async def joinl_toggle_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     user_id_str = str(Altruix.clients[index].me.id)
-    filename = "join_logger_settings.json"
+    filename = get_db_path("join_logger_settings.json")
     if os.path.exists(filename):
         with open(filename, "r") as f: data = json.load(f)
     else: data = {"global": {"enabled": True}, "sessions": {}, "apply_types": {}}
@@ -6006,7 +6013,7 @@ async def cmdl_menu_handler(c: Client, cb: CallbackQuery, index: int = None, pag
     if index is None: index = int(cb.matches[0].group(1))
     if page is None: page = int(cb.matches[0].group(2))
     
-    filename = "cmd_logger_settings.json"
+    filename = get_db_path("cmd_logger_settings.json")
     data = {"global": {"enabled": False}, "sessions": {}, "apply_types": {}}
     if os.path.exists(filename):
         with open(filename, "r") as f:
@@ -6049,7 +6056,7 @@ async def cmdl_toggle_type_handler(c: Client, cb: CallbackQuery):
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
     user_id_str = str(Altruix.clients[index].me.id)
-    filename = "cmd_logger_settings.json"
+    filename = get_db_path("cmd_logger_settings.json")
     try:
         if os.path.exists(filename):
             with open(filename, "r") as f: data = json.load(f)
@@ -6071,7 +6078,7 @@ async def cmdl_set_global_handler(c: Client, cb: CallbackQuery):
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
     user_id_str = str(Altruix.clients[index].me.id)
-    filename = "cmd_logger_settings.json"
+    filename = get_db_path("cmd_logger_settings.json")
     try:
         if os.path.exists(filename):
             with open(filename, "r") as f: data = json.load(f)
@@ -6089,7 +6096,7 @@ async def cmdl_set_global_handler(c: Client, cb: CallbackQuery):
 async def cmdl_toggle_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     user_id_str = str(Altruix.clients[index].me.id)
-    filename = "cmd_logger_settings.json"
+    filename = get_db_path("cmd_logger_settings.json")
     if os.path.exists(filename):
         with open(filename, "r") as f: data = json.load(f)
     else: data = {"global": {"enabled": False}, "sessions": {}, "apply_types": {}}
@@ -6150,7 +6157,7 @@ async def pmlf_list_handler(c: Client, cb: CallbackQuery):
     page = int(cb.matches[0].group(4))
     source_key = f"from_{source}"
     
-    filename = "pm_logger_user_settings.json"
+    filename = get_db_path("pm_logger_user_settings.json")
     user_id_str = str(Altruix.clients[index].me.id)
     
     if os.path.exists(filename):
@@ -6192,7 +6199,7 @@ async def pmlf_toggle_handler(c: Client, cb: CallbackQuery):
     source_key = f"from_{source}"
     user_id_str = str(Altruix.clients[index].me.id)
     
-    filename = "pm_logger_user_settings.json"
+    filename = get_db_path("pm_logger_user_settings.json")
     
     if os.path.exists(filename):
         with open(filename, "r") as f: data = json.load(f)
@@ -6257,7 +6264,7 @@ async def mnt_menu_handler(c: Client, cb: CallbackQuery, index: int = None, page
         page = int(cb.matches[0].group(2))
     
     # Load Mention Settings with support for structured format
-    settings_file = "mentions_settings.json"
+    settings_file = get_db_path("mentions_settings.json")
     m_settings = {"global": {"mention": True, "auto_log": True, "reply_from_all": False}, "settings": {}}
     
     if os.path.exists(settings_file):
@@ -6516,7 +6523,7 @@ async def mnt_toggle_type_handler(c: Client, cb: CallbackQuery):
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
     user_id_str = str(Altruix.clients[index].me.id)
-    settings_file = "mentions_settings.json"
+    settings_file = get_db_path("mentions_settings.json")
     
     try:
         if os.path.exists(settings_file):
@@ -6545,7 +6552,7 @@ async def mnt_set_global_handler(c: Client, cb: CallbackQuery):
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
     user_id_str = str(Altruix.clients[index].me.id)
-    settings_file = "mentions_settings.json"
+    settings_file = get_db_path("mentions_settings.json")
     
     try:
         if os.path.exists(settings_file):
@@ -6581,7 +6588,7 @@ async def mnt_toggle_handler(c: Client, cb: CallbackQuery):
     page = int(cb.matches[0].group(3))
     user_id_str = str(Altruix.clients[index].me.id)
     
-    settings_file = "mentions_settings.json"
+    settings_file = get_db_path("mentions_settings.json")
     m_settings = {"global": {"mention": True, "auto_log": True, "reply_from_all": False}, "settings": {}, "apply_types": {}}
     
     if os.path.exists(settings_file):
@@ -7725,7 +7732,7 @@ async def chat_stats_scan_handler(c: Client, cb: CallbackQuery):
     session_info = getattr(session, 'myself', None) or await session.get_me()
     
     # Caching Logic
-    cache_file = "chat_stats_cache.json"
+    cache_file = get_db_path("chat_stats_cache.json")
     cache_data = {}
     if os.path.exists(cache_file):
         try:
@@ -8332,17 +8339,19 @@ async def default_bot_settings_handler(c: Client, cb: CallbackQuery):
     
     # Load statuses from files
     def get_status(filename, key="enabled", nested=False):
-        if os.path.exists(filename):
-            try:
-                with open(filename, "r") as f:
-                    data = json.load(f)
-                    if nested:
-                        val = data.get("settings", {}).get(key, False)
-                    else:
-                        val = data.get(key, False)
-                    return "✅ ON" if val else "❌ OFF"
-            except: pass
-        return "❌ OFF"
+        f_path = get_db_path(filename)
+        if not os.path.exists(f_path):
+            return "OFF ❌"
+        try:
+            with open(f_path, "r") as f:
+                data = json.load(f)
+                if nested:
+                    val = any(v.get(key, False) for v in (data.get("sessions", {}) or data.get("settings", {})).values() if isinstance(v, dict))
+                else:
+                    val = data.get(key, False)
+                return "ON ✅" if val else "OFF ❌"
+        except:
+            return "OFF ❌"
 
     pm_status = get_status("pm_logger_bot_settings.json", nested=True)
     mnt_status = get_status("mention_logger_bot_settings.json", nested=True)  # Bot mention logger
@@ -8394,11 +8403,11 @@ async def bot_logger_toggle_handler(c: Client, cb: CallbackQuery):
     target = cb.matches[0].group(1)
     
     file_map = {
-        "pml": "pm_logger_bot_settings.json",
-        "mnt": "mention_logger_bot_settings.json",  # Bot mention logger (independent from userbot)
-        "joinl": "join_logger_settings.json",
-        "cbl": "callback_logger_settings.json",
-        "rml": "reply_manager_settings.json"
+        "pml": get_db_path("pm_logger_bot_settings.json"),
+        "mnt": get_db_path("mention_logger_bot_settings.json"),  # Bot mention logger (independent from userbot)
+        "joinl": get_db_path("join_logger_settings.json"),
+        "cbl": get_db_path("callback_logger_settings.json"),
+        "rml": get_db_path("reply_manager_settings.json")
     }
     
     filename = file_map.get(target)
@@ -8550,7 +8559,7 @@ async def mntf_list_handler(c: Client, cb: CallbackQuery):
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
     
-    filename = "mentions_settings.json"
+    filename = get_db_path("mentions_settings.json")
     if os.path.exists(filename):
         with open(filename, "r") as f: data = json.load(f)
         filters = data.get("filters", {})
@@ -8579,7 +8588,7 @@ async def mntf_toggle_handler(c: Client, cb: CallbackQuery):
     index = int(cb.matches[0].group(2))
     page = int(cb.matches[0].group(3))
     
-    filename = "mentions_settings.json"
+    filename = get_db_path("mentions_settings.json")
     if os.path.exists(filename):
         with open(filename, "r") as f: data = json.load(f)
     else: data = {}
@@ -9178,3 +9187,469 @@ async def check_authorization_message(m: Message) -> bool:
 
 # Log sukses loading
 logger.info(f"✅ Loaded → {__plugin_name__} v{PLUGIN_VERSION}")
+# ====================== SUDO SETTINGS HANDLERS ======================
+
+@Altruix.bot.on_callback_query(filters.regex(r"^sudo_settings_menu_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def sudo_settings_menu_handler(c: Client, cb: CallbackQuery):
+    """Handler for sudo settings menu"""
+    await cb.answer()
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    
+    # Get current sudo status
+    apply_type = await Altruix.config.get_env("SUDO_APPLY_TYPE") or "global"
+    
+    if apply_type == "global":
+        sudo_enabled = await Altruix.config.get_env("SUDO_ENABLED_GLOBAL")
+        sudo_enabled = sudo_enabled != "false" if sudo_enabled else True
+    else:
+        sudo_enabled = await Altruix.config.get_env(f"SUDO_ENABLED_{index}")
+        sudo_enabled = sudo_enabled != "false" if sudo_enabled else True
+    
+    # Get sudo prefix
+    sudo_prefix = await Altruix.config.get_env("SUDO_CMD_HANDLER") or "!"
+    
+    status_text = gt("sudo_enabled_status") if sudo_enabled else gt("sudo_disabled_status")
+    apply_type_text = gt("global") if apply_type == "global" else gt("per_account")
+    
+    text = gt("sudo_settings_desc").format(status_text, apply_type_text, sudo_prefix)
+    
+    buttons = [
+        [
+            InlineKeyboardButton(
+                gt("sudo_toggle_off") if sudo_enabled else gt("sudo_toggle_on"),
+                f"sudo_toggle_{index}_{page}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                f"{gt('apply_type')}: {apply_type_text}",
+                f"sudo_apply_type_{index}_{page}"
+            )
+        ],
+        [
+            InlineKeyboardButton(gt("change_sudo_prefix"), f"change_sudo_prefix_{index}_{page}")
+        ],
+        [
+            InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}")
+        ]
+    ]
+    
+    await edit_cb(cb, 
+        text=gt("sudo_settings_title") + "\n\n" + text,
+        reply_markup=InlineKeyboardMarkup(buttons),
+        parse_mode=ParseMode.HTML
+    )
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^sudo_toggle_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def sudo_toggle_handler(c: Client, cb: CallbackQuery):
+    """Toggle sudo on/off"""
+    await cb.answer()
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    
+    apply_type = await Altruix.config.get_env("SUDO_APPLY_TYPE") or "global"
+    
+    if apply_type == "global":
+        current_status = await Altruix.config.get_env("SUDO_ENABLED_GLOBAL")
+        current_status = current_status != "false" if current_status else True
+        new_status = not current_status
+        await Altruix.config.sync_env_to_db("SUDO_ENABLED_GLOBAL", "true" if new_status else "false", upsert=True)
+    else:
+        current_status = await Altruix.config.get_env(f"SUDO_ENABLED_{index}")
+        current_status = current_status != "false" if current_status else True
+        new_status = not current_status
+        await Altruix.config.sync_env_to_db(f"SUDO_ENABLED_{index}", "true" if new_status else "false", upsert=True)
+    
+    # Send log notification
+    log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
+    await Altruix.bot.send_message(
+        log_chat_id,
+        f"🔐 <b>Sudo Settings Changed</b>\n\n"
+        f"• User: <a href='tg://user?id={cb.from_user.id}'>{html.escape(cb.from_user.first_name)}</a>\n"
+        f"• Session Index: <code>{index + 1}</code>\n"
+        f"• Apply Type: <code>{apply_type}</code>\n"
+        f"• New Status: <code>{'ENABLED' if new_status else 'DISABLED'}</code>\n"
+        f"• Time: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>",
+        parse_mode=ParseMode.HTML
+    )
+    
+    await cb.answer(gt("sudo_enabled_msg") if new_status else gt("sudo_disabled_msg"), show_alert=True)
+    await sudo_settings_menu_handler(c, cb)
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^sudo_apply_type_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def sudo_apply_type_handler(c: Client, cb: CallbackQuery):
+    """Toggle between global and per-account apply type"""
+    await cb.answer()
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    
+    current_type = await Altruix.config.get_env("SUDO_APPLY_TYPE") or "global"
+    new_type = "per_account" if current_type == "global" else "global"
+    
+    await Altruix.config.sync_env_to_db("SUDO_APPLY_TYPE", new_type, upsert=True)
+    
+    type_text = gt("global") if new_type == "global" else gt("per_account")
+    await cb.answer(gt("sudo_apply_type_changed").format(type_text), show_alert=True)
+    await sudo_settings_menu_handler(c, cb)
+
+
+# ====================== PREFIX SETTINGS HANDLERS ======================
+
+@Altruix.bot.on_callback_query(filters.regex(r"^prefix_settings_menu_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def prefix_settings_menu_handler(c: Client, cb: CallbackQuery):
+    """Handler for prefix settings menu"""
+    await cb.answer()
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    
+    # Get current prefixes
+    userbot_prefix = await Altruix.config.get_env("USER_CMD_HANDLER") or "."
+    sudo_prefix = await Altruix.config.get_env("SUDO_CMD_HANDLER") or "!"
+    
+    text = gt("prefix_settings_desc").format(userbot_prefix, sudo_prefix)
+    
+    buttons = [
+        [
+            InlineKeyboardButton(gt("change_userbot_prefix"), f"change_userbot_prefix_{index}_{page}")
+        ],
+        [
+            InlineKeyboardButton(gt("change_sudo_prefix_menu"), f"change_sudo_prefix_{index}_{page}")
+        ],
+        [
+            InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}")
+        ]
+    ]
+    
+    await edit_cb(cb,
+        text=gt("prefix_settings_title") + "\n\n" + text,
+        reply_markup=InlineKeyboardMarkup(buttons),
+        parse_mode=ParseMode.HTML
+    )
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^change_userbot_prefix_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def change_userbot_prefix_handler(c: Client, cb: CallbackQuery):
+    """Change userbot command prefix"""
+    await cb.answer()
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    user_id = cb.from_user.id
+    
+    current_prefix = await Altruix.config.get_env("USER_CMD_HANDLER") or "."
+    
+    await edit_cb(cb,
+        f"<b>📝 {gt('change_userbot_prefix')}</b>\n\n"
+        f"• <b>{gt('current_prefix')}:</b> <code>{current_prefix}</code>\n\n"
+        f"{gt('prefix_prompt')}",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("back"), f"prefix_settings_menu_{index}_{page}")]]),
+        parse_mode=ParseMode.HTML
+    )
+    
+    try:
+        msg = await c.listen(filters.chat(user_id) & filters.text, timeout=60)
+        new_prefix = msg.text.strip()
+        
+        if new_prefix.lower() == "cancel":
+            await msg.delete()
+            await edit_cb(cb, gt("operation_cancelled"))
+            await asyncio.sleep(2)
+            await prefix_settings_menu_handler(c, cb)
+            return
+        
+        # Validate prefix
+        if len(new_prefix) != 1 or new_prefix.isalnum():
+            await msg.delete()
+            await edit_cb(cb, gt("prefix_invalid"))
+            await asyncio.sleep(2)
+            await prefix_settings_menu_handler(c, cb)
+            return
+        
+        # Check if same as sudo prefix
+        sudo_prefix = await Altruix.config.get_env("SUDO_CMD_HANDLER") or "!"
+        if new_prefix == sudo_prefix:
+            await msg.delete()
+            await edit_cb(cb, gt("prefix_same_as_other").format(gt("prefix_sudo")))
+            await asyncio.sleep(2)
+            await prefix_settings_menu_handler(c, cb)
+            return
+        
+        await msg.delete()
+        
+        # Update prefix
+        await Altruix.config.sync_env_to_db("USER_CMD_HANDLER", new_prefix, upsert=True)
+        
+        # Send log notification
+        log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
+        await Altruix.bot.send_message(
+            log_chat_id,
+            f"📝 <b>Userbot Prefix Changed</b>\n\n"
+            f"• User: <a href='tg://user?id={cb.from_user.id}'>{html.escape(cb.from_user.first_name)}</a>\n"
+            f"• Old Prefix: <code>{current_prefix}</code>\n"
+            f"• New Prefix: <code>{new_prefix}</code>\n"
+            f"• Time: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>",
+            parse_mode=ParseMode.HTML
+        )
+        
+        await edit_cb(cb, gt("prefix_updated").format(new_prefix), parse_mode=ParseMode.HTML)
+        await asyncio.sleep(3)
+        await prefix_settings_menu_handler(c, cb)
+        
+    except asyncio.TimeoutError:
+        await edit_cb(cb, gt("timeout_retry"))
+        await asyncio.sleep(2)
+        await prefix_settings_menu_handler(c, cb)
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^change_sudo_prefix_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def change_sudo_prefix_handler(c: Client, cb: CallbackQuery):
+    """Change sudo command prefix"""
+    await cb.answer()
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    user_id = cb.from_user.id
+    
+    current_prefix = await Altruix.config.get_env("SUDO_CMD_HANDLER") or "!"
+    
+    await edit_cb(cb,
+        f"<b>🔧 {gt('change_sudo_prefix_menu')}</b>\n\n"
+        f"• <b>{gt('current_prefix')}:</b> <code>{current_prefix}</code>\n\n"
+        f"{gt('prefix_prompt')}",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("back"), f"prefix_settings_menu_{index}_{page}")]]),
+        parse_mode=ParseMode.HTML
+    )
+    
+    try:
+        msg = await c.listen(filters.chat(user_id) & filters.text, timeout=60)
+        new_prefix = msg.text.strip()
+        
+        if new_prefix.lower() == "cancel":
+            await msg.delete()
+            await edit_cb(cb, gt("operation_cancelled"))
+            await asyncio.sleep(2)
+            await prefix_settings_menu_handler(c, cb)
+            return
+        
+        # Validate prefix
+        if len(new_prefix) != 1 or new_prefix.isalnum():
+            await msg.delete()
+            await edit_cb(cb, gt("prefix_invalid"))
+            await asyncio.sleep(2)
+            await prefix_settings_menu_handler(c, cb)
+            return
+        
+        # Check if same as userbot prefix
+        userbot_prefix = await Altruix.config.get_env("USER_CMD_HANDLER") or "."
+        if new_prefix == userbot_prefix:
+            await msg.delete()
+            await edit_cb(cb, gt("prefix_same_as_other").format(gt("prefix_userbot")))
+            await asyncio.sleep(2)
+            await prefix_settings_menu_handler(c, cb)
+            return
+        
+        await msg.delete()
+        
+        # Update prefix
+        await Altruix.config.sync_env_to_db("SUDO_CMD_HANDLER", new_prefix, upsert=True)
+        
+        # Send log notification
+        log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
+        await Altruix.bot.send_message(
+            log_chat_id,
+            f"🔧 <b>Sudo Prefix Changed</b>\n\n"
+            f"• User: <a href='tg://user?id={cb.from_user.id}'>{html.escape(cb.from_user.first_name)}</a>\n"
+            f"• Old Prefix: <code>{current_prefix}</code>\n"
+            f"• New Prefix: <code>{new_prefix}</code>\n"
+            f"• Time: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>",
+            parse_mode=ParseMode.HTML
+        )
+        
+        await edit_cb(cb, gt("prefix_updated").format(new_prefix), parse_mode=ParseMode.HTML)
+        await asyncio.sleep(3)
+        await prefix_settings_menu_handler(c, cb)
+        
+    except asyncio.TimeoutError:
+        await edit_cb(cb, gt("timeout_retry"))
+        await asyncio.sleep(2)
+        await prefix_settings_menu_handler(c, cb)
+# ─── GLOBAL PURGEME HANDLERS ──────────────────────────────────────────
+
+@Altruix.bot.on_callback_query(filters.regex(r"^gpurgeme_menu_(\d+)_(\d+)$"))
+@log_errors
+@iuser_check
+async def gpurgeme_menu_handler(c: Client, cb: CallbackQuery):
+    try:
+        await cb.answer()
+    except: pass
+    
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    
+    if index >= len(Altruix.clients):
+        await edit_cb(cb, "Session not found.")
+        return
+
+    client = Altruix.clients[index]
+    
+    # Fully robust session retrieval
+    me = getattr(client, "myself", None) or client.me
+    if not me:
+        try:
+            me = await client.get_me()
+            client.myself = me
+        except Exception as e:
+            await cb.answer(f"Session Error: {e}", show_alert=True)
+            return
+            
+    if not me: # Still None?
+        await cb.answer("Could not retrieve user info.", show_alert=True)
+        return
+
+    unique_id = f"gp_{me.id}"
+    
+    # Safe message/chat ID extraction
+    msg_id = cb.message.id if cb.message else 0
+    chat_id = cb.message.chat.id if cb.message else cb.from_user.id
+    
+    # Initialize state if not exists
+    from Main.plugins.userbot import xgpurgeme_userbot
+    async with xgpurgeme_userbot.STATE_LOCK:
+        if unique_id not in Altruix.GPURGEME_STATE:
+            Altruix.GPURGEME_STATE[unique_id] = {
+                "unique_id": unique_id,
+                "client": client,
+                "status": "idle",
+                "target": "all",
+                "limit": 10,
+                "delay": 6,
+                "ignore_admin": True,
+                "mode": "newest",
+                "offset": 0,
+                "notify": True,
+                "filters": ["all"],
+                "deleted_count": 0,
+                "processed_chats": 0,
+                "total_chats": 0,
+                "stop_event": asyncio.Event(),
+                "pause_event": asyncio.Event(),
+                "dashboard_msg_id": msg_id,
+                "dashboard_chat_id": chat_id,
+                "start_time": 0
+            }
+        state = Altruix.GPURGEME_STATE[unique_id]
+        state["dashboard_msg_id"] = msg_id
+        state["dashboard_chat_id"] = chat_id
+        state["pause_event"].set()
+        
+        # ✅ SET SETTINGS CONTEXT
+        state["is_settings"] = True
+        state["index"] = index
+        state["page"] = page
+        # Capture the message ID so the dashboard updater knows what to target
+        if cb.message:
+            state["dashboard_chat_id"] = cb.message.chat.id
+            state["dashboard_msg_id"] = cb.message.id
+        Altruix.log(f"DEBUG: Initialized GP State in Settings for {unique_id}. index={index}, page={page}, msg_id={state.get('dashboard_msg_id')}", level=20)
+
+    text = xgpurgeme_userbot.get_gp_status_text(state)
+    kb = xgpurgeme_userbot.get_gp_control_kb(unique_id, state)
+    
+    Altruix.log(f"DEBUG: Sending GP Menu via edit_cb for {unique_id}. msg_id={msg_id}", level=20)
+    await edit_cb(cb, text, reply_markup=kb)
+
+# ---------------------------------------------------------
+# GLOBAL PURGEME INLINE HANDLER
+# ---------------------------------------------------------
+
+@Altruix.bot.on_inline_query(filters.regex(r"^gp_menu_(?P<uid>gp_\d+)$"))
+@log_errors
+@iuser_check
+async def gp_inline_handler(c: Client, q: InlineQuery):
+    unique_id = q.matches[0].group("uid")
+    
+    from Main.plugins.userbot import xgpurgeme_userbot
+    
+    async with xgpurgeme_userbot.STATE_LOCK:
+        # Check if state exists, if not try to initialize default
+        if unique_id not in Altruix.GPURGEME_STATE:
+             # Extract user_id from unique_id (gp_12345)
+            try:
+                user_id = int(unique_id.split("_")[1])
+                # Find the client for this user
+                client = None
+                for cl in Altruix.clients:
+                    me = getattr(cl, "myself", None) or cl.me
+                    if me and me.id == user_id:
+                        client = cl
+                        break
+                
+                if client:
+                    Altruix.GPURGEME_STATE[unique_id] = {
+                        "unique_id": unique_id,
+                        "client": client,
+                        "status": "idle",
+                        "target": "all",
+                        "limit": 10,
+                        "delay": 6,
+                        "ignore_admin": True,
+                        "mode": "newest",
+                        "offset": 0,
+                        "notify": True,
+                        "filters": ["all"],
+                        "deleted_count": 0,
+                        "processed_chats": 0,
+                        "total_chats": 0,
+                        "stop_event": asyncio.Event(),
+                        "pause_event": asyncio.Event(),
+                        "dashboard_msg_id": None,
+                        "dashboard_chat_id": None,
+                        "start_time": 0
+                    }
+                    Altruix.GPURGEME_STATE[unique_id]["pause_event"].set()
+            except:
+                pass
+
+        state = Altruix.GPURGEME_STATE.get(unique_id)
+        
+    if not state:
+        await q.answer(
+            results=[],
+            switch_pm_text="❌ Session expired or invalid",
+            switch_pm_parameter="help",
+            cache_time=0
+        )
+        return
+
+    text = xgpurgeme_userbot.get_gp_status_text(state)
+    kb = xgpurgeme_userbot.get_gp_control_kb(unique_id, state)
+    
+    await q.answer(
+        results=[
+            InlineQueryResultArticle(
+                title="Global Purgeme Dashboard",
+                description=f"Status: {state['status']} | Target: {state['target']}",
+                thumb_url="https://telegra.ph/file/0c9aaff87572791838520.png",
+                input_message_content=InputTextMessageContent(
+                    text,
+                    disable_web_page_preview=True
+                ),
+                reply_markup=kb
+            )
+        ],
+        cache_time=0,
+        is_personal=True
+    )

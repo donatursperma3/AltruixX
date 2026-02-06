@@ -114,10 +114,10 @@ class Message:
     @property
     def command_(self):
         try:
-            self.text.split()[0][
+            return self.text.split()[0][
                 1:
             ].strip() if self.text and " " in self.text else self.text[1:].strip()
-        except (IndexError, AttributeError):  # ✅ Perbaikan typo: "or" → ","
+        except (IndexError, AttributeError):
             return None
 
     @property
@@ -267,7 +267,8 @@ class Message:
                 Altruix.log(f"Final edit failed: {e}", level=40)
                 return self
         except Exception as e:
-            Altruix.log(f"Failed to edit message: {e}", level=40)
+            # Expected errors like MESSAGE_AUTHOR_REQUIRED, CHAT_ADMIN_REQUIRED are normal
+            Altruix.log(f"Failed to edit message: {e}", level=10)
             # Fallback: kirim sebagai reply jika gagal edit biasa (bukan karena panjang)
             try:
                 return await self.reply_msg(text, too_long_as_file=too_long_as_file, **args)
@@ -396,7 +397,8 @@ class Message:
                 Altruix.log(f"Failed to reply with long text: {e}", level=40)
                 msg_ = await self.reply("Text too long to display.", **args)
         except Exception as e:
-            Altruix.log(f"Unexpected error in reply_msg: {e}", level=40)
+            # Expected errors like CHAT_ADMIN_REQUIRED, SLOWMODE_WAIT_X are normal
+            Altruix.log(f"Unexpected error in reply_msg: {e}", level=10)
             msg_ = await self.reply("Failed to send message.", **args)
         if del_in and isinstance(del_in, int):
             await asyncio.sleep(del_in)
@@ -507,6 +509,7 @@ class Message:
                     final_text_ += f"{stripContext} "
             ft = final_text_.strip()
             return ft
+        return None
 
     def strip_args(self, text_to_return):
         if text_to_return is None:
@@ -533,7 +536,8 @@ class Message:
         try:
             _m_ = await self.edit(text, **args)
         except Exception as e:
-            Altruix.log(f"Failed to edit message in edit_and_del: {e}", level=40)
+            # Expected errors like MESSAGE_AUTHOR_REQUIRED are normal
+            Altruix.log(f"Failed to edit message in edit_and_del: {e}", level=10)
             _m_ = await self.reply(text, **args)
         await asyncio.sleep(del_in)
         try:

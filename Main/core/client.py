@@ -126,7 +126,7 @@ class AltruixClient:
         self.clients: List[Client] = []
         self.cmd_list = {}
         self.all_lang_strings = {}
-        self.__version__ = "0.0.8.83"
+        self.__version__ = "0.0.9.14"
         self.selected_lang = "english"
         self.local_lang_file = "./Main/localization"
         self.cmd_list = {} # {plugin_name: [cmd_data, ...]}
@@ -192,6 +192,7 @@ class AltruixClient:
         
         # State mapping for different plugins
         self.user_track_state = {} # {user_id: {'session_index': int, 'step': str, ...}}
+        self.GPURGEME_STATE = {} # {unique_id: state_dict}
         
         if sys.platform != "win32":
             try:
@@ -507,6 +508,23 @@ class AltruixClient:
         return decorator
 
     async def update_on_startup(self):
+        from Main.utils.file_helpers import migrate_db_files
+        
+        # ✅ Migrate JSON databases to centralized folder
+        json_to_migrate = [
+            "altruix_local_db.json", "callback_logger_settings.json", 
+            "chat_stats_cache.json", "custom_button_settings.json", 
+            "db.json", "join_logger_settings.json", "mentions_cache.json", 
+            "mentions_cache_fallback.json", "mentions_settings.json", 
+            "mention_logger_bot_settings.json", "pml_filters.json", 
+            "pm_logger_bot_settings.json", "pm_logger_cache.json", 
+            "pm_logger_sessions.json", "pm_logger_user_settings.json", 
+            "reply_manager_settings.json", "topic_cache.json", 
+            "xchatsanomlau_cache.json", "cmd_logger_settings.json", 
+            "topics_cache.json"
+        ]
+        migrate_db_files(json_to_migrate)
+        
         if self.config.UPDATE_ON_STARTUP:
             updater_ = Updater(
                 repo=self.config.REPO, branch="main", app_url=self.app_url_
@@ -639,6 +657,12 @@ class AltruixClient:
                         (str(message.chat.type).lower()).split("chattype.")[1]
                     )
                     message.chat.type = chat_type
+                
+                # ✅ CRITICAL SAFETY CHECK: Ensure it's actually a command
+                if message.text:
+                    if not any(message.text.startswith(p) for p in [self.user_command_handler, self.sudo_cmd_handler]):
+                        return
+
                 chat_type = message.chat.type
                 input_ = message.user_input
                 if requires_input and input_ in ["", " ", None]:

@@ -17,6 +17,7 @@ import asyncio
 from pathlib import Path
 from datetime import datetime
 import aiofiles
+from Main.utils.file_helpers import get_db_path
 
 # Logger
 plugin_name = f"{os.path.basename(__file__)}"
@@ -24,11 +25,12 @@ __plugin_name__ = plugin_name if plugin_name else "xmention_logger_bot"
 logger = logging.getLogger("altruix.mention_logger_bot")
 logger.setLevel(logging.INFO)
 
+# Global Constants
 PLUGIN_NAME = __plugin_name__
-PLUGIN_VERSION = "1.0.1"
-STORAGE_FILE = Path("mention_logger_bot_settings.json")
+PLUGIN_VERSION = "1.0.5"
+STORAGE_FILE = Path(get_db_path("mention_logger_bot_settings.json"))
 
-# Settings Cache
+# Settings Cache - ✅ Default: Disabled/Off to save resources
 MENTION_LOGGER_BOT_DATA = {"enabled": False}
 REPLY_ACCESS_MODE = "sudo"  # Default: sudo users + owner
 
@@ -225,11 +227,7 @@ async def mention_mute_handler(c: Client, cb: CallbackQuery):
         await cb.answer(f"❌ Error: {e}", show_alert=True)
 
 
-# Log successful loading
-# try:
-#     Altruix.log(f"[DEBUG] Loaded → {__plugin_name__} {PLUGIN_VERSION}", level=20)
-# except Exception as e:
-#     logger.info(f"[DEBUG] Loaded → {__plugin_name__} {PLUGIN_VERSION}")
+
 # ✅ HANDLER: Mention Logger Bot Settings Menu
 @Altruix.bot.on_callback_query(filters.regex(r"^mntlb_menu$"))
 @log_errors

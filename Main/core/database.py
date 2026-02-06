@@ -120,9 +120,11 @@ class LocalCollection:
 import asyncio
 import aiofiles
 
+from Main.utils.file_helpers import get_db_path
+
 class LocalDatabase:
     def __init__(self, file_path="altruix_local_db.json"):
-        self.path = file_path
+        self.path = get_db_path(file_path)
         self.data = {}
         self._dirty = False
         self._lock = asyncio.Lock()

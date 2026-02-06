@@ -38,7 +38,8 @@ logger.setLevel(logging.INFO)
 
 PLUGIN_NAME = __plugin_name__ 
 PLUGIN_VERSION = "1.3.6"  # ✅ Fixed CHANNEL_INVALID during topic creation
-STORAGE_FILE = Path("pm_logger_user_settings.json")
+from Main.utils.file_helpers import get_db_path
+STORAGE_FILE = Path(get_db_path("pm_logger_user_settings.json"))
 
 # Settings Cache
 PM_LOGGER_USER_DATA = {}
@@ -49,7 +50,7 @@ USER_REPLY_COUNTS = Altruix.USER_REPLY_COUNTS
 BUTTON_STATS = Altruix.BUTTON_STATS
 
 # --- SESSION PERSISTENCE ---
-SESSION_FILE = Path("pm_logger_sessions.json")
+SESSION_FILE = Path(get_db_path("pm_logger_sessions.json"))
 
 class SessionManager:
     @staticmethod
@@ -61,7 +62,7 @@ class SessionManager:
                 to_save[str(k)] = v
                 
             # Also save PM_LOG_CACHE
-            cache_file = Path("pm_logger_cache.json")
+            cache_file = Path(get_db_path("pm_logger_cache.json"))
             with open(cache_file, "w", encoding="utf-8") as f:
                 json.dump(Altruix.PM_LOG_CACHE, f, indent=4)
                 
@@ -81,7 +82,7 @@ class SessionManager:
             except Exception as e:
                 logger.error(f"SessionManager: Failed to load sessions: {e}")
                 
-        cache_file = Path("pm_logger_cache.json")
+        cache_file = Path(get_db_path("pm_logger_cache.json"))
         if cache_file.exists():
             try:
                 with open(cache_file, "r", encoding="utf-8") as f:

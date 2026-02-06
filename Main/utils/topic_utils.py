@@ -6,6 +6,7 @@ from pathlib import Path
 import logging
 from pyrogram import Client
 from typing import Optional
+from Main.utils.file_helpers import get_db_path
 
 # Import Cache Manager
 try:
@@ -30,7 +31,7 @@ async def get_cache_manager():
         # Initialize with same logic as mentions plugin
         cache_config = {
             "cache_backend": "json", 
-            "json_cache_path": "topics_cache.json"
+            "json_cache_path": get_db_path("topics_cache.json")
         }
         
         if os.environ.get("REDIS_URL"):

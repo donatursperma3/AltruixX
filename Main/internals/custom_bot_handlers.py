@@ -12,7 +12,7 @@ from pyrogram.types import (
     ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup)
 from pyrogram.enums import ParseMode
 from Main.internals.settings import (
-    check_authorization, check_authorization_message, gt, send_log_notification, user_env_manager_state
+    check_authorization, check_authorization_message, gt, send_log_notification
 )
 
 # ====================== CUSTOM BOT MENU HANDLER ======================
@@ -73,11 +73,12 @@ async def custom_bot_set_handler(c: Client, cb: CallbackQuery):
     user_id = cb.from_user.id
     
     # Set state untuk menunggu input token
-    user_env_manager_state[user_id] = {
+    Altruix.user_env_manager_state[user_id] = {
         'action': 'custom_bot_token',
         'index': index,
         'page': page
     }
+    Altruix.log(f"DEBUG: Set custom_bot_token state for {user_id}. Keys in Altruix.state: {list(Altruix.user_env_manager_state.keys())}", level=20)
     
     await cb.message.edit(
         f"🔑 <b>Set Bot Token</b>\n\n"
@@ -281,97 +282,128 @@ async def handle_custom_bot_token_input(c: Client, m: Message):
     # Use State from Altruix client to ensure consistency
     state_dict = Altruix.user_env_manager_state
     
+    Altruix.log(f"DEBUG: Message from {user_id}. State keys: {list(state_dict.keys())}", level=20)
+
     if user_id not in state_dict:
         return
     
     state = state_dict[user_id]
+    Altruix.log(f"DEBUG: User {user_id} in state. Action: {state.get('action')}, Message attributes: text={bool(m.text)}, caption={bool(m.caption)}, media={m.media}", level=20)
     
     if state.get('action') != 'custom_bot_token':
         return
     
-    # It's our message! Stop others from processing.
-    m.stop_propagation()
-
-    if not m.text:
-        return
-
-    # Debug log
-    Altruix.log(f"Handling potential bot token from {user_id}. Action: {state.get('action')}", level=20)
-
-    # Optional cancel
-    if m.text.lower().strip() in ["/cancel", "cancel", "batal"]:
-        del user_env_manager_state[user_id]
-        await m.reply("❌ Input token dibatalkan.")
-        return
-
-    # In groups, we MUST require a reply to our "Set Bot Token" message to avoid spam
-    if m.chat.type in [enums.ChatType.GROUP, enums.ChatType.SUPERGROUP]:
-        if not m.reply_to_message or "Set Bot Token" not in m.reply_to_message.text:
-            return
-    # In PM, we can be more lenient but still check if it looks like a token if not a reply
-    else:
-        # If it's a PM but not a reply, we only process if it looks like a token (contains ':')
-        if not m.reply_to_message or "Set Bot Token" not in m.reply_to_message.text:
-            if ":" not in m.text:
-                return # Likely not a token, maybe user just talking to bot
-
-    # Check authorization
-    if not await check_authorization_message(m):
-        await m.reply("❌ Unauthorized")
-        return
-    
-    index = state['index']
-    page = state['page']
-    token = m.text.strip()
-    
-    # Validate token format (basic)
-    if ":" not in token:
-        await m.reply("❌ Invalid token format. Please send a valid bot token from @BotFather.")
-        return
-    
-    status_msg = await m.reply("⏳ Starting custom bot...")
+    # Correct way to stop propagation in Pyrogram
+    from pyrogram import StopPropagation
     
     try:
-        session_client = Altruix.clients[index]
-        user_id_session = session_client.me.id
+        if not m.text and not m.caption:
+            Altruix.log(f"DEBUG: Returning because no text or caption from {user_id}", level=20)
+            return
+
+        # Use caption if text is missing (e.g. if token sent with a photo)
+        input_text = m.text or m.caption
         
-        # Start custom bot
-        success = await Altruix.bot_manager.start_custom_bot(user_id_session, token)
+        # Debug log
+        Altruix.log(f"Handling potential bot token from {user_id}. input_text: {input_text[:10]}...", level=20)
+
+        # Optional cancel
+        if input_text.lower().strip() in ["/cancel", "cancel", "batal"]:
+            if user_id in Altruix.user_env_manager_state:
+                del Altruix.user_env_manager_state[user_id]
+            await m.reply("❌ Input token dibatalkan.")
+            raise StopPropagation
+
+        # In groups, we MUST require a reply to our "Set Bot Token" message to avoid spam
+        if m.chat.type in [enums.ChatType.GROUP, enums.ChatType.SUPERGROUP]:
+            if not m.reply_to_message or "Set Bot Token" not in m.reply_to_message.text:
+                # Just ignore if not a reply in groups, to avoid interfering with normal conversation
+                m.continue_propagation()
+                return # This return is fine as it's within the try block and allows propagation to continue if not handled here.
+        # In PM, we should be more proactive but still check if it's likely a token
+        else:
+            # If it's a PM but not a reply, we check if it looks like a token
+            if not m.reply_to_message or "Set Bot Token" not in m.reply_to_message.text:
+                Altruix.log(f"DEBUG: PM logic - Not a reply or trigger text missing", level=20)
+                if ":" not in input_text:
+                    Altruix.log(f"DEBUG: PM logic - No ':' in text, returning error", level=20)
+                    await m.reply("❌ Format token tidak valid. Token harus berisi karakter ':'.\nKetik `/cancel` untuk membatalkan.")
+                    raise StopPropagation
+
+        Altruix.log(f"DEBUG: Reached authorization check for {user_id}", level=20)
+        # Check authorization
+        if not await check_authorization_message(m):
+            Altruix.log(f"DEBUG: Authorization failed for {user_id}", level=20)
+            await m.reply("❌ Unauthorized")
+            raise StopPropagation
         
-        if success:
-            # Save token to database
-            await Altruix.bot_manager.save_token(user_id_session, token)
+        Altruix.log(f"DEBUG: Authorized. Preparing to start bot for index {state.get('index')}", level=20)
+        index = state['index']
+        page = state['page']
+        token = input_text.strip()
+        
+        # Validate token format (basic)
+        if ":" not in token:
+            Altruix.log(f"DEBUG: Final token validation failed (no ':') for {user_id}", level=20)
+            await m.reply("❌ Invalid token format. Please send a valid bot token from @BotFather.")
+            raise StopPropagation
+        
+        Altruix.log(f"DEBUG: Attempting to send 'Starting' message for {user_id}", level=20)
+        status_msg = await m.reply("⏳ Starting custom bot...")
+        Altruix.log(f"DEBUG: 'Starting' message sent for {user_id}. Status msg ID: {status_msg.id}", level=20)
+        
+        try:
+            session_client = Altruix.clients[index]
+            user_id_session = session_client.me.id
+            Altruix.log(f"DEBUG: Session found for {user_id_session}. Starting custom bot manager...", level=20)
             
-            bot_username = Altruix.bot_manager.get_bot_username(user_id_session)
+            # Start custom bot
+            success = await Altruix.bot_manager.start_custom_bot(user_id_session, token)
             
-            await status_msg.edit(
-                f"✅ <b>Custom bot started successfully!</b>\n\n"
-                f"🤖 <b>Bot:</b> @{bot_username}\n"
-                f"📊 <b>Session:</b> <code>{index + 1}</code>",
-                parse_mode=ParseMode.HTML
-            )
-            
-            # Log notification
+            if success:
+                # Save token to database
+                await Altruix.bot_manager.save_token(user_id_session, token)
+                
+                bot_username = Altruix.bot_manager.get_bot_username(user_id_session)
+                
+                await status_msg.edit(
+                    f"✅ <b>Custom bot started successfully!</b>\n\n"
+                    f"🤖 <b>Bot:</b> @{bot_username}\n"
+                    f"📊 <b>Session:</b> <code>{index + 1}</code>",
+                    parse_mode=ParseMode.HTML
+                )
+                
+                # Log notification
+                await send_log_notification(
+                    c, 'set_custom_bot', index, m.from_user,
+                    True, None, {'Session': index + 1, 'Bot': bot_username}
+                )
+                
+                # Delete instruction message
+                try:
+                    await m.reply_to_message.delete()
+                except:
+                    pass
+            else:
+                await status_msg.edit("❌ Failed to start custom bot. Please check the token and try again.")
+                
+        except Exception as e:
+            Altruix.log(f"DEBUG: Error starting custom bot for {user_id}: {e}", level=40)
+            await status_msg.edit(f"❌ <b>Error:</b> {str(e)}", parse_mode=ParseMode.HTML)
             await send_log_notification(
                 c, 'set_custom_bot', index, m.from_user,
-                True, None, {'Session': index + 1, 'Bot': bot_username}
+                False, str(e), {'Session': index + 1}
             )
-            
-            # Delete instruction message
-            try:
-                await m.reply_to_message.delete()
-            except:
-                pass
-        else:
-            await status_msg.edit("❌ Failed to start custom bot. Please check the token and try again.")
-            
+        
+        # Cleanup state from shared dict
+        if user_id in Altruix.user_env_manager_state:
+            del Altruix.user_env_manager_state[user_id]
+
+        # Always raise stop propagation for our messages
+        raise StopPropagation
+
+    except StopPropagation:
+        raise
     except Exception as e:
-        await status_msg.edit(f"❌ <b>Error:</b> {str(e)}", parse_mode=ParseMode.HTML)
-        await send_log_notification(
-            c, 'set_custom_bot', index, m.from_user,
-            False, str(e), {'Session': index + 1}
-        )
-    
-    # Cleanup state from shared dict
-    if user_id in Altruix.user_env_manager_state:
-        del Altruix.user_env_manager_state[user_id]
+        Altruix.log(f"DEBUG: Unexpected error in bot token handler for {user_id}: {e}", level=40)
+        # Don't re-raise, let it pass

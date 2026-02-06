@@ -55,7 +55,39 @@ def rename_file(file_name, new_file_name):
 def make_folder(folder_name=None):
     letters = string.ascii_letters
     folder_name = folder_name or "".join(random.choice(letters) for _ in range(5))
-    if os.path.exists(folder_name):
-        os.remove(folder_name)
-    os.makedirs(folder_name)
+    if os.path.exists(folder_name) and not os.path.isdir(folder_name):
+         os.remove(folder_name)
+    if not os.path.exists(folder_name):
+        os.makedirs(folder_name)
     return os.path.exists(folder_name)
+
+
+DATABASE_DIR = "DATABASE"
+
+def get_db_path(filename: str) -> str:
+    """Returns the path of a database file within the centralized DATABASE directory."""
+    if not os.path.exists(DATABASE_DIR):
+        os.makedirs(DATABASE_DIR, exist_ok=True)
+    
+    # Ensure filename doesn't already have the directory prefix
+    if filename.startswith(f"{DATABASE_DIR}{os.sep}") or filename.startswith(f"{DATABASE_DIR}/"):
+        return filename
+        
+    return os.path.join(DATABASE_DIR, filename)
+
+
+def migrate_db_files(filenames: list):
+    """Migrates specified JSON files from root to the DATABASE directory if they exist."""
+    if not os.path.exists(DATABASE_DIR):
+        os.makedirs(DATABASE_DIR, exist_ok=True)
+        
+    for filename in filenames:
+        old_path = filename
+        new_path = get_db_path(filename)
+        
+        if os.path.exists(old_path) and not os.path.exists(new_path):
+            try:
+                os.rename(old_path, new_path)
+                print(f"[Migration] Moved {old_path} to {new_path}")
+            except Exception as e:
+                print(f"[Migration] Failed to move {old_path}: {e}")

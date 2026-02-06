@@ -1,4 +1,4 @@
-PLUGIN_VERSION = "0.0.1"
+PLUGIN_VERSION = "0.0.2"
 # xreply_manager.py
 # Separated logic for handling PM Logger replies to prevent conflicts
 # Copyright (C) 2021-present by Altruix@Github, < https://github.com/Altruix >.
@@ -13,6 +13,7 @@ from pyrogram.types import (
 )
 from Main.core.decorators import log_errors
 from Main.utils.access_control import is_authorized_user
+from Main.utils.file_helpers import get_db_path
 import html
 import logging
 from datetime import datetime
@@ -25,7 +26,7 @@ import os
 logger = logging.getLogger("altruix.reply_manager")
 
 def should_log():
-    filename = "reply_manager_settings.json"
+    filename = get_db_path("reply_manager_settings.json")
     if os.path.exists(filename):
         try:
             with open(filename, "r") as f:
@@ -444,7 +445,7 @@ async def reply_manager_menu_handler(c: Client, cb: CallbackQuery):
 @Altruix.bot.on_callback_query(filters.regex(r"^reply_manager_toggle_enabled$"))
 @log_errors
 async def reply_manager_toggle_enabled_handler(c: Client, cb: CallbackQuery):
-    filename = "reply_manager_settings.json"
+    filename = get_db_path("reply_manager_settings.json")
     data = {"enabled": False}
     if os.path.exists(filename):
         try:
