@@ -15,9 +15,24 @@ from .file_helpers import run_in_exc
 
 
 async def parse_(client, message: Message, cmd, disable_sudo=False):
-    sudo_cmd_handler = Main.Altruix.sudo_cmd_handler
+    prefix_apply_type = await Main.Altruix.config.get_env("PREFIX_APPLY_TYPE") or "global"
+    
+    if prefix_apply_type == "global":
+        sudo_cmd_handler = Main.Altruix.sudo_cmd_handler
+        user_cmd_handler = Main.Altruix.user_command_handler
+    else:
+        user_id = client.me.id if client.me else None
+        if user_id:
+            user_cmd_handler = await Main.Altruix.config.get_env(f"CMD_HANDLER_{user_id}") or Main.Altruix.user_command_handler
+            sudo_cmd_handler = await Main.Altruix.config.get_env(f"SUDO_CMD_HANDLER_{user_id}") or Main.Altruix.sudo_cmd_handler
+        else:
+            sudo_cmd_handler = Main.Altruix.sudo_cmd_handler
+            user_cmd_handler = Main.Altruix.user_command_handler
+
+    # [DEBUG] Log prefix info
+    # logging.info(f"[PREFIX DEBUG] Mode: {prefix_apply_type}, User: {user_cmd_handler}, Sudo: {sudo_cmd_handler}, Msg: {message.text[:20] if message.text else 'None'}")
+
     sd_list = [] if disable_sudo else Main.Altruix.config.SUDO_USERS
-    user_cmd_handler = Main.Altruix.user_command_handler
     try:
         if not message.text:
             return False

@@ -27,7 +27,7 @@ from pyrogram.errors import (
     SlowmodeWait, InviteHashInvalid, InviteHashExpired, UserAlreadyParticipant,
     ChatAdminRequired, UsernameNotOccupied, ChannelPrivate, UsernameInvalid,
     UsernameNotModified, AboutTooLong, PhotoInvalidDimensions,
-    PhotoSaveFileInvalid, UsernameOccupied, RPCError
+    PhotoSaveFileInvalid, UsernameOccupied, RPCError, QueryIdInvalid
 )
 
 # Handle FirstNameInvalid yang mungkin tidak ada di beberapa versi Pyrogram
@@ -41,6 +41,7 @@ except ImportError:
 # ✅ IMPORT BARU UNTUK CEK LIMIT
 from pyrogram.errors import UserIsBlocked as BotBlocked  # Alias agar tidak bentrok
 
+from pyromod.exceptions import ListenerTimeout
 from pyrogram.enums import ParseMode, ChatType
 import os
 import logging
@@ -82,16 +83,13 @@ import logging
 
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "settings"
-PLUGIN_VERSION = "0.0.6.86"  # ✅ FIXED: Global Audit & Version Sync
+PLUGIN_VERSION = "0.0.6.87"  # ✅ FIXED: Global Audit & Version Sync
 
 logger = logging.getLogger("altruix.settings")
 logger.setLevel(logging.INFO)
 
 # ✅ IMPORT BARU: Untuk integrasi session addition
 from Main.internals.get_session import add_session_cb_handler
-
-# 🔥 LOG STARTUP
-# logger.info(f"🚀 Initializing settings plugin v{PLUGIN_VERSION}")
 
 from Main.utils.file_helpers import get_db_path
 
@@ -400,6 +398,7 @@ async def send_log_notification(
             'export_phone': 'Export Phone',
             'export_session': 'Export Session',
             'join_log_group': 'Join Log Group',
+            'getlinkf': 'Get Invite Link',
             'check_limit': 'Check Limit',
             'recent_messages': 'Pesan Terbaru',  # ✅ BARU
             'view_mentions': 'Lihat Mention',  # ✅ BARU
@@ -413,11 +412,15 @@ async def send_log_notification(
         timestamp = datetime.now().strftime('%d-%m-%Y %H:%M:%S')
         
         # Buat pesan log
+        user_name = html.escape(user.first_name or "User") if user else "Unknown"
+        user_id = user.id if user else "N/A"
+        user_link = f"<a href='tg://user?id={user_id}'>{user_name}</a>" if user else "Unknown"
+
         log_message = (
             f"📢 <b>AKSI PROFIL - {action_text}</b>\n"
             f"• Status: <b>{status}</b>\n"
-            f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a>\n"
-            f"• User ID: <code>{user.id}</code>\n"
+            f"• User: {user_link}\n"
+            f"• User ID: <code>{user_id}</code>\n"
         )
         
         if session_info:
@@ -442,13 +445,21 @@ async def send_log_notification(
         log_message += f"• Waktu: <code>{timestamp}</code>"
         
         # Kirim ke log group
-        await Altruix.bot.send_message(
-            log_chat_id,
-            log_message,
-            parse_mode=ParseMode.HTML,
-            reply_markup=reply_markup,
-            link_preview_options=LinkPreviewOptions(is_disabled=True)
-        )
+        try:
+            await Altruix.bot.send_message(
+                chat_id=log_chat_id,
+                text=log_message,
+                reply_markup=reply_markup,
+                parse_mode=ParseMode.HTML,
+                link_preview_options=LinkPreviewOptions(is_disabled=True)
+            )
+        except Exception as e:
+            from pyrogram.errors import ChannelInvalid, ChatAdminRequired, PeerIdInvalid
+            if isinstance(e, (ChannelInvalid, ChatAdminRequired, PeerIdInvalid)):
+                Altruix.log(f"Cannot access log chat {log_chat_id}: Telegram says: {e}", level=logging.ERROR)
+            else:
+                Altruix.log(f"Failed to send log notification: {e}", level=logging.ERROR)
+            return # Silent fail on log error
         
     except Exception as e:
         Altruix.log(f"Error sending log notification: {e}", level=logging.ERROR)
@@ -805,8 +816,14 @@ def get_sessions_buttons(page=1) -> Tuple[List[InlineKeyboardButton], bool, int]
             first_name = getattr(getattr(client, 'myself', None), 'first_name', 'Unknown')
             if not first_name or first_name == 'Unknown':
                 first_name = f"Session {session_num}"
+            
+            # ✅ Status Check
+            user_id = getattr(getattr(client, 'myself', None), 'id', None)
+            is_disabled = Altruix.is_session_disabled(user_id) if user_id else False
+            status_icon = "❌" if is_disabled else "✅"
+
             # PERUBAHAN: Format tombol dengan nomor: [[1] Nama Akun]
-            button_text = f"[{session_num}] {first_name[:15]}" if len(first_name) > 15 else f"[{session_num}] {first_name}"
+            button_text = f"{status_icon} [{session_num}] {first_name[:15]}" if len(first_name) > 15 else f"{status_icon} [{session_num}] {first_name}"
             buttons.append(
                 InlineKeyboardButton(button_text, f"session_info_{index}_{page}")
             )
@@ -1050,6 +1067,7 @@ async def sessions_menu_cb_handler(c: Client, cb: CallbackQuery):
         ],
         [
             InlineKeyboardButton("🏓 Test Ping All", "test_ping_all_confirmation"),
+            InlineKeyboardButton(gt("btn_stats"), "sessions_stats"),
             InlineKeyboardButton("➕ Add a Session", "add_session")
         ]
     ]
@@ -1104,10 +1122,11 @@ async def sessions_menu_cb_handler(c: Client, cb: CallbackQuery):
     try:
         await edit_cb(
             cb,
-            text=f"<b>📋 Sessions List</b>\n\n"
+            text=f"<b>📱 Sessions Manager</b>\n\n"
                  f"<b>Total Sessions:</b> <code>{total_sessions}</code>\n"
                  f"<b>Showing:</b> <code>{start_session}-{end_session}</code>\n"
-                 f"<b>Page:</b> <code>{page}/{total_pages or 1}</code>", 
+                 f"<b>Page:</b> <code>{page}/{total_pages or 1}</code>\n\n"
+                 f"Select a session below to manage it or use the bulk actions.",
             reply_markup=InlineKeyboardMarkup(final_markup)
         )
     except Exception as e:
@@ -1122,6 +1141,42 @@ async def sessions_menu_cb_handler(c: Client, cb: CallbackQuery):
             parse_mode=ParseMode.HTML
         )
         await edit_cb(cb, "❌ Failed to load menu. Owner has been notified.")
+
+@Altruix.bot.on_callback_query(filters.regex("^sessions_stats$"))
+@log_errors
+@iuser_check
+async def sessions_stats_cb_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk menampilkan statistik sesi secara interaktif"""
+    if not await check_authorization(cb): return
+    await cb.answer()
+    
+    total_sessions = len(Altruix.clients) if hasattr(Altruix, 'clients') else 0
+    inactive_sessions = 0
+    
+    if hasattr(Altruix, 'disabled_sessions'):
+        for client in Altruix.clients:
+            me = getattr(client, 'myself', None)
+            if me and Altruix.is_session_disabled(me.id):
+                inactive_sessions += 1
+                
+    active_sessions = total_sessions - inactive_sessions
+    total_custom_bots = len(Altruix.bot_manager.custom_bots) if hasattr(Altruix, 'bot_manager') else 0
+    
+    txt = (
+        f"{gt('sessions_stats_title')}\n\n"
+        f"{gt('active_sessions').format(active_sessions)}\n"
+        f"{gt('inactive_sessions').format(inactive_sessions)}\n"
+        f"{gt('total_sessions').format(total_sessions)}\n"
+        f"{gt('total_custom_bots').format(total_custom_bots)}\n\n"
+        f"<i>💡 This data reflects current in-memory state.</i>"
+    )
+    
+    buttons = [
+        [InlineKeyboardButton(gt("refresh_data"), "sessions_stats")],
+        [InlineKeyboardButton(gt("back"), "sessions_list_1")]
+    ]
+    
+    await edit_cb(cb, txt, reply_markup=InlineKeyboardMarkup(buttons))
 
 
 # ====================== BULK JOIN FEATURE ======================
@@ -1400,7 +1455,7 @@ async def user_text_handler(c: Client, m: Message):
             await m.reply(
                 f"✅ <b>Startup message berhasil diupdate!</b>\n\n"
                 f"<code>{html.escape(text)}</code>",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Kembali", callback_data=f"startup_custom_menu_{index}_{page}")]])
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("cancel"), callback_data=f"startup_custom_menu_{index}_{page}_{button_page}")]])
             )
             return
 
@@ -2638,8 +2693,8 @@ async def execute_bulk_join(c: Client, cb: CallbackQuery, delay: int, link: str)
     # Kirim laporan ke log group
     log_report = (
         f"👥 <b>BULK JOIN COMPLETED</b>\n"
-        f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a>\n"
-        f"• User ID: <code>{user.id}</code>\n"
+        f"• User: {user_link}\n"
+        f"• User ID: <code>{user_id}</code>\n"
         f"• Link: <code>{link}</code>\n"
         f"• Delay: <code>{delay}</code> seconds\n"
         f"• Total Sessions: <code>{total_sessions}</code>\n"
@@ -3188,8 +3243,8 @@ async def execute_export_all_sessions(c: Client, m: Message):
         await Altruix.bot.send_message(
             log_chat_id,
             f"📤 <b>EXPORT ALL SESSIONS COMPLETED</b>\n"
-            f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a>\n"
-            f"• User ID: <code>{user.id}</code>\n"
+            f"• User: {user_link}\n"
+            f"• User ID: <code>{user_id}</code>\n"
             f"• Total Sessions: <code>{len(Altruix.clients)}</code>\n"
             f"• Time: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>\n"
             f"• Status: ✅ Success",
@@ -3206,7 +3261,7 @@ async def execute_export_all_sessions(c: Client, m: Message):
         await Altruix.bot.send_message(
             log_chat_id,
             f"⚠️ <b>EXPORT ALL SESSIONS FLOODWAIT</b>\n"
-            f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a>\n"
+            f"• User: {user_link}\n"
             f"• FloodWait: {e.value} seconds\n"
             f"• Time: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>",
             parse_mode=ParseMode.HTML
@@ -3219,7 +3274,7 @@ async def execute_export_all_sessions(c: Client, m: Message):
         await Altruix.bot.send_message(
             log_chat_id,
             f"⚠️ <b>EXPORT ALL SESSIONS PERMISSION ERROR</b>\n"
-            f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a>\n"
+            f"• User: {user_link}\n"
             f"• Error: <code>{type(e).__name__}</code>\n"
             f"• Solution: User must start chat with bot assistant.",
             parse_mode=ParseMode.HTML
@@ -3232,7 +3287,7 @@ async def execute_export_all_sessions(c: Client, m: Message):
         await Altruix.bot.send_message(
             log_chat_id,
             f"⚠️ <b>EXPORT ALL SESSIONS CRITICAL ERROR</b>\n"
-            f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a>\n"
+            f"• User: {user_link}\n"
             f"• Error: <code>{html.escape(str(e))}</code>\n"
             f"• Time: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>",
             parse_mode=ParseMode.HTML
@@ -3307,8 +3362,8 @@ async def execute_export_all_phones(c: Client, m: Message):
         await Altruix.bot.send_message(
             log_chat_id,
             f"📲 <b>EXPORT ALL PHONES COMPLETED</b>\n"
-            f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a>\n"
-            f"• User ID: <code>{user.id}</code>\n"
+            f"• User: {user_link}\n"
+            f"• User ID: <code>{user_id}</code>\n"
             f"• Total Sessions: <code>{len(Altruix.clients)}</code>\n"
             f"• Time: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>\n"
             f"• Status: ✅ Success",
@@ -3325,7 +3380,7 @@ async def execute_export_all_phones(c: Client, m: Message):
         await Altruix.bot.send_message(
             log_chat_id,
             f"⚠️ <b>EXPORT ALL PHONES FLOODWAIT</b>\n"
-            f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a>\n"
+            f"• User: {user_link}\n"
             f"• FloodWait: {e.value} seconds\n"
             f"• Time: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>",
             parse_mode=ParseMode.HTML
@@ -3338,7 +3393,7 @@ async def execute_export_all_phones(c: Client, m: Message):
         await Altruix.bot.send_message(
             log_chat_id,
             f"⚠️ <b>EXPORT ALL PHONES PERMISSION ERROR</b>\n"
-            f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a>\n"
+            f"• User: {user_link}\n"
             f"• Error: <code>{type(e).__name__}</code>\n"
             f"• Solution: User must start chat with bot assistant.",
             parse_mode=ParseMode.HTML
@@ -3351,7 +3406,7 @@ async def execute_export_all_phones(c: Client, m: Message):
         await Altruix.bot.send_message(
             log_chat_id,
             f"⚠️ <b>EXPORT ALL PHONES CRITICAL ERROR</b>\n"
-            f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a>\n"
+            f"• User: {user_link}\n"
             f"• Error: <code>{html.escape(str(e))}</code>\n"
             f"• Time: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>",
             parse_mode=ParseMode.HTML
@@ -3489,7 +3544,7 @@ async def test_ping_all_execute_handler(c: Client, cb: CallbackQuery):
     await Altruix.bot.send_message(
         log_chat_id,
         f"🏓 <b>TEST PING ALL SELESAI</b>\n"
-        f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a>\n"
+        f"• User: {user_link}\n"
         f"• Status: <b>{final_status}</b>\n"
         f"• Berhasil: <code>{success_count}</code> akun\n"
         f"• Gagal: <code>{failed_count}</code> akun\n"
@@ -3514,6 +3569,8 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
         await cb.answer()
     except:
         pass
+    
+    gt = Altruix.get_string
     
     data = cb.matches[0]
     num_groups = len(data.groups())
@@ -3555,63 +3612,69 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
     }
     startup_status = status_map.get(str(startup_state).lower(), "✅ DEFAULT")
 
+    # ✅ Toggle Disable Button
+    is_session_disabled_ = Altruix.is_session_disabled(session_info.id)
+    toggle_text = gt("enable_session") if is_session_disabled_ else gt("disable_session")
+    toggle_cb = f"toggle_sess_stat_{index}_{callback_page}"
+
     # All available buttons
     all_buttons = [
         # Account Actions
-        InlineKeyboardButton(gt("refresh_data"), f"gen_conf_refresh_session_info_{index}_{callback_page}"),
-        InlineKeyboardButton(gt("unlink_session"), f"unlink_session_{index}"),
-        InlineKeyboardButton(gt("change_name"), f"change_name_menu_{index}_{callback_page}"),
-        InlineKeyboardButton(gt("change_bio"), f"gen_conf_change_bio_{index}_{callback_page}"),
-        InlineKeyboardButton(gt("change_username"), f"gen_conf_change_username_{index}_{callback_page}"),
-        InlineKeyboardButton(gt("change_profile_photo"), f"gen_conf_change_profile_photo_{index}_{callback_page}"),
-        InlineKeyboardButton(gt("delete_all_photos"), f"gen_conf_delete_all_profile_photos_{index}_{callback_page}"),
-        InlineKeyboardButton(gt("change_login_email"), f"change_login_email_{index}_{callback_page}"),
+        InlineKeyboardButton(toggle_text, f"{toggle_cb}_{button_page}"),
+        InlineKeyboardButton(gt("refresh_data"), f"gen_conf_refresh_session_info_{index}_{callback_page}_{button_page}"),
+        InlineKeyboardButton(gt("unlink_session"), f"unlink_session_{index}_{callback_page}_{button_page}"),
+        InlineKeyboardButton(gt("change_name"), f"change_name_menu_{index}_{callback_page}_{button_page}"),
+        InlineKeyboardButton(gt("change_bio"), f"gen_conf_change_bio_{index}_{callback_page}_{button_page}"),
+        InlineKeyboardButton(gt("change_username"), f"gen_conf_change_username_{index}_{callback_page}_{button_page}"),
+        InlineKeyboardButton(gt("change_profile_photo"), f"gen_conf_change_profile_photo_{index}_{callback_page}_{button_page}"),
+        InlineKeyboardButton(gt("delete_all_photos"), f"gen_conf_delete_all_profile_photos_{index}_{callback_page}_{button_page}"),
+        InlineKeyboardButton(gt("change_login_email"), f"change_login_email_{index}_{callback_page}_{button_page}"),
         
         # Tools & Downloads
-        InlineKeyboardButton(gt("download_story"), f"gen_conf_dlstory_session_input_{index}_{callback_page}"),
-        InlineKeyboardButton(gt("download_content"), f"gen_conf_dl_content_input_{index}_{callback_page}"),
-        InlineKeyboardButton(gt("download_user_photo"), f"gen_conf_dl_uphoto_start_{index}_{callback_page}"),
-        InlineKeyboardButton(gt("download_my_photo"), f"gen_conf_send_profile_photo_{index}_{callback_page}"),
+        InlineKeyboardButton(gt("download_story"), f"gen_conf_dlstory_session_input_{index}_{callback_page}_{button_page}"),
+        InlineKeyboardButton(gt("download_content"), f"gen_conf_dl_content_input_{index}_{callback_page}_{button_page}"),
+        InlineKeyboardButton(gt("download_user_photo"), f"gen_conf_dl_uphoto_start_{index}_{callback_page}_{button_page}"),
+        InlineKeyboardButton(gt("download_my_photo"), f"gen_conf_send_profile_photo_{index}_{callback_page}_{button_page}"),
         
         # Info & Security
-        InlineKeyboardButton(gt("export_session"), f"gen_conf_export_session_{index}_{callback_page}"),
-        InlineKeyboardButton(gt("export_phone"), f"gen_conf_export_phone_{index}_{callback_page}"),
-        InlineKeyboardButton(gt("test_ping"), f"gen_conf_test_ping_{index}_{callback_page}"),
-        InlineKeyboardButton(gt("track_profile"), f"track_profile_start_{index}_{callback_page}"),
-        InlineKeyboardButton(gt("check_limit"), f"check_limit_confirm_{index}_{callback_page}"),
-        InlineKeyboardButton(gt("view_sessions"), f"gen_conf_view_all_sessions_{index}_{callback_page}"),
+        InlineKeyboardButton(gt("export_session"), f"gen_conf_export_session_{index}_{callback_page}_{button_page}"),
+        InlineKeyboardButton(gt("export_phone"), f"gen_conf_export_phone_{index}_{callback_page}_{button_page}"),
+        InlineKeyboardButton(gt("test_ping"), f"gen_conf_test_ping_{index}_{callback_page}_{button_page}"),
+        InlineKeyboardButton(gt("track_profile"), f"track_profile_start_{index}_{callback_page}_{button_page}"),
+        InlineKeyboardButton(gt("check_limit"), f"check_limit_confirm_{index}_{callback_page}_{button_page}"),
+        InlineKeyboardButton(gt("view_sessions"), f"gen_conf_view_all_sessions_{index}_{callback_page}_{button_page}"),
         
         # Group & Msg
-        InlineKeyboardButton(gt("join_group"), f"gen_conf_join_chat_input_{index}_{callback_page}"),
-        InlineKeyboardButton(gt("leave_group"), f"gen_conf_leave_chat_input_{index}_{callback_page}"),
-        InlineKeyboardButton(gt("purge_my_msg"), f"gen_conf_purge_msg_start_{index}_{callback_page}"),
-        InlineKeyboardButton(gt("global_purgeme"), f"gpurgeme_menu_{index}_{callback_page}"),
-        InlineKeyboardButton(gt("send_message"), f"gen_conf_send_message_input_{index}_{callback_page}"),
-        InlineKeyboardButton(gt("chat_stats"), f"gen_conf_chat_stats_scan_{index}_{callback_page}"),
+        InlineKeyboardButton(gt("join_group"), f"gen_conf_join_chat_input_{index}_{callback_page}_{button_page}"),
+        InlineKeyboardButton(gt("leave_group"), f"gen_conf_leave_chat_input_{index}_{callback_page}_{button_page}"),
+        InlineKeyboardButton(gt("purge_my_msg"), f"gen_conf_purge_msg_start_{index}_{callback_page}_{button_page}"),
+        InlineKeyboardButton(gt("global_purgeme"), f"gpurgeme_menu_{index}_{callback_page}_{button_page}"),
+        InlineKeyboardButton(gt("send_message"), f"gen_conf_send_message_input_{index}_{callback_page}_{button_page}"),
+        InlineKeyboardButton(gt("chat_stats"), f"gen_conf_chat_stats_scan_{index}_{callback_page}_{button_page}"),
         
         # Logs & Monitoring
-        InlineKeyboardButton(gt("pm_logger_control"), f"pml_menu_{index}_{callback_page}"),
-        InlineKeyboardButton(gt("mention_control"), f"mnt_menu_{index}_{callback_page}"),
-        InlineKeyboardButton(gt("join_logger_control"), f"joinl_menu_{index}_{callback_page}"),
-        InlineKeyboardButton(gt("cmd_logger_control"), f"cmdl_menu_{index}_{callback_page}"),
-        InlineKeyboardButton(gt("cmd_settings"), f"cmd_settings_menu_{index}_{callback_page}"),
-        InlineKeyboardButton(gt("recent_messages"), f"gen_conf_recent_messages_menu_{index}_{callback_page}"),
-        InlineKeyboardButton(gt("view_mentions"), f"gen_conf_view_mentions_menu_{index}_{callback_page}"),
-        InlineKeyboardButton(gt("join_log_group"), f"join_log_group_{index}"),
+        InlineKeyboardButton(gt("pm_logger_control"), f"pml_menu_{index}_{callback_page}_{button_page}"),
+        InlineKeyboardButton(gt("mention_control"), f"mnt_menu_{index}_{callback_page}_{button_page}"),
+        InlineKeyboardButton(gt("join_logger_control"), f"joinl_menu_{index}_{callback_page}_{button_page}"),
+        InlineKeyboardButton(gt("cmd_logger_control"), f"cmdl_menu_{index}_{callback_page}_{button_page}"),
+        InlineKeyboardButton(gt("cmd_settings"), f"cmd_settings_menu_{index}_{callback_page}_{button_page}"),
+        InlineKeyboardButton(gt("recent_messages"), f"gen_conf_recent_messages_menu_{index}_{callback_page}_{button_page}"),
+        InlineKeyboardButton(gt("view_mentions"), f"gen_conf_view_mentions_menu_{index}_{callback_page}_{button_page}"),
+        InlineKeyboardButton(gt("join_log_group"), f"join_log_group_{index}_{callback_page}_{button_page}"),
         
         # Advanced & Settings
-        InlineKeyboardButton(f"🚀 Startup: {startup_status}", f"startup_menu_{index}_{callback_page}"),
-        InlineKeyboardButton(gt("laucreate_menu"), f"laucreate_menu_{index}_{callback_page}"),
+        InlineKeyboardButton(f"🚀 Startup: {startup_status}", f"startup_menu_{index}_{callback_page}_{button_page}"),
+        InlineKeyboardButton(gt("laucreate_menu"), f"laucreate_menu_{index}_{callback_page}_{button_page}"),
         # Removed Edit Startup Msg
-        InlineKeyboardButton(gt("privacy_security"), f"privacy_menu_{index}_{callback_page}"),
-        InlineKeyboardButton(f"🚀 Help Info: {await Altruix.config.get_env(f'HELP_INFO_{index}') or 'default'}", f"help_info_menu_{index}_{callback_page}"),
+        InlineKeyboardButton(gt("privacy_security"), f"privacy_menu_{index}_{callback_page}_{button_page}"),
+        InlineKeyboardButton(f"🚀 Help Info: {await Altruix.config.get_env(f'HELP_INFO_{index}') or 'default'}", f"help_info_menu_{index}_{callback_page}_{button_page}"),
         # Removed Edit Help Msg
-        InlineKeyboardButton(gt("eval_python"), f"eval_session_{index}_{callback_page}"),
-        InlineKeyboardButton(gt("exec_terminal"), f"exec_session_{index}_{callback_page}"),
-        InlineKeyboardButton(gt("custom_bot"), f"custom_bot_menu_{index}_{callback_page}"),
-        InlineKeyboardButton(gt("cache_log_menu"), f"cache_log_menu_{index}_{callback_page}"),
-        InlineKeyboardButton(gt("sudo_settings"), f"sudo_settings_menu_{index}_{callback_page}"),
-        InlineKeyboardButton(gt("prefix_settings"), f"prefix_settings_menu_{index}_{callback_page}"),
+        InlineKeyboardButton(gt("eval_python"), f"eval_session_{index}_{callback_page}_{button_page}"),
+        InlineKeyboardButton(gt("exec_terminal"), f"exec_session_{index}_{callback_page}_{button_page}"),
+        InlineKeyboardButton(gt("custom_bot"), f"custom_bot_menu_{index}_{callback_page}_{button_page}"),
+        InlineKeyboardButton(gt("cache_log_menu"), f"cache_log_menu_{index}_{callback_page}_{button_page}"),
+        InlineKeyboardButton(gt("sudo_settings"), f"sudo_settings_menu_{index}_{callback_page}_{button_page}"),
+        InlineKeyboardButton(gt("prefix_settings"), f"prefix_settings_menu_{index}_{callback_page}_{button_page}"),
     ]
 
     # Pagination Logic
@@ -3675,7 +3738,7 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
     )
 
 
-@Altruix.bot.on_callback_query(filters.regex(r"change_login_email_(\d+)_(\d+)"))
+@Altruix.bot.on_callback_query(filters.regex(r"change_login_email_(\d+)_(\d+)(?:_(\d+))?"))
 @iuser_check
 @log_errors
 async def change_login_email_handler(c: Client, cb: CallbackQuery):
@@ -3684,6 +3747,7 @@ async def change_login_email_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     if index >= len(Altruix.clients):
         await edit_cb(cb, "❌ Session tidak ditemukan.")
@@ -3711,8 +3775,8 @@ async def change_login_email_handler(c: Client, cb: CallbackQuery):
         
         buttons = [
             [
-                InlineKeyboardButton(gt("yes_continue"), f"change_email_start_{index}_{page}"),
-                InlineKeyboardButton(gt("cancel"), f"session_info_{index}_{page}")
+                InlineKeyboardButton(gt("yes_continue"), f"change_email_start_{index}_{page}_{button_page}"),
+                InlineKeyboardButton(gt("cancel"), f"session_info_{index}_{page}_{button_page}")
             ]
         ]
         
@@ -3725,7 +3789,7 @@ async def change_login_email_handler(c: Client, cb: CallbackQuery):
         Altruix.log(f"Error in change_login_email_handler: {e}", level=logging.ERROR)
 
 
-@Altruix.bot.on_callback_query(filters.regex(r"change_email_start_(\d+)_(\d+)"))
+@Altruix.bot.on_callback_query(filters.regex(r"change_email_start_(\d+)_(\d+)(?:_(\d+))?"))
 @iuser_check
 @log_errors
 async def change_email_start_handler(c: Client, cb: CallbackQuery):
@@ -3734,6 +3798,7 @@ async def change_email_start_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     user_id = cb.from_user.id
     
     if index >= len(Altruix.clients): return
@@ -3742,7 +3807,7 @@ async def change_email_start_handler(c: Client, cb: CallbackQuery):
     # Prompt email baru
     await edit_cb(cb, 
         gt("change_email_step_1"),
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}_{button_page}")]])
     )
     
     try:
@@ -3780,7 +3845,7 @@ async def change_email_start_handler(c: Client, cb: CallbackQuery):
             # Step 2: Minta kode
             await edit_cb(cb, 
                 gt("code_sent_step_2").format(html.escape(new_email)),
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}")]])
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}_{button_page}")]])
             )
             
             msg_code = await c.listen(filters.chat(user_id) & filters.text, timeout=180)
@@ -3806,7 +3871,7 @@ async def change_email_start_handler(c: Client, cb: CallbackQuery):
             
             await edit_cb(cb, 
                 gt("change_email_success").format(html.escape(new_email)),
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}")]])
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}_{button_page}")]])
             )
             
             # Log Notification
@@ -3828,7 +3893,7 @@ async def change_email_start_handler(c: Client, cb: CallbackQuery):
                 False, str(e), {'Email Baru': new_email}
             )
             
-    except asyncio.TimeoutError:
+    except (asyncio.TimeoutError, ListenerTimeout):
         await edit_cb(cb, gt("timeout_retry"))
     except Exception as e:
         await edit_cb(cb, f"❌ <b>Error:</b> {str(e)}")
@@ -3836,7 +3901,7 @@ async def change_email_start_handler(c: Client, cb: CallbackQuery):
 
 
 # ✅ HANDLER BARU: Menu Ganti Nama
-@Altruix.bot.on_callback_query(filters.regex(r"change_name_menu_(\d+)_(\d+)"))
+@Altruix.bot.on_callback_query(filters.regex(r"change_name_menu_(\d+)_(\d+)(?:_(\d+))?"))
 @iuser_check
 @log_errors
 async def change_name_menu_handler(c: Client, cb: CallbackQuery):
@@ -3844,14 +3909,15 @@ async def change_name_menu_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     buttons = [
         [
-            InlineKeyboardButton(gt("first_name"), f"gen_conf_change_first_name_{index}_{page}"),
-            InlineKeyboardButton(gt("last_name"), f"gen_conf_change_last_name_{index}_{page}"),
+            InlineKeyboardButton(gt("first_name"), f"gen_conf_change_first_name_{index}_{page}_{button_page}"),
+            InlineKeyboardButton(gt("last_name"), f"gen_conf_change_last_name_{index}_{page}_{button_page}"),
         ],
         [
-            InlineKeyboardButton("🔙 Back", callback_data=f"session_info_{index}_{page}"),
+            InlineKeyboardButton("🔙 Back", callback_data=f"session_info_{index}_{page}_{button_page}"),
         ]
     ]
     
@@ -3864,7 +3930,7 @@ async def change_name_menu_handler(c: Client, cb: CallbackQuery):
 
 
 # ✅ HANDLER BARU: Download Content Input
-@Altruix.bot.on_callback_query(filters.regex(r"^dl_content_input_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^dl_content_input_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def dl_content_input_handler(c: Client, cb: CallbackQuery):
     """Menerima input link pesan untuk didownload/forward"""
@@ -3872,6 +3938,7 @@ async def dl_content_input_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     if index >= len(Altruix.clients):
         await cb.answer("❌ Session tidak ditemukan.", show_alert=True)
@@ -3887,7 +3954,7 @@ async def dl_content_input_handler(c: Client, cb: CallbackQuery):
         f"Konten akan dikirim ke <b>Altruix Log Group</b>.\n\n"
         f"Ketik <code>cancel</code> untuk membatalkan.",
         parse_mode=ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("cancel"), f"session_info_{index}_{page}")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("cancel"), f"session_info_{index}_{page}_{button_page}")]])
     )
     
     try:
@@ -3907,7 +3974,7 @@ async def dl_content_input_handler(c: Client, cb: CallbackQuery):
         await edit_cb(cb, "🔄 <b>Sedang memproses...</b>")
         await process_download_content(c, cb, session_client, link, index, page)
         
-    except asyncio.TimeoutError:
+    except (asyncio.TimeoutError, ListenerTimeout):
         await edit_cb(cb, "⏳ Waktu habis. Silakan coba lagi.")
     except Exception as e:
         await edit_cb(cb, f"❌ Error: {str(e)}")
@@ -3990,7 +4057,7 @@ async def process_download_content(c, cb, session_client, link, index, page):
 
 
 # ✅ HANDLER BARU: Menu Pesan Terbaru
-@Altruix.bot.on_callback_query(filters.regex(r"recent_messages_menu_(\d+)_(\d+)"))
+@Altruix.bot.on_callback_query(filters.regex(r"recent_messages_menu_(\d+)_(\d+)(?:_(\d+))?"))
 @iuser_check
 @log_errors
 async def recent_messages_menu_handler(c: Client, cb: CallbackQuery):
@@ -3998,22 +4065,23 @@ async def recent_messages_menu_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     # Tampilkan pilihan jumlah pesan
     buttons = [
         [
-            InlineKeyboardButton("3 pesan", callback_data=f"recent_messages_quick_{index}_{page}_3"),
-            InlineKeyboardButton("6 pesan", callback_data=f"recent_messages_quick_{index}_{page}_6"),
+            InlineKeyboardButton("3 pesan", callback_data=f"recent_messages_quick_{index}_{page}_3_{button_page}"),
+            InlineKeyboardButton("6 pesan", callback_data=f"recent_messages_quick_{index}_{page}_6_{button_page}"),
         ],
         [
-            InlineKeyboardButton("9 pesan", callback_data=f"recent_messages_quick_{index}_{page}_9"),
-            InlineKeyboardButton("11 pesan", callback_data=f"recent_messages_quick_{index}_{page}_11"),
+            InlineKeyboardButton("9 pesan", callback_data=f"recent_messages_quick_{index}_{page}_9_{button_page}"),
+            InlineKeyboardButton("11 pesan", callback_data=f"recent_messages_quick_{index}_{page}_11_{button_page}"),
         ],
         [
-            InlineKeyboardButton("📝 Custom jumlah", callback_data=f"recent_messages_custom_{index}_{page}"),
+            InlineKeyboardButton("📝 Custom jumlah", callback_data=f"recent_messages_custom_{index}_{page}_{button_page}"),
         ],
         [
-            InlineKeyboardButton("🔙 Back", callback_data=f"session_info_{index}_{page}"),
+            InlineKeyboardButton("🔙 Back", callback_data=f"session_info_{index}_{page}_{button_page}"),
         ]
     ]
     
@@ -4029,7 +4097,7 @@ async def recent_messages_menu_handler(c: Client, cb: CallbackQuery):
 
 
 # ✅ HANDLER BARU: Pesan Terbaru Quick Select
-@Altruix.bot.on_callback_query(filters.regex(r"recent_messages_quick_(\d+)_(\d+)_(\d+)"))
+@Altruix.bot.on_callback_query(filters.regex(r"recent_messages_quick_(\d+)_(\d+)_(\d+)(?:_(\d+))?"))
 @log_errors
 async def recent_messages_quick_handler(c: Client, cb: CallbackQuery):
     """Handler untuk pesan terbaru quick select"""
@@ -4038,11 +4106,13 @@ async def recent_messages_quick_handler(c: Client, cb: CallbackQuery):
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
     count = int(cb.matches[0].group(3))
+    button_page = int(cb.matches[0].group(4)) if len(cb.matches[0].groups()) >= 4 and cb.matches[0].group(4) else 1
     
     user_id = cb.from_user.id
     user_recent_messages_state[user_id] = {
         'session_index': index,
         'page': page,
+        'button_page': button_page,
         'step': 'waiting_count',
         'count': count
     }
@@ -4107,7 +4177,7 @@ async def recent_messages_quick_handler(c: Client, cb: CallbackQuery):
         
         # Tambahkan tombol kembali
         buttons = [
-            [InlineKeyboardButton("🔙 Back", callback_data=f"session_info_{index}_{page}")]
+            [InlineKeyboardButton("🔙 Back", callback_data=f"session_info_{index}_{page}_{button_page}")]
         ]
         
         await edit_cb(cb, 
@@ -4140,7 +4210,7 @@ async def recent_messages_quick_handler(c: Client, cb: CallbackQuery):
 
 
 # ✅ HANDLER BARU: Pesan Terbaru Custom
-@Altruix.bot.on_callback_query(filters.regex(r"recent_messages_custom_(\d+)_(\d+)"))
+@Altruix.bot.on_callback_query(filters.regex(r"recent_messages_custom_(\d+)_(\d+)(?:_(\d+))?"))
 @log_errors
 async def recent_messages_custom_handler(c: Client, cb: CallbackQuery):
     """Handler untuk pesan terbaru custom jumlah"""
@@ -4148,11 +4218,13 @@ async def recent_messages_custom_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     user_id = cb.from_user.id
     user_recent_messages_state[user_id] = {
         'session_index': index,
         'page': page,
+        'button_page': button_page,
         'step': 'waiting_count'
     }
     
@@ -4165,7 +4237,7 @@ async def recent_messages_custom_handler(c: Client, cb: CallbackQuery):
 
 
 # ✅ HANDLER BARU: Menu Lihat Mention
-@Altruix.bot.on_callback_query(filters.regex(r"view_mentions_menu_(\d+)_(\d+)"))
+@Altruix.bot.on_callback_query(filters.regex(r"view_mentions_menu_(\d+)_(\d+)(?:_(\d+))?"))
 @iuser_check
 @log_errors
 async def view_mentions_menu_handler(c: Client, cb: CallbackQuery):
@@ -4173,11 +4245,13 @@ async def view_mentions_menu_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     user_id = cb.from_user.id
     user_mentions_state[user_id] = {
         'session_index': index,
         'page': page,
+        'button_page': button_page,
         'step': 'waiting_group'
     }
     
@@ -4190,7 +4264,7 @@ async def view_mentions_menu_handler(c: Client, cb: CallbackQuery):
 
 
 # ✅ HANDLER BARU: Pilihan Jumlah Mention
-@Altruix.bot.on_callback_query(filters.regex(r"mention_count_(\d+)_(\d+)"))
+@Altruix.bot.on_callback_query(filters.regex(r"mention_count_(\d+)_(\d+)(?:_(\d+))?"))
 @log_errors
 async def mention_count_handler(c: Client, cb: CallbackQuery):
     """Handler untuk pilihan jumlah mention"""
@@ -4198,6 +4272,7 @@ async def mention_count_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
     user_id = int(cb.matches[0].group(1))
     count = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     if user_id not in user_mentions_state:
         await edit_cb(cb, "❌ Session tidak ditemukan atau state expired.")
@@ -4266,7 +4341,7 @@ async def mention_count_handler(c: Client, cb: CallbackQuery):
                 buttons.append([InlineKeyboardButton(f"💬 Reply PM to {sender}", f"rpm_conf_{index}_{chat.id}_{msg.id}")])
         
         # Tambahkan tombol kembali
-        buttons.append([InlineKeyboardButton("🔙 Back", callback_data=f"session_info_{index}_{page}")])
+        buttons.append([InlineKeyboardButton("🔙 Back", callback_data=f"session_info_{index}_{page}_{button_page}")])
         
         await edit_cb(cb, 
             text=text,
@@ -4308,7 +4383,7 @@ async def cancel_mention_handler(c: Client, cb: CallbackQuery):
 
 
 # ✅ HANDLER BARU: Kirim Foto Profil
-@Altruix.bot.on_callback_query(filters.regex(r"send_profile_photo_(\d+)_(\d+)"))
+@Altruix.bot.on_callback_query(filters.regex(r"send_profile_photo_(\d+)_(\d+)(?:_(\d+))?"))
 @log_errors
 async def send_profile_photo_handler(c: Client, cb: CallbackQuery):
     """Handler untuk mengirim foto profil"""
@@ -4316,6 +4391,7 @@ async def send_profile_photo_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     if index >= len(Altruix.clients):
         await cb.answer("❌ Session tidak ditemukan.", show_alert=True)
@@ -4383,7 +4459,7 @@ async def send_profile_photo_handler(c: Client, cb: CallbackQuery):
         )
 
 # ✅ HANDLER BARU: Leave Chat (Group/Channel)
-@Altruix.bot.on_callback_query(filters.regex(r"leave_chat_input_(\d+)_(\d+)"))
+@Altruix.bot.on_callback_query(filters.regex(r"leave_chat_input_(\d+)_(\d+)(?:_(\d+))?"))
 @log_errors
 async def leave_chat_input_handler(c: Client, cb: CallbackQuery):
     """Menerima input chat_id atau username untuk leave"""
@@ -4391,6 +4467,7 @@ async def leave_chat_input_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     if index >= len(Altruix.clients):
         await cb.answer("❌ Session tidak ditemukan.", show_alert=True)
@@ -4405,7 +4482,7 @@ async def leave_chat_input_handler(c: Client, cb: CallbackQuery):
         f"Silakan kirim <b>Username</b> (misal: @groupname) atau <b>Chat ID</b> grup yang ingin ditinggalkan.\n\n"
         f"Ketik <code>cancel</code> untuk membatalkan.",
         parse_mode=ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", f"session_info_{index}_{page}")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", f"session_info_{index}_{page}_{button_page}")]])
     )
     
     try:
@@ -4425,8 +4502,8 @@ async def leave_chat_input_handler(c: Client, cb: CallbackQuery):
         # Konfirmasi
         confirm_buttons = [
             [
-                InlineKeyboardButton("✅ Ya, Keluar Sekarang", f"leave_chat_confirm_{index}_{page}_{target}"),
-                InlineKeyboardButton("❌ Tidak", f"session_info_{index}_{page}")
+                InlineKeyboardButton("✅ Ya, Keluar Sekarang", f"leave_chat_confirm_{index}_{page}_{button_page}_{target}"),
+                InlineKeyboardButton("❌ Tidak", f"session_info_{index}_{page}_{button_page}")
             ]
         ]
         
@@ -4437,12 +4514,12 @@ async def leave_chat_input_handler(c: Client, cb: CallbackQuery):
             parse_mode=ParseMode.HTML
         )
         
-    except asyncio.TimeoutError:
+    except (asyncio.TimeoutError, ListenerTimeout):
         await edit_cb(cb, "⏳ Waktu habis. Silakan coba lagi.")
     except Exception as e:
         await edit_cb(cb, f"❌ Error: {str(e)}")
 
-@Altruix.bot.on_callback_query(filters.regex(r"leave_chat_confirm_(\d+)_(\d+)_(.+)"))
+@Altruix.bot.on_callback_query(filters.regex(r"leave_chat_confirm_(\d+)_(\d+)_(\d+)_(.+)"))
 @log_errors
 async def leave_chat_confirm_handler(c: Client, cb: CallbackQuery):
     """Eksekusi leave chat setelah konfirmasi"""
@@ -4450,7 +4527,8 @@ async def leave_chat_confirm_handler(c: Client, cb: CallbackQuery):
     await cb.answer("Memproses...", show_alert=False)
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
-    target = cb.matches[0].group(3)
+    button_page = int(cb.matches[0].group(3))
+    target = cb.matches[0].group(4)
     
     # FIX: Convert to int if target is a chat ID (digits)
     if target.lstrip('-').isdigit():
@@ -4488,7 +4566,7 @@ async def leave_chat_confirm_handler(c: Client, cb: CallbackQuery):
         )
 
 # ✅ HANDLER BARU: Send Message Direct
-@Altruix.bot.on_callback_query(filters.regex(r"send_message_input_(\d+)_(\d+)"))
+@Altruix.bot.on_callback_query(filters.regex(r"send_message_input_(\d+)_(\d+)(?:_(\d+))?"))
 @log_errors
 async def send_message_input_handler(c: Client, cb: CallbackQuery):
     """Menerima input target dan teks pesan"""
@@ -4496,6 +4574,7 @@ async def send_message_input_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     if index >= len(Altruix.clients):
         await cb.answer("❌ Session tidak ditemukan.", show_alert=True)
@@ -4510,7 +4589,7 @@ async def send_message_input_handler(c: Client, cb: CallbackQuery):
         f"Silakan kirim <b>Target</b> (Username @... atau ID).\n"
         f"Ketik <code>cancel</code> untuk membatalkan.",
         parse_mode=ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", f"session_info_{index}_{page}")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", f"session_info_{index}_{page}_{button_page}")]])
     )
     
     try:
@@ -4550,7 +4629,7 @@ async def send_message_input_handler(c: Client, cb: CallbackQuery):
         confirm_buttons = [
             [
                 InlineKeyboardButton("✅ Ya, Kirim Sekarang", f"send_msg_confirm_{index}_{page}"),
-                InlineKeyboardButton("❌ Tidak", f"session_info_{index}_{page}")
+                InlineKeyboardButton("❌ Tidak", f"session_info_{index}_{page}_{button_page}")
             ]
         ]
         
@@ -4568,7 +4647,7 @@ async def send_message_input_handler(c: Client, cb: CallbackQuery):
             reply_markup=InlineKeyboardMarkup(confirm_buttons)
         )
         
-    except asyncio.TimeoutError:
+    except (asyncio.TimeoutError, ListenerTimeout):
         await edit_cb(cb, "⏳ Waktu habis. Silakan coba lagi.")
     except Exception as e:
         await edit_cb(cb, f"❌ Error: {str(e)}")
@@ -4683,7 +4762,7 @@ async def change_last_name_handler(c: Client, cb: CallbackQuery):
 
 
 # ✅ HANDLER BARU: Ganti Bio dengan konfirmasi
-@Altruix.bot.on_callback_query(filters.regex(r"change_bio_(\d+)_(\d+)"))
+@Altruix.bot.on_callback_query(filters.regex(r"change_bio_(\d+)_(\d+)(?:_(\d+))?"))
 @log_errors
 async def change_bio_handler(c: Client, cb: CallbackQuery):
     """Handler untuk mengganti bio (dengan konfirmasi)"""
@@ -4691,12 +4770,14 @@ async def change_bio_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     user_id = cb.from_user.id
     user_profile_edit_state[user_id] = {
         'action': 'change_bio',
         'session_index': index,
-        'page': page
+        'page': page,
+        'button_page': button_page
     }
     
     await edit_cb(
@@ -4712,7 +4793,7 @@ async def change_bio_handler(c: Client, cb: CallbackQuery):
 
 
 # ✅ HANDLER BARU: Ganti Username dengan konfirmasi
-@Altruix.bot.on_callback_query(filters.regex(r"change_username_(\d+)_(\d+)"))
+@Altruix.bot.on_callback_query(filters.regex(r"change_username_(\d+)_(\d+)(?:_(\d+))?"))
 @log_errors
 async def change_username_handler(c: Client, cb: CallbackQuery):
     """Handler untuk mengganti username (dengan konfirmasi)"""
@@ -4720,12 +4801,14 @@ async def change_username_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     user_id = cb.from_user.id
     user_profile_edit_state[user_id] = {
         'action': 'change_username',
         'session_index': index,
-        'page': page
+        'page': page,
+        'button_page': button_page
     }
     
     await edit_cb(cb, 
@@ -4743,7 +4826,7 @@ async def change_username_handler(c: Client, cb: CallbackQuery):
 
 
 # ✅ HANDLER BARU: Ganti Foto Profil dengan konfirmasi
-@Altruix.bot.on_callback_query(filters.regex(r"change_profile_photo_(\d+)_(\d+)"))
+@Altruix.bot.on_callback_query(filters.regex(r"change_profile_photo_(\d+)_(\d+)(?:_(\d+))?"))
 @log_errors
 async def change_profile_photo_handler(c: Client, cb: CallbackQuery):
     """Handler untuk mengganti foto profil (dengan konfirmasi)"""
@@ -4751,12 +4834,14 @@ async def change_profile_photo_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     user_id = cb.from_user.id
     user_profile_edit_state[user_id] = {
         'action': 'change_profile_photo',
         'session_index': index,
-        'page': page
+        'page': page,
+        'button_page': button_page
     }
     
     await edit_cb(cb, 
@@ -4774,7 +4859,7 @@ async def change_profile_photo_handler(c: Client, cb: CallbackQuery):
 
 
 # ✅ HANDLER BARU: Hapus semua foto profil dengan konfirmasi
-@Altruix.bot.on_callback_query(filters.regex(r"delete_all_profile_photos_(\d+)_(\d+)"))
+@Altruix.bot.on_callback_query(filters.regex(r"delete_all_profile_photos_(\d+)_(\d+)(?:_(\d+))?"))
 @log_errors
 async def delete_all_profile_photos_handler(c: Client, cb: CallbackQuery):
     """Handler untuk menghapus semua foto profil (dengan konfirmasi)"""
@@ -4782,12 +4867,14 @@ async def delete_all_profile_photos_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     user_id = cb.from_user.id
     user_edit_confirmation_state[user_id] = {
         'action': 'delete_all_profile_photos',
         'session_index': index,
         'page': page,
+        'button_page': button_page,
         'delay': 2  # Default delay 2 detik
     }
     
@@ -4803,7 +4890,7 @@ async def delete_all_profile_photos_handler(c: Client, cb: CallbackQuery):
         reply_markup=InlineKeyboardMarkup([
             [
                 InlineKeyboardButton("✅ Ya, Hapus Semua", f"edit_confirm_yes_{user_id}"),
-                InlineKeyboardButton("❌ Tidak", f"session_info_{index}_{page}")
+                InlineKeyboardButton("❌ Tidak", f"session_info_{index}_{page}_{button_page}")
             ]
         ]),
         parse_mode=ParseMode.HTML
@@ -4944,18 +5031,19 @@ async def delete_all_profile_photos_process(c: Client, m: Message, session_index
 
 
 # ✅ HANDLER BARU: Konfirmasi Check Limit
-@Altruix.bot.on_callback_query(filters.regex(r"check_limit_confirm_(\d+)_(\d+)"))
+@Altruix.bot.on_callback_query(filters.regex(r"check_limit_confirm_(\d+)_(\d+)(?:_(\d+))?"))
 @log_errors
 async def check_limit_confirmation_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     await cb.answer()
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
 
     confirmation_buttons = [
         [
             InlineKeyboardButton("✅ Yes, Check Limit", f"check_limit_execute_{index}_{page}"),
-            InlineKeyboardButton("❌ Cancel", f"session_info_{index}_{page}")
+            InlineKeyboardButton("❌ Cancel", f"session_info_{index}_{page}_{button_page}")
         ]
     ]
 
@@ -5029,14 +5117,15 @@ async def check_limit_execute_handler(c: Client, cb: CallbackQuery):
         Altruix.log(f"Error check limit session {index}: {e}", level=logging.ERROR)
 
 
-@Altruix.bot.on_callback_query(filters.regex(r"^test_ping_(\d+)(?:_(\d+))?$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^test_ping_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def test_ping_cb_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     user = cb.from_user
     user_id = user.id
     index = int(cb.matches[0].group(1))
-    page = int(cb.matches[0].group(2)) if cb.matches[0].group(2) else 1
+    page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
 
     if index >= len(Altruix.clients):
         return await cb.answer("Session tidak ditemukan.", show_alert=True)
@@ -5072,7 +5161,7 @@ async def test_ping_cb_handler(c: Client, cb: CallbackQuery):
         await edit_cb(cb, 
             f"✅ Ping berhasil! Pesan dikirim ke grup log.\n"
             f"Akun: <a href='tg://user?id={session_user.id}'>{html.escape(session_user.first_name or '')} {html.escape(session_user.last_name or '')}</a>",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}")]]) ,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}_{button_page}")]]) ,
             parse_mode=ParseMode.HTML
         )
         
@@ -5104,7 +5193,7 @@ async def test_ping_cb_handler(c: Client, cb: CallbackQuery):
             await Altruix.bot.send_message(
                 log_chat_id,
                 f"⚠️ <b>ERROR TEST PING</b>\n"
-                f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a>\n"
+                f"• User: {user_link}\n"
                 f"• Session: <a href='tg://user?id={session_user.id}'>{html.escape(session_user.first_name or '')} {html.escape(session_user.last_name or '')}</a> (<code>{getattr(session_user, 'id', 'Unknown')}</code>)\n"
                 f"• Error: <code>{type(e).__name__}</code>\n"
                 f"• Solusi: Pastikan bot assistant dan userbot berada di group dan bisa mengirim pesan ke grup log.",
@@ -5127,7 +5216,7 @@ async def test_ping_cb_handler(c: Client, cb: CallbackQuery):
             await Altruix.bot.send_message(
                 log_chat_id,
                 f"⚠️ <b>ERROR TEST PING (SlowmodeWait)</b>\n"
-                f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a>\n"
+                f"• User: {user_link}\n"
                 f"• Session: <a href='tg://user?id={session_user.id}'>{html.escape(session_user.first_name or '')} {html.escape(session_user.last_name or '')}</a>\n"
                 f"• Error: <code>SlowmodeWait({e.value}s)</code>",
                 parse_mode=ParseMode.HTML
@@ -5149,7 +5238,7 @@ async def test_ping_cb_handler(c: Client, cb: CallbackQuery):
             await Altruix.bot.send_message(
                 log_chat_id,
                 f"⚠️ <b>ERROR TEST PING (CRITICAL)</b>\n"
-                f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a>\n"
+                f"• User: {user_link}\n"
                 f"• Session: <a href='tg://user?id={session_user.id}'>{html.escape(session_user.first_name or '')} {html.escape(session_user.last_name or '')}</a> (<code>{getattr(session_user, 'id', 'Unknown')}</code>)\n"
                 f"• Error: <code>{html.escape(str(e))}</code>\n"
                 f"• Waktu: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>",
@@ -5165,14 +5254,15 @@ async def test_ping_cb_handler(c: Client, cb: CallbackQuery):
         )
 
 
-@Altruix.bot.on_callback_query(filters.regex(r"^export_phone_(\d+)(?:_(\d+))?$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^export_phone_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def export_phone_cb_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     user = cb.from_user
     user_id = user.id
     index = int(cb.matches[0].group(1))
-    page = int(cb.matches[0].group(2)) if cb.matches[0].group(2) else 1
+    page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
 
     if index >= len(Altruix.clients):
         return await cb.answer("Session tidak ditemukan.", show_alert=True)
@@ -5220,7 +5310,7 @@ async def export_phone_cb_handler(c: Client, cb: CallbackQuery):
         
         await edit_cb(cb, 
             f"✅ Nomor HP untuk sesi {index + 1} telah dikirim ke pesan pribadi Anda.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}_{button_page}")]])
         )
         
     except Exception as e:
@@ -5246,14 +5336,15 @@ async def export_phone_cb_handler(c: Client, cb: CallbackQuery):
         )
 
 
-@Altruix.bot.on_callback_query(filters.regex(r"^export_session_(\d+)(?:_(\d+))?$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^export_session_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def export_session_cb_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     user = cb.from_user
     user_id = user.id
     index = int(cb.matches[0].group(1))
-    page = int(cb.matches[0].group(2)) if cb.matches[0].group(2) else 1
+    page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
 
     if index >= len(Altruix.clients):
         return await cb.answer("Session tidak ditemukan.", show_alert=True)
@@ -5291,7 +5382,7 @@ async def export_session_cb_handler(c: Client, cb: CallbackQuery):
         
         await edit_cb(cb, 
             "✅ Session dikirim ke pesan pribadi Anda.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}_{button_page}")]])
         )
         
     except Exception as e:
@@ -5317,12 +5408,13 @@ async def export_session_cb_handler(c: Client, cb: CallbackQuery):
         )
 
 
-@Altruix.bot.on_callback_query(filters.regex(r"^refresh_session_info_(\d+)(?:_(\d+))?$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^refresh_session_info_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def refresh_session_info_cb_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     index = int(cb.matches[0].group(1))
-    page = int(cb.matches[0].group(2)) if cb.matches[0].group(2) else 1
+    page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     if not hasattr(Altruix, 'ourselves'):
         Altruix.ourselves = []
@@ -5339,14 +5431,16 @@ async def refresh_session_info_cb_handler(c: Client, cb: CallbackQuery):
         return
 
     await cb.answer("Data refreshed!")
-    await sessions_info_cb_handler(c, cb, index=index, callback_page=page)
+    await sessions_info_cb_handler(c, cb, index=index, callback_page=page, button_page=button_page)
 
 
-@Altruix.bot.on_callback_query(filters.regex(r"^unlink_session_(\d+)(?:_(\d+))?$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^unlink_session_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def unlink_session_cb_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     if index >= len(Altruix.clients):
         await cb.answer("Session already removed or invalid.", show_alert=True)
@@ -5356,7 +5450,7 @@ async def unlink_session_cb_handler(c: Client, cb: CallbackQuery):
     confirm_buttons = [
         [
             InlineKeyboardButton(gt("yes"), f"unlink_confirm_{index}"),
-            InlineKeyboardButton(gt("no"), f"session_info_{index}_1") # Kembali ke info
+            InlineKeyboardButton(gt("no"), f"session_info_{index}_{page}_{button_page}")
         ]
     ]
 
@@ -5397,13 +5491,14 @@ async def unlink_confirm_handler(c: Client, cb: CallbackQuery):
 
 
 # ✅ HANDLER BARU: Lihat Semua Sesi Login
-@Altruix.bot.on_callback_query(filters.regex(r"^view_all_sessions_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^view_all_sessions_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def view_all_sessions_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     await cb.answer("🔍 Mengambil data sesi...", show_alert=False)
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
 
     if index >= len(Altruix.clients):
         await edit_cb(cb, "❌ Session tidak ditemukan.")
@@ -5420,7 +5515,7 @@ async def view_all_sessions_handler(c: Client, cb: CallbackQuery):
             await edit_cb(cb, 
                 text="ℹ️ Tidak ada sesi aktif selain ini.",
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]
+                    [InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}_{button_page}")]
                 ])
             )
             return
@@ -5436,7 +5531,7 @@ async def view_all_sessions_handler(c: Client, cb: CallbackQuery):
         await edit_cb(cb, 
             text=out,
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]
+                [InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}_{button_page}")]
             ]),
             parse_mode=ParseMode.HTML
         )
@@ -5451,7 +5546,7 @@ async def view_all_sessions_handler(c: Client, cb: CallbackQuery):
         await edit_cb(cb, 
             text=f"❌ Gagal mengambil data sesi: {html.escape(str(e))}",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]
+                [InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}_{button_page}")]
             ])
         )
         await send_log_notification(
@@ -5461,19 +5556,21 @@ async def view_all_sessions_handler(c: Client, cb: CallbackQuery):
 
 
 # ✅ HANDLER BARU: Join Group/Channel Input
-@Altruix.bot.on_callback_query(filters.regex(r"^join_chat_input_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^join_chat_input_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def join_chat_input_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     await cb.answer()
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     user_id = cb.from_user.id
     
     # Simpan state
     user_bulk_join_state[user_id] = {
         'session_index': index,
         'page': page,
+        'button_page': button_page,
         'step': 'waiting_link',
         'delay': 0, # Not bulk, but we reuse the state dict for simplicity
         'is_single': True
@@ -5489,7 +5586,7 @@ async def join_chat_input_handler(c: Client, cb: CallbackQuery):
              "Kirim <code>/cancel</code> untuk membatalkan.",
         parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("❌ Batal", callback_data=f"session_info_{index}_{page}")]
+            [InlineKeyboardButton("❌ Batal", callback_data=f"session_info_{index}_{page}_{button_page}")]
         ])
     )
 
@@ -5509,6 +5606,7 @@ async def join_chat_confirm_handler(c: Client, cb: CallbackQuery):
     state = user_bulk_join_state[user_id]
     index = state['session_index']
     page = state['page']
+    button_page = state['button_page']
     link = state['link']
     
     if action == "no":
@@ -5537,7 +5635,7 @@ async def join_chat_confirm_handler(c: Client, cb: CallbackQuery):
         await edit_cb(cb, 
             text=f"✅ <b>Berhasil Join!</b>\n\nSesi {index+1} telah bergabung ke <code>{link}</code>.",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]
+                [InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}_{button_page}")]
             ]),
             parse_mode=ParseMode.HTML
         )
@@ -5546,7 +5644,7 @@ async def join_chat_confirm_handler(c: Client, cb: CallbackQuery):
         await edit_cb(cb, 
             text=f"ℹ️ <b>Sudah Bergabung</b>\n\nSesi {index+1} sudah menjadi anggota di <code>{link}</code>.",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]
+                [InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}_{button_page}")]
             ]),
             parse_mode=ParseMode.HTML
         )
@@ -5573,9 +5671,9 @@ async def join_chat_confirm_handler(c: Client, cb: CallbackQuery):
 
 
 # ✅ HANDLER BARU: PM Logger Menu
-@Altruix.bot.on_callback_query(filters.regex(r"^pml_menu_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^pml_menu_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
-async def pml_menu_handler(c: Client, cb: CallbackQuery, index: int = None, page: int = None):
+async def pml_menu_handler(c: Client, cb: CallbackQuery, index: int = None, page: int = None, button_page: int = None):
     if not await check_authorization(cb): return
     try:
         await cb.answer()
@@ -5585,6 +5683,8 @@ async def pml_menu_handler(c: Client, cb: CallbackQuery, index: int = None, page
         index = int(cb.matches[0].group(1))
     if page is None:
         page = int(cb.matches[0].group(2))
+    if button_page is None:
+        button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     # Load settings
     try:
@@ -5632,33 +5732,34 @@ async def pml_menu_handler(c: Client, cb: CallbackQuery, index: int = None, page
     
     buttons = [
         [
-            InlineKeyboardButton(f"👤 Log User: {'OFF' if log_from_user else 'ON'}", f"pml_toggle_log_user_{index}_{page}"),
-            InlineKeyboardButton(f"🤖 Log Bot: {'OFF' if log_from_bot else 'ON'}", f"pml_toggle_log_bot_{index}_{page}"),
+            InlineKeyboardButton(f"👤 Log User: {'OFF' if log_from_user else 'ON'}", f"pml_toggle_log_user_{index}_{page}_{button_page}"),
+            InlineKeyboardButton(f"🤖 Log Bot: {'OFF' if log_from_bot else 'ON'}", f"pml_toggle_log_bot_{index}_{page}_{button_page}"),
         ],
         [
-            InlineKeyboardButton(f"⚙️ {gt('apply_type')}: {type_label}", f"pml_toggle_type_{index}_{page}"),
-            InlineKeyboardButton(gt("set_as_global"), f"pml_set_global_{index}_{page}"),
+            InlineKeyboardButton(f"⚙️ {gt('apply_type')}: {type_label}", f"pml_toggle_type_{index}_{page}_{button_page}"),
+            InlineKeyboardButton(gt("set_as_global"), f"pml_set_global_{index}_{page}_{button_page}"),
         ],
         [
-            InlineKeyboardButton(f"👥 Reply Mode: {reply_access_mode.upper()}", f"pml_toggle_log_mode_{index}_{page}"),
+            InlineKeyboardButton(f"👥 Reply Mode: {reply_access_mode.upper()}", f"pml_toggle_log_mode_{index}_{page}_{button_page}"),
         ],
         [
-            InlineKeyboardButton("👤 User Filters", f"pmlf_menu_user_{index}_{page}"),
-            InlineKeyboardButton("🤖 Bot Filters", f"pmlf_menu_bot_{index}_{page}")
+            InlineKeyboardButton("👤 User Filters", f"pmlf_menu_user_{index}_{page}_{button_page}"),
+            InlineKeyboardButton("🤖 Bot Filters", f"pmlf_menu_bot_{index}_{page}_{button_page}")
         ],
-        [InlineKeyboardButton("🔙 Back to Session Info", f"session_info_{index}_{page}")]
+        [InlineKeyboardButton("🔙 Back to Session Info", f"session_info_{index}_{page}_{button_page}")]
     ]
     
     await edit_cb(cb, text=text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
 
 # ✅ HANDLER BARU: Toggle PM Logger Settings
-@Altruix.bot.on_callback_query(filters.regex(r"^pml_toggle_type_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^pml_toggle_type_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def pml_toggle_type_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     user_id_str = str(Altruix.clients[index].me.id)
     filename = get_db_path("pm_logger_user_settings.json")
     
@@ -5678,16 +5779,17 @@ async def pml_toggle_type_handler(c: Client, cb: CallbackQuery):
             json.dump(data, f, indent=2)
         
         await cb.answer(f"Apply Type: {new_val.upper()}")
-        await pml_menu_handler(c, cb, index=index, page=page)
+        await pml_menu_handler(c, cb, index=index, page=page, button_page=button_page)
     except Exception as e:
         await cb.answer(f"Error: {e}", show_alert=True)
 
-@Altruix.bot.on_callback_query(filters.regex(r"^pml_set_global_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^pml_set_global_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def pml_set_global_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     user_id_str = str(Altruix.clients[index].me.id)
     filename = get_db_path("pm_logger_user_settings.json")
     
@@ -5706,16 +5808,18 @@ async def pml_set_global_handler(c: Client, cb: CallbackQuery):
             json.dump(data, f, indent=2)
             
         await cb.answer("✅ Successfully set as GLOBAL!", show_alert=True)
+        await pml_menu_handler(c, cb, index=index, page=page, button_page=button_page)
     except Exception as e:
         await cb.answer(f"Error: {e}", show_alert=True)
 
-@Altruix.bot.on_callback_query(filters.regex(r"^pml_toggle_log_(user|bot|mode)_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^pml_toggle_log_(user|bot|mode)_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def pml_toggle_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     target = cb.matches[0].group(1)
     index = int(cb.matches[0].group(2))
     page = int(cb.matches[0].group(3))
+    button_page = int(cb.matches[0].group(4)) if len(cb.matches[0].groups()) >= 4 and cb.matches[0].group(4) else 1
     
     filename = get_db_path("pm_logger_user_settings.json")
     
@@ -5767,7 +5871,7 @@ async def pml_toggle_handler(c: Client, cb: CallbackQuery):
             with open(filename, "w") as f:
                 json.dump(data, f, indent=2)
             await cb.answer("✅ Updated!")
-            await pml_menu_handler(c, cb, index=index, page=page)
+            await pml_menu_handler(c, cb, index=index, page=page, button_page=button_page)
             
             # Log
             await send_log_notification(
@@ -5783,14 +5887,16 @@ async def pml_toggle_handler(c: Client, cb: CallbackQuery):
 
 
 # ✅ HANDLER BARU: Join Logger Menu
-@Altruix.bot.on_callback_query(filters.regex(r"^joinl_menu_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^joinl_menu_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
-async def joinl_menu_handler(c: Client, cb: CallbackQuery, index: int = None, page: int = None):
+async def joinl_menu_handler(c: Client, cb: CallbackQuery, index: int = None, page: int = None, button_page: int = None):
     if not await check_authorization(cb): return
     try: await cb.answer()
     except: pass
     if index is None: index = int(cb.matches[0].group(1))
     if page is None: page = int(cb.matches[0].group(2))
+    if button_page is None:
+        button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     filename = get_db_path("join_logger_settings.json")
     data = {"global": {"enabled": True}, "sessions": {}, "apply_types": {}}
@@ -5819,21 +5925,22 @@ async def joinl_menu_handler(c: Client, cb: CallbackQuery, index: int = None, pa
         f"• ⚙️ <b>{gt('apply_type')}:</b> <code>{type_label}</code>"
     )
     buttons = [
-        [InlineKeyboardButton(f"{'Disable' if active_enabled else 'Enable'} Join Logger", f"joinl_toggle_{index}_{page}")],
+        [InlineKeyboardButton(f"{'Disable' if active_enabled else 'Enable'} Join Logger", f"joinl_toggle_{index}_{page}_{button_page}")],
         [
-            InlineKeyboardButton(f"⚙️ {gt('apply_type')}: {type_label}", f"joinl_toggle_type_{index}_{page}"),
-            InlineKeyboardButton(gt("set_as_global"), f"joinl_set_global_{index}_{page}"),
+            InlineKeyboardButton(f"⚙️ {gt('apply_type')}: {type_label}", f"joinl_toggle_type_{index}_{page}_{button_page}"),
+            InlineKeyboardButton(gt("set_as_global"), f"joinl_set_global_{index}_{page}_{button_page}"),
         ],
-        [InlineKeyboardButton("🔙 Back to Session Info", f"session_info_{index}_{page}")]
+        [InlineKeyboardButton("🔙 Back to Session Info", f"session_info_{index}_{page}_{button_page}")]
     ]
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
 
-@Altruix.bot.on_callback_query(filters.regex(r"^joinl_toggle_type_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^joinl_toggle_type_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def joinl_toggle_type_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     user_id_str = str(Altruix.clients[index].me.id)
     filename = get_db_path("join_logger_settings.json")
     try:
@@ -5847,17 +5954,19 @@ async def joinl_toggle_type_handler(c: Client, cb: CallbackQuery):
         data["apply_types"][user_id_str] = new_val
         with open(filename, "w") as f: json.dump(data, f, indent=4)
         await cb.answer(f"Apply Type: {new_val.upper()}")
-        await joinl_menu_handler(c, cb, index=index, page=page)
+        await joinl_menu_handler(c, cb, index=index, page=page, button_page=button_page)
     except Exception as e: await cb.answer(f"Error: {e}", show_alert=True)
 
 
 # ✅ HANDLER BARU: Command Settings Menu
-@Altruix.bot.on_callback_query(filters.regex(r"^cmd_settings_menu_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^cmd_settings_menu_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
-async def cmd_settings_menu_handler(c: Client, cb: CallbackQuery):
+async def cmd_settings_menu_handler(c: Client, cb: CallbackQuery, index: int = None, page: int = None, button_page: int = None):
     if not await check_authorization(cb): return
-    index = int(cb.matches[0].group(1))
-    page = int(cb.matches[0].group(2))
+    if index is None: index = int(cb.matches[0].group(1))
+    if page is None: page = int(cb.matches[0].group(2))
+    if button_page is None:
+        button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     try:
         await cb.answer()
@@ -5889,24 +5998,25 @@ async def cmd_settings_menu_handler(c: Client, cb: CallbackQuery):
     
     buttons = [
         [
-            InlineKeyboardButton(f"🗑️ {gt('auto_delete_cmd')}: {'OFF' if status else 'ON'}", f"cmd_toggle_{index}_{page}"),
+            InlineKeyboardButton(f"🗑️ {gt('auto_delete_cmd')}: {'OFF' if status else 'ON'}", f"cmd_toggle_{index}_{page}_{button_page}"),
         ],
         [
-            InlineKeyboardButton(f"⚙️ {gt('apply_type')}: {type_label}", f"cmd_toggle_type_{index}_{page}"),
-            InlineKeyboardButton(gt("set_as_global"), f"cmd_set_global_{index}_{page}"),
+            InlineKeyboardButton(f"⚙️ {gt('apply_type')}: {type_label}", f"cmd_toggle_type_{index}_{page}_{button_page}"),
+            InlineKeyboardButton(gt("set_as_global"), f"cmd_set_global_{index}_{page}_{button_page}"),
         ],
-        [InlineKeyboardButton("🔙 Back to Session Info", f"session_info_{index}_{page}")]
+        [InlineKeyboardButton("🔙 Back to Session Info", f"session_info_{index}_{page}_{button_page}")]
     ]
     
     await edit_cb(cb, text=text, reply_markup=InlineKeyboardMarkup(buttons))
 
 
-@Altruix.bot.on_callback_query(filters.regex(r"^cmd_toggle_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^cmd_toggle_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def cmd_toggle_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     apply_type = await Altruix.config.get_env(f"AUTO_DELETE_CMD_TYPE_{index}") or "per_account"
     
@@ -5922,42 +6032,47 @@ async def cmd_toggle_handler(c: Client, cb: CallbackQuery):
         await Altruix.config.sync_env_to_db(f"AUTO_DELETE_CMD_STATUS_{index}", new_val, upsert=True)
     
     await cb.answer(f"{gt('auto_delete_cmd')}: {'ON' if new_val else 'OFF'}")
-    await cmd_settings_menu_handler(c, cb)
+    await cmd_settings_menu_handler(c, cb, index=index, page=page, button_page=button_page)
 
 
-@Altruix.bot.on_callback_query(filters.regex(r"^cmd_toggle_type_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^cmd_toggle_type_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def cmd_toggle_type_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     current = await Altruix.config.get_env(f"AUTO_DELETE_CMD_TYPE_{index}") or "per_account"
     new_val = "global" if current == "per_account" else "per_account"
     
     await Altruix.config.sync_env_to_db(f"AUTO_DELETE_CMD_TYPE_{index}", new_val, upsert=True)
     await cb.answer(f"Apply Type: {new_val.upper()}")
-    await cmd_settings_menu_handler(c, cb)
+    await cmd_settings_menu_handler(c, cb, index=index, page=page, button_page=button_page)
 
 
-@Altruix.bot.on_callback_query(filters.regex(r"^cmd_set_global_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^cmd_set_global_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def cmd_set_global_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     current = await Altruix.config.get_env(f"AUTO_DELETE_CMD_STATUS_{index}")
     if current is None: current = True
     
     await Altruix.config.sync_env_to_db("AUTO_DELETE_CMD_GLOBAL", current, upsert=True)
     await cb.answer("✅ Successfully set as GLOBAL!", show_alert=True)
+    await cmd_settings_menu_handler(c, cb, index=index, page=page, button_page=button_page)
 
-@Altruix.bot.on_callback_query(filters.regex(r"^joinl_set_global_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^joinl_set_global_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def joinl_set_global_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     user_id_str = str(Altruix.clients[index].me.id)
     filename = get_db_path("join_logger_settings.json")
     try:
@@ -5970,12 +6085,16 @@ async def joinl_set_global_handler(c: Client, cb: CallbackQuery):
         data["global"] = current
         with open(filename, "w") as f: json.dump(data, f, indent=4)
         await cb.answer("✅ Successfully set as GLOBAL!", show_alert=True)
+        await joinl_menu_handler(c, cb, index=index, page=page, button_page=button_page)
     except Exception as e: await cb.answer(f"Error: {e}", show_alert=True)
 
-@Altruix.bot.on_callback_query(filters.regex(r"^joinl_toggle_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^joinl_toggle_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def joinl_toggle_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     user_id_str = str(Altruix.clients[index].me.id)
     filename = get_db_path("join_logger_settings.json")
     if os.path.exists(filename):
@@ -6001,17 +6120,19 @@ async def joinl_toggle_handler(c: Client, cb: CallbackQuery):
 
     with open(filename, "w") as f: json.dump(data, f, indent=4)
     await cb.answer(f"Join Logger: {'Enabled' if new_val else 'Disabled'}")
-    await joinl_menu_handler(c, cb, index=index, page=page)
+    await joinl_menu_handler(c, cb, index=index, page=page, button_page=button_page)
 
 # ✅ HANDLER BARU: Command Logger Menu
-@Altruix.bot.on_callback_query(filters.regex(r"^cmdl_menu_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^cmdl_menu_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
-async def cmdl_menu_handler(c: Client, cb: CallbackQuery, index: int = None, page: int = None):
+async def cmdl_menu_handler(c: Client, cb: CallbackQuery, index: int = None, page: int = None, button_page: int = None):
     if not await check_authorization(cb): return
     try: await cb.answer()
     except: pass
     if index is None: index = int(cb.matches[0].group(1))
     if page is None: page = int(cb.matches[0].group(2))
+    if button_page is None:
+        button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     filename = get_db_path("cmd_logger_settings.json")
     data = {"global": {"enabled": False}, "sessions": {}, "apply_types": {}}
@@ -6040,21 +6161,22 @@ async def cmdl_menu_handler(c: Client, cb: CallbackQuery, index: int = None, pag
         f"• ⚙️ <b>{gt('apply_type')}:</b> <code>{type_label}</code>"
     )
     buttons = [
-        [InlineKeyboardButton(f"{'Disable' if active_enabled else 'Enable'} Cmd Logger", f"cmdl_toggle_{index}_{page}")],
+        [InlineKeyboardButton(f"{'Disable' if active_enabled else 'Enable'} Cmd Logger", f"cmdl_toggle_{index}_{page}_{button_page}")],
         [
-            InlineKeyboardButton(f"⚙️ {gt('apply_type')}: {type_label}", f"cmdl_toggle_type_{index}_{page}"),
-            InlineKeyboardButton(gt("set_as_global"), f"cmdl_set_global_{index}_{page}"),
+            InlineKeyboardButton(f"⚙️ {gt('apply_type')}: {type_label}", f"cmdl_toggle_type_{index}_{page}_{button_page}"),
+            InlineKeyboardButton(gt("set_as_global"), f"cmdl_set_global_{index}_{page}_{button_page}"),
         ],
-        [InlineKeyboardButton("🔙 Back to Session Info", f"session_info_{index}_{page}")]
+        [InlineKeyboardButton("🔙 Back to Session Info", f"session_info_{index}_{page}_{button_page}")]
     ]
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
 
-@Altruix.bot.on_callback_query(filters.regex(r"^cmdl_toggle_type_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^cmdl_toggle_type_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def cmdl_toggle_type_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     user_id_str = str(Altruix.clients[index].me.id)
     filename = get_db_path("cmd_logger_settings.json")
     try:
@@ -6068,15 +6190,16 @@ async def cmdl_toggle_type_handler(c: Client, cb: CallbackQuery):
         data["apply_types"][user_id_str] = new_val
         with open(filename, "w") as f: json.dump(data, f, indent=4)
         await cb.answer(f"Apply Type: {new_val.upper()}")
-        await cmdl_menu_handler(c, cb, index=index, page=page)
+        await cmdl_menu_handler(c, cb, index=index, page=page, button_page=button_page)
     except Exception as e: await cb.answer(f"Error: {e}", show_alert=True)
 
-@Altruix.bot.on_callback_query(filters.regex(r"^cmdl_set_global_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^cmdl_set_global_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def cmdl_set_global_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     user_id_str = str(Altruix.clients[index].me.id)
     filename = get_db_path("cmd_logger_settings.json")
     try:
@@ -6089,12 +6212,16 @@ async def cmdl_set_global_handler(c: Client, cb: CallbackQuery):
         data["global"] = current
         with open(filename, "w") as f: json.dump(data, f, indent=4)
         await cb.answer("✅ Successfully set as GLOBAL!", show_alert=True)
+        await cmdl_menu_handler(c, cb, index=index, page=page, button_page=button_page)
     except Exception as e: await cb.answer(f"Error: {e}", show_alert=True)
 
-@Altruix.bot.on_callback_query(filters.regex(r"^cmdl_toggle_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^cmdl_toggle_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def cmdl_toggle_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     user_id_str = str(Altruix.clients[index].me.id)
     filename = get_db_path("cmd_logger_settings.json")
     if os.path.exists(filename):
@@ -6119,18 +6246,19 @@ async def cmdl_toggle_handler(c: Client, cb: CallbackQuery):
 
     with open(filename, "w") as f: json.dump(data, f, indent=4)
     await cb.answer(f"Command Logger: {'Enabled' if new_val else 'Disabled'}")
-    await cmdl_menu_handler(c, cb, index=index, page=page)
+    await cmdl_menu_handler(c, cb, index=index, page=page, button_page=button_page)
 
 # ✅ HANDLER BARU: PM Filters Menu
-@Altruix.bot.on_callback_query(filters.regex(r"^pmlf_menu_(user|bot)_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^pmlf_menu_(user|bot)_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def pml_filters_menu_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     try: await cb.answer()
     except: pass
-    logger_type = cb.matches[0].group(1)
+    logger_type = cb.matches[0].group(1) # 'user' only for now in session info
     index = int(cb.matches[0].group(2))
     page = int(cb.matches[0].group(3))
+    button_page = int(cb.matches[0].group(4)) if len(cb.matches[0].groups()) >= 4 and cb.matches[0].group(4) else 1
     
     text = (
         f"<b>🔍 {'Userbot' if logger_type == 'user' else 'Bot'} Logger Message Filters</b>\n\n"
@@ -6140,14 +6268,14 @@ async def pml_filters_menu_handler(c: Client, cb: CallbackQuery):
     )
     buttons = [
         [
-            InlineKeyboardButton("👤 From User", f"pmlfl_{logger_type}_user_{index}_{page}"),
-            InlineKeyboardButton("🤖 From Bot", f"pmlfl_{logger_type}_bot_{index}_{page}"),
+            InlineKeyboardButton("👤 From User", f"pmlfl_{logger_type}_user_{index}_{page}_{button_page}"),
+            InlineKeyboardButton("🤖 From Bot", f"pmlfl_{logger_type}_bot_{index}_{page}_{button_page}"),
         ],
-        [InlineKeyboardButton("🔙 Back to PM Logger", f"pml_menu_{index}_{page}")]
+        [InlineKeyboardButton("🔙 Back to PM Logger", f"pml_menu_{index}_{page}_{button_page}")]
     ]
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
-@Altruix.bot.on_callback_query(filters.regex(r"^pmlfl_(user|bot)_(user|bot)_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^pmlfl_(user|bot)_(user|bot)_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def pmlf_list_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
@@ -6155,6 +6283,7 @@ async def pmlf_list_handler(c: Client, cb: CallbackQuery):
     source = cb.matches[0].group(2) # 'user' or 'bot'
     index = int(cb.matches[0].group(3))
     page = int(cb.matches[0].group(4))
+    button_page = int(cb.matches[0].group(5)) if len(cb.matches[0].groups()) >= 5 and cb.matches[0].group(5) else 1
     source_key = f"from_{source}"
     
     filename = get_db_path("pm_logger_user_settings.json")
@@ -6179,15 +6308,15 @@ async def pmlf_list_handler(c: Client, cb: CallbackQuery):
         
         val = filters.get(m_type, default_val)
         status = "✅" if val else "❌"
-        row.append(InlineKeyboardButton(f"{status} {m_type.capitalize()}", f"pmlft_{logger_type}_{source}_{m_type}_{index}_{page}"))
+        row.append(InlineKeyboardButton(f"{status} {m_type.capitalize()}", f"pmlft_{logger_type}_{source}_{m_type}_{index}_{page}_{button_page}"))
         if len(row) == 2:
             buttons.append(row)
             row = []
     if row: buttons.append(row)
-    buttons.append([InlineKeyboardButton("🔙 Back to Filters Menu", f"pmlf_menu_{logger_type}_{index}_{page}")])
+    buttons.append([InlineKeyboardButton("🔙 Back to Filters Menu", f"pmlf_menu_{logger_type}_{index}_{page}_{button_page}")])
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
-@Altruix.bot.on_callback_query(filters.regex(r"^pmlft_(user|bot)_(user|bot)_(.+)_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^pmlft_(user|bot)_(user|bot)_(.+)_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def pmlf_toggle_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
@@ -6196,6 +6325,7 @@ async def pmlf_toggle_handler(c: Client, cb: CallbackQuery):
     m_type = cb.matches[0].group(3)
     index = int(cb.matches[0].group(4))
     page = int(cb.matches[0].group(5))
+    button_page = int(cb.matches[0].group(6)) if len(cb.matches[0].groups()) >= 6 and cb.matches[0].group(6) else 1
     source_key = f"from_{source}"
     user_id_str = str(Altruix.clients[index].me.id)
     
@@ -6233,6 +6363,7 @@ async def pmlf_toggle_handler(c: Client, cb: CallbackQuery):
             if i == 2: return source
             if i == 3: return index
             if i == 4: return page
+            if i == 5: return button_page
             return None
     cb.matches = [MockMatch()]
     await pmlf_list_handler(c, cb)
@@ -6249,9 +6380,9 @@ async def add_session_handler(c: Client, cb: CallbackQuery):
 
 
 # ✅ HANDLER BARU: Mention Control Menu
-@Altruix.bot.on_callback_query(filters.regex(r"^mnt_menu_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^mnt_menu_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
-async def mnt_menu_handler(c: Client, cb: CallbackQuery, index: int = None, page: int = None):
+async def mnt_menu_handler(c: Client, cb: CallbackQuery, index: int = None, page: int = None, button_page: int = None):
     """Mention Control Menu with toggles"""
     if not await check_authorization(cb): return
     try:
@@ -6262,6 +6393,8 @@ async def mnt_menu_handler(c: Client, cb: CallbackQuery, index: int = None, page
         index = int(cb.matches[0].group(1))
     if page is None:
         page = int(cb.matches[0].group(2))
+    if button_page is None:
+        button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     # Load Mention Settings with support for structured format
     settings_file = get_db_path("mentions_settings.json")
@@ -6318,22 +6451,22 @@ async def mnt_menu_handler(c: Client, cb: CallbackQuery, index: int = None, page
 
     buttons = [
         [
-            InlineKeyboardButton(f"{gt('reply_from_all')}: {rfa_status}", f"mnt_toggle_rfa_{index}_{page}"),
+            InlineKeyboardButton(f"{gt('reply_from_all')}: {rfa_status}", f"mnt_toggle_rfa_{index}_{page}_{button_page}"),
         ],
         [
-            InlineKeyboardButton(f"⚙️ {gt('apply_type')}: {type_label}", f"mnt_toggle_type_{index}_{page}"),
-            InlineKeyboardButton(gt("set_as_global"), f"mnt_set_global_{index}_{page}"),
+            InlineKeyboardButton(f"⚙️ {gt('apply_type')}: {type_label}", f"mnt_toggle_type_{index}_{page}_{button_page}"),
+            InlineKeyboardButton(gt("set_as_global"), f"mnt_set_global_{index}_{page}_{button_page}"),
         ],
         [
-            InlineKeyboardButton(f"{gt('mention_logic')}: {mnt_status}", f"mnt_toggle_mnt_{index}_{page}"),
-            InlineKeyboardButton(f"{gt('mention_auto_log')}: {alog_status}", f"mnt_toggle_alog_{index}_{page}"),
+            InlineKeyboardButton(f"{gt('mention_logic')}: {mnt_status}", f"mnt_toggle_mnt_{index}_{page}_{button_page}"),
+            InlineKeyboardButton(f"{gt('mention_auto_log')}: {alog_status}", f"mnt_toggle_alog_{index}_{page}_{button_page}"),
         ],
         [
-            InlineKeyboardButton("🔍 Message Type Filters", f"mntf_menu_{index}_{page}"),
-            InlineKeyboardButton(gt("view_mentions"), f"view_mentions_menu_{index}_{page}"),
+            InlineKeyboardButton("🔍 Message Type Filters", f"mntf_menu_{index}_{page}_{button_page}"),
+            InlineKeyboardButton(gt("view_mentions"), f"view_mentions_menu_{index}_{page}_{button_page}"),
         ],
         [
-            InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}"),
+            InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}_{button_page}"),
         ]
     ]
 
@@ -6345,7 +6478,7 @@ async def mnt_menu_handler(c: Client, cb: CallbackQuery, index: int = None, page
 
 
 # ✅ HANDLER BARU: Download Story session-targeted
-@Altruix.bot.on_callback_query(filters.regex(r"^dlstory_session_input_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^dlstory_session_input_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def dlstory_session_input_handler(c: Client, cb: CallbackQuery):
     """Menerima input link story untuk didownload sesi tertentu"""
@@ -6353,6 +6486,7 @@ async def dlstory_session_input_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     if index >= len(Altruix.clients):
         await cb.answer("❌ Session tidak ditemukan.", show_alert=True)
@@ -6368,7 +6502,7 @@ async def dlstory_session_input_handler(c: Client, cb: CallbackQuery):
         f"Hasil akan dikirim ke <b>Altruix Log Group</b>.\n\n"
         f"Ketik <code>cancel</code> untuk membatalkan.",
         parse_mode=ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("cancel"), f"session_info_{index}_{page}")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("cancel"), f"session_info_{index}_{page}_{button_page}")]])
     )
     
     try:
@@ -6383,7 +6517,7 @@ async def dlstory_session_input_handler(c: Client, cb: CallbackQuery):
         if "t.me/" not in link or "/s/" not in link:
             await edit_cb(cb, "❌ <b>Format link tidak valid!</b>")
             await asyncio.sleep(3)
-            await sessions_info_cb_handler(c, cb, index=index, callback_page=page)
+            await sessions_info_cb_handler(c, cb, index=index, callback_page=page, button_page=button_page)
             return
 
         parts = link.split("/")
@@ -6508,20 +6642,21 @@ async def dlstory_session_input_handler(c: Client, cb: CallbackQuery):
             )
             
         await asyncio.sleep(3)
-        await sessions_info_cb_handler(c, cb, index=index, callback_page=page)
+        await sessions_info_cb_handler(c, cb, index=index, callback_page=page, button_page=button_page)
         
-    except asyncio.TimeoutError:
+    except (asyncio.TimeoutError, ListenerTimeout):
         await edit_cb(cb, "⏳ Waktu habis. Silakan coba lagi.")
     except Exception as e:
         await edit_cb(cb, f"❌ Error: {str(e)}")
 
 
-@Altruix.bot.on_callback_query(filters.regex(r"^mnt_toggle_type_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^mnt_toggle_type_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def mnt_toggle_type_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     user_id_str = str(Altruix.clients[index].me.id)
     settings_file = get_db_path("mentions_settings.json")
     
@@ -6541,16 +6676,17 @@ async def mnt_toggle_type_handler(c: Client, cb: CallbackQuery):
             json.dump(data, f, indent=4)
         
         await cb.answer(f"Apply Type: {new_val.upper()}")
-        await mnt_menu_handler(c, cb, index=index, page=page)
+        await mnt_menu_handler(c, cb, index=index, page=page, button_page=button_page)
     except Exception as e:
         await cb.answer(f"Error: {e}", show_alert=True)
 
-@Altruix.bot.on_callback_query(filters.regex(r"^mnt_set_global_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^mnt_set_global_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def mnt_set_global_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     user_id_str = str(Altruix.clients[index].me.id)
     settings_file = get_db_path("mentions_settings.json")
     
@@ -6574,11 +6710,12 @@ async def mnt_set_global_handler(c: Client, cb: CallbackQuery):
             json.dump(data, f, indent=4)
             
         await cb.answer("✅ Successfully set as GLOBAL!", show_alert=True)
+        await mnt_menu_handler(c, cb, index=index, page=page, button_page=button_page)
     except Exception as e:
         await cb.answer(f"Error: {e}", show_alert=True)
 
 # ✅ HANDLER BARU: Toggle Mention Settings (RFA, MNT, ALOG)
-@Altruix.bot.on_callback_query(filters.regex(r"^mnt_toggle_(rfa|mnt|alog)_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^mnt_toggle_(rfa|mnt|alog)_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def mnt_toggle_handler(c: Client, cb: CallbackQuery):
     """Toggle mention settings (RFA, MNT, ALOG)"""
@@ -6586,6 +6723,7 @@ async def mnt_toggle_handler(c: Client, cb: CallbackQuery):
     action = cb.matches[0].group(1)
     index = int(cb.matches[0].group(2))
     page = int(cb.matches[0].group(3))
+    button_page = int(cb.matches[0].group(4)) if len(cb.matches[0].groups()) >= 4 and cb.matches[0].group(4) else 1
     user_id_str = str(Altruix.clients[index].me.id)
     
     settings_file = get_db_path("mentions_settings.json")
@@ -6635,7 +6773,7 @@ async def mnt_toggle_handler(c: Client, cb: CallbackQuery):
         
         readable_name = key.replace('_', ' ').title()
         await cb.answer(f"✅ {readable_name} updated", show_alert=False)
-        await mnt_menu_handler(c, cb, index=index, page=page)
+        await mnt_menu_handler(c, cb, index=index, page=page, button_page=button_page)
     else:
         await cb.answer("❌ Invalid action", show_alert=True)
 
@@ -6649,23 +6787,35 @@ async def gen_confirm_handler(c: Client, cb: CallbackQuery):
     # Format: gen_conf_{real_callback_data}
     real_data = cb.matches[0].group(1)
     
-    # Extract index and page if available for the 'No' button
-    # Most data ends with _{index} or _{index}_{page}
+    # Extract index, callback_page, and optional button_page
+    # Format typically: action_{index}_{callback_page} or action_{index}_{callback_page}_{button_page}
     parts = real_data.split("_")
     index = "0"
-    page = "1"
-    if len(parts) >= 2:
-        index = parts[-2] if len(parts) >= 2 else "0"
-        page = parts[-1] if len(parts) >= 2 else "1"
-        # If the last part is not a page (some data only has index), adjust
-        if not index.isdigit() and parts[-1].isdigit():
-             index = parts[-1]
-             page = "1"
+    callback_page = "1"
+    button_page = "1"
+    
+    # Try to find numeric parts at the end
+    numeric_parts = []
+    for p in reversed(parts):
+        if p.isdigit():
+            numeric_parts.insert(0, p)
+        else:
+            break
+            
+    if len(numeric_parts) >= 3:
+        index = numeric_parts[0]
+        callback_page = numeric_parts[1]
+        button_page = numeric_parts[2]
+    elif len(numeric_parts) == 2:
+        index = numeric_parts[0]
+        callback_page = numeric_parts[1]
+    elif len(numeric_parts) == 1:
+        index = numeric_parts[0]
     
     confirm_buttons = [
         [
             InlineKeyboardButton(gt("yes"), real_data),
-            InlineKeyboardButton(gt("no"), f"session_info_{index}_{page}")
+            InlineKeyboardButton(gt("no"), f"session_info_{index}_{callback_page}_{button_page}")
         ]
     ]
     
@@ -6677,18 +6827,20 @@ async def gen_confirm_handler(c: Client, cb: CallbackQuery):
 
 
 # ✅ HANDLER BARU: Download User Photo Start
-@Altruix.bot.on_callback_query(filters.regex(r"^dl_uphoto_start_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^dl_uphoto_start_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def dl_uphoto_start_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     await cb.answer()
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     user_id = cb.from_user.id
     
     user_dlphoto_state[user_id] = {
         'session_index': index,
         'page': page,
+        'button_page': button_page,
         'step': 'waiting_target'
     }
     
@@ -6698,7 +6850,7 @@ async def dl_uphoto_start_handler(c: Client, cb: CallbackQuery):
              "Silakan kirim <b>Username</b> atau <b>Chat ID</b> user yang ingin didownload fotonya.\n\n"
              "Ketik /cancel untuk membatalkan.",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton(gt("cancel"), f"session_info_{index}_{page}")]
+            [InlineKeyboardButton(gt("cancel"), f"session_info_{index}_{page}_{button_page}")]
         ])
     )
 
@@ -6729,7 +6881,7 @@ async def purge_amt_handler(c: Client, cb: CallbackQuery):
             f"Silakan kirim <b>angka</b> jumlah pesan yang ingin dihapus.\n\n"
             f"Ketik /cancel untuk membatalkan.",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton(gt("cancel"), f"session_info_{state['session_index']}_{state['page']}")]
+                [InlineKeyboardButton(gt("cancel"), f"session_info_{state['session_index']}_{state['page']}_{state['button_page']}")]
             ])
         )
         return
@@ -6749,7 +6901,7 @@ async def purge_amt_handler(c: Client, cb: CallbackQuery):
             InlineKeyboardButton("Custom", callback_data=f"purge_del_{user_id}_custom"),
         ],
         [
-            InlineKeyboardButton("🔙 Cancel", callback_data=f"session_info_{state['session_index']}_{state['page']}"),
+            InlineKeyboardButton("🔙 Cancel", callback_data=f"session_info_{state['session_index']}_{state['page']}_{state['button_page']}"),
         ]
     ]
     
@@ -6787,7 +6939,7 @@ async def purge_del_handler(c: Client, cb: CallbackQuery):
             f"{gt('custom_delay_prompt')}\n\n"
             f"Ketik /cancel untuk membatalkan.",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton(gt("cancel"), f"session_info_{state['session_index']}_{state['page']}")]
+                [InlineKeyboardButton(gt("cancel"), f"session_info_{state['session_index']}_{state['page']}_{state['button_page']}")]
             ])
         )
         return
@@ -6803,7 +6955,7 @@ async def purge_del_handler(c: Client, cb: CallbackQuery):
             InlineKeyboardButton("⌛ Terlama (Oldest)", callback_data=f"purge_mode_{user_id}_oldest"),
         ],
         [
-            InlineKeyboardButton("🔙 Cancel", callback_data=f"session_info_{state['session_index']}_{state['page']}"),
+            InlineKeyboardButton("🔙 Cancel", callback_data=f"session_info_{state['session_index']}_{state['page']}_{state['button_page']}"),
         ]
     ]
     
@@ -6841,7 +6993,7 @@ async def purge_mode_handler(c: Client, cb: CallbackQuery):
     buttons = [
         [
             InlineKeyboardButton("✅ Ya, Mulai Purge", callback_data=f"purge_exec_{user_id}"),
-            InlineKeyboardButton("❌ Tidak, Batalkan", f"session_info_{state['session_index']}_{state['page']}")
+            InlineKeyboardButton("❌ Tidak, Batalkan", f"session_info_{state['session_index']}_{state['page']}_{state['button_page']}")
         ]
     ]
     
@@ -7011,10 +7163,11 @@ async def dl_uphoto_exec_handler(c: Client, cb: CallbackQuery):
                 os.remove(photo)
             
             page = state.get('page', 1)
+            button_page = state.get('button_page', 1)
             await edit_cb(cb, 
                 f"✅ <b>Foto profil {html.escape(user.first_name)} telah dikirim ke Log Group!</b>",
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton(gt("back"), f"session_info_{session_index}_{page}")]
+                    [InlineKeyboardButton(gt("back"), f"session_info_{session_index}_{page}_{button_page}")]
                 ]),
                 parse_mode=ParseMode.HTML
             )
@@ -7034,18 +7187,20 @@ async def dl_uphoto_exec_handler(c: Client, cb: CallbackQuery):
         )
 
 # ✅ HANDLER BARU: Purge My Msg Start
-@Altruix.bot.on_callback_query(filters.regex(r"purge_msg_start_(\d+)_(\d+)"))
+@Altruix.bot.on_callback_query(filters.regex(r"purge_msg_start_(\d+)_(\d+)(?:_(\d+))?"))
 @log_errors
 async def purge_msg_start_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     await cb.answer()
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     user_id = cb.from_user.id
     
     user_purge_state[user_id] = {
         'session_index': index,
         'page': page,
+        'button_page': button_page,
         'step': 'waiting_chat'
     }
     
@@ -7055,7 +7210,7 @@ async def purge_msg_start_handler(c: Client, cb: CallbackQuery):
              "Silakan kirim <b>Username</b> atau <b>Chat ID</b> target chat.\n\n"
              "Ketik /cancel untuk membatalkan.",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton(gt("cancel"), f"session_info_{index}_{page}")]
+            [InlineKeyboardButton(gt("cancel"), f"session_info_{index}_{page}_{button_page}")]
         ]),
         parse_mode=ParseMode.HTML
     )
@@ -7202,17 +7357,19 @@ async def sys_ctrl_1_handler(c: Client, cb: CallbackQuery):
 
 
 # ✅ HANDLER BARU: Eval Session Input
-@Altruix.bot.on_callback_query(filters.regex(r"^eval_session_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^eval_session_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def eval_session_start_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     user_id = cb.from_user.id
     
     user_eval_state[user_id] = {
         "session_index": index,
         "page": page,
+        "button_page": button_page,
         "step": "waiting_code"
     }
     
@@ -7223,7 +7380,7 @@ async def eval_session_start_handler(c: Client, cb: CallbackQuery):
         f"⚠️ <b>Hati-hati!</b> Kode berbahaya dapat merusak sesi.\n\n"
         f"Ketik /cancel untuk membatalkan.",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔙 Cancel", callback_data=f"session_info_{index}_{page}")]
+            [InlineKeyboardButton("🔙 Cancel", callback_data=f"session_info_{index}_{page}_{button_page}")]
         ]),
         parse_mode=ParseMode.HTML
     )
@@ -7319,7 +7476,7 @@ async def eval_exec_confirm_handler(c: Client, cb: CallbackQuery):
     await edit_cb(cb, 
         f"🐍 <b>Eval Result</b>\n\n{final_output}",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔙 Back", callback_data=f"session_info_{index}_{state['page']}")]
+            [InlineKeyboardButton("🔙 Back", callback_data=f"session_info_{index}_{state['page']}_{state.get('button_page', 1)}")]
         ]),
         parse_mode=ParseMode.HTML
     )
@@ -7328,12 +7485,13 @@ async def eval_exec_confirm_handler(c: Client, cb: CallbackQuery):
 
 
 # ✅ HANDLER BARU: Exec Session Input
-@Altruix.bot.on_callback_query(filters.regex(r"^exec_session_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^exec_session_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def exec_session_start_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     user_id = cb.from_user.id
     
     user_exec_state[user_id] = {
@@ -7349,7 +7507,7 @@ async def exec_session_start_handler(c: Client, cb: CallbackQuery):
         f"⚠️ <b>WARNING:</b> Fitur ini sangat <b>BERBAHAYA</b>. Gunakan dengan bijak!\n\n"
         f"Ketik /cancel untuk membatalkan.",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔙 Cancel", callback_data=f"session_info_{index}_{page}")]
+            [InlineKeyboardButton("🔙 Cancel", callback_data=f"session_info_{index}_{page}_{button_page}")]
         ]),
         parse_mode=ParseMode.HTML
     )
@@ -7414,7 +7572,7 @@ async def exec_term_handler(c: Client, cb: CallbackQuery):
     await edit_cb(cb, 
         f"🖥️ <b>Exec Result</b>\n\n{final_output}",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔙 Back", callback_data=f"session_info_{index}_{state['page']}")]
+            [InlineKeyboardButton("🔙 Back", callback_data=f"session_info_{index}_{state['page']}_{state.get('button_page', 1)}")]
         ]),
         parse_mode=ParseMode.HTML
     )
@@ -7427,27 +7585,28 @@ async def exec_term_handler(c: Client, cb: CallbackQuery):
 # PRIVACY & SECURITY HANDLERS
 # ============================================================================
 
-@Altruix.bot.on_callback_query(filters.regex(r"^privacy_menu_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^privacy_menu_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def privacy_menu_cb_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     await cb.answer()
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     buttons = [
         [
-            InlineKeyboardButton("🚫 Block User", callback_data=f"block_user_input_{index}_{page}"),
-            InlineKeyboardButton("✅ Unblock User", callback_data=f"unblock_user_input_{index}_{page}"),
+            InlineKeyboardButton("🚫 Block User", callback_data=f"block_user_input_{index}_{page}_{button_page}"),
+            InlineKeyboardButton("✅ Unblock User", callback_data=f"unblock_user_input_{index}_{page}_{button_page}"),
         ],
         [
-            InlineKeyboardButton("📞 Phone Privacy", callback_data=f"phone_privacy_menu_{index}_{page}"),
+            InlineKeyboardButton("📞 Phone Privacy", callback_data=f"phone_privacy_menu_{index}_{page}_{button_page}"),
         ],
         [
-            InlineKeyboardButton("👥 Group/Channel Privacy", callback_data=f"group_privacy_menu_{index}_{page}"),
+            InlineKeyboardButton("👥 Group/Channel Privacy", callback_data=f"group_privacy_menu_{index}_{page}_{button_page}"),
         ],
         [
-            InlineKeyboardButton("🔙 Back to Session Info", callback_data=f"session_info_{index}_{page}"),
+            InlineKeyboardButton("🔙 Back to Session Info", callback_data=f"session_info_{index}_{page}_{button_page}"),
         ]
     ]
     
@@ -7461,7 +7620,7 @@ async def privacy_menu_cb_handler(c: Client, cb: CallbackQuery):
         parse_mode=ParseMode.HTML
     )
 
-@Altruix.bot.on_callback_query(filters.regex(r"^(block|unblock)_user_input_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^(block|unblock)_user_input_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def block_unblock_input_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
@@ -7469,12 +7628,14 @@ async def block_unblock_input_handler(c: Client, cb: CallbackQuery):
     action = cb.matches[0].group(1) # block / unblock
     index = int(cb.matches[0].group(2))
     page = int(cb.matches[0].group(3))
+    button_page = int(cb.matches[0].group(4)) if len(cb.matches[0].groups()) >= 4 and cb.matches[0].group(4) else 1
     user_id = cb.from_user.id
     
     user_privacy_state[user_id] = {
         'action': f"{action}_user",
         'session_index': index,
         'page': page,
+        'button_page': button_page,
         'step': 'waiting_target'
     }
     
@@ -7487,7 +7648,7 @@ async def block_unblock_input_handler(c: Client, cb: CallbackQuery):
              "Kirim <code>/cancel</code> untuk membatalkan.",
         parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup([
-             [InlineKeyboardButton("🔙 Cancel", callback_data=f"privacy_menu_{index}_{page}")]
+             [InlineKeyboardButton("🔙 Cancel", callback_data=f"privacy_menu_{index}_{page}_{button_page}")]
         ])
     )
 
@@ -7546,32 +7707,33 @@ async def execute_block_unblock(c: Client, m: Message, state: dict):
         )
 
 # PHONE PRIVACY MENUS
-@Altruix.bot.on_callback_query(filters.regex(r"^phone_privacy_menu_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^phone_privacy_menu_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def phone_privacy_menu_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     await cb.answer()
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     buttons = [
         [
             InlineKeyboardButton("👀 Who can SEE my number?", callback_data="ignore"),
         ],
         [
-            InlineKeyboardButton("Everybody", callback_data=f"set_pp_see_{index}_{page}_all"),
-            InlineKeyboardButton("Contacts", callback_data=f"set_pp_see_{index}_{page}_contacts"),
-            InlineKeyboardButton("Nobody", callback_data=f"set_pp_see_{index}_{page}_nobody"),
+            InlineKeyboardButton("Everybody", callback_data=f"set_pp_see_{index}_{page}_{button_page}_all"),
+            InlineKeyboardButton("Contacts", callback_data=f"set_pp_see_{index}_{page}_{button_page}_contacts"),
+            InlineKeyboardButton("Nobody", callback_data=f"set_pp_see_{index}_{page}_{button_page}_nobody"),
         ],
         [
             InlineKeyboardButton("🔍 Who can FIND by number?", callback_data="ignore"),
         ],
         [
-            InlineKeyboardButton("Everybody", callback_data=f"set_pp_find_{index}_{page}_all"),
-            InlineKeyboardButton("Contacts", callback_data=f"set_pp_find_{index}_{page}_contacts"),
+            InlineKeyboardButton("Everybody", callback_data=f"set_pp_find_{index}_{page}_{button_page}_all"),
+            InlineKeyboardButton("Contacts", callback_data=f"set_pp_find_{index}_{page}_{button_page}_contacts"),
         ],
         [
-            InlineKeyboardButton("🔙 Back", callback_data=f"privacy_menu_{index}_{page}"),
+            InlineKeyboardButton("🔙 Back", callback_data=f"privacy_menu_{index}_{page}_{button_page}"),
         ]
     ]
     
@@ -7583,14 +7745,15 @@ async def phone_privacy_menu_handler(c: Client, cb: CallbackQuery):
         parse_mode=ParseMode.HTML
     )
 
-@Altruix.bot.on_callback_query(filters.regex(r"^set_pp_(see|find)_(\d+)_(\d+)_(.+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^set_pp_(see|find)_(\d+)_(\d+)_(\d+)_(.+)$"))
 @log_errors
 async def set_phone_privacy_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     type_ = cb.matches[0].group(1) # see / find
     index = int(cb.matches[0].group(2))
     page = int(cb.matches[0].group(3))
-    value = cb.matches[0].group(4) # all / contacts / nobody
+    button_page = int(cb.matches[0].group(4)) 
+    value = cb.matches[0].group(5) # all / contacts / nobody
     
     if index >= len(Altruix.clients):
         await cb.answer("Session unavailable", show_alert=True)
@@ -7640,22 +7803,23 @@ async def set_phone_privacy_handler(c: Client, cb: CallbackQuery):
         )
 
 # GROUP PRIVACY MENUS
-@Altruix.bot.on_callback_query(filters.regex(r"^group_privacy_menu_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^group_privacy_menu_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def group_privacy_menu_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     await cb.answer()
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     buttons = [
         [
-            InlineKeyboardButton("Everyone", callback_data=f"set_gp_{index}_{page}_all"),
-            InlineKeyboardButton("Contacts", callback_data=f"set_gp_{index}_{page}_contacts"),
-            InlineKeyboardButton("Nobody", callback_data=f"set_gp_{index}_{page}_nobody"),
+            InlineKeyboardButton("Everyone", callback_data=f"set_gp_{index}_{page}_{button_page}_all"),
+            InlineKeyboardButton("Contacts", callback_data=f"set_gp_{index}_{page}_{button_page}_contacts"),
+            InlineKeyboardButton("Nobody", callback_data=f"set_gp_{index}_{page}_{button_page}_nobody"),
         ],
         [
-            InlineKeyboardButton("🔙 Back", callback_data=f"privacy_menu_{index}_{page}"),
+            InlineKeyboardButton("🔙 Back", callback_data=f"privacy_menu_{index}_{page}_{button_page}"),
         ]
     ]
     
@@ -7667,13 +7831,14 @@ async def group_privacy_menu_handler(c: Client, cb: CallbackQuery):
         parse_mode=ParseMode.HTML
     )
 
-@Altruix.bot.on_callback_query(filters.regex(r"^set_gp_(\d+)_(\d+)_(.+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^set_gp_(\d+)_(\d+)_(\d+)_(.+)$"))
 @log_errors
 async def set_group_privacy_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
-    value = cb.matches[0].group(3)
+    button_page = int(cb.matches[0].group(3))
+    value = cb.matches[0].group(4)
     
     if index >= len(Altruix.clients):
         await cb.answer("Session unavailable", show_alert=True)
@@ -7715,13 +7880,14 @@ async def set_group_privacy_handler(c: Client, cb: CallbackQuery):
 # CHAT STATISTICS HANDLER
 # ============================================================================
 
-@Altruix.bot.on_callback_query(filters.regex(r"^chat_stats_scan_(\d+)_(\d+)(?:_(force))?$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^chat_stats_scan_(\d+)_(\d+)_(\d+)(?:_(force))?$"))
 @log_errors
 async def chat_stats_scan_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
-    force = cb.matches[0].group(3) == "force"
+    button_page = int(cb.matches[0].group(3))
+    force = cb.matches[0].group(4) == "force"
     user_id = cb.from_user.id
     
     if index >= len(Altruix.clients):
@@ -7749,7 +7915,7 @@ async def chat_stats_scan_handler(c: Client, cb: CallbackQuery):
         if now - entry.get("timestamp", 0) < 3600: # 1 hour cache
             stats = entry.get("stats")
             await cb.answer("📊 Loading from cache...")
-            await display_chat_stats(c, cb, session_info, stats, index, page, cached=True)
+            await display_chat_stats(c, cb, session_info, stats, index, page, button_page, cached=True)
             return
 
     await cb.answer("🔍 Scanning chat statistics... This may take a moment.", show_alert=False)
@@ -7842,9 +8008,9 @@ async def chat_stats_scan_handler(c: Client, cb: CallbackQuery):
             json.dump(cache_data, f, indent=4)
     except: pass
 
-    await display_chat_stats(c, cb, session_info, stats, index, page)
+    await display_chat_stats(c, cb, session_info, stats, index, page, button_page)
 
-async def display_chat_stats(c, cb, session_info, stats, index, page, cached=False):
+async def display_chat_stats(c, cb, session_info, stats, index, page, button_page, cached=False):
     # Formatting Output
     text = (
         f"📊 <b>Chat Statistics</b> {'(CACHED)' if cached else ''}\n"
@@ -7876,8 +8042,8 @@ async def display_chat_stats(c, cb, session_info, stats, index, page, cached=Fal
     
     buttons = [
         [
-            InlineKeyboardButton("🔄 Update from Server", callback_data=f"chat_stats_scan_{index}_{page}_force"),
-            InlineKeyboardButton("🔙 Back to Session Info", callback_data=f"session_info_{index}_{page}")
+            InlineKeyboardButton("🔄 Update from Server", callback_data=f"chat_stats_scan_{index}_{page}_{button_page}_force"),
+            InlineKeyboardButton("🔙 Back to Session Info", callback_data=f"session_info_{index}_{page}_{button_page}")
         ]
     ]
     
@@ -7926,13 +8092,14 @@ async def sys_shutdown_handler(c: Client, cb: CallbackQuery):
 
 # Default Configuration
 # ✅ NEW: Startup Message Menu
-@Altruix.bot.on_callback_query(filters.regex(r"^startup_menu_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^startup_menu_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def startup_menu_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     await cb.answer()
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     mode = await Altruix.config.get_env(f"STARTUP_MSG_{index}") or "default"
     apply_type = await Altruix.config.get_env(f"STARTUP_MSG_TYPE_{index}") or "per_account"
@@ -7950,28 +8117,29 @@ async def startup_menu_handler(c: Client, cb: CallbackQuery):
     
     buttons = [
         [
-            InlineKeyboardButton(f"🔄 Mode: {mode_label}", f"startup_set_val_{index}_{page}"),
+            InlineKeyboardButton(f"🔄 Mode: {mode_label}", f"startup_set_val_{index}_{page}_{button_page}"),
         ],
         [
-            InlineKeyboardButton(f"⚙️ {gt('apply_type')}: {type_label}", f"startup_toggle_type_{index}_{page}"),
+            InlineKeyboardButton(f"⚙️ {gt('apply_type')}: {type_label}", f"startup_toggle_type_{index}_{page}_{button_page}"),
         ],
         [
-            InlineKeyboardButton("📝 Edit Custom Msg", f"startup_custom_menu_{index}_{page}"),
-            InlineKeyboardButton(gt("set_as_global"), f"startup_set_global_{index}_{page}"),
+            InlineKeyboardButton("📝 Edit Custom Msg", f"startup_custom_menu_{index}_{page}_{button_page}"),
+            InlineKeyboardButton(gt("set_as_global"), f"startup_set_global_{index}_{page}_{button_page}"),
         ],
         [
-            InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}"),
+            InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}_{button_page}"),
         ]
     ]
     
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
-@Altruix.bot.on_callback_query(filters.regex(r"^startup_set_val_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^startup_set_val_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def startup_set_val_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     key = f"STARTUP_MSG_{index}"
     
     current = await Altruix.config.get_env(key) or "default"
@@ -7986,14 +8154,16 @@ async def startup_set_val_handler(c: Client, cb: CallbackQuery):
     setattr(Altruix.config, key, new_val)
     
     await cb.answer(f"Startup: {new_val.upper()}")
+    cb.matches = [re.match(r"^startup_menu_(\d+)_(\d+)_(\d+)$", f"startup_menu_{index}_{page}_{button_page}")]
     await startup_menu_handler(c, cb)
 
-@Altruix.bot.on_callback_query(filters.regex(r"^startup_toggle_type_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^startup_toggle_type_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def startup_toggle_type_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     key = f"STARTUP_MSG_TYPE_{index}"
     
     current = await Altruix.config.get_env(key) or "per_account"
@@ -8003,6 +8173,7 @@ async def startup_toggle_type_handler(c: Client, cb: CallbackQuery):
     setattr(Altruix.config, key, new_val)
     
     await cb.answer(f"Apply Type: {new_val.upper()}")
+    cb.matches = [re.match(r"^startup_menu_(\d+)_(\d+)_(\d+)$", f"startup_menu_{index}_{page}_{button_page}")]
     await startup_menu_handler(c, cb)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^startup_set_global_(\d+)_(\d+)$"))
@@ -8022,13 +8193,14 @@ async def startup_set_global_handler(c: Client, cb: CallbackQuery):
     await cb.answer("✅ Berhasil dijadikan pesan GLOBAL!", show_alert=True)
 
 # ✅ NEW: Help Info Menu
-@Altruix.bot.on_callback_query(filters.regex(r"^help_info_menu_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^help_info_menu_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def help_info_menu_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     await cb.answer()
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     mode = await Altruix.config.get_env(f"HELP_INFO_{index}") or "default"
     apply_type = await Altruix.config.get_env(f"HELP_INFO_TYPE_{index}") or "per_account"
@@ -8046,28 +8218,29 @@ async def help_info_menu_handler(c: Client, cb: CallbackQuery):
     
     buttons = [
         [
-            InlineKeyboardButton(f"🔄 Mode: {mode_label}", f"help_info_set_val_{index}_{page}"),
+            InlineKeyboardButton(f"🔄 Mode: {mode_label}", f"help_info_set_val_{index}_{page}_{button_page}"),
         ],
         [
-            InlineKeyboardButton(f"⚙️ {gt('apply_type')}: {type_label}", f"help_info_toggle_type_{index}_{page}"),
+            InlineKeyboardButton(f"⚙️ {gt('apply_type')}: {type_label}", f"help_info_toggle_type_{index}_{page}_{button_page}"),
         ],
         [
-            InlineKeyboardButton("📝 Edit Custom Msg", f"help_info_custom_menu_{index}_{page}"),
-            InlineKeyboardButton(gt("set_as_global"), f"help_info_set_global_{index}_{page}"),
+            InlineKeyboardButton("📝 Edit Custom Msg", f"help_info_custom_menu_{index}_{page}_{button_page}"),
+            InlineKeyboardButton(gt("set_as_global"), f"help_info_set_global_{index}_{page}_{button_page}"),
         ],
         [
-            InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}"),
+            InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}_{button_page}"),
         ]
     ]
     
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
-@Altruix.bot.on_callback_query(filters.regex(r"^help_info_set_val_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^help_info_set_val_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def help_info_set_val_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     key = f"HELP_INFO_{index}"
     
     current = await Altruix.config.get_env(key) or "default"
@@ -8082,14 +8255,16 @@ async def help_info_set_val_handler(c: Client, cb: CallbackQuery):
     setattr(Altruix.config, key, new_val)
     
     await cb.answer(f"Help Info: {new_val.upper()}")
+    cb.matches = [re.match(r"^help_info_menu_(\d+)_(\d+)_(\d+)$", f"help_info_menu_{index}_{page}_{button_page}")]
     await help_info_menu_handler(c, cb)
 
-@Altruix.bot.on_callback_query(filters.regex(r"^help_info_toggle_type_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^help_info_toggle_type_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def help_info_toggle_type_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     key = f"HELP_INFO_TYPE_{index}"
     
     current = await Altruix.config.get_env(key) or "per_account"
@@ -8099,6 +8274,7 @@ async def help_info_toggle_type_handler(c: Client, cb: CallbackQuery):
     setattr(Altruix.config, key, new_val)
     
     await cb.answer(f"Apply Type: {new_val.upper()}")
+    cb.matches = [re.match(r"^help_info_menu_(\d+)_(\d+)_(\d+)$", f"help_info_menu_{index}_{page}_{button_page}")]
     await help_info_menu_handler(c, cb)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^help_info_set_global_(\d+)_(\d+)$"))
@@ -8118,7 +8294,7 @@ async def help_info_set_global_handler(c: Client, cb: CallbackQuery):
     await cb.answer("✅ Berhasil dijadikan pesan GLOBAL!", show_alert=True)
 
 
-@Altruix.bot.on_callback_query(filters.regex(r"^startup_custom_menu_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^startup_custom_menu_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def startup_custom_menu_handler(c: Client, cb: CallbackQuery):
     """Handler untuk menu kustomisasi startup message"""
@@ -8126,6 +8302,7 @@ async def startup_custom_menu_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     current_msg = await Altruix.config.get_env(f"STARTUP_CUSTOM_MSG_{index}") or "(Belum diatur)"
     
@@ -8150,17 +8327,17 @@ async def startup_custom_menu_handler(c: Client, cb: CallbackQuery):
     
     buttons = [
         [
-            InlineKeyboardButton("📝 Edit Startup Message", f"startup_custom_input_{index}_{page}"),
+            InlineKeyboardButton("📝 Edit Startup Message", f"startup_custom_input_{index}_{page}_{button_page}"),
         ],
         [
-            InlineKeyboardButton("🔙 Back", f"startup_menu_{index}_{page}"),
+            InlineKeyboardButton("🔙 Back", f"startup_menu_{index}_{page}_{button_page}"),
         ]
     ]
     
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
 
-@Altruix.bot.on_callback_query(filters.regex(r"^help_info_custom_menu_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^help_info_custom_menu_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def help_info_custom_menu_handler(c: Client, cb: CallbackQuery):
     """Handler untuk menu kustomisasi help info message"""
@@ -8168,6 +8345,7 @@ async def help_info_custom_menu_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     # 🕵️ Get Current Logic Type
     apply_type = await Altruix.config.get_env(f"HELP_INFO_TYPE_{index}") or "per_account"
@@ -8198,21 +8376,21 @@ async def help_info_custom_menu_handler(c: Client, cb: CallbackQuery):
     
     buttons = [
         [
-            InlineKeyboardButton(f"🔄 {gt('apply_type')}: {type_label}", f"help_info_toggle_type_{index}_{page}"),
+            InlineKeyboardButton(f"🔄 {gt('apply_type')}: {type_label}", f"help_info_toggle_type_{index}_{page}_{button_page}"),
         ],
         [
-            InlineKeyboardButton("📝 Edit Help Msg", f"help_info_custom_input_{index}_{page}"),
-            InlineKeyboardButton(gt("set_as_global"), f"help_info_set_global_{index}_{page}"),
+            InlineKeyboardButton("📝 Edit Help Msg", f"help_info_custom_input_{index}_{page}_{button_page}"),
+            InlineKeyboardButton(gt("set_as_global"), f"help_info_set_global_{index}_{page}_{button_page}"),
         ],
         [
-            InlineKeyboardButton("🔙 Back", f"help_info_menu_{index}_{page}"),
+            InlineKeyboardButton("🔙 Back", f"help_info_menu_{index}_{page}_{button_page}"),
         ]
     ]
     
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
 
-@Altruix.bot.on_callback_query(filters.regex(r"^help_info_custom_input_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^help_info_custom_input_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def help_info_custom_input_handler(c: Client, cb: CallbackQuery):
     """Memulai proses input pesan help kustom"""
@@ -8220,11 +8398,13 @@ async def help_info_custom_input_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     user_id = cb.from_user.id
     
     user_privacy_state[user_id] = {
         'session_index': index,
         'page': page,
+        'button_page': button_page,
         'step': 'waiting_help_custom_msg'
     }
     
@@ -8234,33 +8414,36 @@ async def help_info_custom_input_handler(c: Client, cb: CallbackQuery):
         f"Gunakan placeholders seperti <code>(userbot version)</code>, <code>{{ub_version}}</code> dll.\n\n"
         f"<i>Kirim /cancel untuk membatalkan.</i>",
         parse_mode=ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("cancel"), callback_data=f"help_info_custom_menu_{index}_{page}")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("cancel"), callback_data=f"help_info_custom_menu_{index}_{page}_{button_page}")]])
     )
 
 
-@Altruix.bot.on_callback_query(filters.regex(r"^help_info_toggle_type_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^help_info_toggle_type_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def help_info_toggle_type_callback(c: Client, cb: CallbackQuery):
     """Toggle antara mode Per-Akun dan Global"""
     if not await check_authorization(cb): return
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     current_type = await Altruix.config.get_env(f"HELP_INFO_TYPE_{index}") or "per_account"
     new_type = "global" if current_type == "per_account" else "per_account"
     
     await Altruix.config.add_env_to_db(f"HELP_INFO_TYPE_{index}", new_type, upsert=True)
     await cb.answer(f"✅ Mode diubah ke: {new_type.upper()}")
+    cb.matches = [re.match(r"^help_info_custom_menu_(\d+)_(\d+)_(\d+)$", f"help_info_custom_menu_{index}_{page}_{button_page}")]
     await help_info_custom_menu_handler(c, cb)
 
 
-@Altruix.bot.on_callback_query(filters.regex(r"^help_info_set_global_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^help_info_set_global_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def help_info_set_global_callback(c: Client, cb: CallbackQuery):
     """Menjadikan pesan kustom akun ini sebagai pesan Global"""
     if not await check_authorization(cb): return
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     current_msg = await Altruix.config.get_env(f"HELP_INFO_CUSTOM_MSG_{index}")
     if not current_msg:
@@ -8268,10 +8451,11 @@ async def help_info_set_global_callback(c: Client, cb: CallbackQuery):
         
     await Altruix.config.add_env_to_db("HELP_INFO_CUSTOM_MSG_GLOBAL", current_msg, upsert=True)
     await cb.answer("✅ Berhasil! Pesan kustom akun ini sekarang menjadi pesan GLOBAL.", show_alert=True)
+    cb.matches = [re.match(r"^help_info_custom_menu_(\d+)_(\d+)_(\d+)$", f"help_info_custom_menu_{index}_{page}_{button_page}")]
     await help_info_custom_menu_handler(c, cb)
 
 
-@Altruix.bot.on_callback_query(filters.regex(r"^startup_custom_input_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^startup_custom_input_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def startup_custom_input_handler(c: Client, cb: CallbackQuery):
     """Memulai proses input pesan startup kustom"""
@@ -8279,12 +8463,14 @@ async def startup_custom_input_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     user_id = cb.from_user.id
     
     # Simpan state ke global (atau local state dictionary)
     user_privacy_state[user_id] = {
         'session_index': index,
         'page': page,
+        'button_page': button_page,
         'step': 'waiting_startup_custom_msg'
     }
     
@@ -8606,17 +8792,19 @@ async def mntf_toggle_handler(c: Client, cb: CallbackQuery):
 # 🔍 TRACK PROFILE (SANGMATA) HANDLERS
 # ============================================================================
 
-@Altruix.bot.on_callback_query(filters.regex(r"^track_profile_start_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^track_profile_start_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def track_profile_start_cb_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     user_id = cb.from_user.id
     
     Altruix.user_track_state[user_id] = {
         "session_index": index,
         "page": page,
+        "button_page": button_page,
         "step": "waiting_target_id"
     }
     
@@ -8628,7 +8816,7 @@ async def track_profile_start_cb_handler(c: Client, cb: CallbackQuery):
         f"Userbot akan mengirimkan perintah <code>/id</code> ke @SangMata_beta_bot.\n\n"
         f"Ketik /cancel untuk membatalkan.",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔙 Back", callback_data=f"session_info_{index}_{page}")]
+            [InlineKeyboardButton("🔙 Back", callback_data=f"session_info_{index}_{page}_{button_page}")]
         ])
     )
 
@@ -8682,7 +8870,7 @@ async def track_profile_confirm_cb_handler(c: Client, cb: CallbackQuery):
             f"{status_summary}\n\n"
             f"<i>Perintah dikirim via Session {index + 1}.</i>",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔙 Menu Sesi", callback_data=f"session_info_{index}_{page}")]
+                [InlineKeyboardButton("🔙 Menu Sesi", callback_data=f"session_info_{index}_{page}_{state.get('button_page', 1)}")]
             ]),
             parse_mode=ParseMode.HTML
         )
@@ -8715,7 +8903,8 @@ async def env_manager_list_handler(c: Client, cb: CallbackQuery):
     """Handler untuk menampilkan daftar environment variables dari database"""
     if not await check_authorization(cb): return
     page = int(cb.matches[0].group(1))
-    await cb.answer("🔍 Loading ENV list...", show_alert=False)
+    gt = Altruix.get_string
+    await cb.answer(gt("CMD_RUNNING"), show_alert=False)
     
     # Ambil semua data dari env_col
     all_envs = set()
@@ -8766,10 +8955,34 @@ async def env_manager_list_handler(c: Client, cb: CallbackQuery):
     if nav_row:
         buttons.append(nav_row)
     
-    buttons.append([InlineKeyboardButton("➕ Add New ENV", callback_data="env_manager_add")])
+    buttons.append([
+        InlineKeyboardButton(gt("refresh"), callback_data=f"env_manager_refresh_{page}"),
+        InlineKeyboardButton("➕ Add New ENV", callback_data="env_manager_add")
+    ])
     buttons.append([InlineKeyboardButton("🔙 Back to Configs", callback_data="configs_home")])
     
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^env_manager_refresh_(\d+)$"))
+@log_errors
+async def env_manager_refresh_handler(c: Client, cb: CallbackQuery):
+    """Handler to reload ENV from DB and refresh list"""
+    if not await check_authorization(cb): return
+    page = int(cb.matches[0].group(1))
+    gt = Altruix.get_string
+    
+    await cb.answer(gt("CMD_RUNNING"))
+    
+    # Reload cache/vars from DB
+    await Altruix.config.load_vars_from_db()
+    
+    await cb.answer(gt("env_reloaded"), show_alert=True)
+    
+    # Update the list
+    new_match = re.match(r"^env_manager_list_(\d+)$", f"env_manager_list_{page}")
+    cb.matches = [new_match]
+    await env_manager_list_handler(c, cb)
 
 
 
@@ -9192,11 +9405,15 @@ logger.info(f"✅ Loaded → {__plugin_name__} v{PLUGIN_VERSION}")
 @Altruix.bot.on_callback_query(filters.regex(r"^sudo_settings_menu_(\d+)_(\d+)$"))
 @iuser_check
 @log_errors
+@Altruix.bot.on_callback_query(filters.regex(r"^sudo_settings_menu_(\d+)_(\d+)(?:_(\d+))?$"))
+@iuser_check
+@log_errors
 async def sudo_settings_menu_handler(c: Client, cb: CallbackQuery):
     """Handler for sudo settings menu"""
     await cb.answer()
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     # Get current sudo status
     apply_type = await Altruix.config.get_env("SUDO_APPLY_TYPE") or "global"
@@ -9220,20 +9437,20 @@ async def sudo_settings_menu_handler(c: Client, cb: CallbackQuery):
         [
             InlineKeyboardButton(
                 gt("sudo_toggle_off") if sudo_enabled else gt("sudo_toggle_on"),
-                f"sudo_toggle_{index}_{page}"
+                f"sudo_toggle_{index}_{page}_{button_page}"
             )
         ],
         [
             InlineKeyboardButton(
                 f"{gt('apply_type')}: {apply_type_text}",
-                f"sudo_apply_type_{index}_{page}"
+                f"sudo_apply_type_{index}_{page}_{button_page}"
             )
         ],
         [
-            InlineKeyboardButton(gt("change_sudo_prefix"), f"change_sudo_prefix_{index}_{page}")
+            InlineKeyboardButton(gt("change_sudo_prefix"), f"change_sudo_prefix_{index}_{page}_{button_page}")
         ],
         [
-            InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}")
+            InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}_{button_page}")
         ]
     ]
     
@@ -9244,7 +9461,7 @@ async def sudo_settings_menu_handler(c: Client, cb: CallbackQuery):
     )
 
 
-@Altruix.bot.on_callback_query(filters.regex(r"^sudo_toggle_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^sudo_toggle_(\d+)_(\d+)(?:_(\d+))?$"))
 @iuser_check
 @log_errors
 async def sudo_toggle_handler(c: Client, cb: CallbackQuery):
@@ -9252,6 +9469,7 @@ async def sudo_toggle_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     apply_type = await Altruix.config.get_env("SUDO_APPLY_TYPE") or "global"
     
@@ -9280,10 +9498,11 @@ async def sudo_toggle_handler(c: Client, cb: CallbackQuery):
     )
     
     await cb.answer(gt("sudo_enabled_msg") if new_status else gt("sudo_disabled_msg"), show_alert=True)
+    cb.matches = [re.match(r"^sudo_settings_menu_(\d+)_(\d+)_(\d+)$", f"sudo_settings_menu_{index}_{page}_{button_page}")]
     await sudo_settings_menu_handler(c, cb)
 
 
-@Altruix.bot.on_callback_query(filters.regex(r"^sudo_apply_type_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^sudo_apply_type_(\d+)_(\d+)(?:_(\d+))?$"))
 @iuser_check
 @log_errors
 async def sudo_apply_type_handler(c: Client, cb: CallbackQuery):
@@ -9291,6 +9510,7 @@ async def sudo_apply_type_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     current_type = await Altruix.config.get_env("SUDO_APPLY_TYPE") or "global"
     new_type = "per_account" if current_type == "global" else "global"
@@ -9304,30 +9524,40 @@ async def sudo_apply_type_handler(c: Client, cb: CallbackQuery):
 
 # ====================== PREFIX SETTINGS HANDLERS ======================
 
-@Altruix.bot.on_callback_query(filters.regex(r"^prefix_settings_menu_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^prefix_settings_menu_(\d+)_(\d+)(?:_(\d+))?$"))
 @iuser_check
 @log_errors
 async def prefix_settings_menu_handler(c: Client, cb: CallbackQuery):
     """Handler for prefix settings menu"""
-    await cb.answer()
+    try:
+        await cb.answer()
+    except QueryIdInvalid:
+        pass
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
-    # Get current prefixes
-    userbot_prefix = await Altruix.config.get_env("USER_CMD_HANDLER") or "."
+    # Get current prefixes and apply type
+    apply_type = await Altruix.config.get_env("PREFIX_APPLY_TYPE") or "global"
+    userbot_prefix = await Altruix.config.get_env("CMD_HANDLER") or "."
     sudo_prefix = await Altruix.config.get_env("SUDO_CMD_HANDLER") or "!"
     
     text = gt("prefix_settings_desc").format(userbot_prefix, sudo_prefix)
     
+    apply_type_text = gt("prefix_apply_type_global") if apply_type == "global" else gt("prefix_apply_type_account")
+    
     buttons = [
         [
-            InlineKeyboardButton(gt("change_userbot_prefix"), f"change_userbot_prefix_{index}_{page}")
+            InlineKeyboardButton(f"{gt('prefix_apply_type')}: {apply_type_text}", f"prefix_apply_type_{index}_{page}_{button_page}")
         ],
         [
-            InlineKeyboardButton(gt("change_sudo_prefix_menu"), f"change_sudo_prefix_{index}_{page}")
+            InlineKeyboardButton(gt("change_userbot_prefix"), f"change_userbot_prefix_{index}_{page}_{button_page}")
         ],
         [
-            InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}")
+            InlineKeyboardButton(gt("change_sudo_prefix_menu"), f"change_sudo_prefix_{index}_{page}_{button_page}")
+        ],
+        [
+            InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}_{button_page}")
         ]
     ]
     
@@ -9338,23 +9568,55 @@ async def prefix_settings_menu_handler(c: Client, cb: CallbackQuery):
     )
 
 
-@Altruix.bot.on_callback_query(filters.regex(r"^change_userbot_prefix_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^prefix_apply_type_(\d+)_(\d+)(?:_(\d+))?$"))
+@iuser_check
+@log_errors
+async def prefix_apply_type_handler(c: Client, cb: CallbackQuery):
+    """Toggle prefix apply type between global and per-account"""
+    await cb.answer()
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
+    
+    current_type = await Altruix.config.get_env("PREFIX_APPLY_TYPE") or "global"
+    new_type = "per-account" if current_type == "global" else "global"
+    
+    await Altruix.config.sync_env_to_db("PREFIX_APPLY_TYPE", new_type, upsert=True)
+    
+    type_display = gt("prefix_apply_type_global") if new_type == "global" else gt("prefix_apply_type_account")
+    await cb.answer(gt("prefix_apply_type_msg").format(type_display), show_alert=True)
+    
+    # Send mock cb matches to reuse same handler logic with button_page
+    cb.matches = [re.match(r"^prefix_settings_menu_(\d+)_(\d+)_(\d+)$", f"prefix_settings_menu_{index}_{page}_{button_page}")]
+    await prefix_settings_menu_handler(c, cb)
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^change_userbot_prefix_(\d+)_(\d+)(?:_(\d+))?$"))
 @iuser_check
 @log_errors
 async def change_userbot_prefix_handler(c: Client, cb: CallbackQuery):
     """Change userbot command prefix"""
-    await cb.answer()
+    try:
+        await cb.answer()
+    except QueryIdInvalid:
+        pass
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     user_id = cb.from_user.id
     
-    current_prefix = await Altruix.config.get_env("USER_CMD_HANDLER") or "."
+    apply_type = await Altruix.config.get_env("PREFIX_APPLY_TYPE") or "global"
+    
+    if apply_type == "global":
+        current_prefix = await Altruix.config.get_env("CMD_HANDLER") or "."
+    else:
+        current_prefix = await Altruix.config.get_env(f"CMD_HANDLER_{user_id}") or await Altruix.config.get_env("CMD_HANDLER") or "."
     
     await edit_cb(cb,
         f"<b>📝 {gt('change_userbot_prefix')}</b>\n\n"
         f"• <b>{gt('current_prefix')}:</b> <code>{current_prefix}</code>\n\n"
         f"{gt('prefix_prompt')}",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("back"), f"prefix_settings_menu_{index}_{page}")]]),
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("back"), f"prefix_settings_menu_{index}_{page}_{button_page}")]]),
         parse_mode=ParseMode.HTML
     )
     
@@ -9366,6 +9628,7 @@ async def change_userbot_prefix_handler(c: Client, cb: CallbackQuery):
             await msg.delete()
             await edit_cb(cb, gt("operation_cancelled"))
             await asyncio.sleep(2)
+            cb.matches = [re.match(r"^prefix_settings_menu_(\d+)_(\d+)_(\d+)$", f"prefix_settings_menu_{index}_{page}_{button_page}")]
             await prefix_settings_menu_handler(c, cb)
             return
         
@@ -9374,6 +9637,7 @@ async def change_userbot_prefix_handler(c: Client, cb: CallbackQuery):
             await msg.delete()
             await edit_cb(cb, gt("prefix_invalid"))
             await asyncio.sleep(2)
+            cb.matches = [re.match(r"^prefix_settings_menu_(\d+)_(\d+)_(\d+)$", f"prefix_settings_menu_{index}_{page}_{button_page}")]
             await prefix_settings_menu_handler(c, cb)
             return
         
@@ -9383,13 +9647,25 @@ async def change_userbot_prefix_handler(c: Client, cb: CallbackQuery):
             await msg.delete()
             await edit_cb(cb, gt("prefix_same_as_other").format(gt("prefix_sudo")))
             await asyncio.sleep(2)
+            cb.matches = [re.match(r"^prefix_settings_menu_(\d+)_(\d+)_(\d+)$", f"prefix_settings_menu_{index}_{page}_{button_page}")]
             await prefix_settings_menu_handler(c, cb)
             return
         
         await msg.delete()
         
-        # Update prefix
-        await Altruix.config.sync_env_to_db("USER_CMD_HANDLER", new_prefix, upsert=True)
+        # Update prefix in DB
+        apply_type = await Altruix.config.get_env("PREFIX_APPLY_TYPE") or "global"
+        
+        if apply_type == "global":
+            await Altruix.config.sync_env_to_db("CMD_HANDLER", new_prefix, upsert=True)
+            Altruix.user_command_handler = new_prefix
+        else:
+            await Altruix.config.sync_env_to_db(f"CMD_HANDLER_{user_id}", new_prefix, upsert=True)
+            # If current cb handler is the one we changed, update it in memory too
+            if c.me and c.me.id == user_id:
+                Altruix.user_command_handler = new_prefix
+        
+        await Altruix.config.load_vars_from_db()
         
         # Send log notification
         log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
@@ -9405,31 +9681,45 @@ async def change_userbot_prefix_handler(c: Client, cb: CallbackQuery):
         
         await edit_cb(cb, gt("prefix_updated").format(new_prefix), parse_mode=ParseMode.HTML)
         await asyncio.sleep(3)
+        cb.matches = [re.match(r"^prefix_settings_menu_(\d+)_(\d+)_(\d+)$", f"prefix_settings_menu_{index}_{page}_{button_page}")]
         await prefix_settings_menu_handler(c, cb)
         
-    except asyncio.TimeoutError:
+    except (asyncio.TimeoutError, ListenerTimeout):
         await edit_cb(cb, gt("timeout_retry"))
         await asyncio.sleep(2)
+        cb.matches = [re.match(r"^prefix_settings_menu_(\d+)_(\d+)_(\d+)$", f"prefix_settings_menu_{index}_{page}_{button_page}")]
         await prefix_settings_menu_handler(c, cb)
 
 
-@Altruix.bot.on_callback_query(filters.regex(r"^change_sudo_prefix_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^change_sudo_prefix_(\d+)_(\d+)(?:_(\d+))?$"))
+@iuser_check
+@log_errors
+@Altruix.bot.on_callback_query(filters.regex(r"^change_sudo_prefix_(\d+)_(\d+)(?:_(\d+))?$"))
 @iuser_check
 @log_errors
 async def change_sudo_prefix_handler(c: Client, cb: CallbackQuery):
     """Change sudo command prefix"""
-    await cb.answer()
+    try:
+        await cb.answer()
+    except QueryIdInvalid:
+        pass
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     user_id = cb.from_user.id
     
-    current_prefix = await Altruix.config.get_env("SUDO_CMD_HANDLER") or "!"
+    apply_type = await Altruix.config.get_env("PREFIX_APPLY_TYPE") or "global"
+    
+    if apply_type == "global":
+        current_prefix = await Altruix.config.get_env("SUDO_CMD_HANDLER") or "!"
+    else:
+        current_prefix = await Altruix.config.get_env(f"SUDO_CMD_HANDLER_{user_id}") or await Altruix.config.get_env("SUDO_CMD_HANDLER") or "!"
     
     await edit_cb(cb,
         f"<b>🔧 {gt('change_sudo_prefix_menu')}</b>\n\n"
         f"• <b>{gt('current_prefix')}:</b> <code>{current_prefix}</code>\n\n"
         f"{gt('prefix_prompt')}",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("back"), f"prefix_settings_menu_{index}_{page}")]]),
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("back"), f"prefix_settings_menu_{index}_{page}_{button_page}")]]),
         parse_mode=ParseMode.HTML
     )
     
@@ -9441,6 +9731,7 @@ async def change_sudo_prefix_handler(c: Client, cb: CallbackQuery):
             await msg.delete()
             await edit_cb(cb, gt("operation_cancelled"))
             await asyncio.sleep(2)
+            cb.matches = [re.match(r"^prefix_settings_menu_(\d+)_(\d+)_(\d+)$", f"prefix_settings_menu_{index}_{page}_{button_page}")]
             await prefix_settings_menu_handler(c, cb)
             return
         
@@ -9449,22 +9740,34 @@ async def change_sudo_prefix_handler(c: Client, cb: CallbackQuery):
             await msg.delete()
             await edit_cb(cb, gt("prefix_invalid"))
             await asyncio.sleep(2)
+            cb.matches = [re.match(r"^prefix_settings_menu_(\d+)_(\d+)_(\d+)$", f"prefix_settings_menu_{index}_{page}_{button_page}")]
             await prefix_settings_menu_handler(c, cb)
             return
         
         # Check if same as userbot prefix
-        userbot_prefix = await Altruix.config.get_env("USER_CMD_HANDLER") or "."
+        userbot_prefix = await Altruix.config.get_env("CMD_HANDLER") or "."
         if new_prefix == userbot_prefix:
             await msg.delete()
             await edit_cb(cb, gt("prefix_same_as_other").format(gt("prefix_userbot")))
             await asyncio.sleep(2)
+            cb.matches = [re.match(r"^prefix_settings_menu_(\d+)_(\d+)_(\d+)$", f"prefix_settings_menu_{index}_{page}_{button_page}")]
             await prefix_settings_menu_handler(c, cb)
             return
         
         await msg.delete()
         
-        # Update prefix
-        await Altruix.config.sync_env_to_db("SUDO_CMD_HANDLER", new_prefix, upsert=True)
+        # Update prefix in DB
+        apply_type = await Altruix.config.get_env("PREFIX_APPLY_TYPE") or "global"
+        
+        if apply_type == "global":
+            await Altruix.config.sync_env_to_db("SUDO_CMD_HANDLER", new_prefix, upsert=True)
+            Altruix.sudo_cmd_handler = new_prefix
+        else:
+            await Altruix.config.sync_env_to_db(f"SUDO_CMD_HANDLER_{user_id}", new_prefix, upsert=True)
+            if c.me and c.me.id == user_id:
+                Altruix.sudo_cmd_handler = new_prefix
+        
+        await Altruix.config.load_vars_from_db()
         
         # Send log notification
         log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
@@ -9480,15 +9783,17 @@ async def change_sudo_prefix_handler(c: Client, cb: CallbackQuery):
         
         await edit_cb(cb, gt("prefix_updated").format(new_prefix), parse_mode=ParseMode.HTML)
         await asyncio.sleep(3)
+        cb.matches = [re.match(r"^prefix_settings_menu_(\d+)_(\d+)_(\d+)$", f"prefix_settings_menu_{index}_{page}_{button_page}")]
         await prefix_settings_menu_handler(c, cb)
         
-    except asyncio.TimeoutError:
+    except (asyncio.TimeoutError, ListenerTimeout):
         await edit_cb(cb, gt("timeout_retry"))
         await asyncio.sleep(2)
+        cb.matches = [re.match(r"^prefix_settings_menu_(\d+)_(\d+)_(\d+)$", f"prefix_settings_menu_{index}_{page}_{button_page}")]
         await prefix_settings_menu_handler(c, cb)
 # ─── GLOBAL PURGEME HANDLERS ──────────────────────────────────────────
 
-@Altruix.bot.on_callback_query(filters.regex(r"^gpurgeme_menu_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^gpurgeme_menu_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 @iuser_check
 async def gpurgeme_menu_handler(c: Client, cb: CallbackQuery):
@@ -9498,6 +9803,7 @@ async def gpurgeme_menu_handler(c: Client, cb: CallbackQuery):
     
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     if index >= len(Altruix.clients):
         await edit_cb(cb, "Session not found.")
@@ -9559,6 +9865,7 @@ async def gpurgeme_menu_handler(c: Client, cb: CallbackQuery):
         state["is_settings"] = True
         state["index"] = index
         state["page"] = page
+        state["button_page"] = button_page
         # Capture the message ID so the dashboard updater knows what to target
         if cb.message:
             state["dashboard_chat_id"] = cb.message.chat.id
@@ -9653,3 +9960,101 @@ async def gp_inline_handler(c: Client, q: InlineQuery):
         cache_time=0,
         is_personal=True
     )
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^toggle_sess_stat_(\d+)_(\d+)(?:_(\d+))?$"))
+@iuser_check
+@log_errors
+async def toggle_session_status_handler(c: Client, cb: CallbackQuery):
+    """Handler to confirm session disable/enable."""
+    gt = Altruix.get_string
+    await cb.answer()
+    
+    index = int(cb.matches[0].group(1))
+    callback_page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
+    
+    if index >= len(Altruix.clients):
+        await edit_cb(cb, "Session not found.")
+        return
+
+    client = Altruix.clients[index]
+    user_id = getattr(getattr(client, 'myself', None), 'id', None)
+    
+    if not user_id:
+        await edit_cb(cb, "Failed to get user ID.")
+        return
+        
+    is_disabled = Altruix.is_session_disabled(user_id)
+    
+    action = "enable" if is_disabled else "disable"
+    confirm_text = gt("confirm_enable") if is_disabled else gt("confirm_disable")
+    
+    buttons = [
+        [
+            InlineKeyboardButton(gt("yes"), f"confirm_toggle_sess_stat_{index}_{callback_page}_{button_page}_{action}"),
+            InlineKeyboardButton(gt("no"), f"session_info_{index}_{callback_page}_{button_page}")
+        ]
+    ]
+    
+    await edit_cb(cb, text=confirm_text, reply_markup=InlineKeyboardMarkup(buttons))
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^confirm_toggle_sess_stat_(\d+)_(\d+)_(\d+)_(enable|disable)$"))
+@iuser_check
+@log_errors
+async def toggle_session_status_confirm_handler(c: Client, cb: CallbackQuery):
+    """Handler to execute session disable/enable."""
+    gt = Altruix.get_string
+    await cb.answer()
+    
+    index = int(cb.matches[0].group(1))
+    callback_page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3))
+    action = cb.matches[0].group(4)
+    
+    if index >= len(Altruix.clients):
+        await edit_cb(cb, "Session not found.")
+        return
+
+    client = Altruix.clients[index]
+    user_id = getattr(getattr(client, 'myself', None), 'id', None)
+    
+    if not user_id:
+        await edit_cb(cb, "Failed to get user ID.")
+        return
+        
+    disable = (action == "disable")
+    Altruix.toggle_session_disable(user_id, disable)
+    
+    status_text = gt("inactive_caps") if disable else gt("active_caps")
+    await edit_cb(cb, gt("session_status_changed").format(status_text))
+    
+    # Log to Log Group
+    if Altruix.log_chat:
+        try:
+            log_msg = (
+                f"📝 <b>Session Status Changed</b>\n\n"
+                f"👤 <b>User:</b> {getattr(client.myself, 'first_name', 'Unknown')} (`{user_id}`)\n"
+                f"📊 <b>New Status:</b> {status_text}\n"
+                f"👮 <b>By:</b> {cb.from_user.mention}"
+            )
+            await Altruix.bot.send_message(Altruix.log_chat, log_msg)
+        except Exception as e:
+            logger.error(f"Failed to log session status change: {e}")
+            
+    # Redirect back to session info after short delay
+    await asyncio.sleep(1.5)
+    
+    # We need to manually construct the callback implementation to redirect
+    # Or just call the exist handler logic? Easier to simulate callback
+    # For now, let's just trigger the session_info handler via recursion logic or just edit message again
+    
+    # Re-use the session info logic
+    from pyrogram.types import CallbackQuery as CQ
+    new_cb = cb
+    # Update matches to match session_info regex structure
+    import re
+    new_cb.matches = [re.match(r"^session_info_(\d+)_(\d+)_(\d+)$", f"session_info_{index}_{callback_page}_{button_page}")]
+    
+    await sessions_info_cb_handler(c, new_cb, index, callback_page, button_page)

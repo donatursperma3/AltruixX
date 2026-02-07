@@ -126,7 +126,7 @@ class AltruixClient:
         self.clients: List[Client] = []
         self.cmd_list = {}
         self.all_lang_strings = {}
-        self.__version__ = "0.0.9.14"
+        self.__version__ = "0.0.9.54"
         self.selected_lang = "english"
         self.local_lang_file = "./Main/localization"
         self.cmd_list = {} # {plugin_name: [cmd_data, ...]}
@@ -211,11 +211,66 @@ class AltruixClient:
         # Registry to track added handlers (prevent duplication)
         self.handler_registry = set()
         
+        # ✅ Disabled Sessions Management
+        self.disabled_sessions = set()
+        self.load_disabled_sessions()
+        
         # Initialize BotManager BEFORE _setup()
         from Main.core.bot_manager import BotManager
         self.bot_manager = BotManager(self)
         
         self.loop.run_until_complete(self._setup(restart=False, *args, **kwargs))
+
+
+    async def edit_cb(self, cb: CallbackQuery, text: str, **kwargs):
+        try:
+            await cb.edit_message_text(text, **kwargs)
+        except MessageNotModified:
+            pass
+        except Exception as e:
+            self.log(f"edit_cb failed: {e}", level=logging.ERROR)
+
+    async def delete_cb(self, cb: CallbackQuery):
+        try:
+            await cb.message.delete()
+        except Exception as e:
+            self.log(f"delete_cb failed: {e}", level=logging.ERROR)
+    def load_disabled_sessions(self):
+        """Load list of disabled user_ids from file."""
+        try:
+            path = "disabled_sessions.json" # Root directory
+            if os.path.exists(path):
+                import json
+                with open(path, "r") as f:
+                    data = json.load(f)
+                    self.disabled_sessions = set(int(x) for x in data)
+            else:
+                self.disabled_sessions = set()
+        except Exception as e:
+            self.log(f"Failed to load disabled sessions: {e}", level=logging.ERROR)
+            self.disabled_sessions = set()
+
+    def save_disabled_sessions(self):
+        """Save list of disabled user_ids to file."""
+        try:
+            path = "disabled_sessions.json"
+            import json
+            with open(path, "w") as f:
+                json.dump(list(self.disabled_sessions), f)
+        except Exception as e:
+            self.log(f"Failed to save disabled sessions: {e}", level=logging.ERROR)
+
+    def is_session_disabled(self, user_id: int) -> bool:
+        """Check if a session (user_id) is disabled."""
+        return user_id in self.disabled_sessions
+
+    def toggle_session_disable(self, user_id: int, disable: bool):
+        """Enable or disable a session."""
+        if disable:
+            self.disabled_sessions.add(user_id)
+        else:
+            self.disabled_sessions.discard(user_id)
+        self.save_disabled_sessions()
 
     @property
     def total_commands(self) -> int:
@@ -372,56 +427,34 @@ class AltruixClient:
             )
         self.log("Localization setup complete!")
 
-    def get_string(self, keyword: str, args: tuple = None):
-        selected_lang = self.selected_lang
-        if self.all_lang_strings.get(selected_lang) and self.all_lang_strings.get(
-            selected_lang
-        ).get(keyword):
-            str_ing = self.all_lang_strings.get(selected_lang).get(keyword)
-            return (
-                (
-                    str_ing.format(*args)
-                    if isinstance(args, tuple)
-                    else str_ing.format(args)
-                )
-                if args
-                else str_ing
-            )
-
-    async def edit_cb(self, cb: CallbackQuery, text: str, **kwargs):
-        """
-        Helper to edit callback query message safely.
-        Handles both regular and inline query messages.
-        """
-        if "parse_mode" not in kwargs:
-            kwargs["parse_mode"] = ParseMode.HTML
-        
+    def get_string(self, keyword: str, args: tuple = None) -> str:
         try:
-            if cb.message:
-                return await cb.message.edit(text, **kwargs)
-            else:
-                return await cb.edit_message_text(text, **kwargs)
-        except Exception as e:
-            if "MESSAGE_NOT_MODIFIED" in str(e):
-                return True
-            logger.error(f"Error in edit_cb: {e}")
-            return False
-
-    async def delete_cb(self, cb: CallbackQuery):
-        """Helper to delete callback query message safely."""
-        try:
-            if cb.message:
-                return await cb.message.delete()
-        except Exception as e:
-            logger.error(f"Error in delete_cb: {e}")
-            return False
-
+            # ✅ Robust fallback for Bot Assistant
+            lang_code = self.selected_lang or "id"
+            if self.bot and not self.clients: # Independent Bot Mode
+                lang_code = "id"
+            
+            # Corrected attribute name: all_lang_strings
+            lang = self.all_lang_strings.get(lang_code) or self.all_lang_strings.get("english") or self.all_lang_strings.get("id") or self.all_lang_strings.get("en")
+            if not lang:
+                return keyword
+            
+            format_string = lang.get(keyword, keyword)
+            if args:
+                 return format_string.format(*args) if isinstance(args, tuple) else format_string.format(args)
+            return format_string
+        except Exception:
+            return keyword
     def on_message(self, custom_filters, group=1, bot_mode_unsupported=False):
         custom_filters &= ~filters.command(
             self.cmd_list_s, [self.user_command_handler, self.sudo_cmd_handler]
         )
         def decorator(func):
             async def wrapper(client, message: Message):
+                # ✅ Check if session is disabled
+                if client.me.id in self.disabled_sessions:
+                    return
+
                 if str(message.chat.type).lower().startswith("chattype."):
                     chat_type = str(
                         (str(message.chat.type).lower()).split("chattype.")[1]
@@ -447,6 +480,10 @@ class AltruixClient:
     def on_edited_message(self, custom_filters, group=1, bot_mode_unsupported=False):
         def decorator(func):
             async def wrapper(client, message: Message):
+                # ✅ Check if session is disabled
+                if client.me.id in self.disabled_sessions:
+                    return
+
                 if str(message.chat.type).lower().startswith("chattype."):
                     chat_type = str(
                         (str(message.chat.type).lower()).split("chattype.")[1]
@@ -472,6 +509,9 @@ class AltruixClient:
     def on_callback_query(self, custom_filters, group=1):
         def decorator(func):
             async def wrapper(client, cb: CallbackQuery):
+                # ✅ Check if session is disabled
+                if client.me and client.me.id in self.disabled_sessions:
+                    return
                 try:
                     await func(client, cb)
                 except StopPropagation as e:
@@ -491,6 +531,9 @@ class AltruixClient:
     def on_deleted_messages(self, custom_filters, group=1):
         def decorator(func):
             async def wrapper(client, messages: List[Message]):
+                # ✅ Check if session is disabled
+                if client.me.id in self.disabled_sessions:
+                    return
                 try:
                     await func(client, messages)
                 except StopPropagation as e:
@@ -630,6 +673,10 @@ class AltruixClient:
         )
         def decorator(func):
             async def wrapper(client, message: Message):
+                # ✅ Check if session is disabled
+                if client.me and client.me.id in self.disabled_sessions:
+                    return
+                
                 # ✅ MULTI-CLIENT CROSS-EXECUTION PREVENTION
                 # Prevent Client B from executing commands sent by Client A
                 # when both are active in the same instance.
@@ -660,7 +707,18 @@ class AltruixClient:
                 
                 # ✅ CRITICAL SAFETY CHECK: Ensure it's actually a command
                 if message.text:
-                    if not any(message.text.startswith(p) for p in [self.user_command_handler, self.sudo_cmd_handler]):
+                    apply_type_p = await self.config.get_env("PREFIX_APPLY_TYPE") or "global"
+                    if apply_type_p == "global":
+                        valid_prefixes = [self.user_command_handler, self.sudo_cmd_handler]
+                    else:
+                        u_pref = await self.config.get_env(f"CMD_HANDLER_{client.me.id}") or self.user_command_handler
+                        s_pref = await self.config.get_env(f"SUDO_CMD_HANDLER_{client.me.id}") or self.sudo_cmd_handler
+                        valid_prefixes = [u_pref, s_pref]
+                    
+                    # [DEBUG] Log wrapper safety check
+                    # logger.info(f"[WRAPPER DEBUG] Client: {client.me.id if client.me else 'None'}, Valid Prefixes: {valid_prefixes}, Msg: {message.text[:20] if message.text else 'None'}")
+                    
+                    if not any(message.text.startswith(p) for p in valid_prefixes):
                         return
 
                 chat_type = message.chat.type
@@ -1413,9 +1471,11 @@ class AltruixClient:
                         self.log(
                             self.get_string("session_loaded").format(count + 1, total_sessions, user_id, full_name, username, is_owner)
                         )
+                        # ✅ Store session string for easier removal later
+                        client.session_string = each
                         self.clients.append(client)
-                        if me.id != self.config.OWNER_ID:
-                            self.ourselves.append(me)
+                        # ✅ ALWAYS add to ourselves to keep indices in sync with clients
+                        self.ourselves.append(me)
                     except Exception as err:
                         self.log(self.get_string("session_unloaded").format(count + 1, total_sessions, err), level=50)
                         self.log(self.get_string("session_invalid"))
@@ -1690,13 +1750,34 @@ class AltruixClient:
             raise e
 
     async def remove_session(self, index: int, user: User = None) -> User:
-        session = self.config.pop_session(index)
-        await self.config.pop_element_from_list("SESSIONS", session)
-        removed_session_info = self.ourselves.pop(index)
+        # ✅ SAFER REMOVAL: Check indices before popping
+        if index >= len(self.clients):
+            raise IndexError("Client index out of range")
+        
+        client_to_remove = self.clients[index]
+        session_str = getattr(client_to_remove, "session_string", None)
+        
+        # Remove from SESSIONS list (config/database)
+        if session_str:
+            try:
+                # First try removing from local list and .env
+                self.config.remove_session_by_value(session_str)
+                # Then remove from database
+                await self.config.pop_element_from_list("SESSIONS", session_str)
+            except Exception as e:
+                self.log(f"Failed to remove session string from config/db: {e}", level=logging.WARNING)
+
+        # Remove from memory lists
+        removed_session_info = self.ourselves.pop(index) if index < len(self.ourselves) else None
+        if not removed_session_info:
+            removed_session_info = getattr(client_to_remove, "me", None) or getattr(client_to_remove, "myself", None)
+
         try:
-            await self.clients.pop(index).stop()
-        except Exception:
-            pass
+            removed_client = self.clients.pop(index)
+            await removed_client.stop()
+        except Exception as e:
+            self.log(f"Error stopping removed client: {e}")
+
         if not self.ourselves:
             self.training_wheels_protocol = True
             self.log("[TWP] has been enabled!")

@@ -16,7 +16,7 @@ from Main.internals.settings import (
 )
 
 # ====================== CUSTOM BOT MENU HANDLER ======================
-@Altruix.bot.on_callback_query(filters.regex(r"^custom_bot_menu_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^custom_bot_menu_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def custom_bot_menu_handler(c: Client, cb: CallbackQuery):
     """Handler untuk menu custom bot per session"""
@@ -25,6 +25,7 @@ async def custom_bot_menu_handler(c: Client, cb: CallbackQuery):
     
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     # Check if custom bot exists for this session
     session_client = Altruix.clients[index]
@@ -47,12 +48,12 @@ async def custom_bot_menu_handler(c: Client, cb: CallbackQuery):
     
     buttons = []
     if has_custom_bot:
-        buttons.append([InlineKeyboardButton("🗑️ Remove Bot", f"custom_bot_remove_{index}_{page}")])
-        buttons.append([InlineKeyboardButton(gt("bot_info"), f"custom_bot_info_{index}_{page}")])
+        buttons.append([InlineKeyboardButton("🗑️ Remove Bot", f"custom_bot_remove_{index}_{page}_{button_page}")])
+        buttons.append([InlineKeyboardButton(gt("bot_info"), f"custom_bot_info_{index}_{page}_{button_page}")])
     else:
-        buttons.append([InlineKeyboardButton(gt("set_bot_token"), f"custom_bot_set_{index}_{page}")])
+        buttons.append([InlineKeyboardButton(gt("set_bot_token"), f"custom_bot_set_{index}_{page}_{button_page}")])
     
-    buttons.append([InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}")])
+    buttons.append([InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}_{button_page}")])
     
     await cb.message.edit(
         text=txt,
@@ -61,7 +62,7 @@ async def custom_bot_menu_handler(c: Client, cb: CallbackQuery):
     )
 
 
-@Altruix.bot.on_callback_query(filters.regex(r"^custom_bot_set_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^custom_bot_set_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def custom_bot_set_handler(c: Client, cb: CallbackQuery):
     """Handler untuk set bot token"""
@@ -70,13 +71,15 @@ async def custom_bot_set_handler(c: Client, cb: CallbackQuery):
     
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     user_id = cb.from_user.id
     
     # Set state untuk menunggu input token
     Altruix.user_env_manager_state[user_id] = {
         'action': 'custom_bot_token',
         'index': index,
-        'page': page
+        'page': page,
+        'button_page': button_page
     }
     Altruix.log(f"DEBUG: Set custom_bot_token state for {user_id}. Keys in Altruix.state: {list(Altruix.user_env_manager_state.keys())}", level=20)
     
@@ -85,13 +88,13 @@ async def custom_bot_set_handler(c: Client, cb: CallbackQuery):
         f"Please send the bot token from @BotFather.\n\n"
         f"<i>Reply to this message with the token.</i>",
         reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton(gt("cancel"), f"custom_bot_menu_{index}_{page}")
+            InlineKeyboardButton(gt("cancel"), f"custom_bot_menu_{index}_{page}_{button_page}")
         ]]),
         parse_mode=ParseMode.HTML
     )
 
 
-@Altruix.bot.on_callback_query(filters.regex(r"^custom_bot_remove_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^custom_bot_remove_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def custom_bot_remove_handler(c: Client, cb: CallbackQuery):
     """Handler untuk remove custom bot"""
@@ -99,6 +102,7 @@ async def custom_bot_remove_handler(c: Client, cb: CallbackQuery):
     
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     session_client = Altruix.clients[index]
     user_id = session_client.me.id
@@ -125,7 +129,7 @@ async def custom_bot_remove_handler(c: Client, cb: CallbackQuery):
         )
 
 
-@Altruix.bot.on_callback_query(filters.regex(r"^custom_bot_remove_confirm_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^custom_bot_remove_confirm_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def custom_bot_remove_confirm_handler(c: Client, cb: CallbackQuery):
     """Handler untuk execute remove custom bot setelah konfirmasi"""
@@ -133,6 +137,7 @@ async def custom_bot_remove_confirm_handler(c: Client, cb: CallbackQuery):
     
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     session_client = Altruix.clients[index]
     user_id = session_client.me.id
@@ -159,7 +164,7 @@ async def custom_bot_remove_confirm_handler(c: Client, cb: CallbackQuery):
         )
 
 
-@Altruix.bot.on_callback_query(filters.regex(r"^custom_bot_info_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^custom_bot_info_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def custom_bot_info_handler(c: Client, cb: CallbackQuery):
     """Handler untuk info custom bot"""
@@ -168,6 +173,7 @@ async def custom_bot_info_handler(c: Client, cb: CallbackQuery):
     
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     session_client = Altruix.clients[index]
     user_id = session_client.me.id
@@ -188,14 +194,14 @@ async def custom_bot_info_handler(c: Client, cb: CallbackQuery):
     await cb.message.edit(
         text=txt,
         reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton(gt("back"), f"custom_bot_menu_{index}_{page}")
+            InlineKeyboardButton(gt("back"), f"custom_bot_menu_{index}_{page}_{button_page}")
         ]]),
         parse_mode=ParseMode.HTML
     )
 
 
 # ====================== CACHE LOG MENU HANDLER ======================
-@Altruix.bot.on_callback_query(filters.regex(r"^cache_log_menu_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^cache_log_menu_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def cache_log_menu_handler(c: Client, cb: CallbackQuery):
     """Handler untuk menu cache log notification"""
@@ -204,6 +210,7 @@ async def cache_log_menu_handler(c: Client, cb: CallbackQuery):
     
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     # Get current status
     cache_log_enabled = getattr(Altruix.config, "CACHE_LOG_ENABLED", True)
@@ -219,8 +226,8 @@ async def cache_log_menu_handler(c: Client, cb: CallbackQuery):
     toggle_text = "❌ Disable" if cache_log_enabled else "✅ Enable"
     
     buttons = [
-        [InlineKeyboardButton(toggle_text, f"cache_log_toggle_{index}_{page}")],
-        [InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}")]
+        [InlineKeyboardButton(toggle_text, f"cache_log_toggle_{index}_{page}_{button_page}")],
+        [InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}_{button_page}")]
     ]
     
     await cb.message.edit(
@@ -230,7 +237,7 @@ async def cache_log_menu_handler(c: Client, cb: CallbackQuery):
     )
 
 
-@Altruix.bot.on_callback_query(filters.regex(r"^cache_log_toggle_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^cache_log_toggle_(\d+)_(\d+)(?:_(\d+))?$"))
 @log_errors
 async def cache_log_toggle_handler(c: Client, cb: CallbackQuery):
     """Handler untuk toggle cache log notification"""
@@ -238,6 +245,7 @@ async def cache_log_toggle_handler(c: Client, cb: CallbackQuery):
     
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     try:
         # Get current status
@@ -340,6 +348,7 @@ async def handle_custom_bot_token_input(c: Client, m: Message):
         Altruix.log(f"DEBUG: Authorized. Preparing to start bot for index {state.get('index')}", level=20)
         index = state['index']
         page = state['page']
+        button_page = state.get('button_page', 1)
         token = input_text.strip()
         
         # Validate token format (basic)

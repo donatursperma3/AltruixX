@@ -8,7 +8,7 @@
 
 
 
-PLUGIN_VERSION = "0.0.1"
+PLUGIN_VERSION = "0.0.2"
 import time
 from Main import Altruix
 from style import ping_format as pf
@@ -22,16 +22,16 @@ from pyrogram.types import (
 
 
 @Altruix.bot.on_message(
-    filters.command("ping", Altruix.bot_handler) & filters.user(Altruix.config.OWNER_ID)
+    filters.command("ping", Altruix.bot_handler) & filters.user(Altruix.auth_users)
 )
 @log_errors
-async def restart_command_handler(c: Client, m: Message):
+async def ping_command_handler(c: Client, m: Message):
     start = time.perf_counter()
     await c.invoke(Ping(ping_id=9999999))
     uptime = Essentials.get_readable_time(time.time() - Altruix.start_time)
     end = time.perf_counter()
     ms = round((end - start) * 1000, 2)
-    await m.edit(
+    await m.reply(
         Altruix.get_string("PING_TEXT").format(
             pf["ping_emoji1"], ms, pf["ping_emoji2"], uptime
         ),

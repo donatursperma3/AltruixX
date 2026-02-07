@@ -93,7 +93,7 @@ class BaseConfig(object):
     def pop_session(self, index: int) -> Optional[str]:
         if len(self.SESSIONS) == 0:
             raise Exception("No sessions to pop")
-        if index <= len(self.SESSIONS):
+        if index < len(self.SESSIONS):
             for trials in range(5):
                 try:
                     popped = self.SESSIONS.pop(index)
@@ -125,6 +125,38 @@ class BaseConfig(object):
             f.write(new_data)
         logging.info("The unstable session was removed successfully")
         return popped
+
+    def remove_session_by_value(self, session_str: str) -> bool:
+        """Remove a session by its string value instead of index."""
+        if session_str not in self.SESSIONS:
+            logging.warning("Session string not found in local list.")
+            return False
+        
+        try:
+            self.SESSIONS.remove(session_str)
+        except ValueError:
+            return False
+
+        env_path = pathlib.Path().cwd().joinpath(".env")
+        if not env_path.exists():
+            return True
+            
+        with open(env_path, "r") as f:
+            raw_data = f.read()
+            
+        with open(env_path, "w") as f:
+            if re.search(r"SESSIONS=(?:[^\r\n\t\f\v]+)?", raw_data):
+                new_data = re.sub(
+                    r"SESSIONS=(?:[^\r\n\t\f\v]+)?",
+                    f"SESSIONS={' '.join(self.SESSIONS)}",
+                    raw_data,
+                )
+            else:
+                new_data = f'{raw_data}\nSESSIONS={" ".join(self.SESSIONS)}'
+            f.write(new_data)
+            
+        logging.info("Session string removed successfully and .env updated.")
+        return True
 
     def append_session(self, session: str) -> None:
         if session not in self.SESSIONS:

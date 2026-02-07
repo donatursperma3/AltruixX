@@ -8,17 +8,19 @@
 
 import os
 import html
+import asyncio
 import traceback
 from datetime import datetime
 from Main import Altruix
 from typing import Union
 from functools import wraps
+from pyromod.exceptions import ListenerTimeout
 from Main.internals.set_inline import set_inline_in_botfather
 from pyrogram.types import Message, InlineQuery, CallbackQuery
 from pyrogram import Client, StopPropagation, ContinuePropagation
 from pyrogram.errors import (
     MessageEmpty, MessageIdInvalid, BotInlineDisabled, MessageNotModified,
-    UserNotParticipant, MessageTooLong # ✅ Added
+    UserNotParticipant, MessageTooLong, QueryIdInvalid # ✅ Added
 )
 from pyrogram.types import LinkPreviewOptions, ReplyParameters
 from Main.utils.file_helpers import make_file_from_text # ✅ Added
@@ -74,8 +76,18 @@ def iuser_check(func):
     - Pastikan selalu ada respons (tidak diam)
     """
 
-    async def wrapper(client: Client, update: Union[CallbackQuery, InlineQuery]):
-        user = update.from_user
+    async def wrapper(*args, **kwargs):
+        client = None
+        update = None
+        
+        # Identify client and update from args
+        for arg in args:
+            if isinstance(arg, Client):
+                client = arg
+            elif hasattr(arg, 'from_user'):
+                update = arg
+        
+        user = update.from_user if update else None
         if not user:
             return
 
@@ -140,8 +152,6 @@ def iuser_check(func):
                     chat_info = "📱 Inline Interface"
                     chat_id = "Inline"
                     
-                    # Try to extract chat ID from data or via inline_message_id if possible
-                    # (Help often contains si={index}&cid={chat_id})
                     import re
                     if cid_match := re.search(r"cid=(-?\d+)", cb_data):
                         extracted_cid = cid_match.group(1)
@@ -156,8 +166,16 @@ def iuser_check(func):
             time_now = datetime.now().strftime("%H:%M:%S")
             
             # Accurate Bot Identification
-            me = getattr(client, "me", None)
+            me = getattr(client, "me", None) if 'client' in locals() else None
+            # If client not in args, try to find it
             if not me:
+                for arg in args:
+                    if isinstance(arg, Client):
+                        client = arg
+                        me = getattr(client, "me", None)
+                        break
+
+            if client and not me:
                 try: me = await client.get_me()
                 except: me = None
             
@@ -182,12 +200,11 @@ def iuser_check(func):
 
         if is_sudo:
             try:
-                return await func(client, update)
+                return await func(*args, **kwargs)
             except MessageNotModified:
-                # ✅ Jangan diam — beri feedback halus
-                await update.answer("ℹ️ Tidak ada perubahan diperlukan.", show_alert=True)
+                if isinstance(update, CallbackQuery):
+                    await update.answer("ℹ️ Tidak ada perubahan diperlukan.", show_alert=True)
             except Exception as e:
-                # ✅ TANGANI ERROR INTERNAL & KIRIM KE LOG
                 error_text = (
                     f"💥 <b>ERROR SAAT MENANGANI CALLBACK</b>\n"
                     f"• User: {full_name} ({user_id})\n"
@@ -195,23 +212,31 @@ def iuser_check(func):
                     f"• Error: <code>{str(e)}</code>"
                 )
                 await send_log_message(error_text)
-                # ✅ Beri feedback ke user
-                await update.answer("❌ Terjadi kesalahan internal. Owner telah diberi tahu.", show_alert=True)
+                if isinstance(update, CallbackQuery):
+                    try:
+                        await update.answer("❌ Terjadi kesalahan internal. Owner telah diberi tahu.", show_alert=True)
+                    except QueryIdInvalid:
+                        pass
         else:
-            # ✅ Respon jelas untuk user tidak terotorisasi
             if isinstance(update, CallbackQuery):
-                await update.answer(
-                    "⛔ Anda tidak diizinkan menggunakan tombol ini.",
-                    show_alert=True,
-                    cache_time=5
-                )
+                try:
+                    await update.answer(
+                        "⛔ Anda tidak diizinkan menggunakan tombol ini.",
+                        show_alert=True,
+                        cache_time=5
+                    )
+                except QueryIdInvalid:
+                    pass
             else:
-                await update.answer(
-                    [],
-                    switch_pm_text="⛔ Anda tidak diizinkan menggunakan fitur ini.",
-                    switch_pm_parameter="unauthorized",
-                    cache_time=5
-                )
+                try:
+                    await update.answer(
+                        [],
+                        switch_pm_text="⛔ Anda tidak diizinkan menggunakan fitur ini.",
+                        switch_pm_parameter="unauthorized",
+                        cache_time=5
+                    )
+                except QueryIdInvalid:
+                    pass
 
     return wrapper
 
@@ -231,6 +256,9 @@ def log_errors(func):
             MessageIdInvalid,
             UserNotParticipant,
             MessageEmpty,
+            ListenerTimeout,   # ✅ Added: Ignore listener timeout as crash
+            asyncio.TimeoutError, # ✅ Added: Also ignore standard timeout
+            QueryIdInvalid      # ✅ Added: Ignore expired queries
         ):
             pass  # error yang bisa diabaikan
         except ContinuePropagation as e:

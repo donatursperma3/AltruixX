@@ -67,13 +67,17 @@ class BotManager:
                 logger.error("API_ID or API_HASH missing")
                 return False
 
+            # Ensure separate in-memory session
+            # We remove workdir to ensure purely memory-based if supported,
+            # or allow default if that helps avoid the specific 'closed database' race on file.
+            # Using in_memory=True SHOULD use MemoryStorage.
             bot_client = Client(
                 name=f"custom_bot_{user_id}",
                 api_id=api_id,
                 api_hash=api_hash,
                 bot_token=token,
-                in_memory=True,
-                workdir="cache/custom_bots",
+                in_memory=True, # Ensure no DB file is touched
+                # workdir="cache/custom_bots", # Removed to prevent any file-based session mixup
                 loop=self.altruix.loop
             )
 
@@ -82,18 +86,9 @@ class BotManager:
             self.custom_bots[user_id] = bot_client
             self._bot_tokens[user_id] = token
             
-            # Copy dispatcher groups from main bot to support inline queries etc if they are generic
-            # BUT: handlers often use @Altruix.bot decorator which registers to Altruix.bot
-            # We need to manually add them if we want functionality.
-            # Assuming basic functionality or that we register specific handlers.
-            # For "Ping" inline query, the handler is on Altruix.bot. 
-            # We must copy it.
             if hasattr(self.altruix, 'bot'):
-                # Copy handlers (shallow copy of list)
                  for group, handlers in self.altruix.bot.dispatcher.groups.items():
                     for handler in handlers:
-                        # We should be careful not to add handlers that are bound to specific client instance if any
-                        # But mostly pyrogram handlers are functions.
                         bot_client.add_handler(handler, group)
 
             logger.info(f"✅ Custom bot started for {user_id}: {bot_client.me.username}")
@@ -104,12 +99,16 @@ class BotManager:
 
     async def stop_custom_bot(self, user_id: int):
         if user_id in self.custom_bots:
+            client = self.custom_bots[user_id]
             try:
-                await self.custom_bots[user_id].stop()
-            except:
-                pass
-            del self.custom_bots[user_id]
-            del self._bot_tokens[user_id]
+                if client.is_connected:
+                    await client.stop()
+            except Exception as e:
+                logger.warning(f"Error stopping custom bot for {user_id}: {e}")
+            finally:
+                # Remove from dicts
+                self.custom_bots.pop(user_id, None)
+                self._bot_tokens.pop(user_id, None)
 
     def get_bot(self, user_id: int) -> Client:
         """Get custom bot for user, or fallback to default Altruix.bot."""

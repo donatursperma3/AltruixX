@@ -133,8 +133,8 @@ def get_gp_control_kb(unique_id, state):
         # Limit Adjustment
         kb.append([
             InlineKeyboardButton(f"Limit: {limit}", "gp_noop"),
-            InlineKeyboardButton("-5", f"gp_limit_m5_{unique_id}"),
-            InlineKeyboardButton("+5", f"gp_limit_p5_{unique_id}")
+            InlineKeyboardButton("-2", f"gp_limit_m2_{unique_id}"),
+            InlineKeyboardButton("+2", f"gp_limit_p2_{unique_id}")
         ])
         
         # Delay Adjustment
@@ -571,7 +571,7 @@ async def gpurgeme_cmd(client: Client, message: Message):
                 "client": client,
                 "status": "idle",
                 "target": "all",
-                "limit": 10,
+                "limit": 6,
                 "delay": 6,
                 "ignore_admin": True,
                 "mode": "newest",
@@ -781,8 +781,8 @@ async def gpurgeme_callback_handler(c: Client, cb: CallbackQuery):
                 state["target"] = sub_action
                 await cb.answer(f"Target set to {state['target']}")
             elif action == "limit":
-                if sub_action == "m5": state["limit"] = max(1, state["limit"] - 5)
-                elif sub_action == "p5": state["limit"] += 5
+                if sub_action == "m2": state["limit"] = max(1, state["limit"] - 2)
+                elif sub_action == "p2": state["limit"] += 2
                 Altruix.log(f"DEBUG: Limit updated to {state['limit']} for {unique_id}", level=20)
                 await cb.answer(f"Limit: {state['limit']} per chat")
             elif action == "delay":
