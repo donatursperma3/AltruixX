@@ -153,6 +153,8 @@ Main/plugins/userbot/.goutputstream-CIPMO1
 Main/assets/images/logo.jpg
 
 # extra
+DATABASE/
+DATABASE/*.json
 pm_logger_user_settings.json
 pm_logger_bot_settings.json
 altruix_local_db.json
