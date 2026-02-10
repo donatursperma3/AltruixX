@@ -7,7 +7,7 @@
 # All rights reserved.
 
 
-PLUGIN_VERSION = "0.0.3"
+PLUGIN_VERSION = "0.0.5"
 import os
 import aiofiles
 from Main import Altruix
@@ -136,6 +136,91 @@ async def evaluate_command_handler(c: Client, m: Message):
         force_paste="-paste" in user_args,
         force_file=f"eval_output.txt;{cmd_}" if "f" in user_args else None,
         reply_to_message_id=msg_id,
+    )
+
+
+@Altruix.register_on_cmd(
+    ["reval"],
+    cmd_help={
+        "help": "Executes the python snippet from a replied message.",
+        "example": ".reval (reply to message)",
+        "user_args": [
+            {
+                "arg": "p",
+                "help": "Pastes the output to paste bin.",
+                "requires_input": False,
+            },
+            {
+                "arg": "s",
+                "help": "Sends the output to log chat.",
+                "requires_input": False,
+            },
+        ],
+    },
+)
+@log_errors
+async def re_evaluate_command_handler(c: Client, m: Message):
+    rm = m.reply_to_message
+    if not rm:
+        return await m.reply_msg("REPLY_TO_MSG_REQUIRED")
+    
+    code = (rm.text or rm.caption or "").strip()
+    if not code:
+        return await m.reply_msg("NO_CODE_FOUND")
+
+    # Start processing
+    m_ = await m.handle_message("PROCESSING")
+    arg_keys = [a.key.lower() for a in m.user_args]
+    
+    start_time = pc()
+    from pyrogram.errors import FloodWait as FW
+    try:
+        results = await eval_py(c, code, m)
+    except FW as e:
+        # Handling floodwait by waiting and retrying
+        await asyncio.sleep(e.value)
+        results = await eval_py(c, code, m)
+    except Exception:
+        import traceback
+        results = traceback.format_exc()
+    
+    end_time = pc()
+    time_taken = round(end_time - start_time, 3)
+    
+    header = f"<b>RE-EVAL (v{PLUGIN_VERSION})</b>\n"
+    header += f"🕒 <code>{time_taken}s</code>\n\n"
+    
+    # Trim input if too long for preview
+    code_preview = code[:500] + ("..." if len(code) > 500 else "")
+    final_output = f"{header}<b>INPUT:</b>\n<code>{code_preview}</code>\n\n<b>OUTPUT</b>:\n<code>{results.strip()}</code>"
+    
+    cmd_label = "<b>Re-Eval Output</b>"
+    
+    # Logic for sending to log chat if 's' flag is present
+    if "s" in arg_keys and Altruix.log_chat:
+        log_text = f"🎯 <b>Re-Eval Log</b>\nUser: {m.from_user.id}\n\n{final_output}"
+        try:
+            if "p" in arg_keys:
+                url = await Paste(log_text).paste()
+                await c.send_message(Altruix.log_chat, f"{cmd_label}\n<b>Pasted to:</b> {url}")
+            elif len(log_text) > TGLIMITS.MESSAGE_TEXT:
+                file_name = f"reval_log_{m.id}.txt"
+                async with aiofiles.open(file_name, "w", encoding="utf-8") as f:
+                    await f.write(log_text)
+                await c.send_document(Altruix.log_chat, file_name, caption=cmd_label)
+                if os.path.exists(file_name):
+                    os.remove(file_name)
+            else:
+                await c.send_message(Altruix.log_chat, log_text)
+        except Exception as le:
+            Altruix.log(f"Failed to send reval log: {le}", level=30)
+
+    # Final response to user
+    await m_.edit_msg(
+        final_output,
+        force_paste="p" in arg_keys,
+        force_file=f"reval_output.txt;{cmd_label}" if len(final_output) > TGLIMITS.MESSAGE_TEXT else None,
+        reply_to_message_id=m.id,
     )
 
 

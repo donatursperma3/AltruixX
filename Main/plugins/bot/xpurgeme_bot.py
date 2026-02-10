@@ -342,7 +342,7 @@ async def purgeme_callback_handler(client: Client, cb: CallbackQuery):
         chat_id, user_id = unique_id.rsplit("_", 1)
         from Main.utils.access_control import is_authorized_user
         if str(cb.from_user.id) != str(user_id) and not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-            unauth = Altruix.get_string("access_denied") or "🚫 Access Denied"
+            unauth = Altruix.get_string("ACCESS_DENIED")
             return await cb.answer(unauth, show_alert=True)
     except (ValueError, IndexError):
         return await cb.answer("❌ Invalid Session ID.", show_alert=True)
@@ -589,7 +589,7 @@ async def purgeme_start_handler(client: Client, message):
                     chat_id, user_id = unique_id.rsplit("_", 1)
                     from Main.utils.access_control import is_authorized_user
                     if str(message.from_user.id) != str(user_id) and not is_authorized_user(message.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-                        msg = Altruix.get_string("access_denied") or "🚫 Access Denied"
+                        msg = Altruix.get_string("ACCESS_DENIED")
                         await message.reply(msg)
                         return
                     

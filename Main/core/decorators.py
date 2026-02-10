@@ -11,7 +11,7 @@ import html
 import asyncio
 import traceback
 from datetime import datetime
-from Main import Altruix
+from .client import Altruix
 from typing import Union
 from functools import wraps
 from pyromod.exceptions import ListenerTimeout
@@ -110,6 +110,16 @@ def iuser_check(func):
         elif log_type == "off":
             should_log = False
 
+        if is_sudo:
+            result_status = "AUTHORIZED"
+        else:
+            if isinstance(update, CallbackQuery):
+                result_status = "AUTH_BUTTON_DENIED"
+            elif isinstance(update, InlineQuery):
+                result_status = "AUTH_FEATURE_DENIED"
+            else:
+                result_status = "AUTH_FEATURE_DENIED"
+
         if should_log:
             chat_info = "N/A"
             chat_id = "N/A"
@@ -184,17 +194,19 @@ def iuser_check(func):
                 bot_username = f"Userbot Session ({bot_username})"
             
             log_message = (
-                f"🎯 <b>Callback Button Clicked</b>\n"
+                f"{Altruix.get_string('LOGGER_CALLBACK_TITLE')}\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"• Bot: 🤖 {bot_username}\n"
-                f"• User: 👤 <a href='tg://user?id={user_id}'>{html.escape(full_name)}</a>\n"
-                f"• Username: <code>{username}</code>\n"
-                f"• User ID: <code>{user_id}</code>\n"
-                f"• Chat: {chat_info}\n"
-                f"• Chat ID: <code>{chat_id}</code>\n"
-                f"• Data: <code>{cb_data}</code>\n"
-                f"• Message:\n<blockquote>{html.escape(str(msg_text)[:1000])}</blockquote>\n"
-                f"🕒 Time: <code>{time_now}</code>"
+                f"{Altruix.get_string('LOGGER_CALLBACK_BOT').format(bot_username)}\n"
+                f"{Altruix.get_string('LOGGER_CALLBACK_USER').format(user_id, html.escape(full_name))}\n"
+                f"{Altruix.get_string('LOGGER_CALLBACK_USERNAME').format(username)}\n"
+                f"{Altruix.get_string('LOGGER_CALLBACK_USER_ID').format(user_id)}\n"
+                f"{Altruix.get_string('LOGGER_CALLBACK_CHAT').format(chat_info)}\n"
+                f"{Altruix.get_string('LOGGER_CALLBACK_CHAT_ID').format(chat_id)}\n"
+                f"{Altruix.get_string('LOGGER_CALLBACK_DATA').format(cb_data)}\n"
+                f"{Altruix.get_string('LOGGER_CALLBACK_RESULT').format(Altruix.get_string(result_status))}\n"
+                f"{Altruix.get_string('LOGGER_CALLBACK_MSG_HEADER')}\n"
+                f"<blockquote>{html.escape(str(msg_text)[:1000])}</blockquote>\n"
+                f"{Altruix.get_string('LOGGER_CALLBACK_TIME').format(time_now)}"
             )
             await send_log_message(log_message)
 
@@ -221,22 +233,24 @@ def iuser_check(func):
             if isinstance(update, CallbackQuery):
                 try:
                     await update.answer(
-                        "⛔ Anda tidak diizinkan menggunakan tombol ini.",
+                        Altruix.get_string("AUTH_BUTTON_DENIED"),
                         show_alert=True,
                         cache_time=5
                     )
                 except QueryIdInvalid:
                     pass
-            else:
+            elif isinstance(update, InlineQuery):
                 try:
                     await update.answer(
                         [],
-                        switch_pm_text="⛔ Anda tidak diizinkan menggunakan fitur ini.",
+                        switch_pm_text=Altruix.get_string("AUTH_FEATURE_DENIED"),
                         switch_pm_parameter="unauthorized",
                         cache_time=5
                     )
                 except QueryIdInvalid:
                     pass
+            elif isinstance(update, Message):
+                await update.reply_msg(Altruix.get_string("AUTH_FEATURE_DENIED"))
 
     return wrapper
 
@@ -300,7 +314,7 @@ def log_errors(func):
             if u:
                 # Chat ID/Link
                 chat = getattr(u, "chat", None)
-                if not chat and hasattr(u, "message"): # CallbackQuery
+                if not chat and getattr(u, "message", None): # CallbackQuery
                     chat = u.message.chat
                 
                 if chat:

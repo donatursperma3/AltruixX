@@ -308,13 +308,7 @@ async def start_relayspam(client: Client, destination: str, start_delay: float, 
         validation_success, validation_result = await validate_chat(client, destination, timeout=15)
         if not validation_success:
             await send_log_message(
-                f"❌ **VALIDATION FAILED**\n"
-                f"Tujuan: {destination}\n"
-                f"Error: {validation_result}\n"
-                f"💡 **Solusi:**\n"
-                f"- Pastikan userbot sudah join ke grup/channel\n"
-                f"- Untuk channel private, pastikan userbot adalah admin atau sudah diundang\n"
-                f"- Periksa kembali ID chat atau username",
+                Altruix.get_string("SPAM_VALIDATION_FAILED").format(dest=destination, error=validation_result),
                 client=client
             )
             return False
@@ -322,7 +316,7 @@ async def start_relayspam(client: Client, destination: str, start_delay: float, 
         chat_id, target_chat = validation_result
 
         if chat_id in TELAYSPAM_TASKS:
-            await send_log_message(f"**Error:** Task relayspam sudah berjalan di {target_chat.title}.", client=client)
+            await send_log_message(Altruix.get_string("SPAM_ALREADY_RUNNING").format(chat=target_chat.title), client=client)
             return False
 
         TELAYSPAM_TASKS[chat_id] = {
@@ -350,11 +344,7 @@ async def start_relayspam(client: Client, destination: str, start_delay: float, 
             userbot_info = f"👤 **[Akun Aktif: {me.first_name}](tg://user?id={me.id})**"
         except:
             pass
-        notif_msg = (
-            f"Notifikasi Task\n"
-            f"Tugas spam akan segera dimulai.\n"
-            f"✦ · · ──────✪────── · · ✦\n"
-            f"Tujuan     : {target_chat.title}\n"
+        notif_msg = Altruix.get_string("SPAM_TASK_NOTIF").format(title=target_chat.title) + (
             f"Chat_ID    : -100{clean_id}\n"
             f"Perintah   : {HANDLER}relayspam\n"
             f"Mode       : {'Batch' if is_batch else 'Acak'}\n"
@@ -480,7 +470,7 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
                                     )
                         except Exception as del_err:
                             if "CHANNEL_INVALID" in str(del_err) or "CHANNEL_PRIVATE" in str(del_err):
-                                error_msg = f"❌ **AKSES DITOLAK**\nUserbot kehilangan akses ke {target_chat.title}.\nTask dihentikan secara otomatis."
+                                error_msg = Altruix.get_string("SPAM_CANCELLED_ACCESS").format(chat=target_chat.title)
                                 Altruix.log(f"[SPAM_LOOP_ERROR] {error_msg} - Detail: {str(del_err)}", level=40)
                                 await send_log_message(error_msg, client=client)
                                 if chat_id in TELAYSPAM_TASKS:
@@ -511,14 +501,11 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
                             percentage = (sent_count / count) * 100 if count > 0 else 0
                             char_count = len(msg)
                             await send_log_message(
-                                f"Pesan terkirim\n"
-                                f"Mode: {'Batch' if is_batch else 'Acak'}\n"
-                                f"Delay: {random_delay:.2f} detik\n"
-                                f"Sisa: {remaining} pesan\n"
-                                f"Progress: {percentage:.2f}%\n"
-                                f"Length: {char_count} karakter\n"
-                                f"React: {react_status}\n"
-                                f"Pesan: {msg[:50]}..." if len(msg) > 50 else f"Pesan: {msg}",
+                                Altruix.get_string("SPAM_MSG_SENT").format(
+                                    mode='Batch' if is_batch else 'Acak',
+                                    delay=random_delay,
+                                    remain=remaining
+                                ) + f"\nProgress: {percentage:.2f}%\nLength: {char_count} chars\nReact: {react_status}\nMsg: {msg[:50]}...",
                                 reply_to_message_id=x_msg.id if x_msg else None,
                                 client=client
                             )
@@ -538,7 +525,7 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
                             TELAYSPAM_TASKS[chat_id]["pause_event"].clear()
                             break
                         except (errors.ChannelInvalid, errors.ChannelPrivate) as e:
-                            error_msg = f"❌ **TUGAS DIBATALKAN**\nUserbot kehilangan akses ke {target_chat.title}.\nTask dihentikan secara otomatis."
+                            error_msg = Altruix.get_string("SPAM_CANCELLED_ACCESS").format(chat=target_chat.title)
                             Altruix.log(f"[SPAM_LOOP_ERROR] {error_msg} - Detail: {str(e)}", level=40)
                             await send_log_message(error_msg, client=client)
                             if chat_id in TELAYSPAM_TASKS:
@@ -582,7 +569,7 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
                                 )
                     except Exception as del_err:
                         if "CHANNEL_INVALID" in str(del_err) or "CHANNEL_PRIVATE" in str(del_err):
-                            error_msg = f"❌ **AKSES DITOLAK**\nUserbot kehilangan akses ke {target_chat.title}.\nTask dihentikan secara otomatis."
+                            error_msg = Altruix.get_string("SPAM_CANCELLED_ACCESS").format(chat=target_chat.title)
                             Altruix.log(f"[SPAM_LOOP_ERROR] {error_msg} - Detail: {str(del_err)}", level=40)
                             await send_log_message(error_msg, client=client)
                             if chat_id in TELAYSPAM_TASKS:
@@ -612,14 +599,11 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
                         percentage = (sent_count / count) * 100 if count > 0 else 0
                         char_count = len(msg)
                         await send_log_message(
-                            f"Pesan terkirim\n"
-                            f"Mode: {'Batch' if is_batch else 'Acak'}\n"
-                            f"Delay: {random_delay:.2f} detik\n"
-                            f"Sisa: {remaining} pesan\n"
-                            f"Progress: {percentage:.2f}%\n"
-                            f"Length: {char_count} karakter\n"
-                            f"React: {react_status}\n"
-                            f"Pesan: {msg[:50]}..." if len(msg) > 50 else f"Pesan: {msg}",
+                            Altruix.get_string("SPAM_MSG_SENT").format(
+                                mode='Batch' if is_batch else 'Acak',
+                                delay=random_delay,
+                                remain=remaining
+                            ) + f"\nProgress: {percentage:.2f}%\nLength: {char_count} chars\nReact: {react_status}\nMsg: {msg[:50]}...",
                             reply_to_message_id=x_msg.id if x_msg else None,
                             client=client
                         )
@@ -639,7 +623,7 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
                         TELAYSPAM_TASKS[chat_id]["pause_event"].clear()
                         break
                     except (errors.ChannelInvalid, errors.ChannelPrivate) as e:
-                        error_msg = f"❌ **TUGAS DIBATALKAN**\nUserbot kehilangan akses ke {target_chat.title}.\nTask dihentikan secara otomatis."
+                        error_msg = Altruix.get_string("SPAM_CANCELLED_ACCESS").format(chat=target_chat.title)
                         Altruix.log(f"[SPAM_LOOP_ERROR] {error_msg} - Detail: {str(e)}", level=40)
                         await send_log_message(error_msg, client=client)
                         if chat_id in TELAYSPAM_TASKS:
@@ -651,10 +635,7 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
                         await asyncio.sleep(5)
         if TELAYSPAM_TASKS.get(chat_id, {}).get("running", False):
             await send_log_message(
-                f"[SELESAI]:\n"
-                f"Spam di {target_chat.title} telah selesai!\n"
-                f"Terkirim {sent_count} pesan ({'batch' if is_batch else 'acak'}), delay acak [{start_delay}-{stop_delay}] dengan interval {step} detik,\n"
-                f"Total sukses hapus {total_del_suk} pesan, total gagal hapus {total_del_ggl} pesan.",
+                Altruix.get_string("SPAM_COMPLETED").format(chat=target_chat.title, count=sent_count),
                 reply_to_message_id=x_msg.id if x_msg else None,
                 client=client
             )
@@ -674,7 +655,7 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
 async def see_msglist_handler(c: Client, cb):
     from Main.utils.access_control import is_authorized_user
     if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-        msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+        msg = Altruix.get_string("ACCESS_DENIED")
         return await cb.answer(msg, show_alert=True)
         
     chat_id = cb.data.split("_")[-1]
@@ -684,7 +665,7 @@ async def see_msglist_handler(c: Client, cb):
     elif chat_id in COMPLETED_TASKS:
         config = COMPLETED_TASKS[chat_id]
     if not config:
-        await safe_cb_answer(cb, "❌ Tidak ada data pesan untuk ditampilkan.", show_alert=True)
+        await safe_cb_answer(cb, Altruix.get_string("SPAM_NO_DATA"), show_alert=True)
         return
     msg_list = config["msg_list"]
     is_batch = config["is_batch"]
@@ -712,12 +693,12 @@ async def see_msglist_handler(c: Client, cb):
         if len(preview_text) > 200:
             userbot_client = TELAYSPAM_TASKS.get(chat_id, {}).get("client") or (Altruix.clients[0] if Altruix.clients else None)
             await send_log_message(preview_text, client=userbot_client)
-            await safe_cb_answer(cb, "ℹ️ Preview dikirim sebagai pesan.", show_alert=True)
+            await safe_cb_answer(cb, Altruix.get_string("SPAM_PREVIEW_SENT"), show_alert=True)
         else:
             await safe_cb_answer(cb, preview_text, show_alert=True)
     except Exception as e:
         Altruix.log(f"Error in see_msglist_handler: {e}", level=40)
-        await safe_cb_answer(cb, "❌ Gagal menampilkan preview.", show_alert=True)
+        await safe_cb_answer(cb, Altruix.get_string("SPAM_PREVIEW_FAIL"), show_alert=True)
 
 
 @Altruix.bot.on_callback_query(filters.regex(r"^confirm_start_[^_]+?\|\|[^_]+?_(confirm|cancel)$"))
@@ -726,7 +707,7 @@ async def confirm_start_handler(c: Client, cb):
     try:
         from Main.utils.access_control import is_authorized_user
         if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-            msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+            msg = Altruix.get_string("ACCESS_DENIED")
             return await cb.answer(msg, show_alert=True)
             
         full_data = cb.data
@@ -746,7 +727,7 @@ async def confirm_start_handler(c: Client, cb):
         if action == "confirm":
             if temp_id not in PENDING_CONFIRMATIONS:
                 Altruix.log(f"[WARN] Konfirmasi kadaluarsa atau tidak ditemukan: {temp_id}", level=30)
-                await safe_cb_answer(cb, "❌ Konfirmasi sudah kadaluarsa.", show_alert=True)
+                await safe_cb_answer(cb, Altruix.get_string("SPAM_CONFIRM_EXPIRED"), show_alert=True)
                 return
             data = PENDING_CONFIRMATIONS.pop(temp_id)
             Altruix.log(f"[INFO] Memulai task dari konfirmasi: {temp_id}", level=20)
@@ -782,10 +763,10 @@ async def confirm_start_handler(c: Client, cb):
                 data["react_enabled"]
             )
             if success:
-                await safe_cb_answer(cb, "✅ Task berhasil dimulai!", show_alert=True)
+                await safe_cb_answer(cb, Altruix.get_string("SPAM_TASK_STARTED"), show_alert=True)
                 Altruix.log(f"[SUCCESS] Task dimulai dari konfirmasi: {temp_id}", level=20)
             else:
-                await safe_cb_answer(cb, "❌ Gagal memulai task.", show_alert=True)
+                await safe_cb_answer(cb, Altruix.get_string("SPAM_START_FAIL"), show_alert=True)
                 Altruix.log(f"[ERROR] Gagal memulai task dari konfirmasi: {temp_id}", level=40)
         elif action == "cancel":
             if temp_id in PENDING_CONFIRMATIONS:
@@ -793,10 +774,10 @@ async def confirm_start_handler(c: Client, cb):
                 Altruix.log(f"[INFO] Konfirmasi dibatalkan: {temp_id}", level=20)
             else:
                 Altruix.log(f"[WARN] Konfirmasi sudah tidak ada saat cancel: {temp_id}", level=30)
-            await safe_cb_answer(cb, "❌ Pembuatan task dibatalkan.", show_alert=True)
+            await safe_cb_answer(cb, Altruix.get_string("SPAM_CANCEL_CREATE"), show_alert=True)
             await Altruix.delete_cb(cb)
         else:
-            await safe_cb_answer(cb, "Aksi tidak dikenali.", show_alert=True)
+            await safe_cb_answer(cb, Altruix.get_string("SPAM_UNKNOWN_ACTION"), show_alert=True)
             Altruix.log(f"[WARN] Aksi tidak dikenali: {action}", level=30)
     except Exception as e:
         Altruix.log(f"[CRITICAL] Error di confirm_start_handler: {e}", level=50)
@@ -807,7 +788,7 @@ async def confirm_start_handler(c: Client, cb):
 async def preview_msglist_from_confirm(c: Client, cb):
     from Main.utils.access_control import is_authorized_user
     if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-        msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+        msg = Altruix.get_string("ACCESS_DENIED")
         return await cb.answer(msg, show_alert=True)
         
     full_data = cb.data
@@ -1145,8 +1126,7 @@ async def check_all_relayspam_cmd(c: Client, m: Message):
 async def toggle_purge_handler(c: Client, cb):
     from Main.utils.access_control import is_authorized_user
     if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-        msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
-        return await cb.answer(msg, show_alert=True)
+        return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
         
     data = cb.data
     chat_id = data.split("_")[-1]
@@ -1183,13 +1163,12 @@ async def toggle_purge_handler(c: Client, cb):
 async def toggle_reaction_handler(c: Client, cb):
     from Main.utils.access_control import is_authorized_user
     if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-        msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
-        return await cb.answer(msg, show_alert=True)
+        return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
         
     data = cb.data
     chat_id = data.split("_")[-1]
     if chat_id not in TELAYSPAM_TASKS:
-        await safe_cb_answer(cb, "Task tidak aktif.", show_alert=True)
+        await safe_cb_answer(cb, Altruix.get_string("SPAM_TASK_INACTIVE"), show_alert=True)
         return
     config = TELAYSPAM_TASKS[chat_id]["config"]
     current_enabled = config.get("react_enabled", True)
@@ -1218,13 +1197,12 @@ async def toggle_reaction_handler(c: Client, cb):
 async def select_emoji_handler(c: Client, cb):
     from Main.utils.access_control import is_authorized_user
     if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-        msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
-        return await cb.answer(msg, show_alert=True)
+        return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
         
     data = cb.data
     chat_id = data.split("_")[-1]
     if chat_id not in TELAYSPAM_TASKS:
-        await safe_cb_answer(cb, "Task tidak aktif.", show_alert=True)
+        await safe_cb_answer(cb, Altruix.get_string("SPAM_TASK_INACTIVE"), show_alert=True)
         return
     keyboard = []
     row = []
@@ -1251,15 +1229,14 @@ async def select_emoji_handler(c: Client, cb):
 async def set_emoji_handler(c: Client, cb):
     from Main.utils.access_control import is_authorized_user
     if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-        msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
-        return await cb.answer(msg, show_alert=True)
+        return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
         
     data = cb.data
     parts = data.split("_")
     chat_id = parts[2]
     emoji = parts[3]
     if chat_id not in TELAYSPAM_TASKS:
-        await safe_cb_answer(cb, "Task tidak aktif.", show_alert=True)
+        await safe_cb_answer(cb, Altruix.get_string("SPAM_TASK_INACTIVE"), show_alert=True)
         return
     if emoji not in VALID_EMOJIS:
         await safe_cb_answer(cb, "Emoji tidak valid!", show_alert=True)
@@ -1292,8 +1269,7 @@ async def set_emoji_handler(c: Client, cb):
 async def cancel_emoji_handler(c: Client, cb):
     from Main.utils.access_control import is_authorized_user
     if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-        msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
-        return await cb.answer(msg, show_alert=True)
+        return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
         
     data = cb.data
     chat_id = data.split("_")[-1]
@@ -1306,13 +1282,12 @@ async def cancel_emoji_handler(c: Client, cb):
 async def adjust_purge_handler(c: Client, cb):
     from Main.utils.access_control import is_authorized_user
     if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-        msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
-        return await cb.answer(msg, show_alert=True)
+        return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
         
     data = cb.data
     chat_id = data.split("_")[-1]
     if chat_id not in TELAYSPAM_TASKS:
-        await safe_cb_answer(cb, "Task tidak aktif.", show_alert=True)
+        await safe_cb_answer(cb, Altruix.get_string("SPAM_TASK_INACTIVE"), show_alert=True)
         return
     keyboard = [
         [
@@ -1357,15 +1332,14 @@ async def adjust_purge_handler(c: Client, cb):
 async def increase_purge_handler(c: Client, cb):
     from Main.utils.access_control import is_authorized_user
     if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-        msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
-        return await cb.answer(msg, show_alert=True)
+        return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
         
     data = cb.data
     parts = data.split("_")
     chat_id = parts[2]
     inc_value = int(parts[3])
     if chat_id not in TELAYSPAM_TASKS:
-        await safe_cb_answer(cb, "Task tidak aktif.", show_alert=True)
+        await safe_cb_answer(cb, Altruix.get_string("SPAM_TASK_INACTIVE"), show_alert=True)
         return
     config = TELAYSPAM_TASKS[chat_id]["config"]
     current_purge = config["old_purge"]
@@ -1402,15 +1376,14 @@ async def increase_purge_handler(c: Client, cb):
 async def decrease_purge_handler(c: Client, cb):
     from Main.utils.access_control import is_authorized_user
     if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-        msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
-        return await cb.answer(msg, show_alert=True)
+        return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
         
     data = cb.data
     parts = data.split("_")
     chat_id = parts[2]
     dec_value = int(parts[3])
     if chat_id not in TELAYSPAM_TASKS:
-        await safe_cb_answer(cb, "Task tidak aktif.", show_alert=True)
+        await safe_cb_answer(cb, Altruix.get_string("SPAM_TASK_INACTIVE"), show_alert=True)
         return
     config = TELAYSPAM_TASKS[chat_id]["config"]
     current_purge = config["old_purge"]
@@ -1448,8 +1421,7 @@ async def decrease_purge_handler(c: Client, cb):
 async def back_purge_handler(c: Client, cb):
     from Main.utils.access_control import is_authorized_user
     if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-        msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
-        return await cb.answer(msg, show_alert=True)
+        return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
         
     data = cb.data
     chat_id = data.split("_")[-1]
@@ -1469,8 +1441,7 @@ async def back_purge_handler(c: Client, cb):
 async def cancel_adjust_purge_handler(c: Client, cb):
     from Main.utils.access_control import is_authorized_user
     if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-        msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
-        return await cb.answer(msg, show_alert=True)
+        return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
         
     data = cb.data
     chat_id = data.split("_")[-1]
@@ -1490,8 +1461,7 @@ async def cancel_adjust_purge_handler(c: Client, cb):
 async def handle_task_control(c: Client, cb):
     from Main.utils.access_control import is_authorized_user
     if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-        msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
-        return await cb.answer(msg, show_alert=True)
+        return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
         
     data = cb.data
     action, chat_id_str = data.rsplit("_", 1)
@@ -1516,7 +1486,7 @@ async def handle_task_control(c: Client, cb):
             TELAYSPAM_TASKS.pop(chat_id, None)
         if chat_id in COMPLETED_TASKS:
             COMPLETED_TASKS.pop(chat_id, None)
-        await safe_cb_answer(cb, "❌ Chat tidak valid atau userbot tidak memiliki akses. Task dihapus.", show_alert=True)
+        await safe_cb_answer(cb, Altruix.get_string("SPAM_CHAT_INVALID"), show_alert=True)
         Altruix.log(f"[CHAT_CLEANUP] Task dihapus karena chat {chat_id} tidak valid.", level=30)
         return
     chat_title = f"{target_chat.title}" if hasattr(target_chat, 'title') else (target_chat.first_name or target_chat.username or f"ID: {chat_id}")
@@ -1530,30 +1500,33 @@ async def handle_task_control(c: Client, cb):
             TELAYSPAM_TASKS[chat_id]["pause_event"].set()
             if "task" in TELAYSPAM_TASKS[chat_id]:
                 TELAYSPAM_TASKS[chat_id]["task"].cancel()
-            await safe_cb_answer(cb, f"🔴 Task distop di {chat_title}.", show_alert=True)
+            status_msg = Altruix.get_string("SPAM_TASK_STOPPED").format(chat=chat_title)
+            await safe_cb_answer(cb, status_msg, show_alert=True)
             userbot_client = TELAYSPAM_TASKS[chat_id]["client"]
-            await send_log_message(f"🔴 Task distop di {chat_title}.", client=userbot_client)
+            await send_log_message(status_msg, client=userbot_client)
         elif action == "pause":
             TELAYSPAM_TASKS[chat_id]["pause_event"].clear()
-            await safe_cb_answer(cb, f"🟡 Task dipause di {chat_title}.", show_alert=True)
+            status_msg = Altruix.get_string("SPAM_TASK_PAUSED").format(chat=chat_title)
+            await safe_cb_answer(cb, status_msg, show_alert=True)
             userbot_client = TELAYSPAM_TASKS[chat_id]["client"]
-            await send_log_message(f"🟡 Task dipause di {chat_title}.", client=userbot_client)
+            await send_log_message(status_msg, client=userbot_client)
         elif action == "resume":
             TELAYSPAM_TASKS[chat_id]["pause_event"].set()
-            await safe_cb_answer(cb, f"🟢 Task diresume di {chat_title}.", show_alert=True)
+            status_msg = Altruix.get_string("SPAM_TASK_RESUMED").format(chat=chat_title)
+            await safe_cb_answer(cb, status_msg, show_alert=True)
             userbot_client = TELAYSPAM_TASKS[chat_id]["client"]
-            await send_log_message(f"🟢 Task diresume di {chat_title}.", client=userbot_client)
+            await send_log_message(status_msg, client=userbot_client)
         elif action == "cek":
             status = TELAYSPAM_TASKS[chat_id]
             sent = status.get("sent_count", 0)
             total = status["config"].get("count", 0)
             if status["running"]:
                 if status["pause_event"].is_set():
-                    status_text = f"🔵 Task running di {chat_title}.\n📊 Sisa: {total - sent} pesan."
+                    status_text = Altruix.get_string("SPAM_STATUS_RUNNING").format(chat=chat_title) + f"\n📊 Sisa: {total - sent} pesan."
                 else:
-                    status_text = f"🟡 Task paused di {chat_title}.\n📊 Sisa: {total - sent} pesan."
+                    status_text = Altruix.get_string("SPAM_STATUS_PAUSED").format(chat=chat_title) + f"\n📊 Sisa: {total - sent} pesan."
             else:
-                status_text = f"⚫️ Task stopped di {chat_title}.\n📊 Sisa: {total - sent} pesan."
+                status_text = Altruix.get_string("SPAM_STATUS_STOPPED").format(chat=chat_title) + f"\n📊 Sisa: {total - sent} pesan."
             await safe_cb_answer(cb, status_text, show_alert=True)
             userbot_client = status["client"]
             await send_log_message(status_text, client=userbot_client)
@@ -1777,7 +1750,7 @@ async def handle_task_control(c: Client, cb):
         await safe_cb_answer(cb, f"⚠️ Terlalu banyak permintaan. Tunggu {fwe.value} detik.", show_alert=True)
     except ChatWriteForbidden as cwe:
         Altruix.log(f"ChatWriteForbiddenError saat menangani aksi {action} untuk chat {chat_id}: Bot tidak memiliki izin", level=30)
-        await safe_cb_answer(cb, f"❌ Bot tidak memiliki izin untuk melakukan aksi ini di {chat_title}.", show_alert=True)
+        await safe_cb_answer(cb, Altruix.get_string("AUTH_BOT_NO_PERMISSION").format(chat=chat_title), show_alert=True)
     except Exception as err:
         Altruix.log(f"Error saat menangani aksi {action} untuk chat {chat_id}: {err}", level=40)
         await safe_cb_answer(cb, f"Error: {err}", show_alert=True)
@@ -1787,7 +1760,7 @@ async def handle_task_control(c: Client, cb):
 async def handle_global_controls(c: Client, cb):
     from Main.utils.access_control import is_authorized_user
     if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-        msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+        msg = Altruix.get_string("ACCESS_DENIED")
         return await cb.answer(msg, show_alert=True)
         
     data = cb.data

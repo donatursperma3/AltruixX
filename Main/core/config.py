@@ -8,6 +8,7 @@
 
 
 import re
+import ast
 import dotenv
 import asyncio
 import logging
@@ -232,7 +233,34 @@ class Config(BaseConfig):
 
     async def load_vars_from_db(self):
         async for var in self.env_col.find({}):
-            setattr(self, var.get("_id"), var.get("env_value"))
+            key = var.get("_id")
+            val = var.get("env_value")
+            
+            # Fix for stringified lists (legacy data support)
+            if isinstance(val, str) and val.strip().startswith("[") and val.strip().endswith("]"):
+                with contextlib.suppress(Exception):
+                    val = ast.literal_eval(val)
+            
+            setattr(self, key, val)
+
+    # ✅ Override Session Management to Sync with DB
+    def append_session(self, session: str) -> None:
+        super().append_session(session)
+        # Async save to DB
+        if self.loop:
+            self.loop.create_task(self.sync_env_to_db("SESSIONS", self.SESSIONS, upsert=True))
+
+    def remove_session_by_value(self, session_str: str) -> bool:
+        result = super().remove_session_by_value(session_str)
+        if result and self.loop:
+            self.loop.create_task(self.sync_env_to_db("SESSIONS", self.SESSIONS, upsert=True))
+        return result
+
+    def pop_session(self, index: int) -> Optional[str]:
+        result = super().pop_session(index)
+        if result and self.loop:
+            self.loop.create_task(self.sync_env_to_db("SESSIONS", self.SESSIONS, upsert=True))
+        return result
 
     async def get_env(self, env_key, as_list=False):
         env_key = env_key.strip().upper()
@@ -266,6 +294,9 @@ class Config(BaseConfig):
     async def del_env_from_db(self, env_name):
         if await self.env_col.find_one({"_id": env_name}):
             await self.env_col.find_one_and_delete({"_id": env_name})
+            # ✅ Force Save for LocalDB
+            if hasattr(self.env_col, "db") and hasattr(self.env_col.db, "save_now"):
+                await self.env_col.db.save_now()
             return True
         return False
 
@@ -282,6 +313,9 @@ class Config(BaseConfig):
             await self.env_col.find_one_and_update(
                 {"_id": env_name}, {"$set": {"env_value": update}}, upsert=upsert
             )
+        # ✅ Force Save for LocalDB
+        if hasattr(self.env_col, "db") and hasattr(self.env_col.db, "save_now"):
+            await self.env_col.db.save_now()
 
     async def add_element_to_list(self, env_name, value):
         if self.DEBUG:
@@ -291,13 +325,20 @@ class Config(BaseConfig):
             await self.env_col.find_one_and_update(
                 {"_id": env_name}, {"$addToSet": {"env_value": value}}, upsert=True
             )
+            # ✅ Force Save for LocalDB
+            if hasattr(self.env_col, "db") and hasattr(self.env_col.db, "save_now"):
+                await self.env_col.db.save_now()
 
     async def pop_element_from_list(self, env_name, value):
         await self.env_col.find_one_and_update(
             {"_id": env_name}, {"$pull": {"env_value": value}}
         )
+        # ✅ Force Save for LocalDB
+        if hasattr(self.env_col, "db") and hasattr(self.env_col.db, "save_now"):
+            await self.env_col.db.save_now()
 
     async def unsync_env_to_db(self, env_name, env_value, upsert=False):
+        res = None
         if env_ := await self.get_env_from_db(env_name):
             if isinstance(env_value, list):
                 for i in env_value:
@@ -308,33 +349,46 @@ class Config(BaseConfig):
                             upsert=upsert,
                         )
             elif env_value in env_:
-                return await self.env_col.find_one_and_update(
+                res = await self.env_col.find_one_and_update(
                     {"_id": env_name},
                     {"$pull": {"env_value": env_value}},
                     upsert=upsert,
                 )
+        # ✅ Force Save for LocalDB
+        if hasattr(self.env_col, "db") and hasattr(self.env_col.db, "save_now"):
+            await self.env_col.db.save_now()
+        return res
 
     async def sync_env_to_db(self, env_name, env_value, upsert=False, push_=False):
+        res = None
         if await self.get_env_from_db(env_name):
             if push_:
                 if not isinstance(env_value, list):
-                    return await self.env_col.find_one_and_update(
+                    res = await self.env_col.find_one_and_update(
                         {"_id": env_name},
                         {"$push": {"env_value": env_value}},
                         upsert=upsert,
                     )
-                for i in env_value:
-                    await self.env_col.find_one_and_update(
-                        {"_id": env_name},
-                        {"$push": {"env_value": i}},
-                        upsert=upsert,
-                    )
-            return await self.env_col.find_one_and_update(
-                {"_id": env_name}, {"$set": {"env_value": env_value}}, upsert=upsert
-            )
-        if push_:
-            env_value = [env_value]
-        return await self.env_col.insert_one({"_id": env_name, "env_value": env_value})
+                else:
+                    for i in env_value:
+                        await self.env_col.find_one_and_update(
+                            {"_id": env_name},
+                            {"$push": {"env_value": i}},
+                            upsert=upsert,
+                        )
+            else:
+                res = await self.env_col.find_one_and_update(
+                    {"_id": env_name}, {"$set": {"env_value": env_value}}, upsert=upsert
+                )
+        else:
+            if push_:
+                env_value = [env_value]
+            res = await self.env_col.insert_one({"_id": env_name, "env_value": env_value})
+        
+        # ✅ Force Save for LocalDB
+        if hasattr(self.env_col, "db") and hasattr(self.env_col.db, "save_now"):
+            await self.env_col.db.save_now()
+        return res
 
     @var_check
     async def add_sudo(self, user_id: Union[int, str, List[Union[int, str]]]) -> None:

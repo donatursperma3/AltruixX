@@ -232,7 +232,7 @@ async def pmlu_confirm_send_callback(c: Client, cb: CallbackQuery):
     try:
         # Security: Verify if user is authorized
         if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-             return await cb.answer("⛔ Akses Ditolak!", show_alert=True)
+             return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
 
         # Extract waiting_id based on prefix
         if cb.data.startswith("pmlu_confirm_"):
@@ -380,7 +380,7 @@ async def pmlu_cancel_send_callback(c: Client, cb: CallbackQuery):
     try:
         # Security: Verify if user is authorized
         if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-             return await cb.answer("⛔ Akses Ditolak!", show_alert=True)
+             return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
 
         if cb.data.startswith("pmlu_cancel_"):
             waiting_id = cb.data.replace("pmlu_cancel_", "")
@@ -419,7 +419,7 @@ async def reply_manager_menu_handler(c: Client, cb: CallbackQuery):
     try:
         from Main.utils.access_control import is_authorized_user
         if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-             msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+             msg = Altruix.get_string("ACCESS_DENIED")
              return await cb.answer(msg, show_alert=True)
 
         enabled = should_log()

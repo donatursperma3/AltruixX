@@ -45,13 +45,13 @@ def check_reply_access(
     if mode == ACCESS_MODE_OWNER:
         if user_id == owner_id:
             return True, "Access granted (OWNER)"
-        return False, "⛔ Akses Ditolak - Hanya owner yang dapat menggunakan tombol ini"
+        return False, Altruix.get_string("AUTH_OWNER_ONLY")
     
     # Mode: SUDO - owner + sudo users
     if mode == ACCESS_MODE_SUDO:
         if user_id == owner_id or user_id in sudo_users:
             return True, f"Access granted (SUDO - {'owner' if user_id == owner_id else 'sudo user'})"
-        return False, "⛔ Akses Ditolak - Hanya owner dan sudo users yang dapat menggunakan tombol ini"
+        return False, Altruix.get_string("AUTH_SUDO_ONLY")
     
     # Mode: MENTIONED - only the specific userbot account
     if mode == ACCESS_MODE_MENTIONED:
@@ -61,7 +61,7 @@ def check_reply_access(
         
         if user_id == mentioned_userbot_id:
             return True, "Access granted (MENTIONED userbot)"
-        return False, "⛔ Akses Ditolak - Hanya akun userbot yang disebutkan yang dapat menggunakan tombol ini"
+        return False, Altruix.get_string("AUTH_MENTIONED_ONLY")
     
     # Unknown mode - deny by default
     logger.error(f"Unknown access mode: {mode}")

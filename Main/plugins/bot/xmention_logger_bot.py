@@ -205,7 +205,7 @@ async def mention_mute_handler(c: Client, cb: CallbackQuery):
         
         # Only owner/sudo can mute
         if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-            await cb.answer("⛔ Akses Ditolak - Hanya owner/sudo yang dapat mute group", show_alert=True)
+            await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
             return
         
         chat_id = int(cb.matches[0].group(1))
@@ -235,8 +235,7 @@ async def mntlb_menu_handler(c: Client, cb: CallbackQuery):
     try:
         from Main.utils.access_control import is_authorized_user
         if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-             msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
-             return await cb.answer(msg, show_alert=True)
+             return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
 
         await load_settings()
         enabled = MENTION_LOGGER_BOT_DATA.get("enabled", False)

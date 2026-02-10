@@ -21,7 +21,4 @@ except ImportError:
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 from pyromod import listen
-from .core.client import AltruixClient
-
-
-Altruix = AltruixClient()
+from .core.client import AltruixClient, Altruix

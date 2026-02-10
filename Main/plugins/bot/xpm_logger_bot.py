@@ -171,7 +171,7 @@ asyncio.create_task(load_settings())
 async def pmlb_settings_handler(c: Client, m: AltruixMessage):
     from Main.utils.access_control import is_authorized_user
     if not is_authorized_user(m.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-        return await m.reply_msg("⛔ Akses Ditolak!")
+        return await m.reply_msg(Altruix.get_string("ACCESS_DENIED"))
         
     global REPLY_FROM_ALL_ACCESSIBLE
     user_input = (m.user_input or "").lower().strip()
@@ -240,7 +240,7 @@ async def pmlb_settings_handler(c: Client, m: AltruixMessage):
 async def pml_status_bot_handler(c: Client, m: AltruixMessage):
     from Main.utils.access_control import is_authorized_user
     if not is_authorized_user(m.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-        return await m.reply_msg("⛔ Akses Ditolak!")
+        return await m.reply_msg(Altruix.get_string("ACCESS_DENIED"))
         
     # Bot status
     log_mode = PM_LOGGER_BOT_DATA.get("log_mode", "off")
@@ -512,7 +512,7 @@ async def pmlb_save_callback(c: Client, cb: CallbackQuery):
     try:
         from Main.utils.access_control import is_authorized_user
         if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-            return await cb.answer("⛔ Akses Ditolak!", show_alert=True)
+            return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
             
         data = cb.data.split("_")
         chat_id, msg_id = int(data[2]), int(data[3])
@@ -571,8 +571,7 @@ async def pmlb_others_callback(c: Client, cb: CallbackQuery):
     try:
         from Main.utils.access_control import is_authorized_user
         if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-            msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
-            return await cb.answer(msg, show_alert=True)
+            return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
             
         data = cb.data.split("_")
         chat_id, msg_id, client_id = int(data[2]), int(data[3]), int(data[4])
@@ -593,8 +592,7 @@ async def pmlb_back_callback(c: Client, cb: CallbackQuery):
     try:
         from Main.utils.access_control import is_authorized_user
         if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-            msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
-            return await cb.answer(msg, show_alert=True)
+            return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
             
         data = cb.data.split("_")
         chat_id, msg_id, client_id = int(data[2]), int(data[3]), int(data[4])
@@ -616,8 +614,7 @@ async def pmlb_react_callback(c: Client, cb: CallbackQuery):
     try:
         from Main.utils.access_control import is_authorized_user
         if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-            msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
-            return await cb.answer(msg, show_alert=True)
+            return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
             
         data = cb.data.split("_")
         chat_id, msg_id, client_id, emoji = int(data[2]), int(data[3]), int(data[4]), data[5]
@@ -632,8 +629,7 @@ async def pmlb_unreact_callback(c: Client, cb: CallbackQuery):
     try:
         from Main.utils.access_control import is_authorized_user
         if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-            msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
-            return await cb.answer(msg, show_alert=True)
+            return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
             
         data = cb.data.split("_")
         chat_id, msg_id, client_id = int(data[2]), int(data[3]), int(data[4])
@@ -649,8 +645,7 @@ async def pmlb_replyall_callback(c: Client, cb: CallbackQuery):
     try:
         from Main.utils.access_control import is_authorized_user
         if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-            msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
-            return await cb.answer(msg, show_alert=True)
+            return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
             
         data = cb.data.split("_")
         chat_id, msg_id, client_id = int(data[2]), int(data[3]), int(data[4])
@@ -691,8 +686,7 @@ async def pmlb_unsend_callback(c: Client, cb: CallbackQuery):
     try:
         from Main.utils.access_control import is_authorized_user
         if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-            msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
-            return await cb.answer(msg, show_alert=True)
+            return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
             
         data = cb.data.split("_")
         chat_id, msg_id, client_id = int(data[2]), int(data[3]), int(data[4])
@@ -749,8 +743,7 @@ async def pmlb_menu_callback_handler(c: Client, cb: CallbackQuery):
     try:
         from Main.utils.access_control import is_authorized_user
         if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-             msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
-             return await cb.answer(msg, show_alert=True)
+             return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
              
         await pmlb_menu_refresh(c, cb)
     except Exception as e:
@@ -763,8 +756,7 @@ async def pmlb_set_mode_callback(c: Client, cb: CallbackQuery):
     try:
         from Main.utils.access_control import is_authorized_user
         if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-             msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
-             return await cb.answer(msg, show_alert=True)
+             return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
              
         new_mode = cb.data.replace("pmlb_set_mode_", "").strip()
         if new_mode not in ["all", "sudo", "nonsudo", "off"]:
@@ -788,8 +780,7 @@ async def pmlb_toggle_replyall_callback(c: Client, cb: CallbackQuery):
     try:
         from Main.utils.access_control import is_authorized_user
         if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-             msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
-             return await cb.answer(msg, show_alert=True)
+             return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
              
         global REPLY_FROM_ALL_ACCESSIBLE
         REPLY_FROM_ALL_ACCESSIBLE = not REPLY_FROM_ALL_ACCESSIBLE

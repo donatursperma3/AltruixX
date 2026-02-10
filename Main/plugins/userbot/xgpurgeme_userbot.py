@@ -23,7 +23,7 @@ from Main.core.decorators import iuser_check
 # Plugin Metadata
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xgpurgeme"
-PLUGIN_VERSION = "1.0.11"
+PLUGIN_VERSION = "1.0.12"
 
 # STATE_LOCK is still needed for concurrency within the module
 STATE_LOCK = asyncio.Lock()
@@ -147,7 +147,7 @@ def get_gp_control_kb(unique_id, state):
         # Mode Selection
         kb.append([
             InlineKeyboardButton(f"Mode: {mode.capitalize()}", "gp_noop"),
-            InlineKeyboardButton(("✅ " if mode == "newest" else "") + (gt("GP_BTN_MODE_LATEST") or "Newest"), f"gp_mode_newest_{unique_id}"),
+            InlineKeyboardButton(("✅ " if mode == "newest" else "") + (gt("GP_BTN_MODE_NEWEST") or "Newest"), f"gp_mode_newest_{unique_id}"),
             InlineKeyboardButton(("✅ " if mode == "oldest" else "") + (gt("GP_BTN_MODE_OLDEST") or "Oldest"), f"gp_mode_oldest_{unique_id}")
         ])
 
@@ -606,12 +606,13 @@ async def gpurgeme_cmd(client: Client, message: Message):
                 sent = await client.send_inline_bot_result(
                     message.chat.id,
                     results.query_id,
-                    results.results[0].id
+                    results.results[0].id,
+                    reply_to_message_id=message.id
                 )
                 if sent:
                     state["dashboard_msg_id"] = sent.id
                     state["dashboard_chat_id"] = sent.chat.id
-                await message.delete_if_self()
+                # await message.delete_if_self()
                 return
         except Exception as inline_e:
             Altruix.log(f"DEBUG: Inline query failed for {unique_id}: {inline_e}", level=20)
@@ -628,10 +629,15 @@ async def gpurgeme_cmd(client: Client, message: Message):
             await message.edit("❌ <b>Cannot show dashboard in Bot PM.</b>\nPlease use this command in your <b>Saved Messages</b> or enable Inline Mode in @BotFather.")
             return
 
-        sent = await bot.send_message(message.chat.id, text, reply_markup=kb)
+        sent = await bot.send_message(
+            message.chat.id, 
+            text, 
+            reply_markup=kb,
+            reply_to_message_id=message.id
+        )
         state["dashboard_msg_id"] = sent.id
         state["dashboard_chat_id"] = sent.chat.id
-        await message.delete_if_self()
+        # await message.delete_if_self()
     except Exception as e:
         await message.edit(f"❌ Error initiating GPurgeme: {e}")
 
@@ -729,6 +735,11 @@ async def gp_resume_cmd(client: Client, message: Message):
 @Altruix.bot.on_callback_query(filters.regex(r"^gp_(?P<action>target|limit|delay|pause|resume|stop|start|refresh|close|toggle|list|mode|off|notif|filter|info|back)_(?P<tail>.*)$"))
 @iuser_check
 async def gpurgeme_callback_handler(c: Client, cb: CallbackQuery):
+    # Security: Allow only authorized users
+    from Main.utils.access_control import is_authorized_user
+    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+        return await cb.answer("⛔ Access Denied", show_alert=True)
+
     try:
         action = cb.matches[0].group("action")
         tail = cb.matches[0].group("tail")

@@ -478,17 +478,34 @@ async def laucreate_loop(
             current_group_name = generate_group_name(name_pattern, i)
             current_username = f"{username_prefix}{i}" if username_prefix else None
             
-            # Message buffer for consolidated logs
-            current_log_text = f"🏗️ <b>Memproses Grup {i}/{count}</b>\n• Nama: <code>{html.escape(current_group_name)}</code>\n"
+            # Message buffer for consolidated logs area
+            # Update: Name is now a hyperlink if username/link available, otherwise code. 
+            # We don't have link yet at start, so we update it later or use placeholder?
+            # Actually, we can update the header later. For now, let's keep it simple and update line 554/559.
+            
+            current_log_header = f"🏗 <b>Memproses Grup {i}/{count}</b>\n"
+            current_log_text = current_log_header + f"• Nama: <code>{html.escape(current_group_name)}</code>\n"
+            
             # PERBAIKAN: Gunakan reply_to_msg_id=None agar masuk ke General topic di Forum
             current_log_msg = await send_log_notification(bot_client, current_log_text, reply_to_msg_id=None)
             
-            async def update_group_log(new_line: str):
-                nonlocal current_log_text, current_log_msg
-                current_log_text += f"{new_line}\n"
+            total_push_msg = 0 # Counter for push messages
+
+            async def update_group_log(new_line: str, update_header_name: str = None, name_link: str = None):
+                nonlocal current_log_text, current_log_msg, current_log_header
+                
+                if update_header_name and name_link:
+                    # Reform header with hyperlink
+                    current_log_header = f"🏗 <b>Memproses Grup {i}/{count}</b>\n"
+                    # Disable web page preview is handled in send/edit
+                    current_log_text = current_log_header + f"• Nama: <a href='{name_link}'>{html.escape(update_header_name)}</a>\n" + "\n".join(current_log_text.split("\n")[2:])
+                
+                if new_line:
+                    current_log_text += f"{new_line}\n"
+                
                 if current_log_msg:
                     try:
-                        await current_log_msg.edit_text(current_log_text, parse_mode=ParseMode.HTML)
+                        await current_log_msg.edit_text(current_log_text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
                     except Exception as e:
                         logger.warning(f"Gagal edit log message: {e}")
                         # Fallback: send new message if edit fails
@@ -551,12 +568,14 @@ async def laucreate_loop(
                                     current_username
                                 )
                                 invite_link = f"https://t.me/{current_username}"
-                                await update_group_log(f"✅ Username di-set: @{current_username}")
+                                await update_group_log(f"✅ Username di-set: @{current_username}", current_group_name, invite_link)
                             except Exception as e:
                                 await update_group_log(f"⚠️ Gagal set username @{current_username}: {str(e)}")
                                 invite_link = await user_client.export_chat_invite_link(created_chat_id)
+                                await update_group_log(None, current_group_name, invite_link)
                         else:
                             invite_link = await user_client.export_chat_invite_link(created_chat_id)
+                            await update_group_log(None, current_group_name, invite_link)
                         
                         # ===== KONFIGURASI LANJUTAN =====
                         should_anon = anon_mode or group_type in ["a", "i"]
@@ -790,12 +809,15 @@ async def laucreate_loop(
                                         )
                                         continue
                             
-                            # 10. Get approximate message count
+                            # 10. Get approximate message count (Push Message Total)
                             try:
-                                # Get recent messages count
+                                # Get recent messages count from history scan
                                 messages = []
-                                async for msg in user_client.get_chat_history(created_chat_id, limit=100):
+                                async for msg in user_client.get_chat_history(created_chat_id, limit=150):
                                     messages.append(msg)
+                                
+                                total_push_msg = len(messages)
+                                await update_group_log(f"✅ Push message berhasil total: {total_push_msg} msg")
                                 
                                 count_msg = await bot_client.send_message(
                                     created_chat_id,
@@ -1401,7 +1423,7 @@ async def confirm_laucreate_handler(client: Client, callback_query: CallbackQuer
     try:
         from Main.utils.access_control import is_authorized_user
         if not is_authorized_user(callback_query.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-            msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+            msg = Altruix.get_string("ACCESS_DENIED")
             return await callback_query.answer(msg, show_alert=True)
             
         data_parts = callback_query.data.split(":")
@@ -1605,7 +1627,7 @@ async def laucreate_control_handler(client: Client, callback_query: CallbackQuer
     
     from Main.utils.access_control import is_authorized_user
     if not is_authorized_user(callback_query.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-        msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+        msg = Altruix.get_string("ACCESS_DENIED")
         return await callback_query.answer(msg, show_alert=True)
         
     data_parts = callback_query.data.split(":")

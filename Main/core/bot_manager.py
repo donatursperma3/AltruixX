@@ -54,7 +54,15 @@ class BotManager:
     async def start_custom_bot(self, user_id: int, token: str) -> bool:
         """Start a custom bot for a user session."""
         try:
+            # ✅ IDEMPOTENCY CHECK: If already running with same token, skip
             if user_id in self.custom_bots:
+                existing_bot = self.custom_bots[user_id]
+                # Check if connected and token matches
+                if existing_bot.is_connected and self._bot_tokens.get(user_id) == token:
+                    # logger.info(f"Custom bot for {user_id} is already running. Skipping...")
+                    return True
+                
+                # If different token or not connected, restart
                 await self.stop_custom_bot(user_id)
 
             logger.info(f"Starting custom bot for user {user_id}...")
@@ -67,17 +75,13 @@ class BotManager:
                 logger.error("API_ID or API_HASH missing")
                 return False
 
-            # Ensure separate in-memory session
-            # We remove workdir to ensure purely memory-based if supported,
-            # or allow default if that helps avoid the specific 'closed database' race on file.
-            # Using in_memory=True SHOULD use MemoryStorage.
+            # ✅ USE FILE STORAGE for stability (fixes 'Closed database' error)
             bot_client = Client(
                 name=f"custom_bot_{user_id}",
                 api_id=api_id,
                 api_hash=api_hash,
                 bot_token=token,
-                in_memory=True, # Ensure no DB file is touched
-                # workdir="cache/custom_bots", # Removed to prevent any file-based session mixup
+                workdir="cache", # Use file cache like main sessions
                 loop=self.altruix.loop
             )
 

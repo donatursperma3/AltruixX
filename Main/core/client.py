@@ -126,7 +126,7 @@ class AltruixClient:
         self.clients: List[Client] = []
         self.cmd_list = {}
         self.all_lang_strings = {}
-        self.__version__ = "0.0.9.54"
+        self.__version__ = "0.0.9.698"
         self.selected_lang = "english"
         self.local_lang_file = "./Main/localization"
         self.cmd_list = {} # {plugin_name: [cmd_data, ...]}
@@ -143,6 +143,26 @@ class AltruixClient:
         self.training_wheels_protocol = False
         self._init_logger()
         self.config = BaseConfig
+
+        # ✅ Migrate JSON databases BEFORE initializing LocalDatabase
+        try:
+            from Main.utils.file_helpers import migrate_db_files
+            json_to_migrate = [
+                "altruix_local_db.json", "callback_logger_settings.json", 
+                "chat_stats_cache.json", "custom_button_settings.json", 
+                "db.json", "join_logger_settings.json", "mentions_cache.json", 
+                "mentions_cache_fallback.json", "mentions_settings.json", 
+                "mention_logger_bot_settings.json", "pml_filters.json", 
+                "pm_logger_bot_settings.json", "pm_logger_cache.json", 
+                "pm_logger_sessions.json", "pm_logger_user_settings.json", 
+                "reply_manager_settings.json", "topic_cache.json", 
+                "xchatsanomlau_cache.json", "cmd_logger_settings.json", 
+                "topics_cache.json"
+            ]
+            migrate_db_files(json_to_migrate)
+        except Exception as e:
+            print(f"Migration failed: {e}")
+
         self.local_db = LocalDatabase()
         
         # ✅ Shared States for Plugins
@@ -238,7 +258,9 @@ class AltruixClient:
     def load_disabled_sessions(self):
         """Load list of disabled user_ids from file."""
         try:
-            path = "disabled_sessions.json" # Root directory
+            if not os.path.exists("DATABASE"):
+                os.makedirs("DATABASE")
+            path = os.path.join("DATABASE", "disabled_sessions.json")
             if os.path.exists(path):
                 import json
                 with open(path, "r") as f:
@@ -253,7 +275,9 @@ class AltruixClient:
     def save_disabled_sessions(self):
         """Save list of disabled user_ids to file."""
         try:
-            path = "disabled_sessions.json"
+            if not os.path.exists("DATABASE"):
+                os.makedirs("DATABASE")
+            path = os.path.join("DATABASE", "disabled_sessions.json")
             import json
             with open(path, "w") as f:
                 json.dump(list(self.disabled_sessions), f)
@@ -263,6 +287,31 @@ class AltruixClient:
     def is_session_disabled(self, user_id: int) -> bool:
         """Check if a session (user_id) is disabled."""
         return user_id in self.disabled_sessions
+
+    def toggle_session_status(self, user_id: int, enable: bool = None) -> bool:
+        """Toggle or set session enabled/disabled status.
+        
+        Args:
+            user_id: The user ID to toggle
+            enable: If None, toggle. If True, enable. If False, disable.
+            
+        Returns:
+            bool: True if session is now enabled, False if disabled
+        """
+        if enable is None:
+            # Toggle
+            if user_id in self.disabled_sessions:
+                self.disabled_sessions.discard(user_id)
+            else:
+                self.disabled_sessions.add(user_id)
+        elif enable:
+            # Enable
+            self.disabled_sessions.discard(user_id)
+        else:
+            # Disable
+            self.disabled_sessions.add(user_id)
+        self.save_disabled_sessions()
+        return user_id not in self.disabled_sessions  # Return new status (True = enabled)
 
     def toggle_session_disable(self, user_id: int, disable: bool):
         """Enable or disable a session."""
@@ -313,14 +362,19 @@ class AltruixClient:
             )
         )
 
-    @staticmethod
     def log(
+        self,
         message: Optional[str] = None,
         level=logging.DEBUG,
         logger: logging.Logger = logging.getLogger(__name__),
     ) -> Optional[str]:
-        logger.log(level, message or traceback.format_exc())
-        return message or traceback.format_exc()
+        msg = message or traceback.format_exc()
+        # Suppress DEBUG: logs unless config.DEBUG is True
+        if msg and msg.startswith("DEBUG:") and not getattr(self.config, "DEBUG", False):
+            return msg
+            
+        logger.log(level, msg)
+        return msg
 
     def _init_logger(self) -> None:
         if sys.platform == "win32":
@@ -551,23 +605,6 @@ class AltruixClient:
         return decorator
 
     async def update_on_startup(self):
-        from Main.utils.file_helpers import migrate_db_files
-        
-        # ✅ Migrate JSON databases to centralized folder
-        json_to_migrate = [
-            "altruix_local_db.json", "callback_logger_settings.json", 
-            "chat_stats_cache.json", "custom_button_settings.json", 
-            "db.json", "join_logger_settings.json", "mentions_cache.json", 
-            "mentions_cache_fallback.json", "mentions_settings.json", 
-            "mention_logger_bot_settings.json", "pml_filters.json", 
-            "pm_logger_bot_settings.json", "pm_logger_cache.json", 
-            "pm_logger_sessions.json", "pm_logger_user_settings.json", 
-            "reply_manager_settings.json", "topic_cache.json", 
-            "xchatsanomlau_cache.json", "cmd_logger_settings.json", 
-            "topics_cache.json"
-        ]
-        migrate_db_files(json_to_migrate)
-        
         if self.config.UPDATE_ON_STARTUP:
             updater_ = Updater(
                 repo=self.config.REPO, branch="main", app_url=self.app_url_
@@ -1636,7 +1673,6 @@ class AltruixClient:
             session_string=session,
             workdir="cache",
             loop=self.loop,
-            in_memory=True, # Jangan buat file .session fisik dulu
         )
 
         try:
@@ -1667,6 +1703,15 @@ class AltruixClient:
             # -- Add to DB/Config --
             await self.config.add_element_to_list("SESSIONS", session)
             self.config.append_session(session)
+            
+            # ✅ Fix: Force save to LocalDB to ensure persistence
+            try:
+                if hasattr(self.db, "save_now"):
+                    await self.db.save_now()
+                    self.log("Forced save to LocalDB after adding session.", level=20)
+            except Exception as e:
+                self.log(f"Failed to force save LocalDB: {e}", level=logging.ERROR)
+
             # Pastikan tidak double add di list memori jika append_session sudah handle
             if session not in self.config.SESSIONS:
                 self.config.SESSIONS.append(session)
@@ -2205,3 +2250,6 @@ class AltruixClient:
                     f"<b>⚠️ Error loading help for '{plugin_name}'</b>\n"
                     f"<code>{str(e)}</code>"
         )
+
+
+Altruix = AltruixClient()
