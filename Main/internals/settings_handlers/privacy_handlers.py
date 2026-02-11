@@ -32,10 +32,8 @@ async def privacy_menu_handler(c: Client, cb: CallbackQuery):
             InlineKeyboardButton("⚙️ Prefix Settings", f"prefix_menu_{index}_{page}_{button_page}")
         ],
         [
-            InlineKeyboardButton("🛡️ Two-Step Verification", f"gen_conf_2fa_info_{index}_{page}_{button_page}")
-        ],
-        [
-            InlineKeyboardButton("🤖 Custom Bot Manager", "custom_bot_manager")
+            InlineKeyboardButton("🛡️ Two-Step Verification", f"gen_conf_2fa_info_{index}_{page}_{button_page}"),
+            InlineKeyboardButton("🔒 Privacy Settings", f"native_privacy_menu_{index}_{page}_{button_page}")
         ],
         [
             InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}_{button_page}")
@@ -47,8 +45,37 @@ async def privacy_menu_handler(c: Client, cb: CallbackQuery):
         parse_mode=ParseMode.HTML
     )
 
+@Altruix.bot.on_callback_query(filters.regex(r"^native_privacy_menu_(\d+)_(\d+)(?:_(\d+))?$"))
+@iuser_check
+@log_errors
+async def native_privacy_menu_handler(c: Client, cb: CallbackQuery):
+    """Stub for Native Telegram Privacy Settings"""
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
+    await cb.answer()
+    
+    text = (
+        "<b>🔒 Privacy Settings (Native)</b>\n\n"
+        "Configurable privacy options (Coming Soon):\n"
+        "• Phone Number\n"
+        "• Last Seen & Online\n"
+        "• Profile Photos\n"
+        "• Forwarded Messages\n"
+        "• Calls\n"
+        "• Groups & Channels\n\n"
+        "<i>Currently read-only / placeholder.</i>"
+    )
+    
+    buttons = [
+        [InlineKeyboardButton("🔙 Back", f"privacy_menu_{index}_{page}_{button_page}")]
+    ]
+    
+    await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+
 # ====================== CUSTOM BOT MANAGER ======================
 @Altruix.bot.on_callback_query(filters.regex(r"^custom_bot_manager$"))
+@iuser_check
 @log_errors
 async def custom_bot_manager_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
@@ -82,6 +109,7 @@ async def custom_bot_manager_handler(c: Client, cb: CallbackQuery):
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
 
 @Altruix.bot.on_callback_query(filters.regex(r"^manage_custom_bot_(\d+)$"))
+@iuser_check
 @log_errors
 async def manage_custom_bot_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
@@ -134,21 +162,60 @@ async def sudo_menu_handler(c: Client, cb: CallbackQuery):
     button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     apply_type = await Altruix.config.get_env("SUDO_APPLY_TYPE") or "global"
-    sudo_enabled_raw = await Altruix.config.get_env("SUDO_ENABLED_GLOBAL" if apply_type == "global" else f"SUDO_ENABLED_{index}")
+    apply_label = "Global" if apply_type == "global" else "Per-Account"
+    
+    key = "SUDO_ENABLED_GLOBAL" if apply_type == "global" else f"SUDO_ENABLED_{index}"
+    sudo_enabled_raw = await Altruix.config.get_env(key)
     sudo_enabled = sudo_enabled_raw != "false" if sudo_enabled_raw else True
     
+    status_icon = "✅ Aktif" if sudo_enabled else "❌ Nonaktif"
+    
     text = (
-        f"<b>👑 Sudo Settings (v1.5.5.9b)</b>\n\n"
-        f"• <b>Status Sudo:</b> <code>{'✅ Aktif' if sudo_enabled else '❌ Nonaktif'}</code>\n"
-        f"• <b>Mode:</b> <code>{apply_type.title()}</code>\n"
+        f"<b>👑 Sudo Settings (v1.6.0)</b>\n\n"
+        f"• <b>Status Sudo:</b> <code>{status_icon}</code>\n"
+        f"• <b>Mode Apply:</b> <code>{apply_label}</code>\n"
+        f"<i>Atur apakah status sudo berlaku global atau per akun.</i>"
     )
     
     buttons = [
-        [InlineKeyboardButton("🔄 Toggle Sudo", f"sudo_toggle_{index}_{page}_{button_page}")],
+        [
+            InlineKeyboardButton("➕ Tambah Sudo", f"sudo_add_start_{index}_{page}_{button_page}"),
+            InlineKeyboardButton("➖ Hapus Sudo", f"sudo_remove_start_{index}_{page}_{button_page}")
+        ],
+        [InlineKeyboardButton(f"🔄 Toggle Status: {status_icon}", f"sudo_toggle_{index}_{page}_{button_page}")],
+        [InlineKeyboardButton(f"⚙️ Mode: {apply_label}", f"sudo_mode_{index}_{page}_{button_page}")],
         [InlineKeyboardButton("🔙 Back", f"privacy_menu_{index}_{page}_{button_page}")]
     ]
     
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^sudo_(add|remove)_start_(\d+)_(\d+)(?:_(\d+))?$"))
+@iuser_check
+@log_errors
+async def sudo_add_remove_start_handler(c: Client, cb: CallbackQuery):
+    """Entry point for adding or removing sudo users"""
+    action_type = cb.matches[0].group(1) # 'add' or 'remove'
+    index = int(cb.matches[0].group(2))
+    page = int(cb.matches[0].group(3))
+    button_page = int(cb.matches[0].group(4)) if len(cb.matches[0].groups()) >= 4 and cb.matches[0].group(4) else 1
+    await cb.answer()
+    
+    from .states import user_privacy_state
+    user_privacy_state[cb.from_user.id] = {
+        'action': f'sudo_{action_type}',
+        'session_index': index,
+        'page': page,
+        'button_page': button_page,
+        'step': 'waiting_sudo_uid'
+    }
+    
+    label = "Tambah" if action_type == "add" else "Hapus"
+    await cb.message.edit(
+        text=f"👑 <b>{label} Sudo User</b>\n\n"
+             f"Silakan kirim <b>User ID</b> yang ingin di{label.lower()}.\n\n"
+             f"❌ <b>Cancel:</b> /cancel",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"sudo_menu_{index}_{page}_{button_page}")]])
+    )
 
 @Altruix.bot.on_callback_query(filters.regex(r"^sudo_toggle_(\d+)_(\d+)(?:_(\d+))?$"))
 @iuser_check
@@ -169,6 +236,22 @@ async def sudo_toggle_handler(c: Client, cb: CallbackQuery):
     setattr(Altruix.config, key, new_val)
     
     await cb.answer(f"Sudo {'Aktif' if new_val == 'true' else 'Nonaktif'}", show_alert=False)
+    await sudo_menu_handler(c, cb)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^sudo_mode_(\d+)_(\d+)(?:_(\d+))?$"))
+@iuser_check
+@log_errors
+async def sudo_mode_handler(c: Client, cb: CallbackQuery):
+    """Toggle Sudo Apply Type"""
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
+    
+    current = await Altruix.config.get_env("SUDO_APPLY_TYPE") or "global"
+    new_val = "per_account" if current == "global" else "global"
+    
+    await Altruix.config.sync_env_to_db("SUDO_APPLY_TYPE", new_val, upsert=True)
+    await cb.answer(f"Mode: {new_val.upper()}")
     await sudo_menu_handler(c, cb)
 
 # ====================== PREFIX SETTINGS HANDLERS ======================
@@ -363,4 +446,121 @@ async def process_prefix_input(c: Client, m: Message, state: dict):
         del user_privacy_state[m.from_user.id]
         
     # Show menu again
-    await m.reply("🔄 Kembali ke menu prefix...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Prefix Menu", f"prefix_menu_{index}_{state['page']}_{state['button_page']}")]]))
+async def process_sudo_input(c: Client, m: Message, state: dict):
+    """Process adding or removing sudo users"""
+    action = state['action'] # 'sudo_add' or 'sudo_remove'
+    index = state['session_index']
+    uid_text = m.text.strip()
+    user_id = m.from_user.id
+    
+    if not uid_text.isdigit():
+        await m.reply("❌ User ID harus berupa angka.")
+        return
+        
+    uid = int(uid_text)
+    key = f"SUDO_USERS_{index}"
+    current_sudo_raw = await Altruix.config.get_env(key) or ""
+    
+    # Handle list/string
+    if isinstance(current_sudo_raw, str):
+        current_sudo = current_sudo_raw.split()
+    else:
+        current_sudo = [str(x) for x in current_sudo_raw]
+        
+    if action == 'sudo_add':
+        if str(uid) not in current_sudo:
+            current_sudo.append(str(uid))
+            await Altruix.config.sync_env_to_db(key, " ".join(current_sudo), upsert=True)
+            await m.reply(f"✅ User {uid} ditambahkan ke Sudo Session {index+1}.")
+        else:
+            await m.reply(f"ℹ️ User {uid} sudah ada di daftar Sudo.")
+            
+    elif action == 'sudo_remove':
+        if str(uid) in current_sudo:
+            current_sudo.remove(str(uid))
+            await Altruix.config.sync_env_to_db(key, " ".join(current_sudo), upsert=True)
+            await m.reply(f"✅ User {uid} dihapus dari Sudo Session {index+1}.")
+        else:
+            await m.reply(f"❌ User {uid} tidak ada di daftar Sudo.")
+            
+    from .states import user_privacy_state
+    if user_id in user_privacy_state: del user_privacy_state[user_id]
+    await asyncio.sleep(2)
+    await m.reply("🔄 Kembali ke dashboard...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{state.get('page', 1)}")]]) )
+
+# --- Custom Link Settings (Bot Controls) ---
+
+@Altruix.bot.on_callback_query(filters.regex(r"^custom_link_settings$"))
+@iuser_check
+@log_errors
+async def custom_link_settings_handler(c: Client, cb: CallbackQuery):
+    """Global & Per-Account configuration for Custom Dashboard Button."""
+    await cb.answer()
+    user_id = cb.from_user.id
+    
+    # We need access to get_custom_link_data from settings.py or duplicate logic
+    from Main.internals.settings import get_custom_link_data, get_user_custom_link
+    data = get_custom_link_data()
+    apply_type = data.get("apply_types", {}).get(str(user_id), "global")
+    apply_label = "Global" if apply_type == "global" else "Per-Account"
+    
+    custom_data = get_user_custom_link(user_id)
+    text_val = custom_data.get("text", "Repo")
+    link_val = custom_data.get("link", "https://t.me/AlphaXProject")
+    
+    text = (
+        f"<b>🔗 Custom Link Settings</b>\n\n"
+        f"• <b>Status:</b> <code>{apply_label}</code>\n"
+        f"• <b>Button Text:</b> <code>{html.escape(text_val)}</code>\n"
+        f"• <b>Button Link:</b> <code>{html.escape(link_val)}</code>\n\n"
+        f"<i>Klik tombol di bawah untuk mengubah teks atau link tombol custom di dashboard utama.</i>"
+    )
+    
+    buttons = [
+        [
+            InlineKeyboardButton("📝 Edit Text", callback_data="edit_cl_text"),
+            InlineKeyboardButton("📝 Edit Link", callback_data="edit_cl_link"),
+        ],
+        [InlineKeyboardButton(f"🔄 Per-Account Mode: {'✅' if apply_type == 'per_account' else '❌'}", callback_data="toggle_cl_mode")],
+        [InlineKeyboardButton("🔙 Back", "bot_controls_menu")]
+    ]
+    
+    await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^toggle_cl_mode$"))
+@iuser_check
+@log_errors
+async def toggle_cl_mode_handler(c: Client, cb: CallbackQuery):
+    """Toggle Custom Link Apply Type (Global <-> Per-Account)."""
+    user_id = cb.from_user.id
+    from Main.internals.settings import get_custom_link_data, save_custom_link_data
+    data = get_custom_link_data()
+    
+    current = data.get("apply_types", {}).get(str(user_id), "global")
+    new_val = "per_account" if current == "global" else "global"
+    
+    data.setdefault("apply_types", {})[str(user_id)] = new_val
+    save_custom_link_data(data)
+    
+    await cb.answer(f"Mode: {new_val.upper()}")
+    await custom_link_settings_handler(c, cb)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^edit_cl_(text|link)$"))
+@iuser_check
+@log_errors
+async def edit_cl_start_handler(c: Client, cb: CallbackQuery):
+    """Start process to edit custom link text or url."""
+    target = cb.matches[0].group(1)
+    await cb.answer()
+    
+    # Store state in session_info track state or privacy state
+    # Actually session_info.py uses Altruix.user_track_state for this.
+    Altruix.user_track_state[cb.from_user.id] = {"step": f"edit_cl_{target}"}
+    
+    label = "Teks" if target == "text" else "Link"
+    await cb.message.edit(
+        f"📝 <b>Edit Custom {label}</b>\n\n"
+        f"Silakan kirim {label.lower()} baru untuk tombol dashboard.\n\n"
+        f"❌ <b>Batal:</b> Kirim /cancel",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Batal", "custom_link_settings")]])
+    )

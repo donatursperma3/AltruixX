@@ -176,3 +176,9 @@ join_logger_settings.json
 cmd_logger_settings.json
 *_settings.json
 *.json
+
+# Database migrations and backups
+*.migrated
+*.bak
+*.backup
+*.old

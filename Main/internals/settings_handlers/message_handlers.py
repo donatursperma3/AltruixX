@@ -196,7 +196,101 @@ async def process_send_message_content(c: Client, m: Message, state: dict):
         await m.reply(f"❌ <b>Failed:</b> {str(e)}")
         await send_log_notification(c, 'send_message', index, m.from_user, False, str(e))
     
-    from .states import user_send_msg_state
-    if user_id in user_send_msg_state: del user_send_msg_state[user_id]
+async def process_misc_profile_input(c: Client, m: Message, state: dict):
+    """Router for miscellaneous profile actions (stats, tracking, photos, etc.)"""
+    action = state['action']
+    index = state['session_index']
+    page = state['page']
+    text = m.text.strip()
+    user_id = m.from_user.id
+    
+    session_client = Altruix.clients[index]
+    
+    try:
+        if action == 'download_user_photo':
+            status_msg = await m.reply("📸 Downloading photos...")
+            target = text.lstrip('@')
+            user = await session_client.get_users(int(target) if target.isdigit() else target)
+            photos = [p async for p in session_client.get_chat_photos(user.id, limit=5)]
+            if not photos:
+                await status_msg.edit("❌ No photos found.")
+                return
+            for p in photos:
+                await m.reply_photo(p.file_id)
+            await status_msg.edit(f"✅ Sent {len(photos)} photos!")
+            
+        elif action == 'track_profile':
+            status_msg = await m.reply("👁️ Tracking...")
+            target = text.lstrip('@')
+            user = await session_client.get_users(int(target) if target.isdigit() else target)
+            await status_msg.edit(f"👁️ <b>Tracking:</b> {user.first_name} (@{user.username or 'None'})\nID: <code>{user.id}</code>")
+            
+        elif action == 'chat_stats':
+            status_msg = await m.reply("📊 Analyzing...")
+            chat = await session_client.get_chat(text)
+            await status_msg.edit(f"📊 <b>{chat.title or chat.first_name}</b>\n<b>Type:</b> {chat.type}\n<b>Members:</b> {chat.members_count or 'N/A'}")
+            
+        elif action == 'recent_messages':
+            status_msg = await m.reply("📨 Fetching...")
+            messages = [msg async for msg in session_client.get_chat_history(text, limit=10)]
+            if messages:
+                msgs_text = "📨 <b>Recent Messages</b>\n\n" + "\n".join([f"{i}. {(msg.from_user.first_name if msg.from_user else 'Unknown')}: {(msg.text or '[Media]')[:30]}..." for i, msg in enumerate(messages, 1)])
+                await status_msg.edit(msgs_text)
+            else:
+                await status_msg.edit("❌ No messages found.")
+                
+    except Exception as e:
+        await m.reply(f"❌ <b>Error:</b> {str(e)}")
+        
+    del user_profile_edit_state[user_id]
     await asyncio.sleep(2)
     await m.reply("🔄 Memuat ulang menu...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Dashboard", f"session_info_{index}_{page}")]]))
+
+# --- Global Reply Manager (Bot Controls) ---
+
+@Altruix.bot.on_callback_query(filters.regex(r"^reply_manager_menu$"))
+@iuser_check
+@log_errors
+async def reply_manager_menu_handler(c: Client, cb: CallbackQuery):
+    """Global control menu for Reply Manager."""
+    await cb.answer()
+    
+    # Status
+    current = await Altruix.config.get_env("REPLY_MANAGER_GLOBAL") or "off"
+    status_emoji = "✅ ON" if current == "on" else "❌ OFF"
+    
+    # Auto Reply Status
+    auto_reply = await Altruix.config.get_env("AUTO_REPLY_GLOBAL") or "off"
+    auto_reply_emoji = "✅ ON" if auto_reply == "on" else "❌ OFF"
+    
+    buttons = [
+        [InlineKeyboardButton(f"Toggle Reply Manager: {status_emoji}", "toggle_reply_manager_global")],
+        [InlineKeyboardButton(f"Toggle Auto Reply: {auto_reply_emoji}", "toggle_auto_reply_global")],
+        [InlineKeyboardButton("🔙 Back", "bot_controls_menu")]
+    ]
+    
+    await edit_cb(cb, 
+        f"<b>💬 Global Reply Manager Control</b>\n\n"
+        f"• 🔌 <b>Master Status:</b> {status_emoji}\n"
+        f"• 🤖 <b>Auto Reply:</b> {auto_reply_emoji}\n\n"
+        f"<i>Aksi ini akan mempengaruhi semua sesi yang menggunakan mode Global.</i>",
+        reply_markup=InlineKeyboardMarkup(buttons),
+        parse_mode=ParseMode.HTML
+    )
+
+@Altruix.bot.on_callback_query(filters.regex(r"^toggle_(reply_manager|auto_reply)_global$"))
+@iuser_check
+@log_errors
+async def toggle_reply_manager_global_handler(c: Client, cb: CallbackQuery):
+    """Toggle global status for Reply Manager or Auto Reply."""
+    target = cb.matches[0].group(1).upper()
+    key = f"{target}_GLOBAL"
+    
+    current = await Altruix.config.get_env(key) or "off"
+    new_val = "off" if current == "on" else "on"
+    
+    await Altruix.config.sync_env_to_db(key, new_val, upsert=True)
+    setattr(Altruix.config, key, new_val)
+    
+    await cb.answer(f"Global {target.replace('_', ' ')}: {new_val.upper()}")
+    await reply_manager_menu_handler(c, cb)

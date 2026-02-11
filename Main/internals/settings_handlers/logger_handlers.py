@@ -27,13 +27,40 @@ async def logger_menu_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
     
     type_map = {"pml": "PM Logger", "mnt": "Mention Logger", "joinl": "Join Logger", "cmdl": "Command Logger"}
-    key = f"{log_type.upper()}_LOGGER_{index}"
-    current = await Altruix.config.get_env(key) or "off"
+    base_key = log_type.upper()
+    
+    # 1. APPLY TYPE
+    apply_type = await Altruix.config.get_env(f"{base_key}_LOGGER_APPLY_TYPE_{index}") or "per_account"
+    apply_label = "Global" if apply_type == "global" else "Per-Account"
+    
+    # 2. STATUS
+    if apply_type == "global":
+        current = await Altruix.config.get_env(f"{base_key}_LOGGER_GLOBAL") or "off"
+    else:
+        current = await Altruix.config.get_env(f"{base_key}_LOGGER_{index}") or "off"
     status_emoji = "✅ ON" if current == "on" else "❌ OFF"
     
+    # 3. REPLY BY (Only for PML and MNT)
+    reply_by_txt = ""
+    reply_buttons = []
+    if log_type in ["pml", "mnt"]:
+        if apply_type == "global":
+            reply_by = await Altruix.config.get_env(f"{base_key}_REPLY_BY_GLOBAL") or "all"
+        else:
+            reply_by = await Altruix.config.get_env(f"{base_key}_REPLY_BY_{index}") or "all"
+        
+        reply_by_txt = f"• 🗣️ <b>Reply By:</b> <code>{reply_by.upper()}</code>\n"
+        reply_buttons = [InlineKeyboardButton(f"🗣️ Reply: {reply_by.upper()}", f"{log_type}_reply_{index}_{page}")]
+
     buttons = [
         [InlineKeyboardButton(f"Toggle {type_map[log_type]}: {status_emoji}", f"{log_type}_toggle_{index}_{page}")],
     ]
+    
+    # Mode & Reply Buttons
+    config_row = [InlineKeyboardButton(f"⚙️ Type: {apply_label}", f"{log_type}_mode_{index}_{page}")]
+    if reply_buttons:
+        config_row.extend(reply_buttons)
+    buttons.append(config_row)
     
     # Add advanced filter buttons for PM Logger and Mention Logger
     if log_type == "pml":
@@ -46,8 +73,10 @@ async def logger_menu_handler(c: Client, cb: CallbackQuery):
     
     await cb.message.edit(
         f"<b>📊 {type_map[log_type]} Control</b>\n\n"
-        f"Status saat ini: {status_emoji}\n\n"
-        f"<i>Gunakan tombol di bawah untuk toggle status atau mengatur filter lebih lanjut.</i>",
+        f"• 🔌 <b>Status:</b> {status_emoji}\n"
+        f"• ⚙️ <b>Apply Type:</b> <code>{apply_label}</code>\n"
+        f"{reply_by_txt}\n"
+        f"<i>Gunakan tombol di bawah untuk mengubah pengaturan.</i>",
         reply_markup=InlineKeyboardMarkup(buttons), 
         parse_mode=ParseMode.HTML
     )
@@ -56,15 +85,70 @@ async def logger_menu_handler(c: Client, cb: CallbackQuery):
 @iuser_check
 @log_errors
 async def logger_toggle_handler(c: Client, cb: CallbackQuery):
-    """Toggle logger status (on/off)"""
+    """Toggle logger status (on/off) respecting apply type"""
     log_type, index, page = cb.matches[0].group(1), int(cb.matches[0].group(2)), int(cb.matches[0].group(3))
-    key = f"{log_type.upper()}_LOGGER_{index}"
+    base_key = log_type.upper()
+    
+    apply_type = await Altruix.config.get_env(f"{base_key}_LOGGER_APPLY_TYPE_{index}") or "per_account"
+    
+    if apply_type == "global":
+        key = f"{base_key}_LOGGER_GLOBAL"
+    else:
+        key = f"{base_key}_LOGGER_{index}"
+        
     current = await Altruix.config.get_env(key) or "off"
     new_val = "off" if current == "on" else "on"
     
     await Altruix.config.sync_env_to_db(key, new_val, upsert=True)
-    setattr(Altruix.config, key, new_val)
+    # Ensure local config is updated if needed (though get_env checks DB usually)
+    setattr(Altruix.config, key, new_val) 
+    
     await cb.answer(f"{log_type.upper()} Logger: {new_val.upper()}")
+    await logger_menu_handler(c, cb)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^(pml|mnt|joinl|cmdl)_mode_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def logger_mode_handler(c: Client, cb: CallbackQuery):
+    """Toggle Apply Type (Per-Account <-> Global)"""
+    log_type, index, page = cb.matches[0].group(1), int(cb.matches[0].group(2)), int(cb.matches[0].group(3))
+    base_key = log_type.upper()
+    key = f"{base_key}_LOGGER_APPLY_TYPE_{index}"
+    
+    current = await Altruix.config.get_env(key) or "per_account"
+    new_val = "global" if current == "per_account" else "per_account"
+    
+    await Altruix.config.sync_env_to_db(key, new_val, upsert=True)
+    await cb.answer(f"Apply Type: {new_val.upper()}")
+    await logger_menu_handler(c, cb)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^(pml|mnt)_reply_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def logger_reply_handler(c: Client, cb: CallbackQuery):
+    """Cycle Reply By modes: All -> Sudo -> User -> Owner"""
+    log_type, index, page = cb.matches[0].group(1), int(cb.matches[0].group(2)), int(cb.matches[0].group(3))
+    base_key = log_type.upper()
+    
+    apply_type = await Altruix.config.get_env(f"{base_key}_LOGGER_APPLY_TYPE_{index}") or "per_account"
+    
+    if apply_type == "global":
+        key = f"{base_key}_REPLY_BY_GLOBAL"
+    else:
+        key = f"{base_key}_REPLY_BY_{index}"
+        
+    modes = ["all", "sudo", "user", "owner"]
+    current = await Altruix.config.get_env(key) or "all"
+    
+    try:
+        current_idx = modes.index(current)
+        next_idx = (current_idx + 1) % len(modes)
+        new_val = modes[next_idx]
+    except ValueError:
+        new_val = "all"
+        
+    await Altruix.config.sync_env_to_db(key, new_val, upsert=True)
+    await cb.answer(f"Reply By: {new_val.upper()}")
     await logger_menu_handler(c, cb)
 
 # --- PM Logger Advanced Filters ---
@@ -189,3 +273,86 @@ async def join_log_group_handler(c: Client, cb: CallbackQuery):
         await cb.answer("ℹ️ Already in Log Group.", show_alert=True)
     except Exception as e:
         await cb.answer(f"❌ Join failed: {str(e)}", show_alert=True)
+
+# --- Global Logger Menus (Bot Controls) ---
+
+@Altruix.bot.on_callback_query(filters.regex(r"^(pmlb|mntlb|joinl|cbl)_menu$"))
+@iuser_check
+@log_errors
+async def global_logger_menu_handler(c: Client, cb: CallbackQuery):
+    """Global control menu for loggers from Bot Controls."""
+    log_type = cb.matches[0].group(1).replace("lb", "").replace("l", "")
+    await cb.answer()
+    
+    type_map = {"pm": "PM Logger", "mnt": "Mention Logger", "join": "Join Logger", "cb": "Callback Logger"}
+    base_key = log_type.upper()
+    
+    key = f"{base_key}_LOGGER_GLOBAL"
+    current = await Altruix.config.get_env(key) or "off"
+    status_emoji = "✅ ON" if current == "on" else "❌ OFF"
+    
+    buttons = [
+        [InlineKeyboardButton(f"Toggle Global {type_map[log_type]}: {status_emoji}", f"global_{log_type}_toggle")],
+        [InlineKeyboardButton("🔙 Back", "bot_controls_menu")]
+    ]
+    
+    await edit_cb(cb, 
+        f"<b>📊 Global {type_map[log_type]} Control</b>\n\n"
+        f"• 🔌 <b>Global Status:</b> {status_emoji}\n\n"
+        f"<i>Aksi ini akan mempengaruhi semua sesi yang menggunakan mode Global.</i>",
+        reply_markup=InlineKeyboardMarkup(buttons),
+        parse_mode=ParseMode.HTML
+    )
+
+@Altruix.bot.on_callback_query(filters.regex(r"^global_(pm|mnt|join|cb)_toggle$"))
+@iuser_check
+@log_errors
+async def global_logger_toggle_handler(c: Client, cb: CallbackQuery):
+    """Toggle global status for loggers."""
+    log_type = cb.matches[0].group(1)
+    key = f"{log_type.upper()}_LOGGER_GLOBAL"
+    
+    current = await Altruix.config.get_env(key) or "off"
+    new_val = "off" if current == "on" else "on"
+    
+    await Altruix.config.sync_env_to_db(key, new_val, upsert=True)
+    setattr(Altruix.config, key, new_val)
+    
+    await cb.answer(f"Global {log_type.upper()} Logger: {new_val.upper()}")
+    # Re-use the menu but we need a mock regex match or call it directly with adjustments
+    # For simplicity, let's just create a mock with a manual type
+    cb.matches = [type('Mock', (object,), {'group': lambda x: f"{log_type}l_menu"})()] # Hacky way to reuse
+    await global_logger_menu_handler(c, cb)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^get_log_group_link$"))
+@iuser_check
+@log_errors
+async def get_log_group_link_handler(c: Client, cb: CallbackQuery):
+    """Get or generate log group invite link."""
+    await cb.answer("Generating link...")
+    log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
+    
+    try:
+        chat = await Altruix.bot.get_chat(log_chat_id)
+        link = chat.invite_link
+        if not link:
+            invite = await Altruix.bot.create_chat_invite_link(log_chat_id)
+            link = invite.invite_link
+            
+        await edit_cb(cb, 
+            f"<b>🔗 Log Group Link</b>\n\n<code>{link}</code>\n\n"
+            f"<i>Gunakan link ini untuk memasukkan sesi lain ke Log Group secara manual atau bagikan ke Sudo user.</i>",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", "bot_controls_menu")]]),
+            parse_mode=ParseMode.HTML
+        )
+    except Exception as e:
+        await cb.answer(f"❌ Error: {str(e)}", show_alert=True)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^cb_logger_settings$"))
+@iuser_check
+@log_errors
+async def cb_logger_settings_handler(c: Client, cb: CallbackQuery):
+    """Special menu for Callback Logger."""
+    # This is a bridge, for now just toggle like others
+    cb.matches = [type('Mock', (object,), {'group': lambda x: "cbl_menu"})()]
+    await global_logger_menu_handler(c, cb)

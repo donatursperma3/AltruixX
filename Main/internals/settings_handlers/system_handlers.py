@@ -5,7 +5,7 @@ import subprocess
 import logging
 from pyrogram import Client, filters
 from pyrogram.types import CallbackQuery
-from Main.core.decorators import log_errors
+from Main.core.decorators import log_errors, iuser_check
 from Main.core.client import Altruix
 
 # Utils
@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 # ====================== SYSTEM CONTROL HANDLERS ======================
 @Altruix.bot.on_callback_query(filters.regex("^sys_ctrl_restart$"))
+@iuser_check
 @log_errors
 async def sys_restart_handler(c: Client, cb: CallbackQuery):
     """Handler for Force Restart"""
@@ -33,6 +34,7 @@ async def sys_restart_handler(c: Client, cb: CallbackQuery):
         await cb.answer(f"Failed to restart: {e}", show_alert=True)
 
 @Altruix.bot.on_callback_query(filters.regex("^sys_ctrl_shutdown$"))
+@iuser_check
 @log_errors
 async def sys_shutdown_handler(c: Client, cb: CallbackQuery):
     """Handler for Force Shutdown"""

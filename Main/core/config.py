@@ -198,6 +198,7 @@ class Config(BaseConfig):
                 "Please add database uri, So that the Userbot can function!"
             )
         self.env_col: AgnosticCollection = env_col
+        self._env_cache: dict = {}
         self.loop = asyncio.get_event_loop() if loop is None else loop
         self.loop.run_until_complete(self.get_sudo())
         self.loop.run_until_complete(self.load_vars_from_db())
@@ -241,7 +242,9 @@ class Config(BaseConfig):
                 with contextlib.suppress(Exception):
                     val = ast.literal_eval(val)
             
+            
             setattr(self, key, val)
+            self._env_cache[key] = val
 
     # ✅ Override Session Management to Sync with DB
     def append_session(self, session: str) -> None:
@@ -294,6 +297,8 @@ class Config(BaseConfig):
     async def del_env_from_db(self, env_name):
         if await self.env_col.find_one({"_id": env_name}):
             await self.env_col.find_one_and_delete({"_id": env_name})
+            if env_name in self._env_cache:
+                del self._env_cache[env_name]
             # ✅ Force Save for LocalDB
             if hasattr(self.env_col, "db") and hasattr(self.env_col.db, "save_now"):
                 await self.env_col.db.save_now()
@@ -313,6 +318,7 @@ class Config(BaseConfig):
             await self.env_col.find_one_and_update(
                 {"_id": env_name}, {"$set": {"env_value": update}}, upsert=upsert
             )
+            self._env_cache[env_name] = update
         # ✅ Force Save for LocalDB
         if hasattr(self.env_col, "db") and hasattr(self.env_col.db, "save_now"):
             await self.env_col.db.save_now()
@@ -385,6 +391,7 @@ class Config(BaseConfig):
                 env_value = [env_value]
             res = await self.env_col.insert_one({"_id": env_name, "env_value": env_value})
         
+        self._env_cache[env_name] = env_value
         # ✅ Force Save for LocalDB
         if hasattr(self.env_col, "db") and hasattr(self.env_col.db, "save_now"):
             await self.env_col.db.save_now()

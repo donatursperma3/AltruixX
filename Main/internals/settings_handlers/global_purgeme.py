@@ -4,11 +4,26 @@ import logging
 import html
 import re
 from pyrogram import Client, filters, enums
-from pyrogram.errors import FloodWait, MessageNotModified
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from pyrogram.errors import FloodWait, MessageNotModified, PeerIdInvalid
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, InlineQuery, InlineQueryResultArticle, InputTextMessageContent
 from Main import Altruix
 from Main.core.decorators import iuser_check, log_errors
-from Main.internals.settings import send_log_notification
+from .utils import send_log_notification
+
+# Localizer Helper
+def loc(key, *args):
+    """Get localized string and format with args if provided."""
+    string = Altruix.get_string(key)
+    if not string:
+        return None
+    # Only format if args are provided and string has placeholders
+    if args:
+        try:
+            return string.format(*args)
+        except (IndexError, KeyError):
+            # If format fails, return the string as-is
+            return string
+    return string
 
 # Concurrency Lock
 STATE_LOCK = asyncio.Lock()
@@ -39,46 +54,45 @@ def get_gp_status_text(state):
     notify = state.get("notify", True)
     filters_list = state.get("filters", ["all"])
     
-    gt = Altruix.get_string
-    title = gt("GPURGEME_TITLE") or "🚮 <b>GLOBAL PURGEME DASHBOARD</b>"
+    title = loc("GPURGEME_TITLE") or "🚮 <b>GLOBAL PURGEME DASHBOARD</b>"
     
     # Account Line
     client = state["client"]
     me = client.myself if hasattr(client, "myself") else None
     if me:
         account_name = f"<a href='tg://user?id={me.id}'>{html.escape(me.first_name)}</a>"
-        account_str = (gt("GP_ACCOUNT_INFO") or "👤 <b>Account:</b> {}").format(account_name)
+        account_str = (loc("GP_ACCOUNT_INFO") or "👤 <b>Account:</b> {}").format(account_name)
     else:
         account_str = ""
 
-    target_str = gt(f"GP_BTN_TARGET_{target.upper()}") or target.capitalize()
-    mode_str = gt(f"GP_BTN_MODE_{mode.upper()}") or mode.capitalize()
-    filters_str = ", ".join([gt(f"GP_BTN_{f.upper()}") or f.capitalize() for f in filters_list])
+    target_str = loc(f"GP_BTN_TARGET_{target.upper()}") or target.capitalize()
+    mode_str = loc(f"GP_BTN_MODE_{mode.upper()}") or mode.capitalize()
+    filters_str = ", ".join([loc(f"GP_BTN_{f.upper()}") or f.capitalize() for f in filters_list])
     
     header = (
         f"{title}\n\n"
         f"{account_str}\n"
-        f"{gt('GP_TARGET').format(target_str)}\n"
-        f"{gt('GP_LIMIT').format(limit)} | {gt('GP_DELAY').format(delay)}\n"
-        f"{gt('GP_MODE').format(mode_str)} | {gt('GP_OFFSET').format(offset)}\n"
-        f"{gt('GP_FILTERS').format(filters_str)}\n"
-        f"{gt('GP_IGNORE_ADMIN').format('✅' if ignore_admin else '❌')} | {gt('GP_NOTIF').format('✅' if notify else '❌')}\n\n"
+        f"{loc('GP_TARGET').format(target_str) if loc('GP_TARGET') else f'🎯 Target: {target_str}'}\n"
+        f"<b>📊 Settings:</b> <code>L:{limit} | D:{delay}s</code>\n"
+        f"<b>🛠 Config:</b> <code>M:{mode_str} | O:{offset}</code>\n"
+        f"<b>🧹 Filters:</b> <code>{filters_str}</code>\n"
+        f"<b>🛡 Admin:</b> {'✅' if ignore_admin else '❌'} | <b>🔔 Notif:</b> {'✅' if notify else '❌'}\n\n"
     )
 
     if status == "idle":
-        status_line = gt("GP_STATUS_IDLE") or "💤 <b>Status:</b> <code>Idle / Ready</code>"
+        status_line = loc("GP_STATUS_IDLE") or "💤 <b>Status:</b> <code>Idle / Ready</code>"
     elif status == "listing":
         status_line = "📋 <b>Status:</b> <code>Generating group list...</code>"
     elif status == "running":
-        status_line = (gt("GP_STATUS_RUNNING") or "🚀 <b>Status:</b> <code>Running</code>").format(processed_chats + 1, total_chats)
+        status_line = (loc("GP_STATUS_RUNNING") or "🚀 <b>Status:</b> <code>Running ({}/{})</code>").format(processed_chats + 1, total_chats)
         status_line += f"\n🗑 <b>Deleted:</b> <code>{deleted_count} messages</code>"
         if state.get("current_chat"):
             status_line += f"\n📍 <b>Current Chat:</b> <code>{state['current_chat']}</code>"
     elif status == "paused":
-        status_line = gt("GP_STATUS_PAUSED") or "⏸ <b>Status:</b> <code>Paused</code>"
+        status_line = loc("GP_STATUS_PAUSED") or "⏸ <b>Status:</b> <code>Paused</code>"
         status_line += f"\n🗑 <b>Deleted:</b> <code>{deleted_count} messages</code>"
     elif status == "completed":
-        status_line = gt("GP_STATUS_COMPLETED") or "✅ <b>Status:</b> <code>Completed</code>"
+        status_line = loc("GP_STATUS_COMPLETED") or "✅ <b>Status:</b> <code>Completed</code>"
         status_line += f"\n🗑 <b>Total Deleted:</b> <code>{deleted_count} messages</code>"
     else:
         status_line = f"❓ <b>Status:</b> <code>{status}</code>"
@@ -102,16 +116,14 @@ def get_gp_control_kb(unique_id, state):
     index = state.get("index", 0)
     page = state.get("page", 0)
     
-    gt = Altruix.get_string
-    
     kb = []
     
     if status == "idle" or status == "completed":
         # Target Toggle Buttons
         kb.append([
-            InlineKeyboardButton(("✅ " if target == "all" else "") + (gt("GP_BTN_TARGET_ALL") or "All"), f"gp_target_all_{unique_id}"),
-            InlineKeyboardButton(("✅ " if target == "groups" else "") + (gt("GP_BTN_TARGET_GROUPS") or "Groups"), f"gp_target_groups_{unique_id}"),
-            InlineKeyboardButton(("✅ " if target == "personal" else "") + (gt("GP_BTN_TARGET_PERSONAL") or "Personal"), f"gp_target_personal_{unique_id}")
+            InlineKeyboardButton(("✅ " if target == "all" else "") + (loc("GP_BTN_TARGET_ALL") or "All"), f"gp_target_all_{unique_id}"),
+            InlineKeyboardButton(("✅ " if target == "groups" else "") + (loc("GP_BTN_TARGET_GROUPS") or "Groups"), f"gp_target_groups_{unique_id}"),
+            InlineKeyboardButton(("✅ " if target == "personal" else "") + (loc("GP_BTN_TARGET_PERSONAL") or "Personal"), f"gp_target_personal_{unique_id}")
         ])
         
         # Limit Adjustment
@@ -131,8 +143,8 @@ def get_gp_control_kb(unique_id, state):
         # Mode Selection
         kb.append([
             InlineKeyboardButton(f"Mode: {mode.capitalize()}", "gp_noop"),
-            InlineKeyboardButton(("✅ " if mode == "newest" else "") + (gt("GP_BTN_MODE_NEWEST") or "Newest"), f"gp_mode_newest_{unique_id}"),
-            InlineKeyboardButton(("✅ " if mode == "oldest" else "") + (gt("GP_BTN_MODE_OLDEST") or "Oldest"), f"gp_mode_oldest_{unique_id}")
+            InlineKeyboardButton(("✅ " if mode == "newest" else "") + (loc("GP_BTN_MODE_NEWEST") or "Newest"), f"gp_mode_newest_{unique_id}"),
+            InlineKeyboardButton(("✅ " if mode == "oldest" else "") + (loc("GP_BTN_MODE_OLDEST") or "Oldest"), f"gp_mode_oldest_{unique_id}")
         ])
 
         # Offset Selection
@@ -140,66 +152,68 @@ def get_gp_control_kb(unique_id, state):
             InlineKeyboardButton(f"Offset: {offset}", "gp_noop"),
             InlineKeyboardButton("-5", f"gp_off_m5_{unique_id}"),
             InlineKeyboardButton("+5", f"gp_off_p5_{unique_id}"),
-            InlineKeyboardButton(gt("GP_BTN_RESET") or "Reset", f"gp_off_reset_{unique_id}")
+            InlineKeyboardButton(loc("GP_BTN_RESET") or "Reset", f"gp_off_reset_{unique_id}")
         ])
 
         # Notif Toggle
         kb.append([
-            InlineKeyboardButton(gt("GP_BTN_NOTIF_ON" if notify else "GP_BTN_NOTIF_OFF") or f"Notif: {'ON' if notify else 'OFF'}", f"gp_notif_{unique_id}")
+            InlineKeyboardButton(loc("GP_BTN_NOTIF_ON" if notify else "GP_BTN_NOTIF_OFF") or f"Notif: {'ON' if notify else 'OFF'}", f"gp_notif_{unique_id}")
         ])
 
         # Filters Grid
-        def get_f_btn(f_type, label):
+        def get_f_btn(f_type, label_key, def_label):
+            label = loc(label_key) or def_label
             active = "✅" if f_type in filters_list else "☑️"
             return InlineKeyboardButton(f"{active} {label}", f"gp_filter_{f_type}_{unique_id}")
 
         kb.append([
-            get_f_btn("all", gt("GP_BTN_ALL") or "All"),
-            get_f_btn("image", gt("GP_BTN_IMG") or "Img"),
-            get_f_btn("video", gt("GP_BTN_VID") or "Vid")
+            get_f_btn("all", "GP_BTN_ALL", "All"),
+            get_f_btn("image", "GP_BTN_IMG", "Img"),
+            get_f_btn("video", "GP_BTN_VID", "Vid")
         ])
         kb.append([
-            get_f_btn("text", gt("GP_BTN_TXT") or "Txt"),
-            get_f_btn("audio", gt("GP_BTN_AUD") or "Aud"),
-            get_f_btn("sticker", gt("GP_BTN_STK") or "Stk")
+            get_f_btn("text", "GP_BTN_TXT", "Txt"),
+            get_f_btn("audio", "GP_BTN_AUD", "Aud"),
+            get_f_btn("sticker", "GP_BTN_STK", "Stk")
         ])
         kb.append([
-            get_f_btn("gif", gt("GP_BTN_GIF") or "Gif"),
-            get_f_btn("file", gt("GP_BTN_FILE") or "File"),
-            get_f_btn("vnote", gt("GP_BTN_VN") or "VN")
+            get_f_btn("gif", "GP_BTN_GIF", "Gif"),
+            get_f_btn("file", "GP_BTN_FILE", "File"),
+            get_f_btn("vnote", "GP_BTN_VN", "VN")
         ])
 
         # Advanced Options
         kb.append([
-            InlineKeyboardButton(("✅ " if ignore_admin else "❌ ") + (gt("GP_BTN_IGNORE_ADMIN") or "Ignore Admin"), f"gp_toggle_admin_{unique_id}")
+            InlineKeyboardButton(("✅ " if ignore_admin else "❌ ") + (loc("GP_BTN_IGNORE_ADMIN") or "Ignore Admin"), f"gp_toggle_admin_{unique_id}")
         ])
         kb.append([
-            InlineKeyboardButton(gt("GP_BTN_LIST_CHATS") or "📋 List Chats", f"gp_list_groups_{unique_id}")
+            InlineKeyboardButton(loc("GP_BTN_LIST_CHATS") or "📋 List Chats", f"gp_list_groups_{unique_id}")
         ])
         kb.append([
-            InlineKeyboardButton(gt("GP_BTN_START") or "🚀 Start GPurgeme", f"gp_start_{unique_id}"),
-            InlineKeyboardButton(gt("GP_BTN_INFO") or "ℹ️ Info", f"gp_info_{unique_id}")
+            InlineKeyboardButton(loc("GP_BTN_START") or "🚀 Start GPurgeme", f"gp_start_{unique_id}"),
+            InlineKeyboardButton(loc("GP_BTN_INFO") or "ℹ️ Info", f"gp_info_{unique_id}")
         ])
     elif status == "running":
         kb.append([
-            InlineKeyboardButton(gt("GP_BTN_PAUSE") or "⏸ Pause", f"gp_pause_{unique_id}"),
-            InlineKeyboardButton(gt("GP_BTN_STOP") or "🛑 Stop", f"gp_stop_{unique_id}")
+            InlineKeyboardButton(loc("GP_BTN_PAUSE") or "⏸ Pause", f"gp_pause_{unique_id}"),
+            InlineKeyboardButton(loc("GP_BTN_STOP") or "🛑 Stop", f"gp_stop_{unique_id}")
         ])
     elif status == "paused":
         kb.append([
-            InlineKeyboardButton(gt("GP_BTN_RESUME") or "▶️ Resume", f"gp_resume_{unique_id}"),
-            InlineKeyboardButton(gt("GP_BTN_STOP") or "🛑 Stop", f"gp_stop_{unique_id}")
+            InlineKeyboardButton(loc("GP_BTN_RESUME") or "▶️ Resume", f"gp_resume_{unique_id}"),
+            InlineKeyboardButton(loc("GP_BTN_STOP") or "🛑 Stop", f"gp_stop_{unique_id}")
         ])
     elif status == "info":
-        kb.append([InlineKeyboardButton(gt("GP_BTN_BACK") or "🔙 Back", f"gp_back_{unique_id}")])
+        kb.append([InlineKeyboardButton(loc("GP_BTN_BACK") or "🔙 Back", f"gp_back_{unique_id}")])
     
     # Close/Refresh/Settings Back
     if status != "running":
-        # Always allow back to session info in this context
-        kb.append([
-            InlineKeyboardButton("🔄 Refresh", f"gp_refresh_{unique_id}"), 
-            InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")
-        ])
+        bottom_row = [InlineKeyboardButton("🔄 Refresh", f"gp_refresh_{unique_id}")]
+        if is_settings:
+            bottom_row.append(InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}"))
+        else:
+            bottom_row.append(InlineKeyboardButton("❌ Close", f"gp_close_{unique_id}"))
+        kb.append(bottom_row)
     
     return InlineKeyboardMarkup(kb)
 
@@ -417,6 +431,62 @@ async def gp_global_purgeme_task(unique_id):
         state["status"] = "idle"
         asyncio.create_task(update_gp_dashboard(unique_id))
 
+# Handle Inline Dashboard Requests
+@Altruix.bot.on_inline_query(filters.regex(r"^gp_menu_gp_(?P<uid>\d+)"))
+@iuser_check
+@log_errors
+async def gpurgeme_inline_handler(client: Client, query: InlineQuery):
+    try:
+        user_id = int(query.matches[0].group("uid"))
+        # Security: Only owner/sudo can trigger their own GP menu
+        from Main.utils.access_control import is_authorized_user
+        if not is_authorized_user(query.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+             return await query.answer([], cache_time=0)
+        
+        unique_id = f"gp_{user_id}"
+        
+        async with STATE_LOCK:
+            if not hasattr(Altruix, "GPURGEME_STATE"):
+                Altruix.GPURGEME_STATE = {}
+                
+            state = Altruix.GPURGEME_STATE.get(unique_id)
+            if not state:
+                # Find the client for this ID
+                target_client = next((c for c in Altruix.clients if c.me and c.me.id == user_id), None)
+                if not target_client:
+                     return await query.answer([], cache_time=0)
+                
+                Altruix.GPURGEME_STATE[unique_id] = {
+                    "unique_id": unique_id, "client": target_client, "status": "idle",
+                    "target": "all", "limit": 6, "delay": 6, "ignore_admin": True,
+                    "mode": "newest", "offset": 0, "notify": True, "filters": ["all"],
+                    "deleted_count": 0, "processed_chats": 0, "total_chats": 0,
+                    "processed_list": [], "stop_event": asyncio.Event(), "pause_event": asyncio.Event(),
+                    "dashboard_msg_id": None, "dashboard_chat_id": None, "start_time": 0
+                }
+            state = Altruix.GPURGEME_STATE[unique_id]
+
+        text = get_gp_status_text(state)
+        kb = get_gp_control_kb(unique_id, state)
+        
+        await query.answer(
+            results=[
+                InlineQueryResultArticle(
+                    title="Global Purgeme Dashboard",
+                    description=f"Control mass deletion for account {user_id}",
+                    input_message_content=InputTextMessageContent(
+                        text,
+                        parse_mode=enums.ParseMode.HTML,
+                        disable_web_page_preview=True
+                    ),
+                    reply_markup=kb
+                )
+            ],
+            cache_time=0
+        )
+    except Exception as e:
+        Altruix.log(f"GPurgeme Inline Error: {e}")
+
 # Entry Point from Session Info
 @iuser_check
 @log_errors
@@ -460,6 +530,7 @@ async def open_global_purgeme_ui(c: Client, cb: CallbackQuery, index: int, page:
 # Callback Handler
 @Altruix.bot.on_callback_query(filters.regex(r"^gp_(?P<action>target|limit|delay|pause|resume|stop|start|refresh|close|toggle|list|mode|off|notif|filter|info|back)_(?P<tail>.*)$"))
 @iuser_check
+@log_errors
 async def gpurgeme_callback_handler(c: Client, cb: CallbackQuery):
     from Main.utils.access_control import is_authorized_user
     if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):

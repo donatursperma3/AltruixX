@@ -16,10 +16,11 @@ logger = logging.getLogger(__name__)
 
 # State Dictionaries (Centralized)
 from .states import (
-    user_dlphoto_state, user_purge_state, user_recent_messages_state,
-    user_mentions_state, user_privacy_state, user_confirmation_state,
-    user_text_confirmation_state, user_profile_edit_state, user_edit_confirmation_state
+    user_text_confirmation_state, user_profile_edit_state, user_edit_confirmation_state,
+    user_confirmation_state, user_dlphoto_state, user_purge_state,
+    user_recent_messages_state, user_mentions_state, user_privacy_state
 )
+from .laucreate import user_laucreate_state
 
 # Import all sub-handlers to register them with the bot
 import Main.internals.settings_handlers.profile_handlers
@@ -36,6 +37,8 @@ import Main.internals.settings_handlers.bulk_handlers
 import Main.internals.settings_handlers.system_handlers
 import Main.internals.settings_handlers.env_handlers
 import Main.internals.settings_handlers.toggle_session_handlers
+import Main.internals.settings_handlers.sessions_list
+import Main.internals.settings_handlers.export_handlers
 
 @Altruix.bot.on_callback_query(filters.regex(r"^global_purgeme_(\d+)_(\d+)$"))
 @iuser_check
@@ -96,19 +99,34 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
     bot_mod = len([x for x in Altruix.plugin_categories.values() if x == 'bot'])
     xtra_mod = len([x for x in Altruix.plugin_categories.values() if x == 'other'])
     total_mod = len(Altruix.plugin_categories)
-    xtra_count = 0 # Placeholder if not tracked elsewhere
     
     # Custom Bot Info
-    custom_bot = "None"
+    custom_bot_username = "None"
     if hasattr(Altruix, 'bot_manager'):
-        # Logic to get custom bot for this session if applicable
-        pass 
+        custom_bot_username = Altruix.bot_manager.get_bot_username(me.id) or "None"
+    
+    # Advanced Stats: Count active loggers/features
+    xtra_count = 0
+    # Count how many of these are "ON" in DB
+    feat_keys = [
+        f"PM_LOGGER_STATUS_{index}", f"MENTION_LOGGER_STATUS_{index}", 
+        f"JOIN_LOGGER_STATUS_{index}", f"CMD_LOGGER_STATUS_{index}",
+        f"GPURGEME_STATUS_{index}", f"AUTO_DELETE_CMD_STATUS_{index}"
+    ]
+    for k in feat_keys:
+        if (await Altruix.config.get_env(k)) == "on":
+            xtra_count += 1
 
     # Check session status
     is_disabled = Altruix.is_session_disabled(me.id)
     status_icon = "❌ DISABLED" if is_disabled else "✅ ACTIVE"
     status_emoji = "🔴" if is_disabled else "🟢"
     
+    # Total Active Bots (Main bot + all custom bots)
+    total_active_bots = 1 # Main Bot Assistant
+    if hasattr(Altruix, 'bot_manager'):
+         total_active_bots += len(Altruix.bot_manager.custom_bots)
+
     text = (
         f"<b>👤 Session Info</b>\n\n"
         f"<b>Name:</b> <a href='tg://user?id={me.id}'>{html.escape(me.first_name)} {html.escape(me.last_name or '')}</a>\n"
@@ -118,9 +136,9 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
         f"<b>Premium:</b> {'✅' if me.is_premium else '❌'}\n"
         f"<b>Bio:</b> {html.escape(bio)}\n"
         f"<b>Status:</b> {status_emoji} {status_icon}\n\n"
-        f"<b>🤖 Custom Bot:</b> {custom_bot}\n"
-        f"<b>⚙️ Xtra-Features:</b> {xtra_count}\n"
-        f"<b>🔘 Total Modul:</b> {total_mod} (UB mod {ub_mod}, Bot mod {bot_mod}, Xtra mod {xtra_mod})\n\n"
+        f"<b>🤖 Active Bots:</b> {total_active_bots} | <b>Custom:</b> @{custom_bot_username}\n"
+        f"<b>⚙️ Xtra-Features:</b> {xtra_count} Aktif\n"
+        f"<b>🔘 Total Modul:</b> {total_mod} (UB {ub_mod}, Bot {bot_mod}, Xtra {xtra_mod})\n\n"
         f"<b>📊 Total Buttons:</b> 56 | <b>Page:</b> {button_page}/5\n"
         f"<b>Manage this session:</b>"
     )
@@ -221,6 +239,7 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
 # ============================================================================
 
 @Altruix.bot.on_message(filters.private & filters.user(Altruix.auth_users) & ~filters.command(["start", "settings", "help"]))
+@iuser_check
 @log_errors
 async def sessions_info_msg_handler(c: Client, m: Message):
     """Central handler for capturing text inputs like bio, username, purge count, join links, etc."""
@@ -229,22 +248,86 @@ async def sessions_info_msg_handler(c: Client, m: Message):
 
     if text.lower() == "/cancel":
         # Clear all states
-        from .states import (
-            user_profile_edit_state, user_dlphoto_state, user_purge_state,
-            user_join_state, user_leave_state, user_send_msg_state, user_privacy_state,
-            user_bulk_join_state, user_bulk_leave_state, user_bulk_report_state
-        )
         from .env_handlers import user_env_input_state
+        from .laucreate import user_laucreate_state
         for state_dict in [user_profile_edit_state, user_dlphoto_state, user_purge_state,
                            user_join_state, user_leave_state, user_send_msg_state, user_privacy_state,
-                           user_bulk_join_state, user_bulk_leave_state, user_bulk_report_state, user_env_input_state]:
+                           user_bulk_join_state, user_bulk_leave_state, user_bulk_report_state, 
+                           user_env_input_state, user_laucreate_state, user_edit_confirmation_state,
+                           user_text_confirmation_state]:
             if user_id in state_dict: del state_dict[user_id]
         await m.reply("❌ Input dibatalkan.")
+        return
+
+    # 0. Global Confirmation (Text based)
+    if user_id in user_edit_confirmation_state and text.lower() in ["ya", "tidak"]:
+        if text.lower() == "tidak":
+            del user_edit_confirmation_state[user_id]
+            await m.reply("❌ Aksi dibatalkan.")
+            return
+        # If "ya", we simulate the inline button "yes"
+        # Since we already have edit_confirm_handler, we can refactor it or handle it here.
+        # But for profile edits, it usually goes to process_profile_edit_input or similar.
+        # However, the userbot version of Altruix often uses manual "ya" for confirmations.
+        pass
+
+    # 0.5 Security Verification for Exports
+    if user_id in user_text_confirmation_state and text.lower() == "ok":
+        state = user_text_confirmation_state[user_id]
+        action = state.get("action")
+        if action == "export_all_sessions":
+            from .export_handlers import execute_export_all_sessions
+            await execute_export_all_sessions(c, m)
+        elif action == "export_all_phones":
+            from .export_handlers import execute_export_all_phones
+            await execute_export_all_phones(c, m)
+        
+        del user_text_confirmation_state[user_id]
+        if user_id in user_confirmation_state: del user_confirmation_state[user_id]
         return
 
     # 1. Profile Edits
     from .states import user_profile_edit_state
     if user_id in user_profile_edit_state:
+        state = user_profile_edit_state[user_id]
+        if m.photo and state.get('action') == 'change_profile_photo':
+            # Handle photo upload directly
+            index = state['session_index']
+            page = state['page']
+            await m.reply("📸 <b>Uploading profile photo...</b>", parse_mode=ParseMode.HTML)
+            try:
+                photo_path = await m.download()
+                session_client = Altruix.clients[index]
+                await session_client.set_profile_photo(photo=photo_path)
+                await m.reply("✅ <b>Profile photo updated!</b>", 
+                            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]]),
+                            parse_mode=ParseMode.HTML)
+                from .utils import send_log_notification
+                await send_log_notification(c, 'change_profile_photo', index, m.from_user, True)
+                if os.path.exists(photo_path): os.remove(photo_path)
+                del user_profile_edit_state[user_id]
+            except Exception as e:
+                await m.reply(f"❌ <b>Error:</b> {str(e)}", parse_mode=ParseMode.HTML)
+            return
+
+        # Route media-related actions
+        if state.get('action') in ['download_story', 'download_content']:
+            from .media_handlers import process_media_input
+            await process_media_input(c, m, state)
+            return
+            
+        # Route misc profile actions (stats, tracking, etc.)
+        if state.get('action') in ['download_user_photo', 'track_profile', 'chat_stats', 'recent_messages']:
+            from .message_handlers import process_misc_profile_input
+            await process_misc_profile_input(c, m, state)
+            return
+
+        # Route dev tools
+        if state.get('action') in ['eval_python', 'exec_terminal']:
+            from .dev_handlers import process_dev_input
+            await process_dev_input(c, m, state)
+            return
+
         from .profile_handlers import process_profile_edit_input
         await process_profile_edit_input(c, m)
         return
@@ -281,6 +364,33 @@ async def sessions_info_msg_handler(c: Client, m: Message):
             from .privacy_handlers import process_prefix_input
             await process_prefix_input(c, m, state)
             return
+        elif step == 'waiting_gcast_msg':
+            from .bulk_handlers import process_gcast_input
+            await process_gcast_input(c, m, state)
+            return
+        elif step == 'waiting_sudo_uid':
+            from .privacy_handlers import process_sudo_input
+            await process_sudo_input(c, m, state)
+            return
+        elif step == 'waiting_gpurgeme_limit':
+            from .bulk_handlers import process_gpurgeme_custom
+            await process_gpurgeme_custom(c, m, state)
+            return
+        elif step == 'waiting_help_custom_msg':
+            # Moved from settings.py
+            index = state['session_index']
+            page = state['page']
+            apply_type = await Altruix.config.get_env(f"HELP_INFO_TYPE_{index}") or "per_account"
+            key = "HELP_INFO_CUSTOM_MSG_GLOBAL" if apply_type == "global" else f"HELP_INFO_CUSTOM_MSG_{index}"
+            await Altruix.config.sync_env_to_db(key, text, upsert=True)
+            setattr(Altruix.config, key, text)
+            del user_privacy_state[user_id]
+            from .utils import gt
+            await m.reply(
+                f"{gt('help_info_msg_updated')}\n\n<code>{html.escape(text)}</code>",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("back"), callback_data=f"help_info_custom_menu_{index}_{page}")]])
+            )
+            return
 
     # 4. Download / Tracker Input
     from .states import user_dlphoto_state
@@ -313,16 +423,75 @@ async def sessions_info_msg_handler(c: Client, m: Message):
         await process_bulk_report_input(c, m, user_bulk_report_state[user_id])
         return
 
-    # 7. ENV Manager Input
-    from .env_handlers import user_env_input_state
-    if user_id in user_env_input_state:
-        from .env_handlers import process_env_input
-        await process_env_input(c, m, user_env_input_state[user_id])
+    # 7. Laucreate Inputs
+    from .laucreate import user_laucreate_state, process_laucreate_input
+    if user_id in user_laucreate_state:
+        await process_laucreate_input(c, m, text)
         return
 
-    # 8. Laucreate Input (Group Name Pattern, etc.)
-    from .laucreate import user_laucreate_state
-    if user_id in user_laucreate_state:
-        from .laucreate import process_laucreate_input
-        await process_laucreate_input(c, m, m.text)
+    # 9. Custom Link Tracker
+    if user_id in Altruix.user_track_state:
+        state = Altruix.user_track_state[user_id]
+        step = state.get("step", "")
+        # Note: logic requires access to get_custom_link_data and save_custom_link_data
+        # For now, let's just use it since it's in the same process/scope or import it if needed.
+        from Main.internals.settings import get_custom_link_data, save_custom_link_data
+        
+        if step.startswith("edit_cl_"):
+            target = step.replace("edit_cl_", "")
+            data = get_custom_link_data()
+            apply_type = data.get("apply_types", {}).get(str(user_id), "global")
+            
+            if target == "link" and not re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", text):
+                from .utils import gt
+                await m.reply(gt("invalid_link"))
+                return
+            
+            if apply_type == "global":
+                data["global"][target] = text
+            else:
+                data.setdefault("sessions", {}).setdefault(str(user_id), {})[target] = text
+                if target == "text" and "link" not in data["sessions"][str(user_id)]:
+                    data["sessions"][str(user_id)]["link"] = data["global"]["link"]
+                elif target == "link" and "text" not in data["sessions"][str(user_id)]:
+                    data["sessions"][str(user_id)]["text"] = data["global"]["text"]
+            
+            save_custom_link_data(data)
+            del Altruix.user_track_state[user_id]
+            from .utils import gt
+            await m.reply(gt("btn_updated").format(target.capitalize()))
+            await m.reply(gt("custom_link_title"), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("back"), callback_data="custom_link_settings")]]))
+            return
+
+@Altruix.bot.on_callback_query(filters.regex(r"^edit_confirm_(yes|no)_(\d+)"))
+@iuser_check
+@log_errors
+async def edit_confirm_handler(c: Client, cb: CallbackQuery):
+    """Handler global for Yes/No confirmations from Inline Buttons"""
+    choice = cb.matches[0].group(1)
+    user_id = int(cb.matches[0].group(2))
+    
+    if choice == "no":
+        user_edit_confirmation_state.pop(user_id, None)
+        await cb.answer("Dibatalkan.", show_alert=True)
+        await Altruix.edit_cb(cb, "❌ Aksi dibatalkan oleh pengguna.")
         return
+
+    if user_id not in user_edit_confirmation_state:
+        await cb.answer("❌ Data tidak ditemukan.", show_alert=True)
+        return
+        
+    state = user_edit_confirmation_state[user_id]
+    action = state['action']
+    index = state['session_index']
+    page = state.get('page', 1)
+    
+    await cb.answer("Memproses...", show_alert=False)
+    
+    if action == 'delete_all_profile_photos':
+        from .profile_handlers import delete_all_profile_photos_process
+        await delete_all_profile_photos_process(c, cb.message, index, page, state.get('delay', 2))
+        if user_id in user_edit_confirmation_state: del user_edit_confirmation_state[user_id]
+    
+    # Handle other confirmation actions here if needed
+    

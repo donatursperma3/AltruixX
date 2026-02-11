@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 # ====================== BULK JOIN FEATURE ======================
 @Altruix.bot.on_callback_query(filters.regex("bulk_join_menu"))
+@iuser_check
 @log_errors
 async def bulk_join_menu_handler(c: Client, cb: CallbackQuery):
     """Handler untuk menu bulk join"""
@@ -62,6 +63,7 @@ async def bulk_join_menu_handler(c: Client, cb: CallbackQuery):
     )
 
 @Altruix.bot.on_callback_query(filters.regex("bulk_join_delay_(\\d+)"))
+@iuser_check
 @log_errors
 async def bulk_join_delay_handler(c: Client, cb: CallbackQuery):
     """Handler untuk memilih delay bulk join"""
@@ -92,6 +94,7 @@ async def bulk_join_delay_handler(c: Client, cb: CallbackQuery):
     )
 
 @Altruix.bot.on_callback_query(filters.regex("bulk_join_confirm_(yes|no)"))
+@iuser_check
 @log_errors
 async def bulk_join_confirm_handler(c: Client, cb: CallbackQuery):
     """Handler untuk konfirmasi bulk join"""
@@ -149,6 +152,7 @@ async def execute_bulk_join(c: Client, cb: CallbackQuery, delay: int, link: str)
 
 # ====================== BULK LEAVE FEATURE ======================
 @Altruix.bot.on_callback_query(filters.regex("bulk_leave_menu"))
+@iuser_check
 @log_errors
 async def bulk_leave_menu_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
@@ -164,6 +168,7 @@ async def bulk_leave_menu_handler(c: Client, cb: CallbackQuery):
                         reply_markup=InlineKeyboardMarkup(delay_buttons))
 
 @Altruix.bot.on_callback_query(filters.regex("bulk_leave_delay_(\\d+)"))
+@iuser_check
 @log_errors
 async def bulk_leave_delay_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
@@ -173,6 +178,7 @@ async def bulk_leave_delay_handler(c: Client, cb: CallbackQuery):
     await edit_cb(cb, text=f"<b>🏃 Bulk Leave - Delay {delay}s</b>\nKirim Chat ID/Username target:\n/cancel untuk batal")
 
 @Altruix.bot.on_callback_query(filters.regex("bulk_leave_confirm_(yes|no)"))
+@iuser_check
 @log_errors
 async def bulk_leave_confirm_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
@@ -200,6 +206,7 @@ async def execute_bulk_leave(c: Client, cb: CallbackQuery, delay: int, chat_id: 
 
 # ====================== BULK REPORT FEATURE ======================
 @Altruix.bot.on_callback_query(filters.regex("bulk_report_menu"))
+@iuser_check
 @log_errors
 async def bulk_report_menu_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
@@ -213,6 +220,7 @@ async def bulk_report_menu_handler(c: Client, cb: CallbackQuery):
                         reply_markup=InlineKeyboardMarkup(delay_buttons))
 
 @Altruix.bot.on_callback_query(filters.regex("bulk_report_delay_(\\d+)"))
+@iuser_check
 @log_errors
 async def bulk_report_delay_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
@@ -222,6 +230,7 @@ async def bulk_report_delay_handler(c: Client, cb: CallbackQuery):
     await edit_cb(cb, text=f"<b>🚩 Bulk Report - Delay {delay}s</b>\nKirim Target ID/Username:\n/cancel untuk batal")
 
 @Altruix.bot.on_callback_query(filters.regex("bulk_report_reason_(\\d+)_(.*)"))
+@iuser_check
 @log_errors
 async def bulk_report_reason_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
@@ -238,6 +247,7 @@ async def bulk_report_reason_handler(c: Client, cb: CallbackQuery):
                         ]))
 
 @Altruix.bot.on_callback_query(filters.regex("bulk_report_confirm_(yes|no)"))
+@iuser_check
 @log_errors
 async def bulk_report_confirm_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
@@ -329,6 +339,7 @@ async def process_bulk_report_input(c: Client, m: Message, state: dict):
 
 # ====================== GCAST USER FEATURE ======================
 @Altruix.bot.on_callback_query(filters.regex(r"^gcast_user_(\d+)_(\d+)$"))
+@iuser_check
 @log_errors
 async def gcast_user_handler(c: Client, cb: CallbackQuery):
     """Handler for Global Broadcast to Users"""
@@ -340,19 +351,9 @@ async def gcast_user_handler(c: Client, cb: CallbackQuery):
     
     # Store state
     user_id = cb.from_user.id
-    # reusing bulk state dict or creating new if needed, currently reusing bulk_join for generic input state 
-    # to avoid creating too many state dicts if structure is same, 
-    # BUT better to use dedicated state key in generic dict
+    from .states import user_privacy_state
     
-    # Let's use user_bulk_join_state for simplicity or create a new one?
-    # Better to create a new one in settings.py imports/shared but for now local dict in this file module level?
-    # No, state must be imported/shared. 
-    # Let's use user_text_confirmation_state from settings.py (imported via imports)
-    
-    # Wait, user_text_confirmation_state is imported.
-    from .session_info import user_text_confirmation_state
-    
-    user_text_confirmation_state[user_id] = {
+    user_privacy_state[user_id] = {
         'type': 'gcast_user',
         'index': index,
         'page': page,
@@ -361,8 +362,83 @@ async def gcast_user_handler(c: Client, cb: CallbackQuery):
     
     await edit_cb(cb, 
         "<b>📢 Global Broadcast (Users)</b>\n\n"
-        "Silakan kirim pesan yang ingin dibroadcast ke semua **Private Chat** yang tersimpan di database/dialogs.\n"
+        "Silakan kirim pesan yang ingin dibroadcast ke semua **Private Chat** yang tersimpan di dialogs.\n"
         "⚠️ <b>Warning:</b> Gunakan dengan bijak agar tidak terkena FloodWait/Ban.\n\n"
         "❌ <b>Cancel:</b> Ketik /cancel",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]])
     )
+
+async def process_gcast_input(c: Client, m: Message, state: dict):
+    """Initiate gcast execution from message input"""
+    user_id = m.from_user.id
+    index = state['index']
+    text = m.text or m.caption
+    
+    await m.reply("🔄 <b>Starting Broadcast...</b>\n\nProcess started in background.")
+    
+    # Simple async broadcast
+    asyncio.create_task(execute_gcast(c, index, text, m))
+    
+    from .states import user_privacy_state
+    if user_id in user_privacy_state:
+        del user_privacy_state[user_id]
+
+async def execute_gcast(c, index, text, m):
+    """Logic for broadcasting messages to private dialogs"""
+    from pyrogram.enums import ChatType
+    try:
+        if index >= len(Altruix.clients): return
+        client = Altruix.clients[index]
+        
+        count = 0
+        failed = 0
+        
+        async for dialog in client.get_dialogs():
+            if dialog.chat.type == ChatType.PRIVATE:
+                try:
+                    await client.send_message(dialog.chat.id, text)
+                    count += 1
+                    await asyncio.sleep(2) # FloodWait prevention
+                except:
+                    failed += 1
+                    
+        await m.reply(f"✅ <b>GCAST COMPLETED</b>\n\nSent: {count}\nFailed: {failed}")
+    except Exception as e:
+        logger.error(f"Error in execute_gcast: {e}")
+
+async def process_gpurgeme_custom(c: Client, m: Message, state: dict):
+    """Process custom global purge input"""
+    user_id = m.from_user.id
+    index = state['session_index']
+    text = m.text.strip()
+    
+    if not text.isdigit():
+        await m.reply("❌ Masukkan angka valid.")
+        return
+        
+    limit = int(text)
+    await m.reply(f"🗑️ <b>Starting global purge ({limit} msgs)...</b>", parse_mode=ParseMode.HTML)
+    
+    session_client = Altruix.clients[index]
+    try:
+        count = 0
+        async for dialog in session_client.get_dialogs():
+            try:
+                my_msgs = []
+                async for msg in session_client.get_chat_history(dialog.chat.id, limit=limit):
+                    if msg.from_user and msg.from_user.is_self:
+                        my_msgs.append(msg.id)
+                if my_msgs:
+                    await session_client.delete_messages(dialog.chat.id, my_msgs)
+                    count += 1
+                    await asyncio.sleep(0.5)
+            except: continue
+        await m.reply(f"✅ <b>Global Purgeme Completed</b>\n\nDeleted from {count} dialogs.")
+        await send_log_notification(c, 'gpurgeme_custom', index, m.from_user, True, additional_info={'Limit': limit})
+    except Exception as e:
+        await m.reply(f"❌ Error: {str(e)}")
+        
+    from .states import user_privacy_state
+    if user_id in user_privacy_state: del user_privacy_state[user_id]
+    await asyncio.sleep(2)
+    await m.reply("🔄 Kembali ke dashboard...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{state.get('page', 1)}")]]) )

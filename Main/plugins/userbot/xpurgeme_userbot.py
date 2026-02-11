@@ -160,7 +160,7 @@ async def collect_user_messages_optimized(client: Client, chat_id: int, user_id:
                 Altruix.log(f"Purgeme: search_messages SUCCESS - Found {len(collected_ids)} messages")
                 return collected_ids
             else:
-                Altruix.log(f"Purgeme: search_messages returned 0 results, falling back to get_chat_history")
+                Altruix.log(f"Purgeme: search_messages returned 0 results, forcing fallback to get_chat_history")
                 
         except Exception as search_err:
             Altruix.log(f"Purgeme: search_messages FAILED ({search_err}), falling back to get_chat_history")
@@ -787,11 +787,17 @@ async def purgeme_cmd(client: Client, message: Message):
                                 disable_web_page_preview=True
                             )
                     
+                    
                     # Auto-delete after 9 seconds as requested
                     await asyncio.sleep(9)
                     await target_notif.delete()
                 except Exception as notif_err:
                     Altruix.log(f"Failed to send target chat notification: {notif_err}")
+                    # Try one last time with Userbot client to log chat if target chat failed
+                    try:
+                        if Altruix.log_chat:
+                             await client.send_message(Altruix.log_chat, f"⚠️ Purgeme Notification Fail: {notif_err}")
+                    except: pass
     except Exception as log_err:
         Altruix.log(f"Failed to send Purgeme completion log: {log_err}")
     

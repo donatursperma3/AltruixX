@@ -20,6 +20,7 @@ user_env_input_state = {}
 # ====================== ENV MANAGER HANDLERS ======================
 
 @Altruix.bot.on_callback_query(filters.regex(r"^env_manager_list_(\d+)$"))
+@iuser_check
 @log_errors
 async def env_manager_list_handler(c: Client, cb: CallbackQuery):
     """Display list of environment variables with pagination"""
@@ -53,7 +54,7 @@ async def env_manager_list_handler(c: Client, cb: CallbackQuery):
         text += "<b>Variables:</b>\n"
         for key, value in env_items:
             # Mask sensitive values
-            display_val = value[:20] + "..." if len(str(value)) > 20 else value
+            display_val = str(value)[:20] + "..." if len(str(value)) > 20 else value
             if any(x in key.upper() for x in ['TOKEN', 'KEY', 'SECRET', 'PASSWORD', 'API']):
                 display_val = "***HIDDEN***"
             text += f"• <code>{key}</code>: <code>{html.escape(str(display_val))}</code>\n"
@@ -85,6 +86,7 @@ async def env_manager_list_handler(c: Client, cb: CallbackQuery):
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^env_add_start$"))
+@iuser_check
 @log_errors
 async def env_add_start_handler(c: Client, cb: CallbackQuery):
     """Start process to add new ENV variable"""
@@ -111,6 +113,7 @@ async def env_add_start_handler(c: Client, cb: CallbackQuery):
     }
 
 @Altruix.bot.on_callback_query(filters.regex(r"^env_search_start$"))
+@iuser_check
 @log_errors
 async def env_search_start_handler(c: Client, cb: CallbackQuery):
     """Start ENV search process"""
@@ -133,6 +136,7 @@ async def env_search_start_handler(c: Client, cb: CallbackQuery):
     }
 
 @Altruix.bot.on_callback_query(filters.regex(r"^env_edit_(.+)$"))
+@iuser_check
 @log_errors
 async def env_edit_handler(c: Client, cb: CallbackQuery):
     """Edit existing ENV variable"""
@@ -167,6 +171,7 @@ async def env_edit_handler(c: Client, cb: CallbackQuery):
     }
 
 @Altruix.bot.on_callback_query(filters.regex(r"^env_delete_confirm_(.+)$"))
+@iuser_check
 @log_errors
 async def env_delete_confirm_handler(c: Client, cb: CallbackQuery):
     """Confirm deletion of ENV variable"""
@@ -192,6 +197,7 @@ async def env_delete_confirm_handler(c: Client, cb: CallbackQuery):
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^env_delete_exec_(.+)$"))
+@iuser_check
 @log_errors
 async def env_delete_exec_handler(c: Client, cb: CallbackQuery):
     """Execute deletion of ENV variable"""
@@ -310,7 +316,7 @@ async def process_env_input(c: Client, m: Message, state: dict):
         if results:
             text += f"Found <code>{len(results)}</code> matches:\n\n"
             for key, value in list(results.items())[:10]:  # Limit to 10 results
-                display_val = value[:20] + "..." if len(str(value)) > 20 else value
+                display_val = str(value)[:20] + "..." if len(str(value)) > 20 else value
                 if any(x in key.upper() for x in ['TOKEN', 'KEY', 'SECRET', 'PASSWORD', 'API']):
                     display_val = "***HIDDEN***"
                 text += f"• <code>{key}</code>: <code>{html.escape(str(display_val))}</code>\n"

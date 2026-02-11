@@ -122,3 +122,15 @@ async def check_authorization(cb: CallbackQuery) -> bool:
         await cb.answer(f"{msg} - {full_msg}", show_alert=True)
         return False
     return True
+
+async def check_authorization_message(m: Any) -> bool:
+    """
+    Check if message user is authorized. 
+    Returns True if authorized, False otherwise (and sends ❌ access denied reply).
+    """
+    if not is_authorized(m.from_user.id):
+        msg = Altruix.get_string("ACCESS_DENIED")
+        full_msg = Altruix.get_string("AUTH_NO_PERMISSION")
+        await m.reply(f"❌ {msg} - {full_msg}")
+        return False
+    return True

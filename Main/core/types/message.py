@@ -469,12 +469,24 @@ class Message:
                     apply_type = await Altruix.config.get_env(f"AUTO_DELETE_CMD_TYPE_{index}") or "per_account"
                     if apply_type == "global":
                         enabled = await Altruix.config.get_env("AUTO_DELETE_CMD_GLOBAL")
+                        delay = await Altruix.config.get_env("AUTO_DELETE_CMD_DELAY_GLOBAL")
                     else:
                         enabled = await Altruix.config.get_env(f"AUTO_DELETE_CMD_STATUS_{index}")
+                        delay = await Altruix.config.get_env(f"AUTO_DELETE_CMD_DELAY_{index}")
                     
-                    # If explicitly false, do not delete
-                    if enabled is False:
+                    enabled = str(enabled).lower() == "on" if enabled is not None else False
+                    
+                    if not enabled:
                         return self
+                        
+                    # Add Delay
+                    try:
+                        delay_sec = int(delay) if delay is not None else 0
+                        if delay_sec > 0:
+                            await asyncio.sleep(delay_sec)
+                    except:
+                        pass
+                        
             except Exception as e:
                 Altruix.log(f"Error checking auto-delete setting: {e}", level=40)
 
