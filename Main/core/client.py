@@ -126,7 +126,7 @@ class AltruixClient:
         self.clients: List[Client] = []
         self.cmd_list = {}
         self.all_lang_strings = {}
-        self.__version__ = "0.0.9.706"
+        self.__version__ = "0.0.9.708"
         self.selected_lang = "english"
         self.local_lang_file = "./Main/localization"
         self.cmd_list = {} # {plugin_name: [cmd_data, ...]}
@@ -354,9 +354,17 @@ class AltruixClient:
 
     @property
     def auth_users(self):
+        # Convert SUDO_USERS to list if it's a string
+        sudo_users = self.config.SUDO_USERS
+        if isinstance(sudo_users, str):
+            # Parse comma-separated string to list of ints
+            sudo_users = [int(x.strip()) for x in sudo_users.split(',') if x.strip().isdigit()]
+        elif not isinstance(sudo_users, list):
+            sudo_users = []
+        
         return list(
             set(
-                self.config.SUDO_USERS
+                sudo_users
                 + [int(acc.id) for acc in self.ourselves]
                 + [self.config.OWNER_ID]
             )

@@ -429,6 +429,17 @@ async def sessions_info_msg_handler(c: Client, m: Message):
         await process_laucreate_input(c, m, text)
         return
 
+    # 8. ENV Manager Inputs
+    from .env_handlers import user_env_input_state, process_env_input, process_env_document
+    if user_id in user_env_input_state:
+        state = user_env_input_state[user_id]
+        # Check if it's a document upload
+        if m.document:
+            await process_env_document(c, m, state)
+        else:
+            await process_env_input(c, m, state)
+        return
+
     # 9. Custom Link Tracker
     if user_id in Altruix.user_track_state:
         state = Altruix.user_track_state[user_id]
