@@ -448,14 +448,31 @@ class Message:
             return await self.reply("❌ Gagal menangani pesan.", **kwargs)
 
     async def delete_if_self(self, **kwargs):
-        # Only delete if sender is self (userbot), NOT sudo users
-        if self.from_user and self.from_user.is_self or self.outgoing:
-            # ✅ CHECK AUTO-DELETE COMMAND SETTING
+            """
+            Delete message if sender is self (userbot), respecting auto-delete configuration.
+
+            This method checks AUTO_DELETE_CMD settings from database and deletes the message
+            if auto-delete is enabled for this session. It supports both global and per-account
+            configuration modes.
+
+            Error Handling:
+            - Database connection errors: Falls back to default (auto-delete disabled)
+            - Permission errors: Gracefully skips delete operation
+            - Invalid config values: Uses default values
+            - All errors are logged with appropriate levels
+
+            Returns:
+                Message: Returns self (for chaining) whether deleted or not
+            """
+            # Only delete if sender is self (userbot), NOT sudo users
+            if not (self.from_user and self.from_user.is_self or self.outgoing):
+                return self
+
             try:
-                # Use getattr to avoid potential client initialization issues
+                # Get client ID safely
                 client_id = (getattr(self._client, 'myself', None) or self._client.me).id
-                
-                # Get session index
+
+                # Find session index for this client
                 index = -1
                 for i, c in enumerate(Altruix.clients):
                     try:
@@ -463,38 +480,105 @@ class Message:
                         if c_id == client_id:
                             index = i
                             break
-                    except: continue
-                
-                if index != -1:
-                    apply_type = await Altruix.config.get_env(f"AUTO_DELETE_CMD_TYPE_{index}") or "per_account"
-                    if apply_type == "global":
+                    except Exception as e:
+                        Altruix.log(f"Error getting client ID for index {i}: {e}", level=10)
+                        continue
+
+                # If client not found in Altruix.clients, skip auto-delete
+                if index == -1:
+                    Altruix.log(f"Client {client_id} not found in Altruix.clients, skipping auto-delete", level=10)
+                    return self
+
+                # Read configuration type (global or per_account) with database error handling
+                apply_type = None
+                try:
+                    apply_type = await Altruix.config.get_env(f"AUTO_DELETE_CMD_TYPE_{index}")
+                except Exception as e:
+                    Altruix.log(f"Database error reading AUTO_DELETE_CMD_TYPE_{index}: {e}, using default 'per_account'", level=30)
+                    apply_type = None
+
+                # Default to per_account if not configured
+                if apply_type is None:
+                    apply_type = "per_account"
+                    Altruix.log(f"AUTO_DELETE_CMD_TYPE_{index} not set, defaulting to per_account", level=10)
+
+                # Validate apply_type value
+                apply_type_str = str(apply_type).lower().strip()
+                if apply_type_str not in ("global", "per_account"):
+                    Altruix.log(f"Invalid AUTO_DELETE_CMD_TYPE value '{apply_type}', defaulting to per_account", level=30)
+                    apply_type_str = "per_account"
+
+                # Read appropriate configuration based on type with database error handling
+                enabled = None
+                delay = None
+                try:
+                    if apply_type_str == "global":
                         enabled = await Altruix.config.get_env("AUTO_DELETE_CMD_GLOBAL")
                         delay = await Altruix.config.get_env("AUTO_DELETE_CMD_DELAY_GLOBAL")
+                        Altruix.log(f"Using global auto-delete config: enabled={enabled}, delay={delay}", level=10)
                     else:
                         enabled = await Altruix.config.get_env(f"AUTO_DELETE_CMD_STATUS_{index}")
                         delay = await Altruix.config.get_env(f"AUTO_DELETE_CMD_DELAY_{index}")
-                    
-                    enabled = str(enabled).lower() == "on" if enabled is not None else False
-                    
-                    if not enabled:
-                        return self
-                        
-                    # Add Delay
-                    try:
-                        delay_sec = int(delay) if delay is not None else 0
-                        if delay_sec > 0:
-                            await asyncio.sleep(delay_sec)
-                    except:
-                        pass
-                        
-            except Exception as e:
-                Altruix.log(f"Error checking auto-delete setting: {e}", level=40)
+                        Altruix.log(f"Using per-account auto-delete config for index {index}: enabled={enabled}, delay={delay}", level=10)
+                except Exception as e:
+                    Altruix.log(f"Database error reading auto-delete config: {e}, using defaults (disabled)", level=30)
+                    enabled = None
+                    delay = None
 
-            try:
-                return await self.delete(**kwargs)
+                # Convert enabled string to boolean with validation
+                # Accept "on", "ON", "true", "True", "1" as enabled
+                if enabled is None:
+                    is_enabled = False
+                else:
+                    enabled_str = str(enabled).lower().strip()
+                    is_enabled = enabled_str in ("on", "true", "1", "yes")
+                    if enabled_str not in ("on", "off", "true", "false", "1", "0", "yes", "no"):
+                        Altruix.log(f"Invalid enabled value '{enabled}', treating as disabled", level=30)
+                        is_enabled = False
+
+                # If auto-delete is disabled, return without deleting
+                if not is_enabled:
+                    Altruix.log(f"Auto-delete disabled for index {index}, skipping", level=10)
+                    return self
+
+                # Parse and apply delay with validation
+                delay_sec = 0
+                if delay is not None:
+                    try:
+                        delay_sec = int(delay)
+                        if delay_sec < 0:
+                            Altruix.log(f"Invalid delay value {delay_sec} (negative), using 0", level=30)
+                            delay_sec = 0
+                        elif delay_sec > 3600:  # Max 1 hour
+                            Altruix.log(f"Invalid delay value {delay_sec} (too large), using 3600", level=30)
+                            delay_sec = 3600
+                    except (ValueError, TypeError) as e:
+                        Altruix.log(f"Failed to parse delay '{delay}': {e}, using default 0", level=30)
+                        delay_sec = 0
+
+                # Wait for delay if configured
+                if delay_sec > 0:
+                    Altruix.log(f"Waiting {delay_sec}s before deleting message", level=10)
+                    await asyncio.sleep(delay_sec)
+
+                # Delete the message with permission error handling
+                try:
+                    Altruix.log(f"Deleting self message (auto-delete enabled)", level=10)
+                    return await self.delete(**kwargs)
+                except Exception as delete_error:
+                    # Check if it's a permission error
+                    error_msg = str(delete_error).lower()
+                    if "permission" in error_msg or "forbidden" in error_msg or "right" in error_msg:
+                        Altruix.log(f"Permission denied to delete message, skipping gracefully: {delete_error}", level=20)
+                    else:
+                        Altruix.log(f"Error deleting message: {delete_error}", level=40)
+                    return self
+
             except Exception as e:
-                Altruix.log(f"Failed to delete own message: {e}", level=40)
+                # Log error but don't crash - return self for graceful degradation
+                Altruix.log(f"Unexpected error in delete_if_self: {e}", level=40)
                 return self
+
 
     async def delete_if_sudo(self, **kwargs):
         sudo_ = Altruix.config.SUDO_USERS

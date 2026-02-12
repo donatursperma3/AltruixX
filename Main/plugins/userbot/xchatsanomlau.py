@@ -296,20 +296,68 @@ def generate_group_name(pattern: str, index: int) -> str:
         return name
     return f"{name} {index}"
 
-async def send_log_notification(bot_client: Client, text: str, reply_to_msg_id: Optional[int] = None, disable_web_page_preview: bool = True) -> Optional[Message]:
-    """Send notification to log channel and return the message object"""
+async def send_log_notification(
+    bot_client: Client,
+    text: str,
+    user_id: int,
+    reply_to_msg_id: Optional[int] = None,
+    disable_web_page_preview: bool = True
+) -> Optional[Message]:
+    """Send notification to PM user and log channel, return the log channel message object"""
+    log_msg = None
+
+    # Check if bot_client is available
+    if not bot_client:
+        logger.error("Bot assistant tidak tersedia, tidak dapat mengirim notifikasi")
+        return None
+
+    # Send to PM user
     try:
-        msg = await bot_client.send_message(
+        await bot_client.send_message(
+            user_id,
+            text,
+            disable_web_page_preview=disable_web_page_preview,
+            parse_mode=ParseMode.HTML
+        )
+        logger.info(f"Notifikasi berhasil dikirim ke PM user {user_id}")
+    except UserIsBlocked:
+        logger.warning(f"User {user_id} telah memblokir bot assistant")
+    except PeerIdInvalid:
+        logger.warning(f"User ID {user_id} tidak valid atau bot belum pernah berinteraksi dengan user")
+    except ChatWriteForbidden:
+        logger.error(f"Bot tidak memiliki permission untuk mengirim pesan ke user {user_id}")
+    except FloodWait as e:
+        logger.warning(f"FloodWait {e.value} detik saat mengirim ke PM user {user_id}")
+    except BadRequest as e:
+        logger.error(f"BadRequest saat mengirim ke PM user {user_id}: {e}")
+    except Exception as e:
+        logger.error(f"Gagal kirim notifikasi ke PM user {user_id}: {e}")
+
+    # Send to LOG_CHAT_ID
+    try:
+        log_msg = await bot_client.send_message(
             LOG_CHAT_ID,
             text,
             reply_to_message_id=reply_to_msg_id,
             disable_web_page_preview=disable_web_page_preview,
             parse_mode=ParseMode.HTML
         )
-        return msg
+        logger.info(f"Notifikasi berhasil dikirim ke LOG_CHAT_ID")
+    except ChatWriteForbidden:
+        logger.error(f"Bot tidak memiliki permission untuk mengirim pesan ke LOG_CHAT_ID {LOG_CHAT_ID}")
+    except PeerIdInvalid:
+        logger.error(f"LOG_CHAT_ID {LOG_CHAT_ID} tidak valid")
+    except ChannelPrivate:
+        logger.error(f"LOG_CHAT_ID {LOG_CHAT_ID} adalah channel private dan bot tidak memiliki akses")
+    except FloodWait as e:
+        logger.warning(f"FloodWait {e.value} detik saat mengirim ke LOG_CHAT_ID")
+    except BadRequest as e:
+        logger.error(f"BadRequest saat mengirim ke LOG_CHAT_ID: {e}")
     except Exception as e:
-        logger.error(f"Gagal kirim log notification: {e}")
-        return None
+        logger.error(f"Gagal kirim notifikasi ke LOG_CHAT_ID: {e}")
+
+    return log_msg
+
 
 # ==================== MAIN CREATION FUNCTIONS ====================
 async def laucreate_loop(
@@ -388,12 +436,14 @@ async def laucreate_loop(
                 f"• Delay: {delay} detik\n"
                 f"• Tipe: {group_type}\n"
                 f"• Batch: {batch_size} grup, delay {extra_delay_minutes} menit",
+                LAUCREATE_TASKS[task_id]["user_id"],
                 control_message.id
             )
         except Exception as e:
             await send_log_notification(
                 bot_client,
                 f"❌ Gagal mendapatkan info bot asisten: {str(e)}",
+                LAUCREATE_TASKS[task_id]["user_id"],
                 control_message.id
             )
             return
@@ -415,6 +465,7 @@ async def laucreate_loop(
                     await send_log_notification(
                         bot_client,
                         f"⚠️ Gagal mendapatkan bot {bot_id}: {str(e)}",
+                        LAUCREATE_TASKS[task_id]["user_id"],
                         control_message.id
                     )
         
@@ -432,18 +483,21 @@ async def laucreate_loop(
                     await send_log_notification(
                         bot_client,
                         f"✅ Foto profil ({source_label}) berhasil di-download ({os.path.getsize(photo_path)} bytes)",
+                        LAUCREATE_TASKS[task_id]["user_id"],
                         control_message.id
                     )
                 else:
                     await send_log_notification(
                         bot_client,
                         f"⚠️ Foto profil tidak tersedia atau gagal di-download",
+                        LAUCREATE_TASKS[task_id]["user_id"],
                         control_message.id
                     )
             except Exception as e:
                 await send_log_notification(
                     bot_client,
                     f"⚠️ Error download foto profil: {str(e)}",
+                    LAUCREATE_TASKS[task_id]["user_id"],
                     control_message.id
                 )
         
@@ -454,6 +508,7 @@ async def laucreate_loop(
                 await send_log_notification(
                     bot_client,
                     f"🛑 Task laucreate dihentikan oleh user pada grup ke-{i}",
+                    LAUCREATE_TASKS[task_id]["user_id"],
                     control_message.id
                 )
                 break
@@ -464,6 +519,7 @@ async def laucreate_loop(
                 await send_log_notification(
                     bot_client,
                     f"⏸️ Task laucreate dipause pada grup ke-{i}",
+                    LAUCREATE_TASKS[task_id]["user_id"],
                     control_message.id
                 )
                 await LAUCREATE_TASKS[task_id]["pause_event"].wait()
@@ -471,6 +527,7 @@ async def laucreate_loop(
                 await send_log_notification(
                     bot_client,
                     f"▶️ Task laucreate di-resume pada grup ke-{i}",
+                    LAUCREATE_TASKS[task_id]["user_id"],
                     control_message.id
                 )
             
@@ -487,7 +544,7 @@ async def laucreate_loop(
             current_log_text = current_log_header + f"• Nama: <code>{html.escape(current_group_name)}</code>\n"
             
             # PERBAIKAN: Gunakan reply_to_msg_id=None agar masuk ke General topic di Forum
-            current_log_msg = await send_log_notification(bot_client, current_log_text, reply_to_msg_id=None)
+            current_log_msg = await send_log_notification(bot_client, current_log_text, LAUCREATE_TASKS[task_id]["user_id"], reply_to_msg_id=None)
             
             total_push_msg = 0 # Counter for push messages
 
@@ -509,7 +566,7 @@ async def laucreate_loop(
                     except Exception as e:
                         logger.warning(f"Gagal edit log message: {e}")
                         # Fallback: send new message if edit fails
-                        current_log_msg = await send_log_notification(bot_client, current_log_text, reply_to_msg_id=None)
+                        current_log_msg = await send_log_notification(bot_client, current_log_text, LAUCREATE_TASKS[task_id]["user_id"], reply_to_msg_id=None)
 
             logger.info(f"Membuat grup {i}/{count}: {current_group_name}")
             
@@ -659,6 +716,7 @@ async def laucreate_loop(
                                         await send_log_notification(
                                             bot_client,
                                             f"⏳ FloodWait {fw.value}s, delay {wait_time}s untuk pesan {msg_id}",
+                                            LAUCREATE_TASKS[task_id]["user_id"],
                                             control_message.id
                                         )
                                         await asyncio.sleep(wait_time)
@@ -667,6 +725,7 @@ async def laucreate_loop(
                                         await send_log_notification(
                                             bot_client,
                                             f"⚠️ Gagal forward pesan {msg_id}: {str(e)}",
+                                            LAUCREATE_TASKS[task_id]["user_id"],
                                             control_message.id
                                         )
                                         continue
@@ -688,6 +747,7 @@ async def laucreate_loop(
                                         await send_log_notification(
                                             bot_client,
                                             f"⚠️ Gagal kirim quote {quote_idx}: {str(e)}",
+                                            LAUCREATE_TASKS[task_id]["user_id"],
                                             control_message.id
                                         )
                                         continue
@@ -709,6 +769,7 @@ async def laucreate_loop(
                                         await send_log_notification(
                                             bot_client,
                                             f"⚠️ Gagal kirim quote 2-{quote_idx}: {str(e)}",
+                                            LAUCREATE_TASKS[task_id]["user_id"],
                                             control_message.id
                                         )
                                         continue
@@ -739,6 +800,7 @@ async def laucreate_loop(
                                                 await send_log_notification(
                                                     bot_client,
                                                     f"⚠️ Gagal kirim {cmd} ke bot {bot.username}: {str(e)}",
+                                                    LAUCREATE_TASKS[task_id]["user_id"],
                                                     control_message.id
                                                 )
                                     except Exception as e:
@@ -805,6 +867,7 @@ async def laucreate_loop(
                                         await send_log_notification(
                                             bot_client,
                                             f"⚠️ Gagal kirim quote 3-{quote_idx}: {str(e)}",
+                                            LAUCREATE_TASKS[task_id]["user_id"],
                                             control_message.id
                                         )
                                         continue
@@ -829,6 +892,7 @@ async def laucreate_loop(
                                 await send_log_notification(
                                     bot_client,
                                     f"⚠️ Gagal hitung pesan: {str(e)}",
+                                    LAUCREATE_TASKS[task_id]["user_id"],
                                     control_message.id
                                 )
                             
@@ -846,6 +910,7 @@ async def laucreate_loop(
                                     await send_log_notification(
                                         bot_client,
                                         f"⚠️ Gagal kirim link pesan pertama: {str(e)}",
+                                        LAUCREATE_TASKS[task_id]["user_id"],
                                         control_message.id
                                     )
                             
@@ -873,6 +938,7 @@ async def laucreate_loop(
                                     await send_log_notification(
                                         bot_client,
                                         f"⚠️ Gagal kirim reaction: {str(e)}",
+                                        LAUCREATE_TASKS[task_id]["user_id"],
                                         control_message.id
                                     )
                         
@@ -909,17 +975,18 @@ async def laucreate_loop(
                         await send_log_notification(
                             bot_client,
                             progress_msg,
+                            LAUCREATE_TASKS[task_id]["user_id"],
                             control_message.id
                         )
                         
                     except FloodWait as fw:
                         wait_msg = f"⏳ FloodWait {fw.value}s untuk grup {current_group_name}"
-                        await send_log_notification(bot_client, wait_msg, control_message.id)
+                        await send_log_notification(bot_client, wait_msg, LAUCREATE_TASKS[task_id]["user_id"], control_message.id)
                         await asyncio.sleep(fw.value + 10)
                         continue  # Coba lagi grup yang sama
                     except Exception as e:
                         error_msg = f"❌ Error membuat grup {current_group_name}: {str(e)}"
-                        await send_log_notification(bot_client, error_msg, control_message.id)
+                        await send_log_notification(bot_client, error_msg, LAUCREATE_TASKS[task_id]["user_id"], control_message.id)
                         i += 1
                         continue
                 
@@ -981,14 +1048,14 @@ async def laucreate_loop(
                         
                         batch_report += f"\nmodule by: @AlphaXproject team"
                         
-                        await send_log_notification(bot_client, batch_report, control_message.id, disable_web_page_preview=True)
+                        await send_log_notification(bot_client, batch_report, LAUCREATE_TASKS[task_id]["user_id"], control_message.id, disable_web_page_preview=True)
                         batch_groups = [] # Reset buffer
 
                     # Handle extra delay only if NOT the last group and batch limit reached
                     if i % batch_size == 0 and i < count:
                         extra_delay = extra_delay_minutes * 60
                         batch_msg = f"⏳ Extra delay {extra_delay_minutes} menit setelah batch {i//batch_size} ({batch_size} grup)"
-                        await send_log_notification(bot_client, batch_msg, control_message.id)
+                        await send_log_notification(bot_client, batch_msg, LAUCREATE_TASKS[task_id]["user_id"], control_message.id)
                         await asyncio.sleep(extra_delay)
                 
                 i += 1
@@ -998,6 +1065,7 @@ async def laucreate_loop(
                 await send_log_notification(
                     bot_client,
                     f"❌ Error dalam loop untuk grup {i}: {str(e)}",
+                    LAUCREATE_TASKS[task_id]["user_id"],
                     control_message.id
                 )
                 i += 1
@@ -1042,6 +1110,7 @@ async def laucreate_loop(
                 f"🛑 Task laucreate dihentikan\n"
                 f"• Grup dibuat: {len(created_groups)}/{count}\n"
                 f"• User: {user_info.first_name}",
+                LAUCREATE_TASKS[task_id]["user_id"],
                 control_message.id
             )
     
@@ -1077,6 +1146,7 @@ async def laucreate_loop(
         await send_log_notification(
             bot_client,
             f"❌ Critical error in laucreate_loop: {html.escape(str(e))}",
+            LAUCREATE_TASKS[task_id]["user_id"],
             control_message.id
         )
     finally:
@@ -1229,6 +1299,7 @@ async def send_completion_report(
         await send_log_notification(
             bot_client,
             f"❌ Error dalam completion report: {str(e)}",
+            user_info.id,
             control_message.id
         )
 
@@ -1663,6 +1734,7 @@ async def laucreate_control_handler(client: Client, callback_query: CallbackQuer
                 await send_log_notification(
                     client,
                     f"🛑 Task laucreate dihentikan oleh {callback_query.from_user.mention}",
+                    LAUCREATE_TASKS[task_id].get("user_id"),
                     LAUCREATE_TASKS[task_id].get("control_message_id")
                 )
                 await callback_query.answer("Task dihentikan")
@@ -1680,6 +1752,7 @@ async def laucreate_control_handler(client: Client, callback_query: CallbackQuer
                 await send_log_notification(
                     client,
                     f"⏸️ Task laucreate dipause oleh {callback_query.from_user.mention}",
+                    LAUCREATE_TASKS[task_id].get("user_id"),
                     LAUCREATE_TASKS[task_id].get("control_message_id")
                 )
                 await callback_query.answer("Task dipause")
@@ -1697,6 +1770,7 @@ async def laucreate_control_handler(client: Client, callback_query: CallbackQuer
                 await send_log_notification(
                     client,
                     f"▶️ Task laucreate di-resume oleh {callback_query.from_user.mention}",
+                    LAUCREATE_TASKS[task_id].get("user_id"),
                     LAUCREATE_TASKS[task_id].get("control_message_id")
                 )
                 await callback_query.answer("Task di-resume")
