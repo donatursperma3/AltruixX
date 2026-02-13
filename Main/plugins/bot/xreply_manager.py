@@ -1,4 +1,4 @@
-PLUGIN_VERSION = "0.0.22"
+PLUGIN_VERSION = "0.0.24"
 # xreply_manager.py
 # Separated logic for handling PM Logger replies to prevent conflicts
 # Copyright (C) 2021-present by Altruix@Github, < https://github.com/Altruix >.
@@ -361,12 +361,81 @@ async def pmlu_confirm_send_callback(c: Client, cb: CallbackQuery):
             if "user_id" in data:
                 USER_REPLY_COUNTS[data["user_id"]][today] += 1
         
-        res_msg = f"✅ Berhasil mengirim dari {sent_count} akun."
-        if errors:
-            res_msg += f"\n❌ Gagal: {len(errors)} akun."
-        
-        await cb.message.edit_text(res_msg)
-        
+        # ✅ Detailed Success Notification
+        if sent_count > 0:
+            # 1. Reply Via (Account used)
+            if data.get("is_reply_all"):
+                via_text = f"Multiple Accounts ({sent_count})"
+            else:
+                if target_client and target_client.me:
+                    via_text = f"<a href='tg://user?id={target_client.me.id}'>{html.escape(target_client.me.first_name)}</a>"
+                else:
+                    via_text = "Unknown Client"
+
+            # 2. Reply By (User who clicked)
+            by_user = cb.from_user
+            if by_user:
+                by_text = f"<a href='tg://user?id={by_user.id}'>{html.escape(by_user.first_name)}</a>"
+            else:
+                by_text = "Unknown User"
+
+            # 3. Target Chat & Info
+            # Try to get chat title from cache if available, or just use ID
+            chat_title = str(chat_id)
+            chat_link = f"tg://user?id={chat_id}" # Default to user link for PM
+            chat_type = "User/Bot" if chat_id > 0 else "Group"
+            
+            # Check cached name
+            if msg_key in PM_LOG_CACHE and isinstance(PM_LOG_CACHE[msg_key], dict):
+                cached_name = PM_LOG_CACHE[msg_key].get("name") or PM_LOG_CACHE[msg_key].get("group_name")
+                if cached_name:
+                    chat_title = html.escape(cached_name)
+                    
+                # Determining link type based on ID
+                # If negative, it's a group/channel
+                if chat_id < 0:
+                     # Remove -100 prefix if present for public links, but for protected links use c/
+                     chat_link_id = str(chat_id).replace("-100", "") if str(chat_id).startswith("-100") else str(chat_id).replace("-", "")
+                     chat_link = f"https://t.me/c/{chat_link_id}/{msg_id}"
+                else:
+                     chat_link = f"tg://user?id={chat_id}"
+
+            target_text = f"<a href='{chat_link}'>{chat_title}</a>"
+
+            # 4. Sent Message Link (Button)
+            # We use the LAST sent message ID for the button
+            sent_msg_id = 0
+            if PM_LOG_CACHE[msg_key]["last_replies"]:
+                _, sent_msg_id = PM_LOG_CACHE[msg_key]["last_replies"][-1]
+            
+            # Construct Button
+            success_kb = None
+            if sent_msg_id:
+                if chat_id < 0:
+                    chat_link_id = str(chat_id).replace("-100", "") if str(chat_id).startswith("-100") else str(chat_id).replace("-", "")
+                    btn_url = f"https://t.me/c/{chat_link_id}/{sent_msg_id}"
+                    success_kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔗 Go to Message", url=btn_url)]])
+
+            time_str = datetime.now().strftime("%H:%M:%S")
+
+            res_msg = (
+                f"✅ <b>Berhasil mengirim dari {sent_count} akun</b>\n"
+                f"• <b>Reply via:</b> {via_text} (userbot)\n"
+                f"• <b>Replied by:</b> {by_text}\n"
+                f"• <b>Chat Target:</b> {target_text} (source)\n"
+                f"• <b>Chat Type:</b> {chat_type}\n"
+                f"• <b>Chat ID:</b> <code>{chat_id}</code>\n"
+                f"• <b>Time:</b> {time_str}"
+            )
+            
+            if errors:
+                res_msg += f"\n\n❌ <b>Gagal:</b> {len(errors)} akun\n" + "\n".join([f"- {e}" for e in errors[:5]])
+            
+            await cb.message.edit_text(res_msg, parse_mode=enums.ParseMode.HTML, reply_markup=success_kb, disable_web_page_preview=True)
+            
+        else:
+             await cb.message.edit_text(f"❌ <b>Gagal Mengirim</b>\n" + "\n".join(errors), parse_mode=enums.ParseMode.HTML)
+
     except Exception as e:
         logger.error(f"ReplyManager Error: {e}")
         await cb.answer(f"❌ Error: {e}", show_alert=True)

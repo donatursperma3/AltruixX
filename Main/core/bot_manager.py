@@ -95,7 +95,7 @@ class BotManager:
                     for handler in handlers:
                         bot_client.add_handler(handler, group)
 
-            logger.info(f"✅ Custom bot started for {user_id}: {bot_client.me.username}")
+            logger.info(f"✅ Custom bot started for {user_id}: @{bot_client.me.username}")
             return True
         except Exception as e:
             logger.error(f"❌ Failed to start custom bot for {user_id}: {e}")

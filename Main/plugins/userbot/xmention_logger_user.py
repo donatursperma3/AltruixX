@@ -42,7 +42,7 @@ from Main.plugins.userbot.xpm_logger_user import SessionManager
 # ============================================================================
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "tags"  # Renamed from mentions
-PLUGIN_VERSION = "1.7.66-TAG"  # ✅ Added block/unblock, send message features
+PLUGIN_VERSION = "1.7.67-TAG"  # ✅ Added block/unblock, send message features
 
 # Gunakan logger Altruix jika tersedia, atau buat baru yang konsisten
 logger = logging.getLogger("altruix.mentions")
@@ -1095,9 +1095,21 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
         if not mentioner:
             return
 
-        mentioner_name = mentioner.first_name or "Unknown"
+        # Custom Formatting as requested
         mentioner_id = mentioner.id
-        mentioner_hyperlink = f'<a href="tg://user?id={mentioner_id}">{html.escape(mentioner_name)}</a>'
+        
+        # Name handling: First Last or "Blank User"
+        f_name = mentioner.first_name or ""
+        l_name = mentioner.last_name or ""
+        full_name = f"{f_name} {l_name}".strip()
+        if not full_name:
+            full_name = "Blank User"
+        
+        # Hyperlink the name
+        mentioner_hyperlink = f'<a href="tg://user?id={mentioner_id}">{html.escape(full_name)}</a>'
+        
+        # Username handling
+        username_display = f"@{mentioner.username}" if mentioner.username else "None"
         
         # Handle message text
         message_text = m.text or m.caption or "[No text content]"
@@ -1133,20 +1145,33 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
                 elif media_size < 1024*1024: size_str = f"{media_size/1024:.2f} KB"
                 else: size_str = f"{media_size/(1024*1024):.2f} MB"
         
-        # Chat info with hyperlink
-        chat_title = html.escape(m.chat.title)
-        if m.chat.username:
-            chat_link = f"<a href='https://t.me/{m.chat.username}'>{chat_title}</a>"
-        else:
-            chat_link = f"<b>{chat_title}</b>"
+        # My Account Name (First Name only as per request example "CoolKid 369")
+        my_name = c.me.first_name if c.me else "Unknown"
 
-        # Localization for Mention Logger
+        # Hyperlink the my name
+        my_name_hyperlink = f'<a href="tg://user?id={c.me.id}">{html.escape(my_name)}</a>'
+        
+        # Group handling: Title as clickable hyperlink + (ID)
+        group_title_raw = m.chat.title or "Unknown Group"
+        group_title = html.escape(group_title_raw)
+        if m.chat.username:
+            group_link = f"https://t.me/{m.chat.username}"
+        else:
+            # Private group: use https://t.me/c/{stripped_id}/{msg_id}
+            stripped_id = str(m.chat.id).replace("-100", "", 1)
+            group_link = f"https://t.me/c/{stripped_id}/{m.id}"
+        group_hyperlink = f'<a href="{group_link}">{group_title}</a>'
+
+        # Format: Group: Title(hyperlink) (ID)
+        group_display = f"{group_hyperlink} ({m.chat.id})"
+
         log_message = (
-            f"{Altruix.get_string('LOGGER_TAG_TITLE')}\n\n"
-            f"{Altruix.get_string('LOGGER_TAG_BY').format(mentioner_id, html.escape(mentioner_name), mentioner_id)}\n"
-            f"{Altruix.get_string('LOGGER_TAG_ACCOUNT').format(c.me.mention(style=enums.ParseMode.HTML))}\n"
-            f"{Altruix.get_string('LOGGER_TAG_GROUP').format(chat_link)} (<code>{m.chat.id}</code>)\n"
-            f"{Altruix.get_string('LOGGER_TAG_TIME').format(mention_time)}\n"
+            f"🔔 <b>Tag Detected!</b>\n\n"
+            f"👤 <b>Tagged By:</b> {mentioner_hyperlink} (<code>{mentioner_id}</code>)\n"
+            f"ℹ️ <b>Username:</b> {username_display}\n"
+            f"🤖 <b>My Account:</b> {my_name_hyperlink} (<code>{c.me.id}</code>)\n"
+            f"💬 <b>Group:</b> {group_display}\n"
+            f"🕒 <b>Time:</b> {mention_time}\n"
         )
         
         if has_media:
@@ -1231,6 +1256,7 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
             "thread_id": topic_id,
             "timestamp_int": int(time.time()),
             "mentioned_by": mentioner_id,
+            "name": m.chat.title or full_name,
             "group_name": m.chat.title,
             "client_name": c.me.first_name if c.me else "Unknown",
             "last_reply_id": None,
@@ -1249,6 +1275,7 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
             "thread_id": topic_id,
             "timestamp_int": int(time.time()),
             "mentioned_by": mentioner_id,
+            "name": m.chat.title or full_name,
             "group_name": m.chat.title,
             "client_name": c.me.first_name if c.me else "Unknown",
             "last_reply_id": None,
@@ -1271,6 +1298,10 @@ async def send_mention_edit_handler(c: Client, m: RawMessage):
     """Update log when a mentioned message is edited."""
     try:
         if not Altruix.log_chat:
+            return
+            
+        # ✅ FIX: Check if mention notifications enabled for this account
+        if not await get_mention_setting_safe(c.me.id):
             return
             
         msg_key = f"{m.chat.id}_{m.id}"
@@ -1333,24 +1364,45 @@ async def send_mention_edit_handler(c: Client, m: RawMessage):
         message_text = html.escape(str(message_text))[:500]
 
         # Use formatted HTML for updated content
+        # Format for Edited Message (Consistent with new request)
         mentioner = m.from_user
         mentioner_id = mentioner.id if mentioner else 0
-        mentioner_name = (mentioner.first_name if mentioner else "Unknown") or "Unknown"
-        mentioner_hyperlink = f'<a href="tg://user?id={mentioner_id}">{html.escape(mentioner_name)}</a>'
         
-        # Original time from cache if possible, or current message date
+        # Name handling
+        f_name_edit = (mentioner.first_name if mentioner else "") or ""
+        l_name_edit = (mentioner.last_name if mentioner else "") or ""
+        full_name_edit = f"{f_name_edit} {l_name_edit}".strip() or "Blank User"
+        
+        mentioner_hyperlink = f'<a href="tg://user?id={mentioner_id}">{html.escape(full_name_edit)}</a>'
+        username_display_edit = f"@{mentioner.username}" if mentioner and mentioner.username else "None"
+        
+        my_name_edit = c.me.first_name if c.me else "Unknown"
+        
+        # Time handling
         try:
              mention_time = m.date.strftime("%Y-%m-%d %H:%M:%S")
         except:
              mention_time = "Unknown"
-
         edit_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        # Group handling: Title as clickable hyperlink + (ID)
+        group_title_edit_raw = m.chat.title or "Unknown Group"
+        group_title_edit = html.escape(group_title_edit_raw)
+        if m.chat.username:
+            group_link_edit = f"https://t.me/{m.chat.username}"
+        else:
+            # Private group: use https://t.me/c/{stripped_id}/{msg_id}
+            stripped_id_edit = str(m.chat.id).replace("-100", "", 1)
+            group_link_edit = f"https://t.me/c/{stripped_id_edit}/{m.id}"
+        group_hyperlink_edit = f'<a href="{group_link_edit}">{group_title_edit}</a>'
+        group_display_edit = f"{group_hyperlink_edit} ({m.chat.id})"
 
         log_content = (
-            f"🔔 <b>Mention Detected! [EDITED]</b>\n\n"
-            f"👤 <b>Mentioned By:</b> {mentioner_hyperlink} (<code>{mentioner_id}</code>)\n"
-            f"🤖 <b>My Account:</b> {c.me.mention(style=enums.ParseMode.HTML)}\n"
-            f"💬 <b>Group:</b> {html.escape(m.chat.title)} (<code>{m.chat.id}</code>)\n"
+            f"🔔 <b>Tag Detected! [EDITED]</b>\n\n"
+            f"👤 <b>Tagged By:</b> {mentioner_hyperlink} (<code>{mentioner_id}</code>)\n"
+            f"ℹ️ <b>Username:</b> {username_display_edit}\n"
+            f"🤖 <b>My Account:</b> <a href='tg://user?id={c.me.id}'>{html.escape(my_name_edit)}</a> (<code>{c.me.id}</code>)\n"
+            f"💬 <b>Group:</b> {group_display_edit}\n"
             f"🕒 <b>Original:</b> <code>{mention_time}</code>\n"
             f"🕒 <b>Edited:</b> <code>{edit_time}</code>\n"
             f"📄 <b>New Message:</b>\n<blockquote>{message_text}</blockquote>"

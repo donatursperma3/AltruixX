@@ -37,7 +37,7 @@ logger = logging.getLogger("altruix.pm_logger_user")
 logger.setLevel(logging.INFO)
 
 PLUGIN_NAME = __plugin_name__ 
-PLUGIN_VERSION = "1.3.65"  # ✅ Fixed CHANNEL_INVALID during topic creation
+PLUGIN_VERSION = "1.3.68"  # ✅ Fixed CHANNEL_INVALID during topic creation
 from Main.utils.file_helpers import get_db_path
 STORAGE_FILE = Path(get_db_path("pm_logger_user_settings.json"))
 
@@ -209,16 +209,72 @@ async def load_settings():
 async def save_settings():
     try:
         data = {
-            "sessions": PM_LOGGER_USER_DATA,
+            "settings": PM_LOGGER_USER_DATA, # Key shifted back to settings for consistency with load_settings
+            "sessions": PM_LOGGER_USER_DATA, # Legacy support
             "filters": PM_LOGGER_FILTERS,
             "reply_from_all_accessible": REPLY_FROM_ALL_ACCESSIBLE,
             "reply_access_mode": REPLY_ACCESS_MODE,
-            "version": PLUGIN_VERSION
+            "version": PLUGIN_VERSION,
+            "apply_types": PM_LOGGER_USER_DATA.get("apply_types", {}),
+            "global_config": PM_LOGGER_USER_DATA.get("global_config", {}),
+            "auto_create_topic": PM_LOGGER_USER_DATA.get("auto_create_topic", False)
         }
         async with aiofiles.open(STORAGE_FILE, 'w', encoding='utf-8') as f:
             await f.write(json.dumps(data, indent=2))
     except Exception as e:
         logger.error(f"Failed to save PM Logger User settings: {e}")
+
+def get_pm_setting_safe(client_id: int, key: str = "enabled") -> bool:
+    """Safe method to read PM Logger settings - combines per-account and global."""
+    user_id_str = str(client_id)
+    
+    # PM_LOGGER_USER_DATA stores the main settings / sessions dict
+    
+    # 0. Resolve apply_type
+    apply_types = PM_LOGGER_USER_DATA.get("apply_types", {})
+    if not isinstance(apply_types, dict): apply_types = {}
+    
+    apply_type = apply_types.get(user_id_str, "per_account")
+    
+    if apply_type == "global":
+        global_cfg = PM_LOGGER_USER_DATA.get("global_config", {})
+        if not isinstance(global_cfg, dict): global_cfg = {}
+        return bool(global_cfg.get(key, PM_LOGGER_USER_DATA.get(key, False)))
+
+    # 1. Check per-client settings
+    if user_id_str in PM_LOGGER_USER_DATA:
+        setting_data = PM_LOGGER_USER_DATA[user_id_str]
+        if isinstance(setting_data, dict):
+            return bool(setting_data.get(key, PM_LOGGER_USER_DATA.get(key, False)))
+        elif isinstance(setting_data, bool) and key == "enabled":
+            return setting_data
+
+    # 3. Fallback to root global setting
+    return bool(PM_LOGGER_USER_DATA.get(key, False))
+
+def save_pm_setting_safe(client_id: int, key: str, value: bool):
+    """Save setting to the correct location based on apply_type."""
+    user_id_str = str(client_id)
+    
+    apply_types = PM_LOGGER_USER_DATA.get("apply_types", {})
+    if not isinstance(apply_types, dict): 
+        apply_types = {}
+        PM_LOGGER_USER_DATA["apply_types"] = apply_types
+        
+    apply_type = apply_types.get(user_id_str, "per_account")
+    
+    if apply_type == "global":
+        if "global_config" not in PM_LOGGER_USER_DATA or not isinstance(PM_LOGGER_USER_DATA["global_config"], dict):
+            PM_LOGGER_USER_DATA["global_config"] = {}
+        PM_LOGGER_USER_DATA["global_config"][key] = value
+        
+        # Also sync to root if it's the 'enabled' flag for UI consistency
+        if key == "enabled":
+            PM_LOGGER_USER_DATA["enabled"] = value
+    else:
+        if user_id_str not in PM_LOGGER_USER_DATA or not isinstance(PM_LOGGER_USER_DATA[user_id_str], dict):
+            PM_LOGGER_USER_DATA[user_id_str] = {}
+        PM_LOGGER_USER_DATA[user_id_str][key] = value
 
 # Call load_settings initially
 asyncio.run_coroutine_threadsafe(load_settings(), asyncio.get_event_loop())
@@ -319,13 +375,22 @@ async def pm_logger_user_handler(c: Client, m: RawMessage):
         if apply_type == "global":
             session_settings = PM_LOGGER_USER_DATA.get("global_config", {})
         else:
-            session_settings = PM_LOGGER_USER_DATA.get("sessions", {}).get(user_id_str)
+            # PM_LOGGER_USER_DATA IS the sessions dict (from load_settings)
+            session_settings = PM_LOGGER_USER_DATA.get(user_id_str)
             
         if session_settings is None:
             # Fallback to legacy global setting
             is_globally_on = PM_LOGGER_USER_DATA.get("enabled", False)
-            log_from_user = is_globally_on
-            log_from_bot = is_globally_on
+            mode = PM_LOGGER_USER_DATA.get("mode", "both")
+            if mode == "user":
+                log_from_user = is_globally_on
+                log_from_bot = False
+            elif mode == "bot":
+                log_from_user = False
+                log_from_bot = is_globally_on
+            else:  # "both"
+                log_from_user = is_globally_on
+                log_from_bot = is_globally_on
             session_filters = {}
         elif isinstance(session_settings, bool):
             is_globally_on = session_settings
@@ -523,19 +588,19 @@ async def pm_logger_user_handler(c: Client, m: RawMessage):
         if not fwd_msg and not Altruix.log_chat:
             return
 
-        # Send Detailed Info as a reply to the forwarded message in topic
+        # Send Detailed Info using Main Bot (Altruix.bot) for robustness - similar to mention logger
         try:
-            bot = Altruix.bot_manager.get_bot(c.me.id)
-            sent_log = await bot.send_message(
+            sent_log = await Altruix.bot.send_message(
                 Altruix.log_chat,
                 log_content,
                 parse_mode=enums.ParseMode.HTML,
+                disable_web_page_preview=True,
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 reply_to_message_id=fwd_msg.id if fwd_msg else None,
                 message_thread_id=topic_id
             )
             
-            # Cache for recovery - capture ACTUAL thread_id from sent message
+            # Cache for recovery
             actual_thread_id = getattr(sent_log, "message_thread_id", None)
             PM_LOG_CACHE[f"{m.chat.id}_{m.id}"] = {
                 "client_id": c.me.id,
@@ -544,23 +609,33 @@ async def pm_logger_user_handler(c: Client, m: RawMessage):
                 "thread_id": actual_thread_id,
                 "chat_id": m.chat.id,
                 "msg_id": m.id,
+                "name": sender_name,
                 "last_reply_id": None
             }
         except Exception as e:
-            if "CHANNEL_INVALID" in str(e) or "PEER_ID_INVALID" in str(e):
-                logger.warning(f"PMLU Error: Invalid Log Channel {Altruix.log_chat}. Disabling Logger.")
-                # Auto-disable to prevent spam
-                PM_LOGGER_USER_DATA["enabled"] = False
-                await save_settings()
-                try:
-                    await c.send_message(
-                        "me", 
-                        Altruix.get_string("PMLU_DISABLED_MSG").format(chat=Altruix.log_chat)
-                    )
-                except:
-                    pass
-            else:
-                logger.error(f"PMLU Log send failed: {e}")
+            logger.error(f"PMLU: Send failed to LOG_CHAT ({Altruix.log_chat}), falling back to OWNER: {e}")
+            try:
+                # Fallback to Owner if log chat fails (e.g., CHANNEL_INVALID)
+                sent_log = await Altruix.bot.send_message(
+                    int(Altruix.config.OWNER_ID),
+                    f"⚠️ <b>PMLU FALLBACK</b> (Chat {Altruix.log_chat} invalid)\n\n" + log_content,
+                    parse_mode=enums.ParseMode.HTML,
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+                
+                # Still cache even if owner-mode (though some buttons might fail if they expect log_chat)
+                PM_LOG_CACHE[f"{m.chat.id}_{m.id}"] = {
+                    "client_id": c.me.id,
+                    "log_msg_id": sent_log.id,
+                    "fwd_msg_id": fwd_msg.id if fwd_msg else None,
+                    "thread_id": topic_id,
+                    "chat_id": m.chat.id,
+                    "msg_id": m.id,
+                    "last_reply_id": None
+                }
+            except Exception as owner_err:
+                logger.error(f"PMLU: Fallback to OWNER also failed: {owner_err}")
+                return
 
         # Save both sessions and cache
         SessionManager.save()
@@ -579,7 +654,7 @@ async def pm_logger_user_handler(c: Client, m: RawMessage):
 async def pm_logger_user_edit_handler(c: Client, m: RawMessage):
     """Update log when a message is edited."""
     try:
-        if not PM_LOGGER_USER_DATA.get("enabled", False):
+        if not get_pm_setting_safe(c.me.id, "enabled"):
             return
 
         msg_key = f"{m.chat.id}_{m.id}"
@@ -645,7 +720,7 @@ def generate_pmlu_menu(client_id):
     try:
         user_id = str(client_id)
         
-        is_enabled = PM_LOGGER_USER_DATA.get("enabled", False)
+        is_enabled = get_pm_setting_safe(client_id, "enabled")
         status = "ENABLED ✅" if is_enabled else "DISABLED ❌"
         mode = PM_LOGGER_USER_DATA.get("mode", "both").upper()
         ra_status = "ENABLED ✅" if REPLY_FROM_ALL_ACCESSIBLE else "DISABLED ❌"
@@ -737,8 +812,8 @@ async def pmlu_config_callback(c: Client, cb: CallbackQuery):
         text = "Updated"
         
         if action == "toggle_enable":
-            current = PM_LOGGER_USER_DATA.get("enabled", False)
-            PM_LOGGER_USER_DATA["enabled"] = not current
+            current = get_pm_setting_safe(client_id, "enabled")
+            save_pm_setting_safe(client_id, "enabled", not current)
             text = "✅ PM Logger Enabled" if not current else "❌ PM Logger Disabled"
             
         elif action == "toggle_mode":

@@ -119,24 +119,88 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
 
     # Check session status
     is_disabled = Altruix.is_session_disabled(me.id)
-    status_icon = "❌ DISABLED" if is_disabled else "✅ ACTIVE"
+    status_icon = "DISABLED" if is_disabled else "ACTIVE"
     status_emoji = "🔴" if is_disabled else "🟢"
     
+    # Prefix Handling
+    prefix_apply_type = await Altruix.config.get_env("PREFIX_APPLY_TYPE") or "global"
+    u_key = "CMD_HANDLER" if prefix_apply_type == "global" else f"CMD_HANDLER_{me.id}"
+    s_key = "SUDO_CMD_HANDLER" if prefix_apply_type == "global" else f"SUDO_CMD_HANDLER_{me.id}"
+    
+    u_prefix = await Altruix.config.get_env(u_key) or "."
+    s_prefix = await Altruix.config.get_env(s_key) or ","
+
     # Total Active Bots (Main bot + all custom bots)
     total_active_bots = 1 # Main Bot Assistant
     if hasattr(Altruix, 'bot_manager'):
          total_active_bots += len(Altruix.bot_manager.custom_bots)
 
+    # Fetch PM Logger Status
+    pm_logger_status = "❌ OFF"
+    try:
+        from Main.utils.file_helpers import get_db_path as _get_db_path
+        import json as _json
+        _pm_settings_path = _get_db_path("pm_logger_user_settings.json")
+        if os.path.exists(_pm_settings_path):
+            with open(_pm_settings_path, "r", encoding="utf-8") as _f:
+                _pm_data = _json.load(_f)
+                _pm_sessions = _pm_data.get("settings", {}) or _pm_data.get("sessions", {})
+                _me_id_str = str(me.id)
+                # Resolve apply_type
+                _apply_type = _pm_data.get("apply_types", {}).get(_me_id_str, "per_account")
+                
+                if _apply_type == "global":
+                    _pm_session_cfg = _pm_data.get("global_config", {})
+                else:
+                    _pm_session_cfg = _pm_sessions.get(_me_id_str)
+                
+                _pm_enabled = False
+                if _pm_session_cfg is None:
+                    _pm_enabled = _pm_sessions.get("enabled", False)
+                elif isinstance(_pm_session_cfg, bool):
+                    _pm_enabled = _pm_session_cfg
+                else:
+                    _pm_enabled = _pm_session_cfg.get("enabled", False)
+                
+                if _pm_enabled:
+                    pm_logger_status = "✅ ON"
+    except Exception:
+        pass
+    
+    # Fetch Mention Logger Status
+    mention_logger_status = "❌ OFF"
+    try:
+        _mention_settings_path = _get_db_path("mentions_settings.json")
+        if os.path.exists(_mention_settings_path):
+            with open(_mention_settings_path, "r", encoding="utf-8") as _f:
+                _m_data = _json.load(_f)
+                _me_id_str = str(me.id)
+                # Check per-account first, then global (matches get_mention_setting_safe logic)
+                _m_per_account = _m_data.get("settings", {}).get(_me_id_str, {})
+                if isinstance(_m_per_account, dict):
+                    _m_enabled = _m_per_account.get("mention", _m_data.get("global", {}).get("mention", True))
+                elif isinstance(_m_per_account, bool):
+                    _m_enabled = _m_per_account
+                else:
+                    _m_enabled = _m_data.get("global", {}).get("mention", True)
+                if _m_enabled:
+                    mention_logger_status = "✅ ON"
+    except Exception:
+        pass
+
     text = (
         f"<b>👤 Session Info</b>\n\n"
-        f"<b>Name:</b> <a href='tg://user?id={me.id}'>{html.escape(me.first_name)} {html.escape(me.last_name or '')}</a>\n"
-        f"<b>ID:</b> <tg-spoiler><code>{me.id}</code></tg-spoiler>\n"
-        f"<b>Username:</b> <tg-spoiler>@{me.username or 'None'}</tg-spoiler>\n"
-        f"<b>Phone:</b> <tg-spoiler>{me.phone_number or 'Hidden'}</tg-spoiler>\n"
-        f"<b>Premium:</b> {'✅' if me.is_premium else '❌'}\n"
+        f"<b>Name:</b> <b><a href='tg://user?id={me.id}'>{html.escape(me.first_name)} {html.escape(me.last_name or '')}</a></b> \n"
+        f"<b>ID:</b> <spoiler>{me.id}</spoiler>\n"
+        f"<b>Username:</b> <spoiler>@{me.username or 'None'}</spoiler>\n"
+        f"<b>Premium:</b> {'✅ YES' if me.is_premium else '❌ NO'}\n"
         f"<b>Bio:</b> {html.escape(bio)}\n"
-        f"<b>Status:</b> {status_emoji} {status_icon}\n\n"
-        f"<b>🤖 Active Bots:</b> {total_active_bots} | <b>Custom:</b> @{custom_bot_username}\n"
+        f"<b>Status:</b> {status_emoji} {status_icon}\n"
+        f"<b>Prefix:</b> Userbot ( <code>{u_prefix}</code> ) | Sudo ( <code>{s_prefix}</code> )\n\n"
+        f"<b>📋 Logger Status:</b>\n"
+        f"• <b>PM Logger:</b> {pm_logger_status}\n"
+        f"• <b>Mention Logger:</b> {mention_logger_status}\n\n"
+        f"<b>🤖 Bot Assistant:</b> {('@' + custom_bot_username) if custom_bot_username != 'None' else 'None'} (Active Bots: {total_active_bots})\n"
         f"<b>⚙️ Xtra-Features:</b> {xtra_count} Aktif\n"
         f"<b>🔘 Total Modul:</b> {total_mod} (UB {ub_mod}, Bot {bot_mod}, Xtra {xtra_mod})\n\n"
         f"<b>📊 Total Buttons:</b> 56 | <b>Page:</b> {button_page}/5\n"
