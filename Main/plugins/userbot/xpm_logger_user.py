@@ -37,7 +37,7 @@ logger = logging.getLogger("altruix.pm_logger_user")
 logger.setLevel(logging.INFO)
 
 PLUGIN_NAME = __plugin_name__ 
-PLUGIN_VERSION = "1.3.68"  # ✅ Fixed CHANNEL_INVALID during topic creation
+PLUGIN_VERSION = "1.3.69C"  # ✅ Adjusted safe settings fallback logic
 from Main.utils.file_helpers import get_db_path
 STORAGE_FILE = Path(get_db_path("pm_logger_user_settings.json"))
 
@@ -184,10 +184,23 @@ def get_shared_reply_mode():
         pass
     return REPLY_ACCESS_MODE
 
+# Track last load time to avoid unnecessary disk I/O
+LAST_LOAD_TIME_PM = 0
+
 async def load_settings():
-    global PM_LOGGER_USER_DATA, PM_LOGGER_FILTERS, REPLY_FROM_ALL_ACCESSIBLE, REPLY_ACCESS_MODE
+    """
+    Loads PM Logger settings from the JSON storage file.
+    Uses mtime check to avoid redundant loads from disk.
+    Ensure that per-account settings, filters, and global configurations are correctly restored.
+    """
+    global PM_LOGGER_USER_DATA, PM_LOGGER_FILTERS, REPLY_FROM_ALL_ACCESSIBLE, REPLY_ACCESS_MODE, LAST_LOAD_TIME_PM
     try:
         if STORAGE_FILE.exists():
+            # Optimization: Only load if file modified since last load
+            current_mtime = STORAGE_FILE.stat().st_mtime
+            if current_mtime <= LAST_LOAD_TIME_PM and PM_LOGGER_USER_DATA:
+                return
+            
             async with aiofiles.open(STORAGE_FILE, 'r', encoding='utf-8') as f:
                 content = await f.read()
                 if content.strip():
@@ -199,9 +212,20 @@ async def load_settings():
                     REPLY_FROM_ALL_ACCESSIBLE = data.get("reply_from_all_accessible", True)
                     REPLY_ACCESS_MODE = data.get("reply_access_mode", "sudo")
                     
-                    # Ensure auto_create_topic exists
+                    # ✅ FIX: Ensure root-level keys are merged back into PM_LOGGER_USER_DATA
+                    if "apply_types" in data:
+                        PM_LOGGER_USER_DATA["apply_types"] = data["apply_types"]
+                    if "global_config" in data:
+                        PM_LOGGER_USER_DATA["global_config"] = data["global_config"]
+                    if "auto_create_topic" in data:
+                        PM_LOGGER_USER_DATA["auto_create_topic"] = data["auto_create_topic"]
+
+                    # Ensure essential keys exist
                     if "auto_create_topic" not in PM_LOGGER_USER_DATA:
-                         PM_LOGGER_USER_DATA["auto_create_topic"] = False # Default Disable
+                         PM_LOGGER_USER_DATA["auto_create_topic"] = data.get("auto_create_topic", False)
+                    
+                    LAST_LOAD_TIME_PM = current_mtime
+                    logger.debug(f"PM Logger settings reloaded (mtime: {current_mtime})")
 
     except Exception as e:
         logger.error(f"Failed to load PM Logger User settings: {e}")
@@ -228,29 +252,35 @@ def get_pm_setting_safe(client_id: int, key: str = "enabled") -> bool:
     """Safe method to read PM Logger settings - combines per-account and global."""
     user_id_str = str(client_id)
     
-    # PM_LOGGER_USER_DATA stores the main settings / sessions dict
-    
     # 0. Resolve apply_type
     apply_types = PM_LOGGER_USER_DATA.get("apply_types", {})
     if not isinstance(apply_types, dict): apply_types = {}
     
     apply_type = apply_types.get(user_id_str, "per_account")
     
+    # 1. Check Global configuration if apply_type is global
     if apply_type == "global":
         global_cfg = PM_LOGGER_USER_DATA.get("global_config", {})
         if not isinstance(global_cfg, dict): global_cfg = {}
+        # Fallback to root key if global_cfg doesn't have it
         return bool(global_cfg.get(key, PM_LOGGER_USER_DATA.get(key, False)))
 
-    # 1. Check per-client settings
+    # 2. Check per-client settings
     if user_id_str in PM_LOGGER_USER_DATA:
         setting_data = PM_LOGGER_USER_DATA[user_id_str]
         if isinstance(setting_data, dict):
-            return bool(setting_data.get(key, PM_LOGGER_USER_DATA.get(key, False)))
+            # Key found in per-account dict
+            if key in setting_data:
+                return bool(setting_data[key])
+            # Fallback to global_config key then root key
+            global_cfg = PM_LOGGER_USER_DATA.get("global_config", {})
+            return bool(global_cfg.get(key, PM_LOGGER_USER_DATA.get(key, False)))
         elif isinstance(setting_data, bool) and key == "enabled":
             return setting_data
 
-    # 3. Fallback to root global setting
-    return bool(PM_LOGGER_USER_DATA.get(key, False))
+    # 3. Fallback to GLOBAL setting (root keys or global_config)
+    global_cfg = PM_LOGGER_USER_DATA.get("global_config", {})
+    return bool(global_cfg.get(key, PM_LOGGER_USER_DATA.get(key, False)))
 
 def save_pm_setting_safe(client_id: int, key: str, value: bool):
     """Save setting to the correct location based on apply_type."""
@@ -590,6 +620,7 @@ async def pm_logger_user_handler(c: Client, m: RawMessage):
 
         # Send Detailed Info using Main Bot (Altruix.bot) for robustness - similar to mention logger
         try:
+            # Send notification message with interactive buttons
             sent_log = await Altruix.bot.send_message(
                 Altruix.log_chat,
                 log_content,
@@ -1271,7 +1302,10 @@ async def pmlu_block_unblock_callback(c: Client, cb: CallbackQuery):
 @iuser_check
 @log_errors
 async def pmlu_direct_reply_callback(c: Client, cb: CallbackQuery):
-    """Langsung memulai proses reply ke user tertentu."""
+    """
+    Initiates the reply process for a specific PM log entry.
+    Verifies user permissions and prepares a waiting session for the reply input.
+    """
     try:
         from Main.utils.access_control import check_reply_access
         has_access, reason = check_reply_access(

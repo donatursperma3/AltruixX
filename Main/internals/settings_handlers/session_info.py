@@ -135,7 +135,7 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
     if hasattr(Altruix, 'bot_manager'):
          total_active_bots += len(Altruix.bot_manager.custom_bots)
 
-    # Fetch PM Logger Status
+    # Fetch PM Logger Status (Sync with get_pm_setting_safe logic)
     pm_logger_status = "❌ OFF"
     try:
         from Main.utils.file_helpers import get_db_path as _get_db_path
@@ -146,28 +146,31 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
                 _pm_data = _json.load(_f)
                 _pm_sessions = _pm_data.get("settings", {}) or _pm_data.get("sessions", {})
                 _me_id_str = str(me.id)
-                # Resolve apply_type
+                
+                # Check Apply Type
                 _apply_type = _pm_data.get("apply_types", {}).get(_me_id_str, "per_account")
                 
                 if _apply_type == "global":
-                    _pm_session_cfg = _pm_data.get("global_config", {})
+                    # Global Config
+                    _pm_global_cfg = _pm_data.get("global_config", {})
+                    _pm_enabled = _pm_global_cfg.get("enabled", _pm_data.get("enabled", False))
                 else:
-                    _pm_session_cfg = _pm_sessions.get(_me_id_str)
-                
-                _pm_enabled = False
-                if _pm_session_cfg is None:
-                    _pm_enabled = _pm_sessions.get("enabled", False)
-                elif isinstance(_pm_session_cfg, bool):
-                    _pm_enabled = _pm_session_cfg
-                else:
-                    _pm_enabled = _pm_session_cfg.get("enabled", False)
+                    # Per Account
+                    _setting_data = _pm_sessions.get(_me_id_str)
+                    if isinstance(_setting_data, dict):
+                        _pm_enabled = _setting_data.get("enabled", _pm_data.get("global_config", {}).get("enabled", _pm_data.get("enabled", False)))
+                    elif isinstance(_setting_data, bool):
+                        _pm_enabled = _setting_data
+                    else:
+                        # Fallback to global
+                        _pm_enabled = _pm_data.get("global_config", {}).get("enabled", _pm_data.get("enabled", False))
                 
                 if _pm_enabled:
                     pm_logger_status = "✅ ON"
     except Exception:
         pass
     
-    # Fetch Mention Logger Status
+    # Fetch Mention Logger Status (Sync with get_mention_setting_safe logic)
     mention_logger_status = "❌ OFF"
     try:
         _mention_settings_path = _get_db_path("mentions_settings.json")
@@ -175,14 +178,22 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
             with open(_mention_settings_path, "r", encoding="utf-8") as _f:
                 _m_data = _json.load(_f)
                 _me_id_str = str(me.id)
-                # Check per-account first, then global (matches get_mention_setting_safe logic)
-                _m_per_account = _m_data.get("settings", {}).get(_me_id_str, {})
-                if isinstance(_m_per_account, dict):
-                    _m_enabled = _m_per_account.get("mention", _m_data.get("global", {}).get("mention", True))
-                elif isinstance(_m_per_account, bool):
-                    _m_enabled = _m_per_account
-                else:
+                _m_sessions = _m_data.get("settings", {})
+                
+                # Check Apply Type
+                _m_apply_type = _m_data.get("apply_types", {}).get(_me_id_str, "per_account")
+                
+                if _m_apply_type == "global":
                     _m_enabled = _m_data.get("global", {}).get("mention", True)
+                else:
+                    _m_per_account = _m_sessions.get(_me_id_str, {})
+                    if isinstance(_m_per_account, dict):
+                        _m_enabled = _m_per_account.get("mention", _m_data.get("global", {}).get("mention", True))
+                    elif isinstance(_m_per_account, bool):
+                        _m_enabled = _m_per_account
+                    else:
+                        _m_enabled = _m_data.get("global", {}).get("mention", True)
+                
                 if _m_enabled:
                     mention_logger_status = "✅ ON"
     except Exception:

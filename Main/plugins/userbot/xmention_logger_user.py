@@ -42,7 +42,7 @@ from Main.plugins.userbot.xpm_logger_user import SessionManager
 # ============================================================================
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "tags"  # Renamed from mentions
-PLUGIN_VERSION = "1.7.67-TAG"  # ✅ Added block/unblock, send message features
+PLUGIN_VERSION = "1.7.70-TAG"  # ✅ Improved safe settings & multi-account sync
 
 # Gunakan logger Altruix jika tersedia, atau buat baru yang konsisten
 logger = logging.getLogger("altruix.mentions")
@@ -641,11 +641,23 @@ async def load_settings_on_startup():
     except Exception as e:
         logger.error(f"Failed to load settings from cache: {e}")
 
+# Track last load time to avoid unnecessary disk I/O
+LAST_LOAD_TIME_MENTION = 0
+
 async def load_local_storage():
-    """Load data dari local JSON file."""
-    global MENTIONS_DATA, AUTO_REPLY_ENABLED, MENTION_SETTINGS_GLOBAL
+    """
+    Loads Mention Logger settings from the local JSON storage file.
+    Uses mtime check to avoid redundant loads from disk.
+    Ensures per-account settings, global configurations, and apply types are correctly restored.
+    """
+    global MENTION_SETTINGS_GLOBAL, MENTIONS_DATA, MENTION_APPLY_TYPES, AUTO_REPLY_ENABLED, LAST_LOAD_TIME_MENTION
     try:
         if LOCAL_STORAGE_FILE.exists():
+            # Optimization: Only load if file modified since last load
+            current_mtime = LOCAL_STORAGE_FILE.stat().st_mtime
+            if current_mtime <= LAST_LOAD_TIME_MENTION and MENTIONS_DATA:
+                return
+                
             async with aiofiles.open(LOCAL_STORAGE_FILE, 'r', encoding='utf-8') as f:
                 content = await f.read()
                 if content.strip():
@@ -654,7 +666,6 @@ async def load_local_storage():
                     if "global" in data:
                         MENTION_SETTINGS_GLOBAL = data.get("global", {})
                         MENTIONS_DATA = data.get("settings", {})
-                        global MENTION_APPLY_TYPES
                         MENTION_APPLY_TYPES = data.get("apply_types", {})
                     else:
                         # Old format migration
@@ -665,9 +676,10 @@ async def load_local_storage():
                             "reply_from_all": data.get("reply_from_all", False)
                         }
                     AUTO_REPLY_ENABLED = data.get("auto_reply", False)
-                    logger.info(f"Loaded {len(MENTIONS_DATA)} settings, {len(MENTION_APPLY_TYPES)} apply types")
+                    LAST_LOAD_TIME_MENTION = current_mtime
+                    logger.debug(f"Mention settings reloaded (mtime: {current_mtime})")
     except Exception as e:
-        logger.error(f"Failed to load local storage: {e}")
+        logger.error(f"Failed to load mention local storage: {e}")
 
 asyncio.create_task(load_settings_on_startup())
 
@@ -694,6 +706,9 @@ async def save_local_storage():
 
 async def get_mention_setting_safe(client_id: int, key: str = "mention") -> bool:
     """Safe method untuk membaca setting - gabungkan cache, local, dan global."""
+    # Ensure fresh settings from disk
+    await load_local_storage()
+    
     client_id_str = str(client_id)
     
     # 0. Resolve apply_type
@@ -705,11 +720,16 @@ async def get_mention_setting_safe(client_id: int, key: str = "mention") -> bool
     if client_id_str in MENTIONS_DATA:
         setting_data = MENTIONS_DATA[client_id_str]
         if isinstance(setting_data, dict):
+            # Check nested filters if the key is a message type (not 'mention' or 'auto_log')
+            if key not in ["mention", "auto_log", "reply_from_all", "auto_create_topic"]:
+                 filters = setting_data.get("filters", {})
+                 # Default to True if filter not specified
+                 return bool(filters.get(key, True))
             return bool(setting_data.get(key, MENTION_SETTINGS_GLOBAL.get(key, False)))
         elif isinstance(setting_data, bool) and key == "mention":
             return setting_data
 
-    # 3. Fallback to GLOBAL setting from mentions_settings.json
+    # 3. Fallback to GLOBAL setting
     return bool(MENTION_SETTINGS_GLOBAL.get(key, True if key == "mention" else False))
 
 async def save_mention_setting_safe(client_id: int, value: bool) -> bool:
@@ -979,7 +999,11 @@ async def mnt_config_callback(c: Client, cb: CallbackQuery):
 )
 @log_errors
 async def send_mention_log_handler(c: Client, m: RawMessage):
-    """Handler utama untuk menangkap mention dan mengirim notifikasi ke LOG_CHAT."""
+    """
+    Core handler for processing and logging new mentions found in groups.
+    Handles media forwarding, topic creation, and sends detailed notifications.
+    Stores mention data in both persistent and memory cache for later reply processing.
+    """
     try:
         # ✅ FIX: Ignore mentions in log group to prevent auto-reply loop
         if Altruix.log_chat and m.chat.id == Altruix.log_chat:
@@ -1295,7 +1319,11 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
 )
 @log_errors
 async def send_mention_edit_handler(c: Client, m: RawMessage):
-    """Update log when a mentioned message is edited."""
+    """
+    Updates existing mention logs when the original message is edited.
+    If a message becomes a mention after editing, it initiates a new log entry.
+    Ensures that only the client that originally logged the mention can update it.
+    """
     try:
         if not Altruix.log_chat:
             return

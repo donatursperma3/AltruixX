@@ -72,7 +72,7 @@ async def logger_menu_handler(c: Client, cb: CallbackQuery):
     # Add Bot Assist toggle for PML and MNT
     if log_type in ["pml", "mnt"]:
         bot_assist_enabled = False
-        storage_file = "pm_logger_bot_settings.json" if log_type == "pml" else "mentions_settings.json"
+        storage_file = "DATABASE/pm_logger_bot_settings.json" if log_type == "pml" else "DATABASE/mentions_settings.json"
         if os.path.exists(storage_file):
             with open(storage_file, "r") as f:
                 try:
@@ -117,9 +117,47 @@ async def logger_toggle_handler(c: Client, cb: CallbackQuery):
     new_val = "off" if current == "on" else "on"
     
     await Altruix.config.sync_env_to_db(key, new_val, upsert=True)
-    # Ensure local config is updated if needed (though get_env checks DB usually)
     setattr(Altruix.config, key, new_val) 
     
+    # ✅ SYNC TO JSON (For Userbot Loggers)
+    if log_type in ["pml", "mnt"]:
+        filename = f"DATABASE/{'pm_logger_user_settings.json' if log_type == 'pml' else 'mentions_settings.json'}"
+        if os.path.exists(filename):
+            try:
+                with open(filename, "r") as f: data = json.load(f)
+                
+                # PM Logger Sync
+                if log_type == "pml":
+                    sessions = data.get("settings", {}) or data.get("sessions", {})
+                    # If global mode, sync root 'enabled'
+                    if apply_type == "global":
+                        data["enabled"] = (new_val == "on")
+                        if "global_config" not in data: data["global_config"] = {}
+                        data["global_config"]["enabled"] = (new_val == "on")
+                    else:
+                        me_id_str = str(Altruix.clients[index].me.id)
+                        if me_id_str not in sessions: sessions[me_id_str] = {}
+                        sessions[me_id_str]["enabled"] = (new_val == "on")
+                        data["settings"] = sessions # Ensure back-sync
+                
+                # Mention Logger Sync
+                else: 
+                    me_id_str = str(Altruix.clients[index].me.id)
+                    if apply_type == "global":
+                        if "global" not in data: data["global"] = {}
+                        data["global"]["mention"] = (new_val == "on")
+                    else:
+                        if "settings" not in data: data["settings"] = {}
+                        if me_id_str not in data["settings"]: data["settings"][me_id_str] = {}
+                        # If it was a bool, convert to dict
+                        if not isinstance(data["settings"][me_id_str], dict):
+                             data["settings"][me_id_str] = {"mention": data["settings"][me_id_str]}
+                        data["settings"][me_id_str]["mention"] = (new_val == "on")
+                
+                with open(filename, "w") as f: json.dump(data, f, indent=2)
+            except Exception as e:
+                logger.error(f"Failed to sync {log_type} toggle to JSON: {e}")
+
     await cb.answer(f"{log_type.upper()} Logger: {new_val.upper()}")
     await logger_menu_handler(c, cb)
 
@@ -136,6 +174,20 @@ async def logger_mode_handler(c: Client, cb: CallbackQuery):
     new_val = "global" if current == "per_account" else "per_account"
     
     await Altruix.config.sync_env_to_db(key, new_val, upsert=True)
+    
+    # ✅ SYNC APPLY TYPE TO JSON
+    if log_type in ["pml", "mnt"]:
+        filename = f"DATABASE/{'pm_logger_user_settings.json' if log_type == 'pml' else 'mentions_settings.json'}"
+        if os.path.exists(filename):
+            try:
+                with open(filename, "r") as f: data = json.load(f)
+                if "apply_types" not in data: data["apply_types"] = {}
+                me_id_str = str(Altruix.clients[index].me.id)
+                data["apply_types"][me_id_str] = new_val
+                with open(filename, "w") as f: json.dump(data, f, indent=2)
+            except Exception as e:
+                logger.error(f"Failed to sync {log_type} mode to JSON: {e}")
+
     await cb.answer(f"Apply Type: {new_val.upper()}")
     await logger_menu_handler(c, cb)
 
@@ -165,6 +217,19 @@ async def logger_reply_handler(c: Client, cb: CallbackQuery):
         new_val = "all"
         
     await Altruix.config.sync_env_to_db(key, new_val, upsert=True)
+    
+    # ✅ SYNC REPLY MODE TO JSON
+    if log_type in ["pml", "mnt"]:
+        filename = f"DATABASE/{'pm_logger_user_settings.json' if log_type == 'pml' else 'mentions_settings.json'}"
+        if os.path.exists(filename):
+            try:
+                with open(filename, "r") as f: data = json.load(f)
+                # Both use 'reply_access_mode' key in root or settings
+                data["reply_access_mode"] = new_val
+                with open(filename, "w") as f: json.dump(data, f, indent=2)
+            except Exception as e:
+                logger.error(f"Failed to sync {log_type} reply mode to JSON: {e}")
+
     await cb.answer(f"Reply By: {new_val.upper()}")
     await logger_menu_handler(c, cb)
 
@@ -175,28 +240,37 @@ async def logger_botassist_handler(c: Client, cb: CallbackQuery):
     """Toggle Bot Assist globally from session menu"""
     log_type, index, page = cb.matches[0].group(1), int(cb.matches[0].group(2)), int(cb.matches[0].group(3))
     
-    storage_file = "pm_logger_bot_settings.json" if log_type == "pml" else "mentions_settings.json"
-    if not os.path.exists(storage_file):
-        return await cb.answer("❌ Bot settings not found", show_alert=True)
-        
-    with open(storage_file, "r") as f:
-        data = json.load(f)
-        
-    if "settings" not in data: data["settings"] = {}
-    
     if log_type == "pml":
-        current = data["settings"].get("log_mode", "off")
-        new_val = "all" if current == "off" else "off"
-        data["settings"]["log_mode"] = new_val
-        status = "ENABLED" if new_val != "off" else "DISABLED"
-    else:
-        current = data["settings"].get("enabled", False)
-        new_val = not current
-        data["settings"]["enabled"] = new_val
-        status = "ENABLED" if new_val else "DISABLED"
+        bot_assist_enabled = False
+        if os.path.exists("DATABASE/pm_logger_bot_settings.json"):
+            with open("DATABASE/pm_logger_bot_settings.json", "r") as f:
+                b_data = json.load(f)
+                bot_assist_enabled = b_data.get("settings", {}).get("log_mode", "off") != "off"
         
-    with open(storage_file, "w") as f:
-        json.dump(data, f, indent=2)
+        new_val = "off" if bot_assist_enabled else "all"
+        if not os.path.exists("DATABASE/pm_logger_bot_settings.json"):
+            data = {"settings": {"log_mode": new_val}}
+        else:
+            with open("DATABASE/pm_logger_bot_settings.json", "r") as f: data = json.load(f)
+            if "settings" not in data: data["settings"] = {}
+            data["settings"]["log_mode"] = new_val
+            
+        with open("DATABASE/pm_logger_bot_settings.json", "w") as f: json.dump(data, f, indent=2)
+        status = "DISABLED" if new_val == "off" else "ENABLED"
+    else:
+        # mnt
+        bot_assist_enabled = False
+        if os.path.exists("DATABASE/mentions_settings.json"):
+            with open("DATABASE/mentions_settings.json", "r") as f:
+                b_data = json.load(f)
+                bot_assist_enabled = b_data.get("settings", {}).get("enabled", False)
+        
+        new_val = not bot_assist_enabled
+        with open("DATABASE/mentions_settings.json", "r") as f: data = json.load(f)
+        if "settings" not in data: data["settings"] = {}
+        data["settings"]["enabled"] = new_val
+        with open("DATABASE/mentions_settings.json", "w") as f: json.dump(data, f, indent=2)
+        status = "ENABLED" if new_val else "DISABLED"
         
     await cb.answer(f"🤖 Bot Assist: {status}")
     await logger_menu_handler(c, cb)
@@ -228,43 +302,55 @@ async def pmlf_menu_handler(c: Client, cb: CallbackQuery):
     ]
     await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
-@Altruix.bot.on_callback_query(filters.regex(r"^pmlfl_(user|bot)_(user|bot)_(\d+)_(\d+)$"))
-@iuser_check
-@log_errors
-async def pmlf_list_handler(c: Client, cb: CallbackQuery):
-    """List of toggles for specific message types in PM Logger"""
-    logger_type = cb.matches[0].group(1)
-    source = cb.matches[0].group(2)
-    index = int(cb.matches[0].group(3))
-    page = int(cb.matches[0].group(4))
-    await cb.answer()
-    
-    filename = "pm_logger_user_settings.json"
+async def show_pmlf_list(c: Client, cb: CallbackQuery, logger_type: str, source: str, index: int, page: int):
+    """
+    Helper function to generate and display the message type filter list for PM Logger.
+    Avoids ValueError by centralizing parameter handling.
+    """
+    filename = "DATABASE/pm_logger_user_settings.json"
     user_id_str = str(Altruix.clients[index].me.id)
     source_key = f"from_{source}"
     
     filters_data = {}
     if os.path.exists(filename):
-        with open(filename, "r") as f: data = json.load(f)
+        with open(filename, "r") as f: 
+            data = json.load(f)
         sessions = data.get("sessions", {}) or data.get("settings", {})
         session_data = sessions.get(user_id_str, {})
         if isinstance(session_data, dict):
             filters_data = session_data.get("filters", {}).get(source_key, {})
     
-    text = f"<b>🔍 {source.capitalize()} Filter ({'Session ' + str(index+1)})</b>\n\nKlik untuk toggle (✅ = Log, ❌ = Ignore):"
+    text = f"<b>🔍 {source.capitalize()} Filter (Session {index+1})</b>\n\nKlik untuk toggle (✅ = Log, ❌ = Ignore):"
     buttons = []
     row = []
     m_types = ["text", "photo", "video", "document", "audio", "voice", "sticker", "animation", "video_note"]
     for m_type in m_types:
+        # Defaults: log everything except bot text (to avoid spam)
         default_val = False if (source == "bot" and m_type == "text") else True
         val = filters_data.get(m_type, default_val)
         status = "✅" if val else "❌"
         row.append(InlineKeyboardButton(f"{status} {m_type.capitalize()}", f"pmlft_{logger_type}_{source}_{m_type}_{index}_{page}"))
         if len(row) == 2:
-            buttons.append(row); row = []
-    if row: buttons.append(row)
+            buttons.append(row)
+            row = []
+    
+    if row: 
+        buttons.append(row)
+        
     buttons.append([InlineKeyboardButton("🔙 Back", f"pmlf_menu_{logger_type}_{index}_{page}")])
     await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^pmlfl_(user|bot)_(user|bot)_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def pmlf_list_handler(c: Client, cb: CallbackQuery):
+    """Handler for displaying the specific message type filters list."""
+    logger_type = cb.matches[0].group(1)
+    source = cb.matches[0].group(2)
+    index = int(cb.matches[0].group(3))
+    page = int(cb.matches[0].group(4))
+    await cb.answer()
+    await show_pmlf_list(c, cb, logger_type, source, index, page)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^pmlft_(user|bot)_(user|bot)_(.+)_(\d+)_(\d+)$"))
 @iuser_check
@@ -275,7 +361,7 @@ async def pmlf_toggle_handler(c: Client, cb: CallbackQuery):
     index, page = int(index), int(page)
     user_id_str = str(Altruix.clients[index].me.id)
     source_key = f"from_{source}"
-    filename = "pm_logger_user_settings.json"
+    filename = "DATABASE/pm_logger_user_settings.json"
     
     data = {"sessions": {}}
     if os.path.exists(filename):
@@ -291,9 +377,12 @@ async def pmlf_toggle_handler(c: Client, cb: CallbackQuery):
     current = data["sessions"][user_id_str]["filters"][source_key].get(m_type, True)
     data["sessions"][user_id_str]["filters"][source_key][m_type] = not current
     
-    with open(filename, "w") as f: json.dump(data, f, indent=2)
+    with open(filename, "w") as f: 
+        json.dump(data, f, indent=2)
+        
     await cb.answer(f"{m_type.capitalize()} {source}: {'ON' if not current else 'OFF'}")
-    await pmlf_list_handler(c, cb)
+    # Refresh menu using helper to avoid regex/indexing errors
+    await show_pmlf_list(c, cb, logger_type, source, index, page)
 
 # --- Mention Logger Advanced Filters ---
 
