@@ -11,7 +11,7 @@ from pyrogram.types import (
     CallbackQuery
 )
 from Main.core.types.message import Message as AltruixMessage
-from Main.core.decorators import log_errors
+from Main.core.decorators import log_errors, iuser_check
 import os
 import html
 import logging
@@ -37,7 +37,7 @@ logger = logging.getLogger("altruix.pm_logger_bot")
 logger.setLevel(logging.INFO)
 
 PLUGIN_NAME = __plugin_name__ 
-PLUGIN_VERSION = "1.3.2"  # ✅ Added message type filters
+PLUGIN_VERSION = "1.3.24"  # ✅ Added message type filters
 STORAGE_FILE = Path(get_db_path("pm_logger_bot_settings.json"))
 
 # Settings Cache
@@ -154,7 +154,7 @@ asyncio.create_task(load_settings())
         "example": "/pmlb on | /pmlb replyall off",
         "detail": (
             "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "🤖 **PM LOGGER BOT COMMANDS**\n"
+            "🤖 **BOT ASSIST CONTROL (PM)**\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "• `/pmlb` : Buka menu pengaturan interaktif.\n\n"
             "👥 **Interactive Tools:**\n"
@@ -167,12 +167,9 @@ asyncio.create_task(load_settings())
     group_only=False,
     requires_input=False,
 )
+@iuser_check
 @log_errors
 async def pmlb_settings_handler(c: Client, m: AltruixMessage):
-    from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(m.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-        return await m.reply_msg(Altruix.get_string("ACCESS_DENIED"))
-        
     global REPLY_FROM_ALL_ACCESSIBLE
     user_input = (m.user_input or "").lower().strip()
     
@@ -182,8 +179,9 @@ async def pmlb_settings_handler(c: Client, m: AltruixMessage):
         log_mode = PM_LOGGER_BOT_DATA.get("log_mode", "off")
         mode_label = Altruix.get_string(f"pmlb_mode_{log_mode}") or log_mode.capitalize()
         text = (
-            f"{Altruix.get_string('pmlb_menu_title')}\n\n"
-            f"{Altruix.get_string('pmlb_menu_desc').format(mode_label)}\n"
+            "<b>🤖 Bot Assist Dashboard (PM Logger)</b>\n\n"
+            f"Manage how the Bot Assistant handles private messages.\n"
+            f"Current Status: <b>{mode_label}</b>\n"
         )
         buttons = [
             [
@@ -236,12 +234,9 @@ async def pmlb_settings_handler(c: Client, m: AltruixMessage):
     group_only=False,
     requires_input=False,
 )
+@iuser_check
 @log_errors
 async def pml_status_bot_handler(c: Client, m: AltruixMessage):
-    from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(m.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-        return await m.reply_msg(Altruix.get_string("ACCESS_DENIED"))
-        
     # Bot status
     log_mode = PM_LOGGER_BOT_DATA.get("log_mode", "off")
     b_enabled = log_mode != "off"

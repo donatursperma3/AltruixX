@@ -1,4 +1,4 @@
-PLUGIN_VERSION = "0.0.2"
+PLUGIN_VERSION = "0.0.22"
 # xreply_manager.py
 # Separated logic for handling PM Logger replies to prevent conflicts
 # Copyright (C) 2021-present by Altruix@Github, < https://github.com/Altruix >.
@@ -11,7 +11,7 @@ from pyrogram.types import (
     InlineKeyboardMarkup,
     CallbackQuery
 )
-from Main.core.decorators import log_errors
+from Main.core.decorators import log_errors, iuser_check
 from Main.utils.access_control import is_authorized_user
 from Main.utils.file_helpers import get_db_path
 import html
@@ -36,7 +36,16 @@ def should_log():
             pass
     return False
 
-@Altruix.bot.on_message(filters.chat(Altruix.log_chat) & filters.reply, group=1)
+# ✅ Dynamic Filter for Log Chat
+async def dynamic_log_chat_filter(_, __, m: RawMessage):
+    if not Altruix.log_chat:
+        return False
+    return m.chat.id == Altruix.log_chat
+
+log_chat_filter = filters.create(dynamic_log_chat_filter)
+
+@Altruix.bot.on_message(log_chat_filter & filters.reply, group=1)
+@iuser_check
 @log_errors
 async def handle_reply_input(c: Client, m: RawMessage):
     """
@@ -64,12 +73,9 @@ async def handle_reply_input(c: Client, m: RawMessage):
         if len(REPLY_AS_MENTIONED_WAITING) > 0:
             logger.debug(f"ReplyManager: Current waiting IDs: {list(REPLY_AS_MENTIONED_WAITING.keys())}")
 
-    # Security: Verify if user is authorized to reply
-    is_auth = is_authorized_user(m.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS)
-    if do_log:
-        logger.info(f"ReplyManager: User {m.from_user.id} authorized: {is_auth}")
-    if not is_auth:
-        return 
+    # Security: Verify if user is authorized to reply (Handled by @iuser_check)
+    # is_auth = is_authorized_user(m.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS)
+    # ...
     
     # Check if we are waiting for a reply to this specific message
     waiting_id = None
@@ -149,9 +155,9 @@ async def handle_reply_input(c: Client, m: RawMessage):
                 f"ReplyManager: No active session for message_id {reply_to_id}.\n"
                 f"  - Checked {len(REPLY_AS_MENTIONED_WAITING)} sessions: {active_ids}"
             )
-        # Only reply if user is owner/sudo and it was a direct reply attempt
-        if is_auth:
-             await m.reply(
+        
+        # Only reply if it was a direct reply attempt
+        await m.reply(
                 f"⚠️ <b>Sesi Balasan Tidak Ditemukan</b>\n\n"
                 f"Balasan ke ID: <code>{reply_to_id}</code>\n"
                 f"Thread ID: <code>{thread_id}</code>\n\n"
@@ -161,14 +167,9 @@ async def handle_reply_input(c: Client, m: RawMessage):
             )
         return
     
-    # Security: Verify if the replier has access (Owner/Sudo) already done via is_auth
     session_user_id = str(REPLY_AS_MENTIONED_WAITING[waiting_id].get("user_id", "None"))
     current_user_id = str(m.from_user.id)
     data = REPLY_AS_MENTIONED_WAITING[waiting_id]
-    
-    if not is_auth:
-         logger.warning(f"ReplyManager: Unauthorized user {current_user_id} attempted reply to session {waiting_id}")
-         return
     
     logger.info(f"ReplyManager: Validated session {waiting_id} (Session User: {session_user_id}, Current: {current_user_id}). Preparing confirmation.")
     
@@ -218,6 +219,7 @@ async def handle_reply_input(c: Client, m: RawMessage):
 
 
 @Altruix.bot.on_callback_query(filters.regex(r"^(pmlu|mentions|pmlb)_confirm_"))
+@iuser_check
 @log_errors
 async def pmlu_confirm_send_callback(c: Client, cb: CallbackQuery):
     """Confirm and send the reply using the appropriate client(s)."""
@@ -230,9 +232,8 @@ async def pmlu_confirm_send_callback(c: Client, cb: CallbackQuery):
     xpm_logger_user.SessionManager.load()
 
     try:
-        # Security: Verify if user is authorized
-        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-             return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
+        # Security (Handled by @iuser_check)
+        
 
         # Extract waiting_id based on prefix
         if cb.data.startswith("pmlu_confirm_"):
@@ -371,6 +372,7 @@ async def pmlu_confirm_send_callback(c: Client, cb: CallbackQuery):
         await cb.answer(f"❌ Error: {e}", show_alert=True)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^(pmlu|mentions|pmlb|mntlb)_cancel_"))
+@iuser_check
 @log_errors
 async def pmlu_cancel_send_callback(c: Client, cb: CallbackQuery):
     """Cancel the reply session."""
@@ -378,9 +380,8 @@ async def pmlu_cancel_send_callback(c: Client, cb: CallbackQuery):
     # Force read from persistent
     xpm_logger_user.SessionManager.load()
     try:
-        # Security: Verify if user is authorized
-        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-             return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
+        # Security (Handled by @iuser_check)
+        
 
         if cb.data.startswith("pmlu_cancel_"):
             waiting_id = cb.data.replace("pmlu_cancel_", "")
@@ -414,13 +415,12 @@ async def pmlu_cancel_send_callback(c: Client, cb: CallbackQuery):
 
 # ✅ HANDLER: Reply Manager Settings Menu
 @Altruix.bot.on_callback_query(filters.regex(r"^reply_manager_menu$"))
+@iuser_check
 @log_errors
 async def reply_manager_menu_handler(c: Client, cb: CallbackQuery):
     try:
-        from Main.utils.access_control import is_authorized_user
-        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-             msg = Altruix.get_string("ACCESS_DENIED")
-             return await cb.answer(msg, show_alert=True)
+        # Security (Handled by @iuser_check)
+        
 
         enabled = should_log()
         
@@ -443,6 +443,7 @@ async def reply_manager_menu_handler(c: Client, cb: CallbackQuery):
         await cb.answer(f"❌ Error: {e}", show_alert=True)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^reply_manager_toggle_enabled$"))
+@iuser_check
 @log_errors
 async def reply_manager_toggle_enabled_handler(c: Client, cb: CallbackQuery):
     filename = get_db_path("reply_manager_settings.json")

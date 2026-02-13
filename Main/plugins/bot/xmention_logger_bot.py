@@ -8,7 +8,7 @@ from pyrogram.types import (
     Message as RawMessage, InlineKeyboardButton, InlineKeyboardMarkup, 
     CallbackQuery, ReplyParameters
 )
-from Main.core.decorators import log_errors
+from Main.core.decorators import log_errors, iuser_check
 import os
 import html
 import logging
@@ -27,7 +27,7 @@ logger.setLevel(logging.INFO)
 
 # Global Constants
 PLUGIN_NAME = __plugin_name__
-PLUGIN_VERSION = "1.0.5"
+PLUGIN_VERSION = "1.0.54"
 STORAGE_FILE = Path(get_db_path("mention_logger_bot_settings.json"))
 
 # Settings Cache - ✅ Default: Disabled/Off to save resources
@@ -94,15 +94,15 @@ async def mention_logger_bot_handler(c: Client, m: RawMessage):
         msg_text = m.text or m.caption or "[Media]"
         
         log_content = (
-            f"🔔 <b>Bot Mentioned in Group</b>\\n\\n"
-            f"• <b>From:</b> {sender_hyperlink}\\n"
-            f"• <b>User ID:</b> <code>{sender_id}</code>\\n"
-            f"• <b>Username:</b> {sender_username}\\n"
-            f"• <b>Group:</b> {chat_title}\\n"
-            f"• <b>Group Username:</b> {chat_username}\\n"
-            f"• <b>Group ID:</b> <code>{chat.id}</code>\\n"
-            f"• <b>Time:</b> <code>{log_time}</code>\\n"
-            f"• <b>Message:</b>\\n<blockquote>{html.escape(str(msg_text)[:1000])}</blockquote>"
+            f"🔔 <b>Bot Mentioned in Group</b>\n\n"
+            f"• <b>From:</b> {sender_hyperlink}\n"
+            f"• <b>User ID:</b> <code>{sender_id}</code>\n"
+            f"• <b>Username:</b> {sender_username}\n"
+            f"• <b>Group:</b> {chat_title}\n"
+            f"• <b>Group Username:</b> {chat_username}\n"
+            f"• <b>Group ID:</b> <code>{chat.id}</code>\n"
+            f"• <b>Time:</b> <code>{log_time}</code>\n"
+            f"• <b>Message:</b>\n<blockquote>{html.escape(str(msg_text)[:1000])}</blockquote>"
         )
         
         # Buttons
@@ -143,7 +143,7 @@ async def mention_logger_bot_handler(c: Client, m: RawMessage):
         logger.error(f"Error in mention_logger_bot_handler: {e}", exc_info=True)
 
 
-@Altruix.bot.on_callback_query(filters.regex(r"^mntlb_reply_(\\d+)_(\\d+)_(\\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^mntlb_reply_(-?\d+)_(\d+)_(\d+)$"))
 @log_errors
 async def mention_reply_handler(c: Client, cb: CallbackQuery):
     """Handle reply button for bot mentions."""
@@ -196,17 +196,12 @@ async def mention_reply_handler(c: Client, cb: CallbackQuery):
         await cb.answer(f"❌ Error: {e}", show_alert=True)
 
 
-@Altruix.bot.on_callback_query(filters.regex(r"^mntlb_mute_(\\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^mntlb_mute_(-?\d+)$"))
+@iuser_check
 @log_errors
 async def mention_mute_handler(c: Client, cb: CallbackQuery):
     """Handle mute group button."""
     try:
-        from Main.utils.access_control import is_authorized_user
-        
-        # Only owner/sudo can mute
-        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-            await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
-            return
         
         chat_id = int(cb.matches[0].group(1))
         
@@ -230,26 +225,24 @@ async def mention_mute_handler(c: Client, cb: CallbackQuery):
 
 # ✅ HANDLER: Mention Logger Bot Settings Menu
 @Altruix.bot.on_callback_query(filters.regex(r"^mntlb_menu$"))
+@iuser_check
 @log_errors
 async def mntlb_menu_handler(c: Client, cb: CallbackQuery):
     try:
-        from Main.utils.access_control import is_authorized_user
-        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-             return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
 
         await load_settings()
         enabled = MENTION_LOGGER_BOT_DATA.get("enabled", False)
         
         text = (
-            "<b>🔔 Mention Logger Bot Settings</b>\n\n"
-            "Log mention yang diterima oleh Bot Assistant (bukan Userbot) di grup.\n\n"
+            "<b>🤖 Bot Assist Dashboard (Mention Logger)</b>\n\n"
+            "Log mentions received by the Bot Assistant in groups.\n\n"
             f"• <b>Status:</b> {'✅ ENABLED' if enabled else '❌ DISABLED'}\n"
             f"• <b>Reply Mode:</b> {REPLY_ACCESS_MODE.upper()}"
         )
         
         buttons = [
             [
-                InlineKeyboardButton(f"{'Disable' if enabled else 'Enable'} Logging", callback_data="mntlb_toggle_enabled")
+                InlineKeyboardButton(f"{'Disable' if enabled else 'Enable'} Bot Assist", callback_data="mntlb_toggle_enabled")
             ],
             [
                 InlineKeyboardButton(f"Mode: {REPLY_ACCESS_MODE.upper()}", callback_data="mntlb_toggle_mode")

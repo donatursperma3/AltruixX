@@ -18,7 +18,7 @@ from pyrogram.types import (
     CallbackQuery
 )
 from datetime import datetime, timedelta
-from Main.core.decorators import log_errors
+from Main.core.decorators import log_errors, iuser_check
 import os
 import re
 import asyncio
@@ -33,6 +33,8 @@ from typing import Optional, Union, Dict, Any, List
 from collections import defaultdict
 import sys
 from Main.utils.topic_utils import get_or_create_topic
+# ✅ Import SessionManager for persistence
+from Main.plugins.userbot.xpm_logger_user import SessionManager
 
 
 # ============================================================================
@@ -40,7 +42,7 @@ from Main.utils.topic_utils import get_or_create_topic
 # ============================================================================
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "tags"  # Renamed from mentions
-PLUGIN_VERSION = "1.7.5-TAG"  # ✅ Added block/unblock, send message features
+PLUGIN_VERSION = "1.7.66-TAG"  # ✅ Added block/unblock, send message features
 
 # Gunakan logger Altruix jika tersedia, atau buat baru yang konsisten
 logger = logging.getLogger("altruix.mentions")
@@ -240,8 +242,9 @@ async def cache_exists(key: str) -> bool:
 # ============================================================================
 # 🔥 FALLBACK CACHE SYSTEM (In-memory dengan JSON backup)
 # ============================================================================
-MENTION_LOG_CACHE = {}
-# REPLY_AS_MENTIONED_WAITING = {}  # Redundant local definition removed to use Altruix shared state
+# Fallback cache initialization (only if shared state is missing)
+if "MENTION_LOG_CACHE" not in globals() or MENTION_LOG_CACHE is None:
+    MENTION_LOG_CACHE = {}
 USER_REPLY_COUNTS = defaultdict(lambda: defaultdict(int))
 MENTIONS_DATA = {}
 AUTO_REPLY_ENABLED = False
@@ -803,19 +806,6 @@ async def mention_settings_handler(c: Client, m: AltruixMessage):
         logger.error(f"Mention Settings Error: {e}")
         await msg.edit_msg(f"❌ Error: {str(e)[:100]}")
 # ✅ NEW: Helper to generate Mention Logger Menu
-def generate_mnt_menu(client_id):
-    """Generates the Mention Logger configuration menu for a specific client ID."""
-    try:
-        user_id_str = str(client_id)
-        
-        # Determine status vars
-        is_enabled = asyncio.run_coroutine_threadsafe(get_mention_setting_safe(client_id), Altruix.loop).result() if hasattr(Altruix, "loop") else False
-        # Fallback if loop is not accessible easily or use a different sync pattern. 
-        # But wait, we are in an async context anyway inside handlers. 
-        # I'll make the helper async or handle it inside.
-        return None, None # To be used in async context
-    except:
-        return None, None
 
 async def generate_mnt_menu_async(client_id):
     """Generates the Mention Logger configuration menu for a specific client ID (Async)."""
@@ -840,9 +830,20 @@ async def generate_mnt_menu_async(client_id):
         # Load auto_topic
         auto_topic = m_global.get("auto_create_topic", False) # Default False
         
-        ra_status = "ENABLED ✅" if REPLY_FROM_ALL_ACCESSIBLE else "DISABLED ❌"
-        log_chat = Altruix.log_chat or "Not Configured ⚠️"
+        # Get Bot Assist status from its own settings file
+        from Main.plugins.bot.xmention_logger_bot import STORAGE_FILE as BOT_STORAGE
+        bot_assist_enabled = False
+        if BOT_STORAGE.exists():
+            with open(BOT_STORAGE, "r") as f:
+                b_data = json.load(f)
+                bot_assist_enabled = b_data.get("settings", {}).get("enabled", False)
         
+        bot_assist_label = "ENABLED ✅" if bot_assist_enabled else "DISABLED ❌"
+        bot_assist_btn = "ON" if bot_assist_enabled else "OFF"
+
+        ra_status = "ENABLED ✅" if REPLY_FROM_ALL_ACCESSIBLE else "DISABLED ❌"
+        log_chat_id = Altruix.log_chat or "Not Configured ⚠️"
+
         buttons = [
              [
                  InlineKeyboardButton(f"Status: {status_text}", callback_data=f"mnt_cfg_toggle_enable_{client_id}"),
@@ -850,10 +851,14 @@ async def generate_mnt_menu_async(client_id):
              ],
              [
                  InlineKeyboardButton(f"Apply Type: {apply_type.upper().replace('_', ' ')}", callback_data=f"mnt_cfg_toggle_apply_{client_id}"),
-                 InlineKeyboardButton(f"ReplyAll: {ra_status}", callback_data=f"mnt_cfg_toggle_replyall_{client_id}")
+                 InlineKeyboardButton(f"Bot Assist: {bot_assist_btn}", callback_data=f"mnt_cfg_toggle_botassist_{client_id}")
              ],
              [
-                 InlineKeyboardButton("❌ Close", callback_data="bot_controls_menu") # Back to Settings if from Bot, or we can use generic close
+                 InlineKeyboardButton(f"ReplyAll: {ra_status}", callback_data=f"mnt_cfg_toggle_replyall_{client_id}"),
+                 InlineKeyboardButton("🔍 Filters", callback_data=f"mntf_menu_{client_id}_0")
+             ],
+             [
+                 InlineKeyboardButton("❌ Close", callback_data="bot_controls_menu")
              ]
         ]
         
@@ -864,7 +869,8 @@ async def generate_mnt_menu_async(client_id):
             f"• **Apply Type:** `{apply_type}`\n"
             f"• **Auto Topic:** {'ENABLED' if auto_topic else 'DISABLED'}\n"
             f"• **Reply From All:** {ra_status}\n"
-            f"• **Log Group:** ` {log_chat} `\n\n"
+            f"• **Bot Assist:** {bot_assist_label}\n"
+            f"• **Log Group:** ` {log_chat_id} `\n\n"
             f"<i>Click buttons below to change settings.</i>"
         )
         return res, InlineKeyboardMarkup(buttons)
@@ -889,14 +895,11 @@ async def open_mentions_settings_owner_handler(c: Client, cb: CallbackQuery):
         logger.error(f"Open Mentions Error: {e}")
         await cb.answer(f"Error: {e}", show_alert=True)
 
-@Altruix.bot.on_callback_query(filters.regex(r"^mnt_cfg_(toggle_enable|toggle_replyall|toggle_autotopic|toggle_apply)(?:_(\d+))?$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^mnt_cfg_(toggle_enable|toggle_replyall|toggle_autotopic|toggle_apply|toggle_botassist)(?:_(\d+))?$"))
+@iuser_check
 @log_errors
 async def mnt_config_callback(c: Client, cb: CallbackQuery):
     try:
-        from Main.utils.access_control import is_authorized_user
-        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-            return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
-            
         action = cb.matches[0].group(1)
         client_id = int(cb.matches[0].group(2)) if cb.matches[0].group(2) else Altruix.config.OWNER_ID
         
@@ -919,6 +922,26 @@ async def mnt_config_callback(c: Client, cb: CallbackQuery):
             REPLY_FROM_ALL_ACCESSIBLE = not REPLY_FROM_ALL_ACCESSIBLE
             await cache_set("reply_from_all_accessible", REPLY_FROM_ALL_ACCESSIBLE, 86400 * 30)
             text = f"🔄 Reply From All: {'ACCESSIBLE' if REPLY_FROM_ALL_ACCESSIBLE else 'RESTRICTED'}"
+            
+        elif action == "toggle_botassist":
+            from Main.plugins.bot.xmention_logger_bot import STORAGE_FILE as BOT_STORAGE
+            if BOT_STORAGE.exists():
+                async with aiofiles.open(BOT_STORAGE, "r") as f:
+                    content = await f.read()
+                    b_data = json.loads(content)
+                
+                current = b_data.get("settings", {}).get("enabled", False)
+                new_status = not current
+                
+                if "settings" not in b_data: b_data["settings"] = {}
+                b_data["settings"]["enabled"] = new_status
+                
+                async with aiofiles.open(BOT_STORAGE, "w") as f:
+                    await f.write(json.dumps(b_data, indent=2))
+                
+                text = f"🔄 Bot Assist: {'ENABLED' if new_status else 'DISABLED'}"
+            else:
+                text = "❌ Bot Assist settings not found"
 
         elif action == "toggle_autotopic":
             curr = data["global"].get("auto_create_topic", False) # Default False
@@ -952,7 +975,7 @@ async def mnt_config_callback(c: Client, cb: CallbackQuery):
 # 🔥 MENTION DETECTION HANDLER - DIUPDATE DENGAN CACHE
 # ============================================================================
 @Altruix.on_message(
-    filters.mentioned & filters.group & ~filters.user(Altruix.bot_info.id)
+    filters.mentioned & filters.group
 )
 @log_errors
 async def send_mention_log_handler(c: Client, m: RawMessage):
@@ -964,6 +987,25 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
             return
         
         msg_key = f"{m.chat.id}_{m.id}"
+        
+        # ✅ NEW: Handle Bot Assistant Specific Filtering
+        # If the sender is our own bot assistant, check if 'Bot Assist' is disabled
+        sender = m.from_user
+        is_bot_assistant = (sender and sender.id == Altruix.bot_info.id)
+        if is_bot_assistant:
+            from Main.plugins.bot.xmention_logger_bot import STORAGE_FILE as BOT_STORAGE
+            bot_assist_enabled = False
+            if BOT_STORAGE.exists():
+                try:
+                    with open(BOT_STORAGE, "r") as f:
+                        b_data = json.load(f)
+                        bot_assist_enabled = b_data.get("settings", {}).get("enabled", False)
+                except:
+                    pass
+            
+            if not bot_assist_enabled:
+                logger.debug(f"Mention: Skipping mention from Bot Assistant (Bot Assist is DISABLED)")
+                return
         
         # Cek apakah sudah ada di cache PERSISTEN
         if await check_mention_in_cache(msg_key):
@@ -1011,12 +1053,13 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
                 with open(settings_file, "r") as f:
                     m_settings = json.load(f)
                 
-                if not m_settings.get("auto_log", True):
+                # Check global settings first
+                m_global = m_settings.get("global", {})
+                if not m_global.get("auto_log", True):
                     logger.debug(f"Mention auto-log disabled globally")
                     return
                 
-                # Filter check
-                m_filters = m_settings.get("filters", {})
+                # Identify message type for filtering
                 m_type = "text"
                 if m.photo: m_type = "photo"
                 elif m.video: m_type = "video"
@@ -1026,10 +1069,22 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
                 elif m.sticker: m_type = "sticker"
                 elif m.animation: m_type = "animation"
                 elif m.video_note: m_type = "video_note"
+
+                # Check per-account filters
+                user_settings = m_settings.get("settings", {}).get(str(client_id), {})
+                p_filters = user_settings.get("filters", {})
                 
-                if not m_filters.get(m_type, True):
-                    logger.debug(f"Mention filter BLOCKED message type: {m_type}")
-                    return
+                if p_filters:
+                    # If per-account filters exist, they take precedence
+                    if not p_filters.get(m_type, True):
+                        logger.debug(f"Mention filter BLOCKED message type (per-account): {m_type}")
+                        return
+                else:
+                    # Fallback to legacy global filters key if it exists
+                    legacy_filters = m_settings.get("filters", {})
+                    if legacy_filters and not legacy_filters.get(m_type, True):
+                        logger.debug(f"Mention filter BLOCKED message type (legacy global): {m_type}")
+                        return
         except Exception as e:
             logger.error(f"Error checking mention filters: {e}")
 
@@ -1113,8 +1168,13 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
         
         # Buttons
         keyboard = [
-            [InlineKeyboardButton("💬 Chat with User", url=f"tg://user?id={mentioner_id}")],
-            [InlineKeyboardButton(Altruix.get_string('BUTTON_GO_TO_MSG') or "🔗 Go to Message", url=m.link)]
+            [
+                InlineKeyboardButton("⚙️ Menu", callback_data=f"tags_toggle_full_{m.chat.id}_{m.id}"),
+                InlineKeyboardButton(Altruix.get_string('BUTTON_GO_TO_MSG') or "🔗 Go to Message", url=m.link)
+            ],
+            [
+                InlineKeyboardButton("💬 Chat with User", url=f"tg://user?id={mentioner_id}")
+            ]
         ]
         
         # Get topic if any (use userbot to create if needed)
@@ -1215,6 +1275,25 @@ async def send_mention_edit_handler(c: Client, m: RawMessage):
             
         msg_key = f"{m.chat.id}_{m.id}"
         
+        # ✅ NEW: Handle Bot Assistant Specific Filtering
+        # If the sender is our own bot assistant, check if 'Bot Assist' is disabled
+        sender = m.from_user
+        is_bot_assistant = (sender and sender.id == Altruix.bot_info.id)
+        if is_bot_assistant:
+            from Main.plugins.bot.xmention_logger_bot import STORAGE_FILE as BOT_STORAGE
+            bot_assist_enabled = False
+            if BOT_STORAGE.exists():
+                try:
+                    with open(BOT_STORAGE, "r") as f:
+                        b_data = json.load(f)
+                        bot_assist_enabled = b_data.get("settings", {}).get("enabled", False)
+                except: pass
+            
+            if not bot_assist_enabled:
+                logger.debug(f"Mention Edit: Skipping edit from Bot Assistant (Bot Assist is DISABLED)")
+                # If it was already in cache, we might want to keep it, but skip updating the log message
+                return
+        
         # Cek di cache PERSISTEN terlebih dahulu
         cache_data = await get_mention_from_cache(msg_key)
         
@@ -1310,14 +1389,11 @@ async def send_mention_edit_handler(c: Client, m: RawMessage):
 # 🔥 QUICK REACTION HANDLER - DIUPDATE DENGAN CACHE
 # ============================================================================
 @Altruix.bot.on_callback_query(filters.regex(r"^mentions_react_"))
+@iuser_check
 @log_errors
 async def quick_reaction_handler(c: Client, cb: CallbackQuery):
     """Handle quick reactions from buttons."""
     try:
-        from Main.utils.access_control import is_authorized_user
-        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-            return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
-            
         # Format: mentions_react_{chat_id}_{message_id}_{emoji}
         BUTTON_STATS["react"] += 1
         log_button_press("REACT", cb.data, cb.from_user.id if cb.from_user else None)
@@ -1428,14 +1504,11 @@ async def quick_reaction_handler(c: Client, cb: CallbackQuery):
 # 🔥 REPLY FROM ALL HANDLER - DIUPDATE DENGAN CACHE
 # ============================================================================
 @Altruix.bot.on_callback_query(filters.regex(r"^mentions_replyall_"))
+@iuser_check
 @log_errors
 async def start_reply_from_all(c: Client, cb: CallbackQuery):
     """Memulai proses reply-from-all for all user."""
     try:
-        from Main.utils.access_control import is_authorized_user
-        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-            return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
-            
         # 1. Log Aktivitas
         BUTTON_STATS["reply_all"] += 1
         log_button_press("REPLY_ALL", cb.data, cb.from_user.id if cb.from_user else None)
@@ -1539,6 +1612,7 @@ async def start_reply_from_all(c: Client, cb: CallbackQuery):
             waiting_data["instruction_msg_id"] = instruction_msg.id
             await save_waiting_reply(waiting_id, waiting_data)
             REPLY_AS_MENTIONED_WAITING[waiting_id] = waiting_data
+            SessionManager.save() # ✅ Save to persistent storage
             
             await cb.answer("Silakan kirimkan balasan Anda.", show_alert=False)
             
@@ -1559,6 +1633,7 @@ async def start_reply_from_all(c: Client, cb: CallbackQuery):
 # 🔥 REPLY AS MENTIONED HANDLER - DIUPDATE DENGAN CACHE
 # ============================================================================
 @Altruix.bot.on_callback_query(filters.regex(r"^mentions_reply_(-?\d+)_(\d+)"))
+@iuser_check
 @log_errors
 async def mentions_direct_reply_callback(c: Client, cb: CallbackQuery):
     """Langsung memulai proses reply untuk mention tanpa menu perantara."""
@@ -1609,7 +1684,7 @@ async def mentions_direct_reply_callback(c: Client, cb: CallbackQuery):
         client_name = mentioned_client.me.first_name if mentioned_client.me else "Unknown"
         user_mention = cb.from_user.mention(style=enums.ParseMode.HTML) if cb.from_user else "User"
         
-        bot = Altruix.bot_manager.get_bot(client_id)
+        bot = Altruix.bot
         instr = await bot.send_message(
             Altruix.log_chat,
             f"✉️ **Input Balasan Mention** (via {client_name})\n\n"
@@ -1639,13 +1714,10 @@ async def mentions_direct_reply_callback(c: Client, cb: CallbackQuery):
 # 🔥 ALREADY REACTED HANDLER
 # ============================================================================
 @Altruix.bot.on_callback_query(filters.regex(r"^mentions_reacted$"))
+@iuser_check
 @log_errors
 async def already_reacted_handler(c: Client, cb: CallbackQuery):
     """Handler untuk tombol yang sudah direaksi."""
-    from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-        return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
-        
     log_button_press("ALREADY_REACTED", cb.data, cb.from_user.id if cb.from_user else None)
     await cb.answer("✅ Sudah direaksi sebelumnya", show_alert=False)
 
@@ -1653,14 +1725,11 @@ async def already_reacted_handler(c: Client, cb: CallbackQuery):
 # 🔥 TEST BUTTONS HANDLER
 # ============================================================================
 @Altruix.bot.on_callback_query(filters.regex(r"^test_mentions_"))
+@iuser_check
 @log_errors
 async def test_buttons_handler_bot(c: Client, cb: CallbackQuery):
     """Handler untuk tombol test dari bot."""
     try:
-        from Main.utils.access_control import is_authorized_user
-        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-            return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
-            
         pattern = r"test_mentions_(.+)_(-?\d+)_(\d+)"
         match = re.match(pattern, cb.data)
         
@@ -1699,15 +1768,11 @@ async def test_buttons_handler_bot(c: Client, cb: CallbackQuery):
 # 🔥 UNREACT HANDLER - DIUPDATE DENGAN CACHE
 # ============================================================================
 @Altruix.bot.on_callback_query(filters.regex(r"^mentions_unreact_(-?\d+)_(\d+)"))
+@iuser_check
 @log_errors
 async def quick_unreact_handler(c: Client, cb: CallbackQuery):
     """Hapus reaksi (unreact) pada pesan asli."""
     try:
-        from Main.utils.access_control import is_authorized_user
-        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-            msg = Altruix.get_string("ACCESS_DENIED")
-            return await cb.answer(msg, show_alert=True)
-            
         chat_id = int(cb.matches[0].group(1))
         message_id = int(cb.matches[0].group(2))
         msg_key = f"{chat_id}_{message_id}"
@@ -1743,15 +1808,11 @@ async def quick_unreact_handler(c: Client, cb: CallbackQuery):
 # 🔥 OTHERS EMOJI HANDLER
 # ============================================================================
 @Altruix.bot.on_callback_query(filters.regex(r"^mentions_others_(-?\d+)_(\d+)"))
+@iuser_check
 @log_errors
 async def others_emoji_handler(c: Client, cb: CallbackQuery):
     """Tampilkan menu pilihan emoji lainnya."""
     try:
-        from Main.utils.access_control import is_authorized_user
-        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-            msg = Altruix.get_string("ACCESS_DENIED")
-            return await cb.answer(msg, show_alert=True)
-            
         chat_id = int(cb.matches[0].group(1))
         message_id = int(cb.matches[0].group(2))
         
@@ -1781,15 +1842,11 @@ async def others_emoji_handler(c: Client, cb: CallbackQuery):
 # 🔥 BACK TO MAIN HANDLER
 # ============================================================================
 @Altruix.bot.on_callback_query(filters.regex(r"^mentions_back_(-?\d+)_(\d+)"))
+@iuser_check
 @log_errors
 async def back_to_main_handler(c: Client, cb: CallbackQuery):
     """Kembali ke menu utama mention log."""
     try:
-        from Main.utils.access_control import is_authorized_user
-        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-            msg = Altruix.get_string("ACCESS_DENIED")
-            return await cb.answer(msg, show_alert=True)
-            
         chat_id = int(cb.matches[0].group(1))
         message_id = int(cb.matches[0].group(2))
         
@@ -1835,14 +1892,11 @@ async def back_to_main_handler(c: Client, cb: CallbackQuery):
 # 🔥 SAVE TO LOG HANDLER - DIUPDATE DENGAN CACHE
 # ============================================================================
 @Altruix.bot.on_callback_query(filters.regex(r"^mentions_save_(-?\d+)_(\d+)"))
+@iuser_check
 @log_errors
 async def save_mention_to_log(c: Client, cb: CallbackQuery):
     """Simpan (forward) pesan mention ke log group."""
     try:
-        from Main.utils.access_control import is_authorized_user
-        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-            return await cb.answer("⛔ Akses Ditolak!", show_alert=True)
-
         BUTTON_STATS["save"] += 1
         chat_id = int(cb.matches[0].group(1))
         message_id = int(cb.matches[0].group(2))
@@ -1887,14 +1941,11 @@ async def save_mention_to_log(c: Client, cb: CallbackQuery):
 # 🔥 UNSEND REPLY HANDLER - DIUPDATE DENGAN CACHE
 # ============================================================================
 @Altruix.bot.on_callback_query(filters.regex(r"^mentions_unsend_(-?\d+)_(\d+)"))
+@iuser_check
 @log_errors
 async def unsend_reply_handler(c: Client, cb: CallbackQuery):
     """Hapus balasan yang sebelumnya dikirim."""
     try:
-        from Main.utils.access_control import is_authorized_user
-        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-            return await cb.answer("⛔ Akses Ditolak!", show_alert=True)
-
         BUTTON_STATS["unsend"] += 1
         chat_id = int(cb.matches[0].group(1))
         message_id = int(cb.matches[0].group(2))
@@ -1956,13 +2007,10 @@ async def unsend_reply_handler(c: Client, cb: CallbackQuery):
     group_only=False,
     requires_input=True,
 )
+@iuser_check
 @log_errors
 async def cache_management_handler(c: Client, m: AltruixMessage):
     """Manage mention cache system."""
-    from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(m.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-        return await m.reply_msg(Altruix.get_string("ACCESS_DENIED"))
-        
     msg = await m.handle_message("PROCESSING")
     user_input = m.user_input.lower().strip()
     
@@ -2069,13 +2117,10 @@ async def cache_management_handler(c: Client, m: AltruixMessage):
     group_only=False,
     requires_input=False,
 )
+@iuser_check
 @log_errors
 async def fix_cache_command(c: Client, m: AltruixMessage):
     """Fix missing cache entries by scanning log chat."""
-    from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(m.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-        return await m.reply_msg(Altruix.get_string("ACCESS_DENIED"))
-        
     msg = await m.handle_message("⏳ Scanning log chat for mentions...")
     
     try:
@@ -2157,13 +2202,10 @@ async def fix_cache_command(c: Client, m: AltruixMessage):
     group_only=False,
     requires_input=False,
 )
+@iuser_check
 @log_errors
 async def status_command_handler(c: Client, m: AltruixMessage):
     """Check plugin status with cache info."""
-    from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(m.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-        return await m.reply_msg(Altruix.get_string("ACCESS_DENIED"))
-        
     msg = await m.handle_message("PROCESSING")
     
     client_id_str = str(c.me.id)
@@ -2231,13 +2273,10 @@ async def status_command_handler(c: Client, m: AltruixMessage):
     group_only=False,
     requires_input=False,
 )
+@iuser_check
 @log_errors
 async def debug_command_handler(c: Client, m: AltruixMessage):
     """Debug button issues."""
-    from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(m.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-        return await m.reply_msg(Altruix.get_string("ACCESS_DENIED"))
-        
     msg = await m.handle_message("PROCESSING")
     
     try:
@@ -2317,13 +2356,10 @@ async def debug_command_handler(c: Client, m: AltruixMessage):
     group_only=False,
     requires_input=False,
 )
+@iuser_check
 @log_errors
 async def test_buttons_command(c: Client, m: AltruixMessage):
     """Test semua tombol - HANYA BISA DIJALANKAN OLEH BOT!"""
-    from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(m.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-        return await m.reply_msg(Altruix.get_string("ACCESS_DENIED"))
-        
     msg = await m.handle_message("PROCESSING")
     
     try:
@@ -2420,13 +2456,10 @@ async def test_buttons_command(c: Client, m: AltruixMessage):
     group_only=False,
     requires_input=False,
 )
+@iuser_check
 @log_errors
 async def clear_cache_handler(c: Client, m: AltruixMessage):
     """Clear plugin cache."""
-    from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(m.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-        return await m.reply_msg(Altruix.get_string("ACCESS_DENIED"))
-        
     msg = await m.handle_message("PROCESSING")
     
     try:
@@ -2472,13 +2505,10 @@ async def clear_cache_handler(c: Client, m: AltruixMessage):
     ["test_mention"],
     cmd_help={"help": "Test mention system", "example": "test_mention"},
 )
+@iuser_check
 @log_errors
 async def test_mention_system(c: Client, m: AltruixMessage):
     """Test mention system."""
-    from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(m.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-        return await m.reply_msg(Altruix.get_string("ACCESS_DENIED"))
-        
     msg = await m.handle_message("PROCESSING")
     
     try:
@@ -2519,13 +2549,10 @@ async def test_mention_system(c: Client, m: AltruixMessage):
     group_only=False,
     requires_input=False,
 )
+@iuser_check
 @log_errors
 async def debug_structure_handler(c: Client, m: AltruixMessage):
     """Debug Altruix structure untuk menemukan client."""
-    from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(m.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-        return await m.reply_msg(Altruix.get_string("ACCESS_DENIED"))
-        
     msg = await m.handle_message("PROCESSING")
     
     try:
@@ -2633,13 +2660,10 @@ async def debug_structure_handler(c: Client, m: AltruixMessage):
     group_only=False,
     requires_input=False,
 )
+@iuser_check
 @log_errors
 async def test_handler_command(c: Client, m: AltruixMessage):
     """Test handler functionality."""
-    from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(m.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-        return await m.reply_msg(Altruix.get_string("ACCESS_DENIED"))
-        
     msg = await m.handle_message("PROCESSING")
     
     try:
@@ -2805,15 +2829,11 @@ async def cache_cleanup_task():
 # 🔥 TOGGLE MENU HANDLER - NEW
 # ============================================================================
 @Altruix.bot.on_callback_query(filters.regex(r"^tags_toggle_(full|compact)_"))
+@iuser_check
 @log_errors
 async def tags_toggle_menu_callback(c: Client, cb: CallbackQuery):
     """Toggle between compact and full menu for tag notifications."""
     try:
-        from Main.utils.access_control import is_authorized_user
-        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-            msg = Altruix.get_string("ACCESS_DENIED")
-            return await cb.answer(msg, show_alert=True)
-            
         data = cb.data.split("_")
         mode, chat_id, msg_id = data[2], int(data[3]), int(data[4])
         
@@ -2822,8 +2842,13 @@ async def tags_toggle_menu_callback(c: Client, cb: CallbackQuery):
         cache_data = await get_mention_from_cache(msg_key)
         
         if mode == "full":
-            # Get user_id from cache
-            mentioner_id = cache_data.get("mentioner_id") if cache_data else 0
+            # Get user_id from cache - Fix NoneType error
+            mentioner_id = 0
+            if cache_data and cache_data.get("mentioner_id"):
+                try:
+                    mentioner_id = int(cache_data.get("mentioner_id"))
+                except:
+                   mentioner_id = 0
             
             # Build full menu with all buttons
             reaction_buttons = [
@@ -2876,15 +2901,11 @@ async def tags_toggle_menu_callback(c: Client, cb: CallbackQuery):
 # 🔥 MEDIA FORWARD CONFIRMATION HANDLER - NEW
 # ============================================================================
 @Altruix.bot.on_callback_query(filters.regex(r"^tags_fwd_confirm_"))
+@iuser_check
 @log_errors
 async def tags_forward_confirm_callback(c: Client, cb: CallbackQuery):
     """Show confirmation before forwarding large/restricted media."""
     try:
-        from Main.utils.access_control import is_authorized_user
-        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-            msg = Altruix.get_string("ACCESS_DENIED")
-            return await cb.answer(msg, show_alert=True)
-            
         data = cb.data.split("_")
         chat_id, msg_id = int(data[3]), int(data[4])
         
@@ -2906,15 +2927,11 @@ async def tags_forward_confirm_callback(c: Client, cb: CallbackQuery):
 # 🔥 MEDIA FORWARD HANDLER - NEW
 # ============================================================================
 @Altruix.bot.on_callback_query(filters.regex(r"^tags_fwd_media_"))
+@iuser_check
 @log_errors
 async def tags_forward_media_callback(c: Client, cb: CallbackQuery):
     """Download and forward media to tag logger topic."""
     try:
-        from Main.utils.access_control import is_authorized_user
-        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-            msg = Altruix.get_string("ACCESS_DENIED")
-            return await cb.answer(msg, show_alert=True)
-            
         data = cb.data.split("_")
         chat_id, msg_id = int(data[3]), int(data[4])
         
@@ -2971,15 +2988,11 @@ async def tags_forward_media_callback(c: Client, cb: CallbackQuery):
 # 🔥 MEDIA FORWARD CANCEL HANDLER - NEW
 # ============================================================================
 @Altruix.bot.on_callback_query(filters.regex(r"^tags_fwd_cancel_"))
+@iuser_check
 @log_errors
 async def tags_forward_cancel_callback(c: Client, cb: CallbackQuery):
     """Cancel media forward and restore original buttons."""
     try:
-        from Main.utils.access_control import is_authorized_user
-        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-            msg = Altruix.get_string("ACCESS_DENIED")
-            return await cb.answer(msg, show_alert=True)
-            
         data = cb.data.split("_")
         chat_id, msg_id = int(data[3]), int(data[4])
         
@@ -3001,15 +3014,12 @@ async def tags_forward_cancel_callback(c: Client, cb: CallbackQuery):
 # 🔥 BLOCK USER HANDLER - NEW
 # ============================================================================
 @Altruix.bot.on_callback_query(filters.regex(r"^tags_block_"))
+@iuser_check
 @log_errors
 async def tags_block_user_callback(c: Client, cb: CallbackQuery):
     """Block user who tagged."""
     try:
-        from Main.utils.access_control import is_authorized_user
-        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-            msg = Altruix.get_string("ACCESS_DENIED")
-            return await cb.answer(msg, show_alert=True)
-            
+        # from Main.utils.access_control import is_authorized_user (Cleaned)
         # Parse: tags_block_CHATID_MSGID_USERID
         parts = cb.data.split("_")
         chat_id, msg_id, user_id = int(parts[2]), int(parts[3]), int(parts[4])
@@ -3048,15 +3058,11 @@ async def tags_block_user_callback(c: Client, cb: CallbackQuery):
 # 🔥 UNBLOCK USER HANDLER - NEW
 # ============================================================================
 @Altruix.bot.on_callback_query(filters.regex(r"^tags_unblock_"))
+@iuser_check
 @log_errors
 async def tags_unblock_user_callback(c: Client, cb: CallbackQuery):
     """Unblock user who tagged."""
     try:
-        from Main.utils.access_control import is_authorized_user
-        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-            msg = Altruix.get_string("ACCESS_DENIED")
-            return await cb.answer(msg, show_alert=True)
-            
         # Parse: tags_unblock_CHATID_MSGID_USERID
         parts = cb.data.split("_")
         chat_id, msg_id, user_id = int(parts[2]), int(parts[3]), int(parts[4])
@@ -3095,15 +3101,11 @@ async def tags_unblock_user_callback(c: Client, cb: CallbackQuery):
 # 🔥 SEND MESSAGE TO USER HANDLER - NEW
 # ============================================================================
 @Altruix.bot.on_callback_query(filters.regex(r"^tags_send_msg_"))
+@iuser_check
 @log_errors
 async def tags_send_message_callback(c: Client, cb: CallbackQuery):
     """Start process to send message to user who tagged."""
     try:
-        from Main.utils.access_control import is_authorized_user
-        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-            msg = Altruix.get_string("ACCESS_DENIED")
-            return await cb.answer(msg, show_alert=True)
-            
         # Parse: tags_send_msg_CHATID_MSGID_USERID
         parts = cb.data.split("_")
         chat_id, msg_id, user_id = int(parts[3]), int(parts[4]), int(parts[5])

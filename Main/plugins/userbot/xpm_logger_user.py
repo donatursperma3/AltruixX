@@ -2,7 +2,7 @@
 # Copyright (C) 2021-present by Altruix@Github, < https://github.com/Altruix >.
 
 from Main import Altruix
-from pyrogram import Client, filters, enums, filters
+from pyrogram import Client, filters, enums
 from pyrogram.types import (
     Message as RawMessage,
     InlineKeyboardButton,
@@ -11,7 +11,7 @@ from pyrogram.types import (
     ReplyParameters
 )
 from Main.core.types.message import Message as AltruixMessage
-from Main.core.decorators import log_errors
+from Main.core.decorators import log_errors, iuser_check
 import os
 import html
 import logging
@@ -37,7 +37,7 @@ logger = logging.getLogger("altruix.pm_logger_user")
 logger.setLevel(logging.INFO)
 
 PLUGIN_NAME = __plugin_name__ 
-PLUGIN_VERSION = "1.3.6"  # ✅ Fixed CHANNEL_INVALID during topic creation
+PLUGIN_VERSION = "1.3.65"  # ✅ Fixed CHANNEL_INVALID during topic creation
 from Main.utils.file_helpers import get_db_path
 STORAGE_FILE = Path(get_db_path("pm_logger_user_settings.json"))
 
@@ -60,8 +60,12 @@ class SessionManager:
             to_save = {}
             for k, v in Altruix.REPLY_AS_MENTIONED_WAITING.items():
                 to_save[str(k)] = v
+            
+            # ✅ Fix: Actually write the SESSION_FILE
+            with open(SESSION_FILE, "w", encoding="utf-8") as f:
+                json.dump(to_save, f, indent=4)
                 
-            # Also save PM_LOG_CACHE
+            # Also save PM_LOG_CACHE to its own file
             cache_file = Path(get_db_path("pm_logger_cache.json"))
             with open(cache_file, "w", encoding="utf-8") as f:
                 json.dump(Altruix.PM_LOG_CACHE, f, indent=4)
@@ -97,10 +101,12 @@ class SessionManager:
         cleaned_count = 0
         for session_id in list(Altruix.REPLY_AS_MENTIONED_WAITING.keys()):
             session_data = Altruix.REPLY_AS_MENTIONED_WAITING[session_id]
-            # Remove sessions without thread_id (old sessions before patch)
+            # Relaxed Cleanup: Don't delete if thread_id is missing, just set to None
             if session_data.get("thread_id") is None:
-                del Altruix.REPLY_AS_MENTIONED_WAITING[session_id]
-                cleaned_count += 1
+                # del Altruix.REPLY_AS_MENTIONED_WAITING[session_id]
+                # cleaned_count += 1
+                session_data["thread_id"] = None # Ensure key exists
+                pass
         
         if cleaned_count > 0:
             logger.info(f"SessionManager: Cleaned {cleaned_count} old sessions (missing thread_id)")
@@ -189,7 +195,6 @@ async def load_settings():
                     
                     # Supports both old and new structure
                     PM_LOGGER_USER_DATA = data.get("settings", {}) or data.get("sessions", {})
-                    PM_LOGGER_FILTERS = data.get("filters", PM_LOGGER_FILTERS)
                     PM_LOGGER_FILTERS = data.get("filters", PM_LOGGER_FILTERS)
                     REPLY_FROM_ALL_ACCESSIBLE = data.get("reply_from_all_accessible", True)
                     REPLY_ACCESS_MODE = data.get("reply_access_mode", "sudo")
@@ -331,7 +336,6 @@ async def pm_logger_user_handler(c: Client, m: RawMessage):
             is_globally_on = session_settings.get("enabled", False)
             log_from_user = session_settings.get("log_from_user", is_globally_on)
             log_from_bot = session_settings.get("log_from_bot", is_globally_on)
-            log_from_bot = session_settings.get("log_from_bot", is_globally_on)
             session_filters = session_settings.get("filters", {})
 
         # ✅ Check Auto Create Topic Logic
@@ -346,6 +350,24 @@ async def pm_logger_user_handler(c: Client, m: RawMessage):
         sender = m.from_user
         if not sender or sender.is_self:
             return
+
+        # ✅ NEW: Handle Bot Assistant Specific Filtering
+        # If the sender is our own bot assistant, check if 'Bot Assist' is disabled
+        is_bot_assistant = (sender.id == Altruix.bot_info.id)
+        if is_bot_assistant:
+            from Main.plugins.bot.xpm_logger_bot import STORAGE_FILE as BOT_STORAGE
+            bot_assist_enabled = False
+            if BOT_STORAGE.exists():
+                try:
+                    with open(BOT_STORAGE, "r") as f:
+                        b_data = json.load(f)
+                        bot_assist_enabled = b_data.get("settings", {}).get("log_mode", "off") != "off"
+                except:
+                    pass
+            
+            if not bot_assist_enabled:
+                logger.debug(f"PMLU: Skipping message from Bot Assistant (Bot Assist is DISABLED)")
+                return
 
         # ✅ CAPTURE SANGMATA RESPONSE
         if sender.username == "SangMata_beta_bot":
@@ -634,6 +656,17 @@ def generate_pmlu_menu(client_id):
         auto_topic_val = "ENABLED" if auto_topic else "DISABLED"
         auto_topic_btn = "ON" if auto_topic else "OFF"
         
+        # Get Bot Assist status from its own settings file
+        from Main.plugins.bot.xpm_logger_bot import STORAGE_FILE as BOT_STORAGE
+        bot_assist_enabled = False
+        if BOT_STORAGE.exists():
+            with open(BOT_STORAGE, "r") as f:
+                b_data = json.load(f)
+                bot_assist_enabled = b_data.get("settings", {}).get("log_mode", "off") != "off"
+        
+        bot_assist_label = "ENABLED ✅" if bot_assist_enabled else "DISABLED ❌"
+        bot_assist_btn = "ON" if bot_assist_enabled else "OFF"
+        
         # Check if bot can actually send to log_chat (Basic Check)
         bot_access = "OK ✅" if Altruix.log_chat else "N/A"
 
@@ -648,6 +681,7 @@ def generate_pmlu_menu(client_id):
              ],
              [
                  InlineKeyboardButton(f"ReplyAll: {ra_status}", callback_data=f"pmlu_cfg_toggle_replyall_{client_id}"),
+                 InlineKeyboardButton(f"Bot Assist: {bot_assist_btn}", callback_data=f"pmlu_cfg_toggle_botassist_{client_id}")
              ],
              [
                  InlineKeyboardButton("❌ Close", callback_data="bot_controls_menu") # Back to Bot Controls if opened from there
@@ -662,6 +696,7 @@ def generate_pmlu_menu(client_id):
             f"• **Apply Type:** `{PM_LOGGER_USER_DATA.get('apply_types', {}).get(user_id, 'per_account')}`\n"
             f"• **Auto Topic:** {auto_topic_val}\n"
             f"• **Reply From All:** {ra_status}\n"
+            f"• **Bot Assist:** {bot_assist_label}\n"
             f"• **Log Group:** ` {log_chat} `\n"
             f"• **Bot Access:** {bot_access}\n\n"
             f"<i>Click buttons below to change settings.</i>"
@@ -672,13 +707,10 @@ def generate_pmlu_menu(client_id):
         return f"Error: {e}", None
 
 @Altruix.bot.on_callback_query(filters.regex(r"^open_pmlu_settings_owner$"))
+@iuser_check
 @log_errors
 async def open_pmlu_settings_owner_handler(c: Client, cb: CallbackQuery):
     try:
-        from Main.utils.access_control import is_authorized_user
-        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-            return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
-            
         await cb.answer()
         owner_id = Altruix.config.OWNER_ID
         text, markup = generate_pmlu_menu(owner_id)
@@ -691,14 +723,11 @@ async def open_pmlu_settings_owner_handler(c: Client, cb: CallbackQuery):
         logger.error(f"Failed to open PMLU settings: {e}")
         await cb.answer(f"Error: {e}", show_alert=True)
 
-@Altruix.bot.on_callback_query(filters.regex(r"^pmlu_cfg_(toggle_enable|toggle_mode|toggle_replyall|toggle_autotopic|toggle_apply)(?:_(\d+))?$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^pmlu_cfg_(toggle_enable|toggle_mode|toggle_replyall|toggle_autotopic|toggle_apply|toggle_botassist)(?:_(\d+))?$"))
+@iuser_check
 @log_errors
 async def pmlu_config_callback(c: Client, cb: CallbackQuery):
     try:
-        from Main.utils.access_control import is_authorized_user
-        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-            return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
-            
         action = cb.matches[0].group(1)
         # Get Client ID from callback data or default to Bot ID
         client_id = int(cb.matches[0].group(2)) if cb.matches[0].group(2) else c.me.id
@@ -742,6 +771,26 @@ async def pmlu_config_callback(c: Client, cb: CallbackQuery):
             new_type = "global" if current == "per_account" else "per_account"
             PM_LOGGER_USER_DATA["apply_types"][user_id] = new_type
             text = f"🔄 Apply Type for {client_id}: {new_type.upper().replace('_', ' ')}"
+            
+        elif action == "toggle_botassist":
+            from Main.plugins.bot.xpm_logger_bot import STORAGE_FILE as BOT_STORAGE
+            if BOT_STORAGE.exists():
+                async with aiofiles.open(BOT_STORAGE, "r") as f:
+                    content = await f.read()
+                    b_data = json.loads(content)
+                
+                current_mode = b_data.get("settings", {}).get("log_mode", "off")
+                new_mode = "off" if current_mode != "off" else "all"
+                
+                if "settings" not in b_data: b_data["settings"] = {}
+                b_data["settings"]["log_mode"] = new_mode
+                
+                async with aiofiles.open(BOT_STORAGE, "w") as f:
+                    await f.write(json.dumps(b_data, indent=2))
+                
+                text = f"🔄 Bot Assist: {'ENABLED' if new_mode != 'off' else 'DISABLED'}"
+            else:
+                text = "❌ Bot Assist settings not found"
 
         await save_settings()
         await cb.answer(text)
@@ -757,13 +806,10 @@ async def pmlu_config_callback(c: Client, cb: CallbackQuery):
 
 # Callback Handlers for PMLU
 @Altruix.bot.on_callback_query(filters.regex(r"^pmlu_react_"))
+@iuser_check
 @log_errors
 async def pmlu_react_callback(c: Client, cb: CallbackQuery):
     try:
-        from Main.utils.access_control import is_authorized_user
-        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-            return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
-
         data = cb.data.split("_")
         chat_id, msg_id, client_id, emoji = int(data[2]), int(data[3]), int(data[4]), data[5]
         
@@ -783,13 +829,10 @@ async def pmlu_react_callback(c: Client, cb: CallbackQuery):
         await cb.answer(f"❌ Error: {str(e)}", show_alert=True)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^pmlu_unreact_"))
+@iuser_check
 @log_errors
 async def pmlu_unreact_callback(c: Client, cb: CallbackQuery):
     try:
-        from Main.utils.access_control import is_authorized_user
-        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-            return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
-
         data = cb.data.split("_")
         chat_id, msg_id, client_id = int(data[2]), int(data[3]), int(data[4])
         
@@ -810,13 +853,10 @@ async def pmlu_unreact_callback(c: Client, cb: CallbackQuery):
         await cb.answer(f"❌ Error: {str(e)}", show_alert=True)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^pmlu_save_"))
+@iuser_check
 @log_errors
 async def pmlu_save_callback(c: Client, cb: CallbackQuery):
     try:
-        from Main.utils.access_control import is_authorized_user
-        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-            return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
-
         data = cb.data.split("_")
         chat_id, msg_id, client_id = int(data[2]), int(data[3]), int(data[4])
         
@@ -836,13 +876,10 @@ async def pmlu_save_callback(c: Client, cb: CallbackQuery):
         logger.error(f"PMLU Save callback error: {e}")
 
 @Altruix.bot.on_callback_query(filters.regex(r"^pmlu_force_fwd_"))
+@iuser_check
 @log_errors
 async def pmlu_force_fwd_callback(c: Client, cb: CallbackQuery):
     try:
-        from Main.utils.access_control import is_authorized_user
-        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-            return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
-
         data = cb.data.split("_")
         # pmlu_force_fwd_{chat_id}_{msg_id}_{client_id}
         chat_id, msg_id, client_id = int(data[3]), int(data[4]), int(data[5])
@@ -900,13 +937,10 @@ async def pmlu_force_fwd_callback(c: Client, cb: CallbackQuery):
         await cb.answer(f"❌ Error: {e}", show_alert=True)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^pmlu_others_"))
+@iuser_check
 @log_errors
 async def pmlu_others_callback(c: Client, cb: CallbackQuery):
     try:
-        from Main.utils.access_control import is_authorized_user
-        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-            return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
-            
         data = cb.data.split("_")
         chat_id, msg_id, client_id = int(data[2]), int(data[3]), int(data[4])
         
@@ -928,13 +962,10 @@ async def pmlu_others_callback(c: Client, cb: CallbackQuery):
         await cb.answer(f"❌ Error: {e}", show_alert=True)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^pmlu_back_"))
+@iuser_check
 @log_errors
 async def pmlu_back_callback(c: Client, cb: CallbackQuery):
     try:
-        from Main.utils.access_control import is_authorized_user
-        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-            return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
-            
         data = cb.data.split("_")
         chat_id, msg_id, client_id = int(data[2]), int(data[3]), int(data[4])
         
@@ -966,13 +997,10 @@ async def pmlu_back_callback(c: Client, cb: CallbackQuery):
         await cb.answer(f"❌ Error: {e}", show_alert=True)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^pmlu_replyall_"))
+@iuser_check
 @log_errors
 async def pmlu_replyall_callback(c: Client, cb: CallbackQuery):
     try:
-        from Main.utils.access_control import is_authorized_user
-        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-            return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
-            
         if not REPLY_FROM_ALL_ACCESSIBLE:
             return await cb.answer("❌ Fitur ini sedang dinonaktifkan.", show_alert=True)
 
@@ -1036,25 +1064,36 @@ async def pmlu_replyall_callback(c: Client, cb: CallbackQuery):
 # pmlu_reply_callback removed as it is now handled by pmlu_direct_reply_callback
 
 @Altruix.bot.on_callback_query(filters.regex(r"^pmlu_unsend_"))
+@iuser_check
 @log_errors
 async def pmlu_unsend_callback(c: Client, cb: CallbackQuery):
+    """Unsend the last replies/reply sent by the logger."""
     try:
-        from Main.utils.access_control import is_authorized_user
-        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-            return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
-
         data = cb.data.split("_")
         chat_id, msg_id, client_id = int(data[2]), int(data[3]), int(data[4])
         msg_key = f"{chat_id}_{msg_id}"
         
         cache = PM_LOG_CACHE.get(msg_key, {})
-        last_replies = cache.get("last_replies", []) # List of (client_id, msg_id)
         
-        if not last_replies:
-            return await cb.answer(Altruix.get_string("PMLB_NO_REPLY_FOUND"), show_alert=True)
+        # Collect all messages to delete
+        to_delete = []
+        
+        # 1. From last_replies (Reply All)
+        last_replies = cache.get("last_replies", []) # List of (client_id, msg_id)
+        if last_replies:
+            for cid, mid in last_replies:
+                to_delete.append((cid, mid))
+        
+        # 2. From last_reply_id (Single Reply/Direct Reply)
+        last_reply_id = cache.get("last_reply_id")
+        if last_reply_id:
+            to_delete.append((client_id, last_reply_id))
+            
+        if not to_delete:
+            return await cb.answer(Altruix.get_string("PMLB_NO_REPLY_FOUND") or "❌ Tidak ada balasan yang terekam untuk di-unsend.", show_alert=True)
             
         unsend_count = 0
-        for cid, mid in last_replies:
+        for cid, mid in to_delete:
             target_client = None
             for client in Altruix.clients:
                 if client.me and client.me.id == cid:
@@ -1068,20 +1107,20 @@ async def pmlu_unsend_callback(c: Client, cb: CallbackQuery):
                     pass
         
         # Clear replies from cache
-        PM_LOG_CACHE[msg_key]["last_replies"] = []
+        if msg_key in PM_LOG_CACHE:
+            PM_LOG_CACHE[msg_key]["last_replies"] = []
+            PM_LOG_CACHE[msg_key]["last_reply_id"] = None
+            SessionManager.save()
         
-        await cb.answer(Altruix.get_string("PMLB_UNSENT_SUCCESS").format(count=unsend_count), show_alert=True)
+        await cb.answer(Altruix.get_string("PMLB_UNSENT_SUCCESS").format(count=unsend_count) if unsend_count > 0 else "🗑️ Balasan berhasil dihapus!", show_alert=True)
     except Exception as e:
         await cb.answer(f"❌ Error: {e}", show_alert=True)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^pmlu_toggle_(full|compact)_"))
+@iuser_check
 @log_errors
 async def pmlu_toggle_callback(c: Client, cb: CallbackQuery):
     try:
-        from Main.utils.access_control import is_authorized_user
-        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-            return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
-            
         data = cb.data.split("_")
         mode, chat_id, msg_id, client_id = data[2], int(data[3]), int(data[4]), int(data[5])
         
@@ -1098,15 +1137,16 @@ async def pmlu_toggle_callback(c: Client, cb: CallbackQuery):
                     InlineKeyboardButton("🗑️ Remove React", callback_data=f"pmlu_unreact_{chat_id}_{msg_id}_{client_id}")
                 ],
                 [
-                    InlineKeyboardButton(f"🗨️ {get_permission_label('sudo')}", callback_data=f"pmlu_reply_{chat_id}_{msg_id}_{client_id}"),
+                    InlineKeyboardButton(f"🗨️ {get_permission_label(get_shared_reply_mode())}", callback_data=f"pmlu_reply_{chat_id}_{msg_id}_{client_id}"),
                     InlineKeyboardButton("💾 Save", callback_data=f"pmlu_save_{chat_id}_{msg_id}_{client_id}")
+                ],
+                [
+                    InlineKeyboardButton("🗑️ Unsend", callback_data=f"pmlu_unsend_{chat_id}_{msg_id}_{client_id}"),
+                    InlineKeyboardButton("📤 Send Message", callback_data=f"pmlu_send_msg_{chat_id}_{msg_id}_{client_id}")
                 ],
                 [
                     InlineKeyboardButton("🚫 Block", callback_data=f"pmlu_block_{chat_id}_{client_id}"),
                     InlineKeyboardButton("✅ Unblock", callback_data=f"pmlu_unblock_{chat_id}_{client_id}")
-                ],
-                [
-                    InlineKeyboardButton("🗑️ Unsend", callback_data=f"pmlu_unsend_{chat_id}_{msg_id}_{client_id}")
                 ],
                 [
                     InlineKeyboardButton("⚙️ Hide Settings Menu", callback_data=f"pmlu_toggle_compact_{chat_id}_{msg_id}_{client_id}"),
@@ -1127,13 +1167,10 @@ async def pmlu_toggle_callback(c: Client, cb: CallbackQuery):
         await cb.answer(f"❌ Error: {e}", show_alert=True)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^pmlu_(block|unblock)_"))
+@iuser_check
 @log_errors
 async def pmlu_block_unblock_callback(c: Client, cb: CallbackQuery):
     try:
-        from Main.utils.access_control import is_authorized_user
-        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-            return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
-
         data = cb.data.split("_")
         action, chat_id, client_id = data[1], int(data[2]), int(data[3])
         
@@ -1156,6 +1193,7 @@ async def pmlu_block_unblock_callback(c: Client, cb: CallbackQuery):
         await cb.answer(f"❌ Error: {e}", show_alert=True)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^pmlu_reply_(-?\d+)_(\d+)_(\d+)"))
+@iuser_check
 @log_errors
 async def pmlu_direct_reply_callback(c: Client, cb: CallbackQuery):
     """Langsung memulai proses reply ke user tertentu."""
@@ -1251,6 +1289,130 @@ async def pmlu_direct_reply_callback(c: Client, cb: CallbackQuery):
     except Exception as e:
         logger.error(f"Direct reply error: {e}")
         await cb.answer(f"❌ Error: {e}", show_alert=True)
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^pmlu_send_msg_"))
+@iuser_check
+@log_errors
+async def pmlu_send_msg_callback(c: Client, cb: CallbackQuery):
+    """Start process to send a new message to the user."""
+    try:
+            
+        data = cb.data.split("_")
+        # pmlu_send_msg_{chat_id}_{msg_id}_{client_id}
+        chat_id, msg_id, client_id = int(data[3]), int(data[4]), int(data[5])
+        
+        waiting_id = f"pmlu_send_{cb.from_user.id}_{int(time.time())}"
+        waiting_data = {
+            "chat_id": chat_id, # This is the user ID in PM
+            "client_id": client_id,
+            "user_id": cb.from_user.id,
+            "log_msg_id": cb.message.id,
+            "timestamp": int(time.time()),
+            "msg_key": f"{chat_id}_{msg_id}"
+        }
+        
+        REPLY_AS_MENTIONED_WAITING[waiting_id] = waiting_data
+        SessionManager.save()
+        
+        instruction_msg = await Altruix.bot.send_message(
+            Altruix.log_chat,
+            f"📤 **Send Message to User**\n\n"
+            f"Reply to this message with the text or media you want to send to user <code>{chat_id}</code>\n"
+            f"Pesan akan dikirim sebagai pesan baru, bukan balasan (reply).",
+            parse_mode=enums.ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("❌ Cancel", callback_data=f"pmlu_send_cancel_{waiting_id}")
+            ]]),
+            message_thread_id=cb.message.message_thread_id if hasattr(cb.message, "message_thread_id") else None
+        )
+        
+        waiting_data["instruction_msg_id"] = instruction_msg.id
+        REPLY_AS_MENTIONED_WAITING[waiting_id] = waiting_data
+        SessionManager.save()
+        
+        await cb.answer("Silakan balas pesan instruksi di bawah.")
+    except Exception as e:
+        logger.error(f"PMLU Send Msg Init Error: {e}")
+        await cb.answer(f"❌ Error: {e}", show_alert=True)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^pmlu_send_cancel_"))
+@iuser_check
+@log_errors
+async def pmlu_send_cancel_callback(c: Client, cb: CallbackQuery):
+    try:
+        waiting_id = cb.data.replace("pmlu_send_cancel_", "")
+        if waiting_id in REPLY_AS_MENTIONED_WAITING:
+            REPLY_AS_MENTIONED_WAITING.pop(waiting_id)
+            SessionManager.save()
+        await cb.message.edit_text("❌ Pengiriman pesan dibatalkan.")
+    except Exception as e:
+        await cb.answer(f"❌ Error: {e}", show_alert=True)
+
+@Altruix.bot.on_message(
+    filters.chat(Altruix.log_chat) & filters.reply & ~filters.bot, group=2
+)
+@iuser_check
+@log_errors
+async def handle_pmlu_send_message_input(c: Client, m: RawMessage):
+    """Handle user input for sending a new message to PM user."""
+    try:
+        if not m.reply_to_message or not m.reply_to_message.text:
+            return
+            
+        if "Send Message to User" not in m.reply_to_message.text:
+            return
+            
+        waiting_id_match = None
+        for wid, data in list(REPLY_AS_MENTIONED_WAITING.items()):
+            if wid.startswith("pmlu_send_") and data.get("instruction_msg_id") == m.reply_to_message.id:
+                waiting_id_match = wid
+                break
+        
+        if not waiting_id_match:
+            return
+            
+        data = REPLY_AS_MENTIONED_WAITING.pop(waiting_id_match)
+        SessionManager.save()
+        
+        target_user_id = data["chat_id"]
+        client_id = data["client_id"]
+        
+        target_client = None
+        for client in Altruix.clients:
+            if client.me and client.me.id == client_id:
+                target_client = client
+                break
+        
+        if not target_client:
+            await m.reply("❌ Client tidak ditemukan atau offline.")
+            return
+            
+        # Send message
+        try:
+            if m.media:
+                await m.copy(target_user_id)
+            else:
+                await target_client.send_message(target_user_id, m.text or m.caption)
+                
+            await m.reply(
+                f"✅ **Pesan Terkirim!**\n\n"
+                f"• **Ke:** <code>{target_user_id}</code>\n"
+                f"• **Via:** {target_client.me.mention}",
+                parse_mode=enums.ParseMode.HTML
+            )
+            
+            # Cleanup instruction msg
+            try:
+                await m.reply_to_message.delete()
+            except: pass
+            
+        except Exception as e:
+            logger.error(f"PMLU Send delivery failed: {e}")
+            await m.reply(f"❌ Gagal mengirim: {str(e)[:100]}")
+            
+    except Exception as e:
+        logger.error(f"PMLU Send input handler error: {e}")
 
 
 

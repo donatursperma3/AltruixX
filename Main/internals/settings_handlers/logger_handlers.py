@@ -68,6 +68,23 @@ async def logger_menu_handler(c: Client, cb: CallbackQuery):
     elif log_type == "mnt":
         buttons.append([InlineKeyboardButton("🔍 Mention Filters", f"mntf_menu_{index}_{page}")])
         buttons.append([InlineKeyboardButton("🔔 View Mentions", f"view_mentions_menu_{index}_{page}")])
+    
+    # Add Bot Assist toggle for PML and MNT
+    if log_type in ["pml", "mnt"]:
+        bot_assist_enabled = False
+        storage_file = "pm_logger_bot_settings.json" if log_type == "pml" else "mentions_settings.json"
+        if os.path.exists(storage_file):
+            with open(storage_file, "r") as f:
+                try:
+                    b_data = json.load(f)
+                    if log_type == "pml":
+                        bot_assist_enabled = b_data.get("settings", {}).get("log_mode", "off") != "off"
+                    else:
+                        bot_assist_enabled = b_data.get("settings", {}).get("enabled", False)
+                except: pass
+        
+        bot_assist_btn = "ON" if bot_assist_enabled else "OFF"
+        buttons.append([InlineKeyboardButton(f"🤖 Bot Assist: {bot_assist_btn}", f"{log_type}_botassist_{index}_{page}")])
         
     buttons.append([InlineKeyboardButton("🔙 Back", callback_data=f"session_info_{index}_{page}_3")]) # Fixed page return to 3 (Logs Page)
     
@@ -149,6 +166,39 @@ async def logger_reply_handler(c: Client, cb: CallbackQuery):
         
     await Altruix.config.sync_env_to_db(key, new_val, upsert=True)
     await cb.answer(f"Reply By: {new_val.upper()}")
+    await logger_menu_handler(c, cb)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^(pml|mnt)_botassist_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def logger_botassist_handler(c: Client, cb: CallbackQuery):
+    """Toggle Bot Assist globally from session menu"""
+    log_type, index, page = cb.matches[0].group(1), int(cb.matches[0].group(2)), int(cb.matches[0].group(3))
+    
+    storage_file = "pm_logger_bot_settings.json" if log_type == "pml" else "mentions_settings.json"
+    if not os.path.exists(storage_file):
+        return await cb.answer("❌ Bot settings not found", show_alert=True)
+        
+    with open(storage_file, "r") as f:
+        data = json.load(f)
+        
+    if "settings" not in data: data["settings"] = {}
+    
+    if log_type == "pml":
+        current = data["settings"].get("log_mode", "off")
+        new_val = "all" if current == "off" else "off"
+        data["settings"]["log_mode"] = new_val
+        status = "ENABLED" if new_val != "off" else "DISABLED"
+    else:
+        current = data["settings"].get("enabled", False)
+        new_val = not current
+        data["settings"]["enabled"] = new_val
+        status = "ENABLED" if new_val else "DISABLED"
+        
+    with open(storage_file, "w") as f:
+        json.dump(data, f, indent=2)
+        
+    await cb.answer(f"🤖 Bot Assist: {status}")
     await logger_menu_handler(c, cb)
 
 # --- PM Logger Advanced Filters ---
@@ -244,6 +294,68 @@ async def pmlf_toggle_handler(c: Client, cb: CallbackQuery):
     with open(filename, "w") as f: json.dump(data, f, indent=2)
     await cb.answer(f"{m_type.capitalize()} {source}: {'ON' if not current else 'OFF'}")
     await pmlf_list_handler(c, cb)
+
+# --- Mention Logger Advanced Filters ---
+
+@Altruix.bot.on_callback_query(filters.regex(r"^mntf_menu_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def mntf_menu_handler(c: Client, cb: CallbackQuery):
+    """Mention Logger Filters Category Selection"""
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    await cb.answer()
+    
+    filename = "DATABASE/mentions_settings.json"
+    user_id_str = str(Altruix.clients[index].me.id)
+    
+    filters_data = {}
+    if os.path.exists(filename):
+        with open(filename, "r") as f: data = json.load(f)
+        sessions = data.get("settings", {})
+        session_data = sessions.get(user_id_str, {})
+        if isinstance(session_data, dict):
+            filters_data = session_data.get("filters", {})
+    
+    text = f"<b>🔍 Mention Filters ({'Session ' + str(index+1)})</b>\n\nKlik untuk toggle (✅ = Log, ❌ = Ignore):"
+    buttons = []
+    row = []
+    m_types = ["text", "photo", "video", "document", "audio", "voice", "sticker", "animation", "video_note"]
+    for m_type in m_types:
+        val = filters_data.get(m_type, True) # Default log all
+        status = "✅" if val else "❌"
+        row.append(InlineKeyboardButton(f"{status} {m_type.capitalize()}", f"mntft_{m_type}_{index}_{page}"))
+        if len(row) == 2:
+            buttons.append(row); row = []
+    if row: buttons.append(row)
+    
+    buttons.append([InlineKeyboardButton("🔙 Back to Mention Logger", f"mnt_menu_{index}_{page}")])
+    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^mntft_(.+)_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def mntf_toggle_handler(c: Client, cb: CallbackQuery):
+    """Toggle a specific filter in Mention Logger"""
+    m_type, index, page = cb.matches[0].groups()
+    index, page = int(index), int(page)
+    user_id_str = str(Altruix.clients[index].me.id)
+    filename = "DATABASE/mentions_settings.json"
+    
+    data = {"settings": {}, "global": {}}
+    if os.path.exists(filename):
+        with open(filename, "r") as f: data = json.load(f)
+    
+    if "settings" not in data: data["settings"] = {}
+    if user_id_str not in data["settings"]: data["settings"][user_id_str] = {}
+    if "filters" not in data["settings"][user_id_str]: data["settings"][user_id_str]["filters"] = {}
+        
+    current = data["settings"][user_id_str]["filters"].get(m_type, True)
+    data["settings"][user_id_str]["filters"][m_type] = not current
+    
+    with open(filename, "w") as f: json.dump(data, f, indent=2)
+    await cb.answer(f"Mention Filter {m_type.capitalize()}: {'ON' if not current else 'OFF'}")
+    await mntf_menu_handler(c, cb)
 
 # --- Join Log Group ---
 
