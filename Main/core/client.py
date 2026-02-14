@@ -126,7 +126,7 @@ class AltruixClient:
         self.clients: List[Client] = []
         self.cmd_list = {}
         self.all_lang_strings = {}
-        self.__version__ = "0.0.9.736"
+        self.__version__ = "0.0.9.746D"
         self.selected_lang = "english"
         self.local_lang_file = "./Main/localization"
         self.cmd_list = {} # {plugin_name: [cmd_data, ...]}
@@ -751,23 +751,30 @@ class AltruixClient:
                     message.chat.type = chat_type
                 
                 # ✅ CRITICAL SAFETY CHECK: Ensure it's actually a command
+                # ✅ FIX: Check for bot plugin FIRST before validating prefix
+                # This allows bot commands with '/' to bypass userbot prefix validation
+                is_bot_plugin = self.plugin_categories.get(file_name.lower()) == "bot"
+                is_bot_command = message.text and message.text.startswith("/")
+                
                 if message.text:
-                    apply_type_p = await self.config.get_env("PREFIX_APPLY_TYPE") or "global"
-                    if apply_type_p == "global":
-                        valid_prefixes = [self.user_command_handler, self.sudo_cmd_handler]
-                    else:
-                        u_pref = await self.config.get_env(f"CMD_HANDLER_{client.me.id}") or self.user_command_handler
-                        s_pref = await self.config.get_env(f"SUDO_CMD_HANDLER_{client.me.id}") or self.sudo_cmd_handler
-                        valid_prefixes = [u_pref, s_pref]
-                    
-                    # [DEBUG] Log wrapper safety check
-                    # logger.info(f"[WRAPPER DEBUG] Client: {client.me.id if client.me else 'None'}, Valid Prefixes: {valid_prefixes}, Msg: {message.text[:20] if message.text else 'None'}")
-                    
-                    if not any(message.text.startswith(p) for p in valid_prefixes):
-                        return
+                    # ✅ Bot plugins with '/' prefix bypass userbot prefix check
+                    if not (is_bot_plugin and is_bot_command):
+                        apply_type_p = await self.config.get_env("PREFIX_APPLY_TYPE") or "global"
+                        if apply_type_p == "global":
+                            valid_prefixes = [self.user_command_handler, self.sudo_cmd_handler]
+                        else:
+                            u_pref = await self.config.get_env(f"CMD_HANDLER_{client.me.id}") or self.user_command_handler
+                            s_pref = await self.config.get_env(f"SUDO_CMD_HANDLER_{client.me.id}") or self.sudo_cmd_handler
+                            valid_prefixes = [u_pref, s_pref]
+                        
+                        # Only validate prefix for non-bot commands
+                        if not any(message.text.startswith(p) for p in valid_prefixes):
+                            return
 
                 chat_type = message.chat.type
                 input_ = message.user_input
+                
+                # ✅ Validation checks (bot commands already allowed above)
                 if requires_input and input_ in ["", " ", None]:
                     return await message.handle_message("INPUT_REQUIRED")
                 if requires_reply and not message.reply_to_message:

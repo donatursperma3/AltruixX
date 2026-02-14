@@ -1,4 +1,4 @@
-PLUGIN_VERSION = "0.0.24"
+PLUGIN_VERSION = "0.0.25"
 # xreply_manager.py
 # Separated logic for handling PM Logger replies to prevent conflicts
 # Copyright (C) 2021-present by Altruix@Github, < https://github.com/Altruix >.
@@ -481,6 +481,82 @@ async def pmlu_cancel_send_callback(c: Client, cb: CallbackQuery):
         await cb.answer(f"❌ Error: {e}", show_alert=True)
 
 # logger.info("xreply_manager loaded successfully.")
+
+
+# ✅ HANDLER: Reply Manager Settings Command
+@Altruix.register_on_cmd(
+    ["replymanager", "rm"],
+    cmd_help={
+        "help": "Manage Reply Manager settings.",
+        "usage": "/rm [on/off/status]",
+        "example": "/rm on",
+        "detail": (
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "💬 **REPLY MANAGER CONTROL**\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "Kontrol apakah bot akan memproses balasan di Log Group.\n\n"
+            "Usage Examples:\n"
+            "• `/rm on` : Aktifkan Reply Manager.\n"
+            "• `/rm off` : Matikan Reply Manager.\n"
+        )
+    },
+    group_only=False,
+    requires_input=False,
+)
+@iuser_check
+@log_errors
+async def reply_manager_cmd_handler(c: Client, m: RawMessage):
+    """Handle /replymanager command."""
+    user_input = (m.command[1] if len(m.command) > 1 else "").lower().strip()
+    
+    filename = get_db_path("reply_manager_settings.json")
+    data = {"enabled": False}
+    if os.path.exists(filename):
+        try:
+            with open(filename, "r") as f: data = json.load(f)
+        except: pass
+
+    if not user_input or user_input == "menu":
+         enabled = data.get("enabled", False)
+         
+         text = (
+            "<b>💬 Reply Manager Settings</b>\n\n"
+            "Kontrol apakah Bot Assistant memproses balasan di Log Group untuk diteruskan ke user.\n\n"
+            f"• <b>Status:</b> {'✅ ENABLED' if enabled else '❌ DISABLED'}"
+         )
+         
+         buttons = [
+            [
+                InlineKeyboardButton(f"{'Disable' if enabled else 'Enable'} Manager", callback_data="reply_manager_toggle_enabled")
+            ],
+            [
+                InlineKeyboardButton("🔙 Back", callback_data="bot_controls_menu")
+            ]
+        ]
+         await m.reply_msg(text, reply_markup=InlineKeyboardMarkup(buttons))
+         return
+
+    if user_input in ["on", "enable", "yes"]:
+        data["enabled"] = True
+        status = "ENABLED ✅"
+    elif user_input in ["off", "disable", "no"]:
+        data["enabled"] = False
+        status = "DISABLED ❌"
+    elif user_input == "status":
+        enabled = data.get("enabled", False)
+        status = "ENABLED ✅" if enabled else "DISABLED ❌"
+        return await m.reply_msg(
+            f"💬 **Reply Manager Status**\n"
+            f"• Status: {status}"
+        )
+    else:
+        return await m.reply_msg("Invalid argument. Use: `on`, `off`, `status` or just `/rm` for menu.")
+
+    with open(filename, "w") as f:
+        json.dump(data, f, indent=4)
+        
+    await m.reply_msg(f"✅ Reply Manager is now **{status}**")
+
 
 # ✅ HANDLER: Reply Manager Settings Menu
 @Altruix.bot.on_callback_query(filters.regex(r"^reply_manager_menu$"))

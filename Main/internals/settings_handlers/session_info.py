@@ -70,10 +70,15 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
     if callback_page is None:
         callback_page = int(cb.matches[0].group(2))
     
-    # Check if we have an explicit button page in the callback
-    match_btn_page = cb.matches[0].group(3)
-    if match_btn_page:
-        button_page = int(match_btn_page)
+    
+    # Check if we have an explicit button page in the callback (optional 3rd group)
+    try:
+        match_btn_page = cb.matches[0].group(3)
+        if match_btn_page:
+            button_page = int(match_btn_page)
+    except IndexError:
+        # No 3rd group in callback data, use default button_page = 1
+        pass
 
     await cb.answer()
     

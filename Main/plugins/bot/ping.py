@@ -1,3 +1,4 @@
+# kiro 1.5.5.12
 # Copyright (C) 2021-present by Altruix@Github, < https://github.com/Altruix >.
 #
 # This file is part of < https://github.com/Altruix/Altruix > project,
@@ -99,4 +100,3 @@ async def ping_inline_handler(c: Client, iq: InlineQuery):
         switch_pm_text=f"{pf['ping_emoji1']} Ping",
         switch_pm_parameter="ping",
     )
-

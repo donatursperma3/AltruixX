@@ -98,7 +98,16 @@ def iuser_check(func):
         # ✅ CALLBACK LOGGER CONFIGURATION
         # type: all / sudo / non_sudo / off
         log_type = (os.getenv("CALLBACK_LOGGER_TYPE") or "all").lower()
-        is_sudo = user_id in Altruix.auth_users
+        
+        # ✅ FIXED: Check authorization against owner, sudo users, AND all active userbot sessions
+        # This allows inline queries from userbot commands to work properly
+        is_sudo = user_id in Altruix.auth_users or user_id == Altruix.config.OWNER_ID
+        
+        # ✅ Also authorize all active userbot session IDs for inline queries
+        # This ensures .ping, .help, etc. can use inline bot results
+        if not is_sudo and isinstance(update, InlineQuery):
+            active_session_ids = [c.me.id for c in Altruix.clients if hasattr(c, 'me') and c.me]
+            is_sudo = user_id in active_session_ids
         
         should_log = False
         if log_type == "all":
@@ -419,15 +428,55 @@ def log_errors(func):
 
 # ─── DECORATOR: CEK IZIN INLINE (TANPA PERUBAHAN BESAR) ─────────────────
 def inline_check(func):
+    """
+    ✅ FIXED: Decorator to handle BotInlineDisabled errors and auto-enable inline mode.
+    
+    This decorator wraps userbot command handlers that use inline bot results (via @bot).
+    If inline mode is disabled, it automatically enables it via BotFather and retries.
+    
+    CRITICAL FIX: Now properly passes *args and **kwargs to the wrapped function.
+    Previous version was dropping these arguments, causing inline responses to fail.
+    """
     @wraps(func)
     async def check_inline(c: Client, m: Message, *args, **kwargs):
         try:
-            return await func(c, m)
-        except BotInlineDisabled:
+            # ✅ DEBUG: Log entry to inline_check decorator
+            log_msg = f"🔍 <b>[inline_check] Entering decorator</b>\n• Function: <code>{func.__name__}</code>\n• User: {c.me.id if c.me else 'Unknown'}\n• Chat: {m.chat.id}"
+            Altruix.log(f"🔍 [inline_check] Entering decorator for {func.__name__}", level=20)
+            await send_log_message(log_msg)
+            
+            # ✅ FIX: Pass all arguments to the wrapped function
+            result = await func(c, m, *args, **kwargs)
+            
+            # ✅ DEBUG: Log successful completion
+            success_msg = f"✅ <b>[inline_check] Completed successfully</b>\n• Function: <code>{func.__name__}</code>"
+            Altruix.log(f"✅ [inline_check] {func.__name__} completed successfully", level=20)
+            await send_log_message(success_msg)
+            return result
+            
+        except BotInlineDisabled as e:
+            # Auto-enable inline mode and retry
+            error_msg = f"⚠️ <b>[inline_check] BotInlineDisabled</b>\n• Function: <code>{func.__name__}</code>\n• Action: Auto-enabling inline mode"
+            Altruix.log(f"⚠️ [inline_check] BotInlineDisabled caught, auto-enabling inline mode", level=30)
+            await send_log_message(error_msg)
+            
             status = await m.handle_message("INLINE_DISABLED")
             await set_inline_in_botfather(c)
             await status.delete()
-            return await func(c, m)
+            # ✅ FIX: Pass all arguments on retry as well
+            return await func(c, m, *args, **kwargs)
+            
+        except Exception as e:
+            # ✅ DEBUG: Log any other exceptions that might be silently caught
+            exception_msg = (
+                f"❌ <b>[inline_check] Exception Caught</b>\n"
+                f"• Function: <code>{func.__name__}</code>\n"
+                f"• Exception: <code>{type(e).__name__}</code>\n"
+                f"• Message: <code>{str(e)[:200]}</code>"
+            )
+            Altruix.log(f"❌ [inline_check] Exception in {func.__name__}: {type(e).__name__}: {e}", level=40)
+            await send_log_message(exception_msg)
+            raise  # Re-raise to let the function's own exception handling deal with it
     return check_inline
 
 

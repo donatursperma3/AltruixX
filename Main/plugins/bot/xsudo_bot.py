@@ -15,6 +15,7 @@ from pyrogram import Client, filters
 from pyrogram.types import Message, User
 from Main.core.decorators import log_errors
 import logging
+import asyncio
 
 PLUGIN_VERSION = "0.0.1"
 

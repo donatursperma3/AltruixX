@@ -1,4 +1,4 @@
-PLUGIN_VERSION = "0.0.2"
+PLUGIN_VERSION = "0.0.21"
 
 """
 Purgeme Bot Plugin
@@ -14,6 +14,7 @@ from pyrogram.types import (
     InlineQuery, InlineQueryResultArticle, InputTextMessageContent,
     InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 )
+from Main.core.decorators import log_errors, iuser_check
 from Main import Altruix
 
 # Ensure shared state exists (redundant if loaded second, but safe)
@@ -616,40 +617,65 @@ async def purgeme_close(client, cb: CallbackQuery):
 
     await cb.answer("Message deleted or invalid session.", show_alert=False)
 
-@Altruix.bot.on_message(filters.command("start") & filters.private & filters.regex(r"purgeme_"))
-async def purgeme_start_handler(client: Client, message):
-    try:
-        if len(message.command) > 1:
-            param = message.command[1]
-            if param.startswith("purgeme_"):
-                unique_id = param.replace("purgeme_", "", 1)
-                
-                try:
-                    chat_id, user_id = unique_id.rsplit("_", 1)
-                    from Main.utils.access_control import is_authorized_user
-                    if str(message.from_user.id) != str(user_id) and not is_authorized_user(message.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-                        msg = Altruix.get_string("ACCESS_DENIED")
-                        await message.reply(msg)
-                        return
-                    
-                    state = Altruix.PURGEME_STATE.get(unique_id)
-                    if not state:
-                         await message.reply("❌ Session Expired or Invalid.")
-                         return
 
-                    # Show Menu
-                    menu_text = get_purgeme_text(state)
-                    kb = get_purgeme_keyboard(chat_id, user_id, unique_id)
-                    
-                    await message.reply(
-                        menu_text,
-                        reply_markup=kb,
-                        parse_mode=enums.ParseMode.HTML,
-                        disable_web_page_preview=True
-                    )
-                except ValueError:
-                    await message.reply("❌ Invalid Link Format.")
-    except Exception as e:
-        Altruix.log(f"Purgeme Start Error: {e}")
+
+@Altruix.register_on_cmd(
+    ["start"],
+    cmd_help={
+        "help": "Start the Purgeme Bot process.",
+        "usage": "/start purgeme_{unique_id}",
+        "example": "/start purgeme_123456789_987654321",
+        "detail": "Memulai sesi konfigurasi Purgeme via Bot Assistant. Biasanya dipanggil otomatis oleh tombol dari Userbot."
+    },
+    group_only=False,
+    requires_input=False, 
+    requires_reply=False
+)
+@log_errors
+async def purgeme_start_handler(client: Client, message):
+    from Main.utils.access_control import is_authorized_user
+    
+    # 1. Fallback if no arguments provided
+    if len(message.command) <= 1:
+        if is_authorized_user(message.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+             # Only show response if authorized, otherwise ignore to prevent spam/discovery
+             await message.reply(
+                 f"👋 <b>Halo, {message.from_user.first_name}!</b>\n\n"
+                 f"Saya adalah asisten Altruix. Gunakan tombol pada Userbot untuk mengatur Purgeme.\n"
+                 f"Ketik /help untuk melihat daftar perintah yang tersedia."
+             )
+        return
+
+    # 2. Process arguments
+    param = message.command[1]
+    if param.startswith("purgeme_"):
+        unique_id = param.replace("purgeme_", "", 1)
+        
+        try:
+            chat_id, user_id = unique_id.rsplit("_", 1)
+            
+            # Security: Ensure only the session owner or sudo can access
+            if str(message.from_user.id) != str(user_id) and not is_authorized_user(message.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+                msg = Altruix.get_string("ACCESS_DENIED")
+                await message.reply(msg)
+                return
+            
+            state = Altruix.PURGEME_STATE.get(unique_id)
+            if not state:
+                await message.reply("❌ Session Expired or Invalid.")
+                return
+
+            # Show Menu
+            menu_text = get_purgeme_text(state)
+            kb = get_purgeme_keyboard(chat_id, user_id, unique_id)
+            
+            await message.reply(
+                menu_text,
+                reply_markup=kb,
+                parse_mode=enums.ParseMode.HTML,
+                disable_web_page_preview=True
+            )
+        except ValueError:
+            await message.reply("❌ Invalid Link Format.")
 
 

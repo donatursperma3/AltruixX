@@ -855,4 +855,3 @@ async def send_plugin_execute(c: Client, cb: CallbackQuery):
     except Exception as e:
         Altruix.log(f"Failed to send plugin {plugin}: {e}", level=40)
         await cb.answer(f"❌ Gagal mengirim plugin: {str(e)[:100]}", show_alert=True)
-

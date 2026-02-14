@@ -1,3 +1,4 @@
+# kiro_1.5.5.12
 # Copyright (C) 2021-present by Altruix@Github, < https://github.com/Altruix >.
 #
 # This file is part of < https://github.com/Altruix/Altruix > project,
@@ -7,7 +8,7 @@
 # All rights reserved.
 
 
-PLUGIN_VERSION = "0.0.1"
+PLUGIN_VERSION = "0.0.11"
 import time
 from Main import Altruix
 from pyrogram import Client
@@ -36,6 +37,8 @@ from pyrogram.errors import ChatSendInlineForbidden
 )
 @inline_check
 async def ping_ub_cmd(c: Client, m: Message):
+    # ✅ DEBUG: Log function entry FIRST to verify registration
+    Altruix.log(f"🎯 [PING] Function called! User: {c.me.id}, Chat: {m.chat.id}", level=20)
     user_args = m.user_args
     if "c" not in user_args:
         rm = m.reply_to_message
@@ -55,9 +58,10 @@ async def ping_ub_cmd(c: Client, m: Message):
             uptime = Essentials.get_readable_time(time.time() - Altruix.start_time)
             end = time.perf_counter()
             ms = round((end - start) * 1000, 2)
+            pv = f"{PLUGIN_VERSION}"
             await m.handle_message(
                 "PING_TEXT",
-                string_args=(pf["ping_emoji1"], ms, pf["ping_emoji2"], uptime),
+                string_args=(pf["ping_emoji1"], ms, pf["ping_emoji2"], uptime, pv),
             )
 
     else:
@@ -67,6 +71,5 @@ async def ping_ub_cmd(c: Client, m: Message):
         end = time.perf_counter()
         ms = round((end - start) * 1000, 2)
         await m.handle_message(
-            "PING_TEXT", string_args=(pf["ping_emoji1"], ms, pf["ping_emoji2"], uptime)
+            "PING_TEXT", string_args=(pf["ping_emoji1"], ms, pf["ping_emoji2"], uptime, pv)
         )
-

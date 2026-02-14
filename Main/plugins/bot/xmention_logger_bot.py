@@ -223,6 +223,81 @@ async def mention_mute_handler(c: Client, cb: CallbackQuery):
 
 
 
+
+# ✅ HANDLER: Mention Logger Bot Commands
+@Altruix.register_on_cmd(
+    ["menlb"],
+    cmd_help={
+        "help": "Manage Mention Logger Bot settings.",
+        "usage": "/menlb [on/off/status]",
+        "example": "/menlb on",
+        "detail": (
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "🤖 **BOT ASSIST CONTROL (Mention)**\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "• `/menlb` : Buka menu interaktif.\n\n"
+            "Usage Examples:\n"
+            "• `/menlb on` : Aktifkan logger bot mention.\n"
+            "• `/menlb off` : Matikan logger bot mention.\n"
+        )
+    },
+    group_only=False,
+    requires_input=False,
+)
+@iuser_check
+@log_errors
+async def menlb_settings_handler(c: Client, m: RawMessage):
+    """Handle /menlb command."""
+    user_input = (m.command[1] if len(m.command) > 1 else "").lower().strip()
+    
+    if not user_input or user_input == "menu":
+         # Show Menu
+         await load_settings()
+         enabled = MENTION_LOGGER_BOT_DATA.get("enabled", False)
+         
+         text = (
+            "<b>🤖 Bot Assist Dashboard (Mention Logger)</b>\n\n"
+            "Log mentions received by the Bot Assistant in groups.\n\n"
+            f"• <b>Status:</b> {'✅ ENABLED' if enabled else '❌ DISABLED'}\n"
+            f"• <b>Reply Mode:</b> {REPLY_ACCESS_MODE.upper()}"
+        )
+         
+         buttons = [
+            [
+                InlineKeyboardButton(f"{'Disable' if enabled else 'Enable'} Bot Assist", callback_data="mntlb_toggle_enabled")
+            ],
+            [
+                InlineKeyboardButton(f"Mode: {REPLY_ACCESS_MODE.upper()}", callback_data="mntlb_toggle_mode")
+            ],
+            [
+                InlineKeyboardButton("🔙 Back", callback_data="bot_controls_menu")
+            ]
+        ]
+         await m.reply_msg(text, reply_markup=InlineKeyboardMarkup(buttons))
+         return
+
+    if user_input in ["on", "enable", "yes"]:
+        MENTION_LOGGER_BOT_DATA["enabled"] = True
+        status = "ENABLED ✅"
+    elif user_input in ["off", "disable", "no"]:
+        MENTION_LOGGER_BOT_DATA["enabled"] = False
+        status = "DISABLED ❌"
+    elif user_input == "status":
+        await load_settings()
+        enabled = MENTION_LOGGER_BOT_DATA.get("enabled", False)
+        status = "ENABLED ✅" if enabled else "DISABLED ❌"
+        return await m.reply_msg(
+            f"🤖 **Mention Logger Bot Status**\n"
+            f"• Status: {status}\n"
+            f"• Reply Mode: {REPLY_ACCESS_MODE}"
+        )
+    else:
+        return await m.reply_msg("Invalid argument. Use: `on`, `off`, `status` or just `/menlb` for menu.")
+
+    await save_settings()
+    await m.reply_msg(f"✅ Mention Logger Bot is now **{status}**")
+
+
 # ✅ HANDLER: Mention Logger Bot Settings Menu
 @Altruix.bot.on_callback_query(filters.regex(r"^mntlb_menu$"))
 @iuser_check

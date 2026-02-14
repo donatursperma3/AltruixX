@@ -16,17 +16,32 @@ from Main.utils.paste import Paste
 from Main.core.types.message import Message
 from Main.utils.essentials import Essentials
 from Main.utils.helpers import arrange_buttons
+
+
 from Main.core.decorators import log_errors, iuser_check
+# ✅ FIX: Removed is_authorized_user_check import (commented out by user)
+# Only importing is_authorized_user which is actually used in the code
+from Main.utils.access_control import is_authorized_user
 from pyrogram.types import (
     InlineQuery, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup,
     InputTextMessageContent, InlineQueryResultArticle)
 
-
-@Altruix.bot.on_message(
-    filters.command("paste", Altruix.bot_handler) & filters.user(Altruix.config.OWNER_ID)
+@Altruix.register_on_cmd(
+    ["paste"],
+    cmd_help={
+        "help": "Upload text or file content to a hastebin service.",
+        "usage": "/paste [text/reply]",
+        "example": "/paste Hello World",
+        "detail": "Mengunggah teks atau konten file ke layanan pastebin/hastebin dan memberikan tautan."
+    },
+    group_only=False,
+    requires_input=False,
 )
 @log_errors
 async def paste_bot_cmd_handler(_, m: Message):
+    if not is_authorized_user(m.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+        return
+        
     if mess := m.reply_to_message:
         if mess.text:
             text = mess.text
