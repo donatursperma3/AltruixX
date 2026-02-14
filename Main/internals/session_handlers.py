@@ -282,14 +282,124 @@ async def delete_photos_confirm_handler(c: Client, cb: CallbackQuery):
         await cb.answer(f"❌ Error: {str(e)}", show_alert=True)
 
 
+# ====================== RECENT MESSAGES & GLOBAL STATS ======================
+
+@Altruix.bot.on_callback_query(filters.regex(r"^gen_conf_recent_messages_menu_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def recent_messages_menu_handler(c: Client, cb: CallbackQuery):
+    """Menu selection for Recent Messages filter"""
+    index, page = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
+    await cb.answer()
+    
+    text = (
+        f"<b>📨 Recent Messages (Session {index+1})</b>\n\n"
+        "Pilih kategori pesan yang ingin Anda lihat:"
+    )
+    buttons = [
+        [
+            InlineKeyboardButton("👤 All Users", f"recent_msgs_list_{index}_{page}_user"),
+            InlineKeyboardButton("🤖 All Bots", f"recent_msgs_list_{index}_{page}_bot")
+        ],
+        [InlineKeyboardButton("🌐 All Messages", f"recent_msgs_list_{index}_{page}_all")],
+        [InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]
+    ]
+    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^recent_msgs_list_(\d+)_(\d+)_(user|bot|all)$"))
+@iuser_check
+@log_errors
+async def recent_messages_list_handler(c: Client, cb: CallbackQuery):
+    """Display the list of recent messages based on filter"""
+    index, page, f_type = int(cb.matches[0].group(1)), int(cb.matches[0].group(2)), cb.matches[0].group(3)
+    await cb.answer("📨 Fetching recent messages...", show_alert=False)
+    
+    if index >= len(Altruix.clients): return
+    client = Altruix.clients[index]
+    
+    try:
+        dialogs = []
+        async for dialog in client.get_dialogs(limit=30):
+            if dialog.chat.type != ChatType.PRIVATE: continue
+            
+            is_bot = dialog.chat.is_bot
+            if f_type == "user" and is_bot: continue
+            if f_type == "bot" and not is_bot: continue
+            
+            dialogs.append(dialog)
+            if len(dialogs) >= 15: break
+
+        if not dialogs:
+            await cb.answer("❌ No messages found for this filter.", show_alert=True)
+            return
+
+        txt = f"<b>📨 Recent Messages ({f_type.capitalize()})</b>\n\n"
+        for i, d in enumerate(dialogs, 1):
+            name = d.chat.first_name or "Unknown"
+            last_msg = d.top_message.text or d.top_message.caption or "[Media]"
+            # Truncate
+            if len(last_msg) > 35: last_msg = last_msg[:32] + "..."
+            txt += f"{i}. <b>{html.escape(name)}</b>: <code>{html.escape(last_msg)}</code>\n"
+            
+        await cb.message.edit(
+            txt,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 Back", f"recent_messages_menu_{index}_{page}")],
+                [InlineKeyboardButton("🔙 Dashboard", f"session_info_{index}_{page}")]
+            ]),
+            parse_mode=ParseMode.HTML
+        )
+    except Exception as e:
+        await cb.answer(f"❌ Error: {e}", show_alert=True)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^gen_conf_global_stats_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def global_stats_handler(c: Client, cb: CallbackQuery):
+    """Aggregate statistics across all active sessions"""
+    index, page = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
+    await cb.answer("🌐 Calculating global stats...", show_alert=False)
+    
+    total_sessions = len(Altruix.clients)
+    active_sessions = sum(1 for c in Altruix.clients if getattr(c, 'is_connected', False))
+    
+    # We could scan all, but that's heavy. Let's just use what we have in memory or quick sums if available.
+    # For now, a summary of sessions and system info.
+    import platform
+    import time
+    uptime = time.time() - Altruix.start_time
+    # Format uptime
+    days = int(uptime // (24 * 3600))
+    hours = int((uptime % (24 * 3600)) // 3600)
+    minutes = int((uptime % 3600) // 60)
+    
+    txt = (
+        f"<b>🌐 Global Statistics</b>\n\n"
+        f"• <b>Total Sessions:</b> <code>{total_sessions}</code>\n"
+        f"• <b>Active Sessions:</b> <code>{active_sessions}</code>\n"
+        f"• <b>System Architecture:</b> <code>{platform.machine()}</code>\n"
+        f"• <b>OS:</b> <code>{platform.system()} {platform.release()}</code>\n"
+        f"• <b>Uptime:</b> <code>{days}d {hours}h {minutes}m</code>\n"
+        f"• <b>Core Modules:</b> <code>{len(Altruix.plugin_categories)}</code>\n"
+    )
+    
+    await cb.message.edit(
+        txt,
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 Dashboard", f"session_info_{index}_{page}")],
+            [InlineKeyboardButton("🔙 Main Stats", "sessions_stats")]
+        ]),
+        parse_mode=ParseMode.HTML
+    )
+
 # ====================== PLACEHOLDER HANDLERS FOR REMAINING BUTTONS ======================
 # These show "Feature coming soon" instead of failing silently
 
 PLACEHOLDER_PATTERNS = [
     r"^track_profile_start_", r"^check_limit_confirm_", r"^gen_conf_view_all_sessions_",
-    r"^gen_conf_purge_msg_start_", r"^gpurgeme_menu_", r"^gen_conf_chat_stats_scan_",
+    r"^gen_conf_purge_msg_start_", r"^gpurgeme_menu_",
     r"^pml_menu_", r"^mnt_menu_", r"^joinl_menu_", r"^cmdl_menu_",
-    r"^cmd_settings_menu_", r"^gen_conf_recent_messages_menu_", r"^gen_conf_view_mentions_menu_",
+    r"^cmd_settings_menu_", r"^gen_conf_view_mentions_menu_",
     r"^join_log_group_", r"^startup_menu_", r"^laucreate_menu_", r"^privacy_menu_",
     r"^help_info_menu_", r"^eval_session_", r"^exec_session_", r"^custom_bot_menu_",
     r"^cache_log_menu_", r"^sudo_settings_menu_", r"^prefix_settings_menu_"

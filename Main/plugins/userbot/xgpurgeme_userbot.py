@@ -19,7 +19,7 @@ from Main.internals.settings_handlers.global_purgeme import (
 # Plugin Metadata
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xgpurgeme"
-PLUGIN_VERSION = "1.0.13"
+PLUGIN_VERSION = "0.0.30"
 
 @Altruix.register_on_cmd(
     ["gpurgeme"],
@@ -44,6 +44,14 @@ Interactive dashboard allows Pausing, Resuming, and Stopping the process.
 @iuser_check
 @log_errors
 async def gpurgeme_cmd(client: Client, message: Message):
+    """
+    Mass-delete your messages globally across chats.
+    Now supports 15 granular message filters.
+    """
+    # ✅ SAFETY CHECK: Basic message validity
+    if not message or not hasattr(message, 'chat') or not message.chat:
+        return
+
     # Authorization Check
     from Main.utils.access_control import is_authorized_user
     if not is_authorized_user(message.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):

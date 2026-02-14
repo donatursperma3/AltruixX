@@ -9,6 +9,7 @@ from pyrogram import Client, filters
 from pyrogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton, LinkPreviewOptions
 from Main.core.decorators import log_errors, iuser_check
 from Main.core.client import Altruix
+from Main.utils.file_helpers import get_db_path
 from pyrogram.enums import ParseMode
 from pyrogram.errors import UserAlreadyParticipant, FloodWait
 
@@ -72,7 +73,7 @@ async def logger_menu_handler(c: Client, cb: CallbackQuery):
     # Add Bot Assist toggle for PML and MNT
     if log_type in ["pml", "mnt"]:
         bot_assist_enabled = False
-        storage_file = "DATABASE/pm_logger_bot_settings.json" if log_type == "pml" else "DATABASE/mentions_settings.json"
+        storage_file = get_db_path("pm_logger_bot_settings.json" if log_type == "pml" else "mentions_settings.json")
         if os.path.exists(storage_file):
             with open(storage_file, "r") as f:
                 try:
@@ -121,7 +122,7 @@ async def logger_toggle_handler(c: Client, cb: CallbackQuery):
     
     # ✅ SYNC TO JSON (For Userbot Loggers)
     if log_type in ["pml", "mnt"]:
-        filename = f"DATABASE/{'pm_logger_user_settings.json' if log_type == 'pml' else 'mentions_settings.json'}"
+        filename = get_db_path('pm_logger_user_settings.json' if log_type == 'pml' else 'mentions_settings.json')
         if os.path.exists(filename):
             try:
                 with open(filename, "r") as f: data = json.load(f)
@@ -177,7 +178,7 @@ async def logger_mode_handler(c: Client, cb: CallbackQuery):
     
     # ✅ SYNC APPLY TYPE TO JSON
     if log_type in ["pml", "mnt"]:
-        filename = f"DATABASE/{'pm_logger_user_settings.json' if log_type == 'pml' else 'mentions_settings.json'}"
+        filename = get_db_path('pm_logger_user_settings.json' if log_type == 'pml' else 'mentions_settings.json')
         if os.path.exists(filename):
             try:
                 with open(filename, "r") as f: data = json.load(f)
@@ -220,7 +221,7 @@ async def logger_reply_handler(c: Client, cb: CallbackQuery):
     
     # ✅ SYNC REPLY MODE TO JSON
     if log_type in ["pml", "mnt"]:
-        filename = f"DATABASE/{'pm_logger_user_settings.json' if log_type == 'pml' else 'mentions_settings.json'}"
+        filename = get_db_path('pm_logger_user_settings.json' if log_type == 'pml' else 'mentions_settings.json')
         if os.path.exists(filename):
             try:
                 with open(filename, "r") as f: data = json.load(f)
@@ -242,34 +243,36 @@ async def logger_botassist_handler(c: Client, cb: CallbackQuery):
     
     if log_type == "pml":
         bot_assist_enabled = False
-        if os.path.exists("DATABASE/pm_logger_bot_settings.json"):
-            with open("DATABASE/pm_logger_bot_settings.json", "r") as f:
+        if os.path.exists(get_db_path("pm_logger_bot_settings.json")):
+            with open(get_db_path("pm_logger_bot_settings.json"), "r") as f:
                 b_data = json.load(f)
                 bot_assist_enabled = b_data.get("settings", {}).get("log_mode", "off") != "off"
         
         new_val = "off" if bot_assist_enabled else "all"
-        if not os.path.exists("DATABASE/pm_logger_bot_settings.json"):
+        storage_path = get_db_path("pm_logger_bot_settings.json")
+        if not os.path.exists(storage_path):
             data = {"settings": {"log_mode": new_val}}
         else:
-            with open("DATABASE/pm_logger_bot_settings.json", "r") as f: data = json.load(f)
+            with open(storage_path, "r") as f: data = json.load(f)
             if "settings" not in data: data["settings"] = {}
             data["settings"]["log_mode"] = new_val
             
-        with open("DATABASE/pm_logger_bot_settings.json", "w") as f: json.dump(data, f, indent=2)
+        with open(storage_path, "w") as f: json.dump(data, f, indent=2)
         status = "DISABLED" if new_val == "off" else "ENABLED"
     else:
         # mnt
         bot_assist_enabled = False
-        if os.path.exists("DATABASE/mentions_settings.json"):
-            with open("DATABASE/mentions_settings.json", "r") as f:
+        storage_path = get_db_path("mentions_settings.json")
+        if os.path.exists(storage_path):
+            with open(storage_path, "r") as f:
                 b_data = json.load(f)
                 bot_assist_enabled = b_data.get("settings", {}).get("enabled", False)
         
         new_val = not bot_assist_enabled
-        with open("DATABASE/mentions_settings.json", "r") as f: data = json.load(f)
+        with open(storage_path, "r") as f: data = json.load(f)
         if "settings" not in data: data["settings"] = {}
         data["settings"]["enabled"] = new_val
-        with open("DATABASE/mentions_settings.json", "w") as f: json.dump(data, f, indent=2)
+        with open(storage_path, "w") as f: json.dump(data, f, indent=2)
         status = "ENABLED" if new_val else "DISABLED"
         
     await cb.answer(f"🤖 Bot Assist: {status}")
@@ -307,7 +310,7 @@ async def show_pmlf_list(c: Client, cb: CallbackQuery, logger_type: str, source:
     Helper function to generate and display the message type filter list for PM Logger.
     Avoids ValueError by centralizing parameter handling.
     """
-    filename = "DATABASE/pm_logger_user_settings.json"
+    filename = get_db_path("pm_logger_user_settings.json")
     user_id_str = str(Altruix.clients[index].me.id)
     source_key = f"from_{source}"
     
@@ -323,13 +326,29 @@ async def show_pmlf_list(c: Client, cb: CallbackQuery, logger_type: str, source:
     text = f"<b>🔍 {source.capitalize()} Filter (Session {index+1})</b>\n\nKlik untuk toggle (✅ = Log, ❌ = Ignore):"
     buttons = []
     row = []
-    m_types = ["text", "photo", "video", "document", "audio", "voice", "sticker", "animation", "video_note"]
+    m_types = [
+        "text", "photo", "video", "document", "audio", "voice", "sticker", "animation", 
+        "video_note", "contact", "location", "venue", "game", "poll", "dice"
+    ]
+    # Mapping for localized keys
+    type_map = {
+        "text": "GP_BTN_TXT", "photo": "GP_BTN_IMG", "video": "GP_BTN_VID",
+        "document": "GP_BTN_DOC", "audio": "GP_BTN_AUD", "voice": "GP_BTN_VN",
+        "sticker": "GP_BTN_STK", "animation": "GP_BTN_GIF", "video_note": "GP_BTN_VNOTE",
+        "contact": "GP_BTN_CONT", "location": "GP_BTN_LOC", "venue": "GP_BTN_VEN",
+        "game": "GP_BTN_GAME", "poll": "GP_BTN_POLL", "dice": "GP_BTN_DICE"
+    }
+
     for m_type in m_types:
         # Defaults: log everything except bot text (to avoid spam)
         default_val = False if (source == "bot" and m_type == "text") else True
         val = filters_data.get(m_type, default_val)
         status = "✅" if val else "❌"
-        row.append(InlineKeyboardButton(f"{status} {m_type.capitalize()}", f"pmlft_{logger_type}_{source}_{m_type}_{index}_{page}"))
+        
+        lbl_key = type_map.get(m_type)
+        lbl = Altruix.get_string(lbl_key) or m_type.capitalize()
+        
+        row.append(InlineKeyboardButton(f"{status} {lbl}", f"pmlft_{logger_type}_{source}_{m_type}_{index}_{page}"))
         if len(row) == 2:
             buttons.append(row)
             row = []
@@ -361,7 +380,7 @@ async def pmlf_toggle_handler(c: Client, cb: CallbackQuery):
     index, page = int(index), int(page)
     user_id_str = str(Altruix.clients[index].me.id)
     source_key = f"from_{source}"
-    filename = "DATABASE/pm_logger_user_settings.json"
+    filename = get_db_path("pm_logger_user_settings.json")
     
     data = {"sessions": {}}
     if os.path.exists(filename):
@@ -395,41 +414,85 @@ async def mntf_menu_handler(c: Client, cb: CallbackQuery):
     page = int(cb.matches[0].group(2))
     await cb.answer()
     
-    filename = "DATABASE/mentions_settings.json"
+    text = (
+        f"<b>🔍 Mention Logger Filters (Sesi {index+1})</b>\n\n"
+        "Pilih kategori di bawah untuk mengatur jenis pesan yang akan dicatat:\n\n"
+        "👤 <b>User Filters:</b> Filter mention dari pengguna biasa.\n"
+        "🤖 <b>Bot Filters:</b> Filter mention dari Bot/Robot."
+    )
+    buttons = [
+        [
+            InlineKeyboardButton("👤 From User", f"mntfl_user_{index}_{page}"),
+            InlineKeyboardButton("🤖 From Bot", f"mntfl_bot_{index}_{page}"),
+        ],
+        [InlineKeyboardButton("🔙 Back to Mention Logger", f"mnt_menu_{index}_{page}")]
+    ]
+    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+
+async def show_mntf_list(c: Client, cb: CallbackQuery, source: str, index: int, page: int):
+    """Helper to show mention filter list for a specific source (user/bot)"""
+    filename = get_db_path("mentions_settings.json")
     user_id_str = str(Altruix.clients[index].me.id)
+    source_key = f"from_{source}"
     
     filters_data = {}
     if os.path.exists(filename):
         with open(filename, "r") as f: data = json.load(f)
         sessions = data.get("settings", {})
         session_data = sessions.get(user_id_str, {})
-        if isinstance(session_data, dict):
-            filters_data = session_data.get("filters", {})
+        filters_data = session_data.get("filters", {}).get(source_key, {})
     
-    text = f"<b>🔍 Mention Filters ({'Session ' + str(index+1)})</b>\n\nKlik untuk toggle (✅ = Log, ❌ = Ignore):"
+    text = f"<b>🔍 Mention {source.capitalize()} Filter (Sesi {index+1})</b>\n\nKlik untuk toggle (✅ = Log, ❌ = Ignore):"
     buttons = []
     row = []
-    m_types = ["text", "photo", "video", "document", "audio", "voice", "sticker", "animation", "video_note"]
+    m_types = [
+        "text", "photo", "video", "document", "audio", "voice", "sticker", "animation", 
+        "video_note", "contact", "location", "venue", "game", "poll", "dice"
+    ]
+    # Mapping for localized keys
+    type_map = {
+        "text": "GP_BTN_TXT", "photo": "GP_BTN_IMG", "video": "GP_BTN_VID",
+        "document": "GP_BTN_DOC", "audio": "GP_BTN_AUD", "voice": "GP_BTN_VN",
+        "sticker": "GP_BTN_STK", "animation": "GP_BTN_GIF", "video_note": "GP_BTN_VNOTE",
+        "contact": "GP_BTN_CONT", "location": "GP_BTN_LOC", "venue": "GP_BTN_VEN",
+        "game": "GP_BTN_GAME", "poll": "GP_BTN_POLL", "dice": "GP_BTN_DICE"
+    }
+
     for m_type in m_types:
-        val = filters_data.get(m_type, True) # Default log all
+        # Default: log everything
+        val = filters_data.get(m_type, True)
         status = "✅" if val else "❌"
-        row.append(InlineKeyboardButton(f"{status} {m_type.capitalize()}", f"mntft_{m_type}_{index}_{page}"))
+        
+        lbl_key = type_map.get(m_type)
+        lbl = Altruix.get_string(lbl_key) or m_type.capitalize()
+        
+        row.append(InlineKeyboardButton(f"{status} {lbl}", f"mntft_{source}_{m_type}_{index}_{page}"))
         if len(row) == 2:
             buttons.append(row); row = []
     if row: buttons.append(row)
     
-    buttons.append([InlineKeyboardButton("🔙 Back to Mention Logger", f"mnt_menu_{index}_{page}")])
+    buttons.append([InlineKeyboardButton("🔙 Back", f"mntf_menu_{index}_{page}")])
     await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
-@Altruix.bot.on_callback_query(filters.regex(r"^mntft_(.+)_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^mntfl_(user|bot)_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def mntfl_list_handler(c: Client, cb: CallbackQuery):
+    """Handler for displaying the specific message type filters list for Mentions."""
+    source, index, page = cb.matches[0].groups()
+    await cb.answer()
+    await show_mntf_list(c, cb, source, int(index), int(page))
+
+@Altruix.bot.on_callback_query(filters.regex(r"^mntft_(user|bot)_(.+)_(\d+)_(\d+)$"))
 @iuser_check
 @log_errors
 async def mntf_toggle_handler(c: Client, cb: CallbackQuery):
     """Toggle a specific filter in Mention Logger"""
-    m_type, index, page = cb.matches[0].groups()
+    source, m_type, index, page = cb.matches[0].groups()
     index, page = int(index), int(page)
     user_id_str = str(Altruix.clients[index].me.id)
-    filename = "DATABASE/mentions_settings.json"
+    source_key = f"from_{source}"
+    filename = get_db_path("mentions_settings.json")
     
     data = {"settings": {}, "global": {}}
     if os.path.exists(filename):
@@ -438,13 +501,15 @@ async def mntf_toggle_handler(c: Client, cb: CallbackQuery):
     if "settings" not in data: data["settings"] = {}
     if user_id_str not in data["settings"]: data["settings"][user_id_str] = {}
     if "filters" not in data["settings"][user_id_str]: data["settings"][user_id_str]["filters"] = {}
+    if source_key not in data["settings"][user_id_str]["filters"]:
+        data["settings"][user_id_str]["filters"][source_key] = {}
         
-    current = data["settings"][user_id_str]["filters"].get(m_type, True)
-    data["settings"][user_id_str]["filters"][m_type] = not current
+    current = data["settings"][user_id_str]["filters"][source_key].get(m_type, True)
+    data["settings"][user_id_str]["filters"][source_key][m_type] = not current
     
     with open(filename, "w") as f: json.dump(data, f, indent=2)
-    await cb.answer(f"Mention Filter {m_type.capitalize()}: {'ON' if not current else 'OFF'}")
-    await mntf_menu_handler(c, cb)
+    await cb.answer(f"MNT {source} {m_type.capitalize()} toggled")
+    await show_mntf_list(c, cb, source, index, page)
 
 # --- Join Log Group ---
 

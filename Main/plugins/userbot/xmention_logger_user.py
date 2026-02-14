@@ -114,7 +114,8 @@ MENTION_APPLY_TYPES = {}
 def get_shared_reply_mode():
     """Read reply mode from shared settings file."""
     try:
-        shared_file = "pm_logger_user_settings.json"
+        from Main.utils.file_helpers import get_db_path
+        shared_file = get_db_path("pm_logger_user_settings.json")
         if os.path.exists(shared_file):
             with open(shared_file, "r") as f:
                 data = json.load(f)
@@ -1005,6 +1006,10 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
     Stores mention data in both persistent and memory cache for later reply processing.
     """
     try:
+        # ✅ SAFETY CHECK: Basic message validity
+        if not m or not hasattr(m, 'chat') or not m.chat:
+            return
+
         # ✅ FIX: Ignore mentions in log group to prevent auto-reply loop
         if Altruix.log_chat and m.chat.id == Altruix.log_chat:
             logger.debug(f"⚠️ Ignoring mention in log group {m.chat.id}")
@@ -1093,22 +1098,45 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
                 elif m.sticker: m_type = "sticker"
                 elif m.animation: m_type = "animation"
                 elif m.video_note: m_type = "video_note"
+                elif m.contact: m_type = "contact"
+                elif m.location: m_type = "location"
+                elif m.venue: m_type = "venue"
+                elif m.game: m_type = "game"
+                elif m.poll: m_type = "poll"
+                elif m.dice: m_type = "dice"
 
-                # Check per-account filters
+                # ✅ NEW: Check per-account source-specific filters (User vs Bot)
+                is_bot = (m.from_user.is_bot if m.from_user else False)
+                source_key = "from_bot" if is_bot else "from_user"
+                
                 user_settings = m_settings.get("settings", {}).get(str(client_id), {})
                 p_filters = user_settings.get("filters", {})
                 
-                if p_filters:
-                    # If per-account filters exist, they take precedence
+                # Case 1: New nested structure exists (filters -> from_user/from_bot -> type)
+                if isinstance(p_filters, dict) and source_key in p_filters:
+                    if not p_filters[source_key].get(m_type, True):
+                        logger.debug(f"Mention filter BLOCKED {source_key} message type: {m_type}")
+                        return
+                        
+                # Case 2: Old flat structure exists (filters -> type)
+                elif isinstance(p_filters, dict) and p_filters:
                     if not p_filters.get(m_type, True):
-                        logger.debug(f"Mention filter BLOCKED message type (per-account): {m_type}")
+                        logger.debug(f"Mention filter BLOCKED message type (flat structure): {m_type}")
                         return
+                        
+                # Case 3: Fallback to legacy global filters
                 else:
-                    # Fallback to legacy global filters key if it exists
                     legacy_filters = m_settings.get("filters", {})
-                    if legacy_filters and not legacy_filters.get(m_type, True):
-                        logger.debug(f"Mention filter BLOCKED message type (legacy global): {m_type}")
-                        return
+                    if isinstance(legacy_filters, dict):
+                        # Check global source-specific
+                        if source_key in legacy_filters and isinstance(legacy_filters[source_key], dict):
+                            if not legacy_filters[source_key].get(m_type, True):
+                                logger.debug(f"Mention filter BLOCKED by global {source_key} settings")
+                                return
+                        # Check global flat
+                        elif not legacy_filters.get(m_type, True):
+                            logger.debug(f"Mention filter BLOCKED by global flat settings: {m_type}")
+                            return
         except Exception as e:
             logger.error(f"Error checking mention filters: {e}")
 
@@ -1325,6 +1353,10 @@ async def send_mention_edit_handler(c: Client, m: RawMessage):
     Ensures that only the client that originally logged the mention can update it.
     """
     try:
+        # ✅ SAFETY CHECK: Basic message validity
+        if not m or not hasattr(m, 'chat') or not m.chat:
+            return
+
         if not Altruix.log_chat:
             return
             

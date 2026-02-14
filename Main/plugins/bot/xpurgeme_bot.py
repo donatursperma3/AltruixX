@@ -1,4 +1,4 @@
-PLUGIN_VERSION = "0.0.1"
+PLUGIN_VERSION = "0.0.2"
 
 """
 Purgeme Bot Plugin
@@ -58,8 +58,15 @@ def get_purgeme_text(state):
     account_name = state.get("account_name", "Unknown")
 
     # Common Header for active states
+    if not types or "all" in types:
+        type_display = "ALL"
+    elif len(types) > 1:
+        type_display = Altruix.get_string("purgeme_multiple").format(len(types))
+    else:
+        type_display = Altruix.get_string(f"GP_BTN_{types[0].upper()}") or types[0].upper()
+
     header = f"{title}\n" \
-             f"<b>Mode:</b> {mode.capitalize()} | <b>Type:</b> {types[0].upper() if types else 'ALL'}\n" \
+             f"<b>Mode:</b> {mode.capitalize()} | <b>Type:</b> {type_display}\n" \
              f"<b>Target:</b> {count} messages | <b>Offset:</b> {offset}\n" \
              f"<b>Batch:</b> {batch_size} | <b>DelayBc:</b> {int(batch_delay/60)}m\n" \
              f"<b>Chat:</b> {chat_name}\n" \
@@ -154,7 +161,7 @@ def get_purgeme_keyboard(chat_id, user_id, unique_id):
         # Row 4: Notification Toggle
         # Row 4: Notification Toggle
         notify_active = state.get("notify", True)
-        notif_lbl = f"🔔 Notif: ON" if notify_active else "🔕 Notif: OFF"
+        notif_lbl = Altruix.get_string("GP_BTN_NOTIF_ON" if notify_active else "GP_BTN_NOTIF_OFF") or (f"🔔 Notif: ON" if notify_active else "🔕 Notif: OFF")
         buttons.append([
             InlineKeyboardButton(notif_lbl, callback_data=f"pg_notify_{unique_id}"),
         ])
@@ -186,43 +193,75 @@ def get_purgeme_keyboard(chat_id, user_id, unique_id):
             InlineKeyboardButton("Reset", callback_data=f"pg_off_reset_{unique_id}"),
         ])
         
-        # Type Toggles
+        # Row 1: Core Media
         type_row_1 = []
         all_active = "✅" if "all" in types else "☑️"
-        type_row_1.append(InlineKeyboardButton(f"{all_active} All", callback_data=f"pg_typ_all_{unique_id}"))
+        type_row_1.append(InlineKeyboardButton(f"{all_active} {loc('GP_BTN_ALL', 'All')}", callback_data=f"pg_typ_all_{unique_id}"))
         
-        img_active = "✅" if "image" in types else "☑️"
-        type_row_1.append(InlineKeyboardButton(f"{img_active} Img", callback_data=f"pg_typ_image_{unique_id}"))
+        photo_active = "✅" if ("photo" in types or "image" in types) else "☑️"
+        type_row_1.append(InlineKeyboardButton(f"{photo_active} {loc('GP_BTN_IMG', 'Photo')}", callback_data=f"pg_typ_photo_{unique_id}"))
         
         vid_active = "✅" if "video" in types else "☑️"
-        type_row_1.append(InlineKeyboardButton(f"{vid_active} Vid", callback_data=f"pg_typ_video_{unique_id}"))
+        type_row_1.append(InlineKeyboardButton(f"{vid_active} {loc('GP_BTN_VID', 'Video')}", callback_data=f"pg_typ_video_{unique_id}"))
         
         buttons.append(type_row_1)
 
+        # Row 2: Engagement
         type_row_2 = []
         txt_active = "✅" if "text" in types else "☑️"
-        type_row_2.append(InlineKeyboardButton(f"{txt_active} Txt", callback_data=f"pg_typ_text_{unique_id}"))
+        type_row_2.append(InlineKeyboardButton(f"{txt_active} {loc('GP_BTN_TXT', 'Text')}", callback_data=f"pg_typ_text_{unique_id}"))
 
         aud_active = "✅" if "audio" in types else "☑️"
-        type_row_2.append(InlineKeyboardButton(f"{aud_active} Aud", callback_data=f"pg_typ_audio_{unique_id}"))
+        type_row_2.append(InlineKeyboardButton(f"{aud_active} {loc('GP_BTN_AUD', 'Audio')}", callback_data=f"pg_typ_audio_{unique_id}"))
 
         stk_active = "✅" if "sticker" in types else "☑️"
-        type_row_2.append(InlineKeyboardButton(f"{stk_active} Stk", callback_data=f"pg_typ_sticker_{unique_id}"))
+        type_row_2.append(InlineKeyboardButton(f"{stk_active} {loc('GP_BTN_STK', 'Sticker')}", callback_data=f"pg_typ_sticker_{unique_id}"))
         
         buttons.append(type_row_2)
         
-        # Row 3: Gif, File, VNote
+        # Row 3: Rich Media
         type_row_3 = []
-        gif_active = "✅" if "gif" in types else "☑️"
-        type_row_3.append(InlineKeyboardButton(f"{gif_active} Gif", callback_data=f"pg_typ_gif_{unique_id}"))
+        anim_active = "✅" if ("animation" in types or "gif" in types) else "☑️"
+        type_row_3.append(InlineKeyboardButton(f"{anim_active} {loc('GP_BTN_GIF', 'Anim')}", callback_data=f"pg_typ_animation_{unique_id}"))
 
-        file_active = "✅" if "file" in types else "☑️"
-        type_row_3.append(InlineKeyboardButton(f"{file_active} File", callback_data=f"pg_typ_file_{unique_id}"))
+        doc_active = "✅" if ("document" in types or "file" in types) else "☑️"
+        type_row_3.append(InlineKeyboardButton(f"{doc_active} {loc('GP_BTN_DOC', 'Doc')}", callback_data=f"pg_typ_document_{unique_id}"))
 
-        vnote_active = "✅" if "vnote" in types else "☑️"
-        type_row_3.append(InlineKeyboardButton(f"{vnote_active} VN", callback_data=f"pg_typ_vnote_{unique_id}"))
+        vnote_active = "✅" if ("video_note" in types or "vnote" in types) else "☑️"
+        type_row_3.append(InlineKeyboardButton(f"{vnote_active} {loc('GP_BTN_VNOTE', 'VNote')}", callback_data=f"pg_typ_video_note_{unique_id}"))
         
         buttons.append(type_row_3)
+
+        # Row 4: Specialized
+        type_row_4 = []
+        voice_active = "✅" if "voice" in types else "☑️"
+        type_row_4.append(InlineKeyboardButton(f"{voice_active} {loc('GP_BTN_VN', 'Voice')}", callback_data=f"pg_typ_voice_{unique_id}"))
+
+        contact_active = "✅" if "contact" in types else "☑️"
+        type_row_4.append(InlineKeyboardButton(f"{contact_active} {loc('GP_BTN_CONT', 'Contact')}", callback_data=f"pg_typ_contact_{unique_id}"))
+
+        loc_active = "✅" if "location" in types else "☑️"
+        type_row_4.append(InlineKeyboardButton(f"{loc_active} {loc('GP_BTN_LOC', 'Loc')}", callback_data=f"pg_typ_location_{unique_id}"))
+        
+        buttons.append(type_row_4)
+
+        # Row 5: Interaction
+        type_row_5 = []
+        venue_active = "✅" if "venue" in types else "☑️"
+        type_row_5.append(InlineKeyboardButton(f"{venue_active} {loc('GP_BTN_VEN', 'Venue')}", callback_data=f"pg_typ_venue_{unique_id}"))
+
+        game_active = "✅" if "game" in types else "☑️"
+        type_row_5.append(InlineKeyboardButton(f"{game_active} {loc('GP_BTN_GAME', 'Game')}", callback_data=f"pg_typ_game_{unique_id}"))
+
+        poll_active = "✅" if "poll" in types else "☑️"
+        type_row_5.append(InlineKeyboardButton(f"{poll_active} {loc('GP_BTN_POLL', 'Poll')}", callback_data=f"pg_typ_poll_{unique_id}"))
+        
+        buttons.append(type_row_5)
+
+        # Row 6: Games
+        buttons.append([
+            InlineKeyboardButton(f"{'✅' if 'dice' in types else '☑️'} {loc('GP_BTN_DICE', 'Dice')}", callback_data=f"pg_typ_dice_{unique_id}")
+        ])
         
         # Action Buttons
         # Action Buttons

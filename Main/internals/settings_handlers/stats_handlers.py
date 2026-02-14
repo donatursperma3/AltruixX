@@ -3,7 +3,7 @@ import html
 import os
 import asyncio
 import logging
-from pyrogram import Client, filters
+from pyrogram import Client, filters, enums
 from pyrogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
 from Main.core.decorators import log_errors, iuser_check
 from Main.core.client import Altruix
@@ -13,44 +13,55 @@ from .utils import send_log_notification, gt, edit_cb, check_authorization
 # Logger
 logger = logging.getLogger(__name__)
 
-@Altruix.bot.on_callback_query(filters.regex(r"^gen_conf_chat_stats_scan_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^chat_stats_scan_(\d+)_(\d+)$"))
 @iuser_check
 @log_errors
 async def chat_stats_scan_handler(c: Client, cb: CallbackQuery):
-    """Scan account for chat statistics (Dialogs, Groups, Channels)"""
+    """Scan account for chat statistics (Admin/Owner in Groups & Channels)"""
     index, page = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
-    await cb.answer("📊 Scanning account stats...", show_alert=False)
+    await cb.answer("📊 Scanning admin/owner status...", show_alert=False)
     
     if index >= len(Altruix.clients): return
     client = Altruix.clients[index]
     
     try:
-        status_msg = await cb.message.edit("🔄 <b>Scanning Dialogs...</b>", parse_mode=ParseMode.HTML)
+        status_msg = await cb.message.edit("🔄 <b>Scanning Dialogs... (Checking Permissions)</b>", parse_mode=ParseMode.HTML)
         
-        dialogs_count = 0
-        groups_count = 0
-        channels_count = 0
-        bots_count = 0
-        users_count = 0
+        owned_groups = 0
+        admin_groups = 0
+        owned_channels = 0
+        admin_channels = 0
+        
+        # Get my ID to check status
+        me = await client.get_me()
         
         async for dialog in client.get_dialogs():
-            dialogs_count += 1
             chat = dialog.chat
-            if chat.type == ChatType.PRIVATE:
-                if chat.is_bot: bots_count += 1
-                else: users_count += 1
-            elif chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
-                groups_count += 1
-            elif chat.type == ChatType.CHANNEL:
-                channels_count += 1
+            if chat.type in [ChatType.GROUP, ChatType.SUPERGROUP, ChatType.CHANNEL]:
+                try:
+                    member = await chat.get_member(me.id)
+                    is_owner = member.status == enums.ChatMemberStatus.OWNER
+                    is_admin = member.status == enums.ChatMemberStatus.ADMINISTRATOR
+                    
+                    if chat.type == ChatType.CHANNEL:
+                        if is_owner: owned_channels += 1
+                        elif is_admin: admin_channels += 1
+                    else:
+                        if is_owner: owned_groups += 1
+                        elif is_admin: admin_groups += 1
+                except:
+                    # Likely no permission to get member info or not an admin
+                    pass
         
         txt = (
-            f"<b>📊 Account Statistics (Session {index+1})</b>\n\n"
-            f"• <b>Total Dialogs:</b> <code>{dialogs_count}</code>\n"
-            f"• <b>Groups:</b> <code>{groups_count}</code>\n"
-            f"• <b>Channels:</b> <code>{channels_count}</code>\n"
-            f"• <b>Users:</b> <code>{users_count}</code>\n"
-            f"• <b>Bots:</b> <code>{bots_count}</code>\n"
+            f"<b>📊 Detailed Statistics (Session {index+1})</b>\n\n"
+            f"👤 <b>Groups:</b>\n"
+            f"• Owned: <code>{owned_groups}</code>\n"
+            f"• Admin: <code>{admin_groups}</code>\n\n"
+            f"📢 <b>Channels:</b>\n"
+            f"• Owned: <code>{owned_channels}</code>\n"
+            f"• Admin: <code>{admin_channels}</code>\n\n"
+            f"<i>💡 Total Managed: {owned_groups + admin_groups + owned_channels + admin_channels}</i>"
         )
         
         await status_msg.edit(

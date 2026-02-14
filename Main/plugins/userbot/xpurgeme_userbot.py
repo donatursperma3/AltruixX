@@ -1,4 +1,4 @@
-PLUGIN_VERSION = "0.0.2"
+PLUGIN_VERSION = "0.0.30"
 
 """
 Purgeme Interactive Plugin for Altruix Userbot
@@ -55,8 +55,15 @@ def get_purgeme_status_text(state):
     account_name = state.get("account_name", "Unknown")
 
     # Common Header for active states
+    if not types or "all" in types:
+        type_display = Altruix.get_string("GP_BTN_ALL") or "ALL"
+    elif len(types) > 1:
+        type_display = Altruix.get_string("purgeme_multiple").format(len(types))
+    else:
+        type_display = Altruix.get_string(f"GP_BTN_{types[0].upper()}") or types[0].upper()
+
     header = f"{title}\n" \
-             f"<b>Mode:</b> {mode.capitalize()} | <b>Type:</b> {types[0].upper() if types else 'ALL'}\n" \
+             f"<b>Mode:</b> {mode.capitalize()} | <b>Type:</b> {type_display}\n" \
              f"<b>Target:</b> {count} messages\n" \
              f"<b>Chat:</b> {chat_name}\n" \
              f"<b>Account:</b> {account_name}"
@@ -130,21 +137,45 @@ async def collect_user_messages_optimized(client: Client, chat_id: int, user_id:
             ):
                 scanned_total += 1
                 
+                # Identify message type and check if it should be included
                 should_include = False
                 if "all" in target_types:
                     should_include = True
                 else:
                     try:
-                        if msg.text and "text" in target_types: should_include = True
-                        elif msg.photo and "image" in target_types: should_include = True
-                        elif msg.video and "video" in target_types: should_include = True
-                        elif (msg.voice or msg.audio) and "audio" in target_types: should_include = True
-                        elif msg.sticker and "sticker" in target_types: should_include = True
-                        elif msg.animation and "gif" in target_types: should_include = True
-                        elif msg.document and "file" in target_types: should_include = True
-                        elif msg.video_note and "vnote" in target_types: should_include = True
-                    except:
-                        pass
+                        # Map Pyrogram message attributes to our filter types
+                        if msg.text and "text" in target_types:
+                            should_include = True
+                        elif msg.photo and ("photo" in target_types or "image" in target_types):
+                            should_include = True
+                        elif msg.video and "video" in target_types:
+                            should_include = True
+                        elif (msg.voice or msg.audio) and "audio" in target_types:
+                            should_include = True
+                        elif msg.sticker and "sticker" in target_types:
+                            should_include = True
+                        elif msg.animation and ("animation" in target_types or "gif" in target_types):
+                            should_include = True
+                        elif msg.document and ("document" in target_types or "file" in target_types):
+                            should_include = True
+                        elif msg.video_note and ("video_note" in target_types or "vnote" in target_types):
+                            should_include = True
+                        elif msg.voice and "voice" in target_types:
+                            should_include = True
+                        elif msg.contact and "contact" in target_types:
+                            should_include = True
+                        elif msg.location and "location" in target_types:
+                            should_include = True
+                        elif msg.venue and "venue" in target_types:
+                            should_include = True
+                        elif msg.game and "game" in target_types:
+                            should_include = True
+                        elif msg.poll and "poll" in target_types:
+                            should_include = True
+                        elif msg.dice and "dice" in target_types:
+                            should_include = True
+                    except Exception as e:
+                        Altruix.log(f"Purgeme: Type identification error: {e}", level=10)
                 
                 if should_include:
                     collected_ids.append(msg.id)
@@ -187,22 +218,45 @@ async def collect_user_messages_optimized(client: Client, chat_id: int, user_id:
                         await state_callback(len(collected_ids), scanned_total)
                     continue
                 
-                # Filter by type
+                # Identify message type and check if it should be included
                 should_include = False
                 if "all" in target_types:
                     should_include = True
                 else:
                     try:
-                        if msg.text and "text" in target_types: should_include = True
-                        elif msg.photo and "image" in target_types: should_include = True
-                        elif msg.video and "video" in target_types: should_include = True
-                        elif (msg.voice or msg.audio) and "audio" in target_types: should_include = True
-                        elif msg.sticker and "sticker" in target_types: should_include = True
-                        elif msg.animation and "gif" in target_types: should_include = True
-                        elif msg.document and "file" in target_types: should_include = True
-                        elif msg.video_note and "vnote" in target_types: should_include = True
-                    except:
-                        pass
+                        # Map Pyrogram message attributes to our filter types
+                        if msg.text and "text" in target_types:
+                            should_include = True
+                        elif msg.photo and ("photo" in target_types or "image" in target_types):
+                            should_include = True
+                        elif msg.video and "video" in target_types:
+                            should_include = True
+                        elif (msg.voice or msg.audio) and "audio" in target_types:
+                            should_include = True
+                        elif msg.sticker and "sticker" in target_types:
+                            should_include = True
+                        elif msg.animation and ("animation" in target_types or "gif" in target_types):
+                            should_include = True
+                        elif msg.document and ("document" in target_types or "file" in target_types):
+                            should_include = True
+                        elif msg.video_note and ("video_note" in target_types or "vnote" in target_types):
+                            should_include = True
+                        elif msg.voice and "voice" in target_types:
+                            should_include = True
+                        elif msg.contact and "contact" in target_types:
+                            should_include = True
+                        elif msg.location and "location" in target_types:
+                            should_include = True
+                        elif msg.venue and "venue" in target_types:
+                            should_include = True
+                        elif msg.game and "game" in target_types:
+                            should_include = True
+                        elif msg.poll and "poll" in target_types:
+                            should_include = True
+                        elif msg.dice and "dice" in target_types:
+                            should_include = True
+                    except Exception as e:
+                        Altruix.log(f"Purgeme Fallback: Type identification error: {e}", level=10)
                 
                 if should_include:
                     collected_ids.append(msg.id)
@@ -254,6 +308,14 @@ The command triggers an interactive UI via your Assistant Bot.
     }
 )
 async def purgeme_cmd(client: Client, message: Message):
+    """
+    Purge messages with interactive UI configuration.
+    Supports filtering by 15 specialized message types.
+    """
+    # ✅ SAFETY CHECK: Basic message validity
+    if not message or not hasattr(message, 'chat') or not message.chat:
+        return
+
     # Sudo & Owner Check
     from Main.utils.access_control import is_authorized_user
     if not is_authorized_user(message.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):

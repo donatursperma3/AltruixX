@@ -182,3 +182,5 @@ cmd_logger_settings.json
 *.bak
 *.backup
 *.old
+DATABASE/*.bak
+DATABASE/*.migrated

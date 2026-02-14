@@ -121,7 +121,7 @@ async def load_settings():
             PM_LOGGER_BOT_DATA = {"log_mode": "off"}
                     
         # Try to read shared REPLY_ACCESS_MODE from user settings
-        shared_file = Path("pm_logger_user_settings.json")
+        shared_file = Path(get_db_path("pm_logger_user_settings.json"))
         if shared_file.exists():
             async with aiofiles.open(shared_file, 'r', encoding='utf-8') as f:
                 content = await f.read()

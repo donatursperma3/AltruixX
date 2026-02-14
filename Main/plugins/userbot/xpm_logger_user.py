@@ -121,26 +121,14 @@ USER_REPLY_LIMIT = 5
 # Message Type Filters
 PM_LOGGER_FILTERS = {
     "from_user": {
-        "text": True,
-        "photo": True,
-        "video": True,
-        "document": True,
-        "audio": True,
-        "voice": True,
-        "sticker": True,
-        "animation": True,
-        "video_note": True,
+        "text": True, "photo": True, "video": True, "document": True, "audio": True,
+        "voice": True, "sticker": True, "animation": True, "video_note": True,
+        "contact": True, "location": True, "venue": True, "game": True, "poll": True, "dice": True
     },
     "from_bot": {
-        "text": True,   # Enabled for tools like SangMata
-        "photo": True,
-        "video": True,
-        "document": True,
-        "audio": True,
-        "voice": True,
-        "sticker": True,
-        "animation": True,
-        "video_note": True,
+        "text": True, "photo": True, "video": True, "document": True, "audio": True,
+        "voice": True, "sticker": True, "animation": True, "video_note": True,
+        "contact": True, "location": True, "venue": True, "game": True, "poll": True, "dice": True
     }
 }
 
@@ -394,6 +382,10 @@ async def pml_status_unified_handler(c: Client, m: AltruixMessage):
 async def pm_logger_user_handler(c: Client, m: RawMessage):
     """Log incoming private messages."""
     try:
+        # ✅ SAFETY CHECK: Basic message validity
+        if not m or not hasattr(m, 'chat') or not m.chat:
+            return
+
         # ✅ Dynamic Reload: Catch UI updates from settings.py
         await load_settings()
         
@@ -494,7 +486,7 @@ async def pm_logger_user_handler(c: Client, m: RawMessage):
         # ✅ NEW: Message Type Filter Check (Bot vs User)
         is_bot = m.from_user.is_bot if m.from_user else False
         
-        # ✅ Master Category Check
+        # ✅ Master Category Check (Strict)
         if is_bot:
             if not log_from_bot: return
         else:
@@ -503,31 +495,39 @@ async def pm_logger_user_handler(c: Client, m: RawMessage):
         filter_key = "from_bot" if is_bot else "from_user"
         
         # Determine message type for filtering
-        filter_msg_type = None
-        if not m.media and m.text:
-            filter_msg_type = "text"
-        elif m.photo:
-            filter_msg_type = "photo"
-        elif m.video:
-            filter_msg_type = "video"
-        elif m.document:
-            filter_msg_type = "document"
-        elif m.audio:
-            filter_msg_type = "audio"
-        elif m.voice:
-            filter_msg_type = "voice"
-        elif m.sticker:
-            filter_msg_type = "sticker"
-        elif m.animation:
-            filter_msg_type = "animation"
-        elif m.video_note:
-            filter_msg_type = "video_note"
+        filter_msg_type = "text"
+        if m.photo: filter_msg_type = "photo"
+        elif m.video: filter_msg_type = "video"
+        elif m.document: filter_msg_type = "document"
+        elif m.audio: filter_msg_type = "audio"
+        elif m.voice: filter_msg_type = "voice"
+        elif m.sticker: filter_msg_type = "sticker"
+        elif m.animation: filter_msg_type = "animation"
+        elif m.video_note: filter_msg_type = "video_note"
+        elif m.contact: filter_msg_type = "contact"
+        elif m.location: filter_msg_type = "location"
+        elif m.venue: filter_msg_type = "venue"
+        elif m.game: filter_msg_type = "game"
+        elif m.poll: filter_msg_type = "poll"
+        elif m.dice: filter_msg_type = "dice"
         
-        # ✅ Filter Check (Use pre-initialized session_filters)
-        category_filters = session_filters.get(filter_key, PM_LOGGER_FILTERS.get(filter_key, {}))
-        
-        if filter_msg_type and not category_filters.get(filter_msg_type, True):
-            return  # Skip logging this message type
+        # ✅ Filter Check with Multi-Level Fallback
+        # 1. Per-account source-specific (filters -> from_user/from_bot -> type)
+        if isinstance(session_filters, dict) and filter_key in session_filters:
+            if not session_filters[filter_key].get(filter_msg_type, True):
+                logger.debug(f"PMLU: Filter BLOCKED {filter_key} {filter_msg_type}")
+                return
+        # 2. Per-account flat structure (filters -> type) - backward compatibility
+        elif isinstance(session_filters, dict) and filter_msg_type in session_filters:
+            if not session_filters.get(filter_msg_type, True):
+                logger.debug(f"PMLU: Filter BLOCKED flat {filter_msg_type}")
+                return
+        # 3. Global Hardcoded defaults
+        else:
+            global_defaults = PM_LOGGER_FILTERS.get(filter_key, {})
+            if not global_defaults.get(filter_msg_type, True):
+                logger.debug(f"PMLU: Filter BLOCKED by global default {filter_key} {filter_msg_type}")
+                return
 
         is_restricted = getattr(m, "has_protected_content", False)
         

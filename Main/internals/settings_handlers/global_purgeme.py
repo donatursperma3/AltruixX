@@ -160,26 +160,44 @@ def get_gp_control_kb(unique_id, state):
             InlineKeyboardButton(loc("GP_BTN_NOTIF_ON" if notify else "GP_BTN_NOTIF_OFF") or f"Notif: {'ON' if notify else 'OFF'}", f"gp_notif_{unique_id}")
         ])
 
-        # Filters Grid
+        # Filters Grid (3-column)
         def get_f_btn(f_type, label_key, def_label):
             label = loc(label_key) or def_label
             active = "✅" if f_type in filters_list else "☑️"
             return InlineKeyboardButton(f"{active} {label}", f"gp_filter_{f_type}_{unique_id}")
 
+        # Row 1: Core Media
         kb.append([
             get_f_btn("all", "GP_BTN_ALL", "All"),
-            get_f_btn("image", "GP_BTN_IMG", "Img"),
-            get_f_btn("video", "GP_BTN_VID", "Vid")
+            get_f_btn("photo", "GP_BTN_IMG", "Photo"),
+            get_f_btn("video", "GP_BTN_VID", "Video")
+        ])
+        # Row 2: Engagement
+        kb.append([
+            get_f_btn("text", "GP_BTN_TXT", "Text"),
+            get_f_btn("audio", "GP_BTN_AUD", "Audio"),
+            get_f_btn("sticker", "GP_BTN_STK", "Sticker")
+        ])
+        # Row 3: Rich Media
+        kb.append([
+            get_f_btn("animation", "GP_BTN_GIF", "Anim"),
+            get_f_btn("document", "GP_BTN_DOC", "Doc"),
+            get_f_btn("video_note", "GP_BTN_VNOTE", "VNote")
+        ])
+        # Row 4: Specialized
+        kb.append([
+            get_f_btn("voice", "GP_BTN_VN", "Voice"),
+            get_f_btn("contact", "GP_BTN_CONT", "Contact"),
+            get_f_btn("location", "GP_BTN_LOC", "Loc")
+        ])
+        # Row 5: Interaction
+        kb.append([
+            get_f_btn("venue", "GP_BTN_VENUE", "Venue"),
+            get_f_btn("game", "GP_BTN_GAME", "Game"),
+            get_f_btn("poll", "GP_BTN_POLL", "Poll")
         ])
         kb.append([
-            get_f_btn("text", "GP_BTN_TXT", "Txt"),
-            get_f_btn("audio", "GP_BTN_AUD", "Aud"),
-            get_f_btn("sticker", "GP_BTN_STK", "Stk")
-        ])
-        kb.append([
-            get_f_btn("gif", "GP_BTN_GIF", "Gif"),
-            get_f_btn("file", "GP_BTN_FILE", "File"),
-            get_f_btn("vnote", "GP_BTN_VN", "VN")
+            get_f_btn("dice", "GP_BTN_DICE", "Dice")
         ])
 
         # Advanced Options
@@ -278,15 +296,39 @@ async def gp_process_chat(client: Client, chat_id: int, limit: int, delay: int, 
             if "all" in target_filters: should_include = True
             else:
                 try:
-                    if msg.text and "text" in target_filters: should_include = True
-                    elif msg.photo and "image" in target_filters: should_include = True
-                    elif msg.video and "video" in target_filters: should_include = True
-                    elif (msg.voice or msg.audio) and "audio" in target_filters: should_include = True
-                    elif msg.sticker and "sticker" in target_filters: should_include = True
-                    elif msg.animation and "gif" in target_filters: should_include = True
-                    elif msg.document and "file" in target_filters: should_include = True
-                    elif msg.video_note and "vnote" in target_filters: should_include = True
-                except: pass
+                    # Map Pyrogram message attributes to our filter types
+                    if msg.text and "text" in target_filters:
+                        should_include = True
+                    elif msg.photo and ("photo" in target_filters or "image" in target_filters):
+                        should_include = True
+                    elif msg.video and "video" in target_filters:
+                        should_include = True
+                    elif (msg.voice or msg.audio) and "audio" in target_filters:
+                        should_include = True
+                    elif msg.sticker and "sticker" in target_filters:
+                        should_include = True
+                    elif msg.animation and ("animation" in target_filters or "gif" in target_filters):
+                        should_include = True
+                    elif msg.document and ("document" in target_filters or "file" in target_filters):
+                        should_include = True
+                    elif msg.video_note and ("video_note" in target_filters or "vnote" in target_filters):
+                        should_include = True
+                    elif msg.voice and "voice" in target_filters:
+                        should_include = True
+                    elif msg.contact and "contact" in target_filters:
+                        should_include = True
+                    elif msg.location and "location" in target_filters:
+                        should_include = True
+                    elif msg.venue and "venue" in target_filters:
+                        should_include = True
+                    elif msg.game and "game" in target_filters:
+                        should_include = True
+                    elif msg.poll and "poll" in target_filters:
+                        should_include = True
+                    elif msg.dice and "dice" in target_filters:
+                        should_include = True
+                except Exception as e:
+                    Altruix.log(f"GPurgeme: Type identification error: {e}", level=10)
             
             if should_include: collected_ids.append(msg.id)
             if len(collected_ids) >= limit + offset: break
