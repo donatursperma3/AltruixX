@@ -18,11 +18,14 @@ from .states import user_profile_edit_state
 logger = logging.getLogger(__name__)
 
 async def aexec(code, c, m):
+    locs = {}
     exec(
         f"async def __aexec(c, m): "
-        + "".join(f"\n {l}" for l in code.split("\n"))
+        + "".join(f"\n {l}" for l in code.split("\n")),
+        globals(),
+        locs
     )
-    return await locals()["__aexec"](c, m)
+    return await locs["__aexec"](c, m)
 
 async def process_dev_input(c: Client, m: Message, state: dict):
     """Router for developer tools (eval, terminal)"""
@@ -47,7 +50,8 @@ async def process_dev_input(c: Client, m: Message, state: dict):
             stdout, stderr = redirected_output.getvalue(), redirected_error.getvalue()
             sys.stdout, sys.stderr = old_stdout, old_stderr
             evaluation = exc or stderr or stdout or "Success"
-            await status_msg.edit(f"🐍 <b>Output:</b>\n\n<code>{html.escape(evaluation)}</code>")
+            # ✅ Using <pre> tags for settings UI eval for better display and auto-lang detection
+            await status_msg.edit(f"🐍 <b>Output:</b>\n\n<pre>{html.escape(str(evaluation))}</pre>")
             
         elif action == 'exec_terminal':
             status_msg = await m.reply("💻 Executing...")
@@ -58,11 +62,13 @@ async def process_dev_input(c: Client, m: Message, state: dict):
             )
             stdout, stderr = await process.communicate()
             result = (stdout.decode().strip() or stderr.decode().strip()) or "No output"
-            await status_msg.edit(f"💻 <b>Output:</b>\n\n<code>{result}</code>")
+            # ✅ Enhanced terminal output in settings UI using <pre> tags
+            await status_msg.edit(f"💻 <b>Output:</b>\n\n<pre>{html.escape(result)}</pre>")
             
     except Exception as e:
         await m.reply(f"❌ <b>Error:</b> {str(e)}")
         
-    del user_profile_edit_state[user_id]
+    # State deletion is handled by caller (session_info.py) to avoid hardcoded dependency
+
     await asyncio.sleep(2)
     await m.reply("🔄 Kembali ke menu...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{state.get('page', 1)}")]]) )

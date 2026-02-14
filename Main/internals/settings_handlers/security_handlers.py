@@ -14,7 +14,8 @@ from pyrogram.errors import FloodWait, RPCError
 
 # States & Helpers
 from .states import (
-    user_privacy_state, user_confirmation_state
+    user_privacy_state, user_confirmation_state,
+    user_exec_state, user_eval_state
 )
 # from .session_info import sessions_info_cb_handler
 
@@ -100,7 +101,7 @@ async def exec_term_start_handler(c: Client, cb: CallbackQuery):
     """Admin tool to run terminal commands via bot"""
     index, page = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
     await cb.answer()
-    user_exec_state[cb.from_user.id] = {'session_index': index, 'page': page, 'step': 'waiting_command'}
+    user_exec_state[cb.from_user.id] = {'session_index': index, 'page': page, 'step': 'waiting_command', 'action': 'exec_terminal'}
     await cb.message.edit(
         "🖥️ <b>Terminal Execution</b>\n\n"
         "Silakan kirim perintah terminal yang ingin dijalankan.\n"
@@ -117,7 +118,7 @@ async def eval_exec_start_handler(c: Client, cb: CallbackQuery):
     """Admin tool to evaluate Python code via bot"""
     index, page = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
     await cb.answer()
-    user_eval_state[cb.from_user.id] = {'session_index': index, 'page': page, 'step': 'waiting_code'}
+    user_eval_state[cb.from_user.id] = {'session_index': index, 'page': page, 'step': 'waiting_code', 'action': 'eval_python'}
     await cb.message.edit(
         "🐍 <b>Python Eval</b>\n\n"
         "Silakan kirim kode Python yang ingin dievaluasi.\n\n"

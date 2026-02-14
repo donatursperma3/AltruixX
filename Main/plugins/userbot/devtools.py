@@ -7,8 +7,10 @@
 # All rights reserved.
 
 
-PLUGIN_VERSION = "0.0.5"
+PLUGIN_VERSION = "0.0.62"
 import os
+import html
+import asyncio
 import aiofiles
 from Main import Altruix
 from logging import info
@@ -56,7 +58,8 @@ async def get_json_message_handler(c: Client, m: Message):
     msg_id = m.id
     rm = m.reply_to_message
     m_ = await m.reply_msg("PROCESSING")
-    jsonified = f"<code>{rm or m}</code>"
+    # ✅ Using <pre> tags for structured JSON output to support better UI rendering
+    jsonified = f"<pre>{html.escape(str(rm or m))}</pre>"
     cmd_ = "<b>jsonified</b>"
     
     # ✅ FIX: user_args is a list of Arg objects, not strings.
@@ -70,6 +73,7 @@ async def get_json_message_handler(c: Client, m: Message):
         too_long_as_file="message.json" if "d" in arg_keys else False,
         reply_to_message_id=msg_id,
     )
+    await m.delete_if_self()
 
 
 @Altruix.register_on_cmd(
@@ -102,18 +106,29 @@ async def evaluate_command_handler(c: Client, m: Message):
     msg_id = m.id
     m_ = await m.handle_message("PROCESSING")
     user_args = m.user_args
+    arg_keys = [a.key.lower() for a in user_args]
     cmd = m.raw_user_input
     if not cmd:
         await m_.edit_msg("INPUT_REQUIRED")
         return
     if "p" in user_args or "f" in user_args:
         cmd = (cmd.replace("paste", "").replace("file", "")).strip()
+
+    # ✅ Tracking performance for evaluation
+    start_time = pc()
     results = await eval_py(c, cmd, m)
-    final_output = f"<b>INPUT:</b>\n<code>{cmd}</code>\n\n<b>OUTPUT</b>:\n<code>{results.strip()}</code>"
+    end_time = pc()
+    time_taken = round(end_time - start_time, 3)
+
+    header = f"<b>EVAL (v<code>{PLUGIN_VERSION}</code>)</b>\n"
+    header += f"🕒 <code>{time_taken}s</code>\n\n"
+
+    # ✅ Using <pre> for input/output blocks to support auto-detection of code types
+    final_output = f"{header}<b>INPUT:</b>\n<pre>{html.escape(cmd)}</pre>\n\n<b>OUTPUT</b>:\n<pre>{html.escape(results.strip())}</pre>"
     cmd_ = (
         "<b>Output Of Command</b>"
         if len(cmd) >= 1000
-        else f"<b>OUTPUT FOR COMMAND :</b> <code>{cmd}</code>"
+        else f"<b>OUTPUT FOR COMMAND :</b> <code>{cmd}</code>" # Keep index code for short command titles
     )
     if "s" in user_args and Altruix.log_chat:
         if "p" in user_args:
@@ -130,13 +145,15 @@ async def evaluate_command_handler(c: Client, m: Message):
                 os.remove(file_path)
         else:
             msg = await c.send_message(Altruix.log_chat, final_output)
-        return await m.edit_msg(f"<b>OUTPUT :</b> <a href='{msg.link}'>VIEW</a>")
+        return await m_.edit_msg(f"<b>OUTPUT :</b> <a href='{msg.link}'>VIEW</a>")
+    
     await m_.edit_msg(
         final_output,
-        force_paste="-paste" in user_args,
-        force_file=f"eval_output.txt;{cmd_}" if "f" in user_args else None,
+        force_paste="p" in arg_keys,
+        force_file=f"eval_output.txt;{cmd_}" if "f" in arg_keys else None,
         reply_to_message_id=msg_id,
     )
+    await m.delete_if_self()
 
 
 @Altruix.register_on_cmd(
@@ -187,12 +204,13 @@ async def re_evaluate_command_handler(c: Client, m: Message):
     end_time = pc()
     time_taken = round(end_time - start_time, 3)
     
-    header = f"<b>RE-EVAL (v{PLUGIN_VERSION})</b>\n"
+    header = f"<b>R-EVAL (v<code>{PLUGIN_VERSION}</code>)</b>\n"
     header += f"🕒 <code>{time_taken}s</code>\n\n"
     
     # Trim input if too long for preview
     code_preview = code[:500] + ("..." if len(code) > 500 else "")
-    final_output = f"{header}<b>INPUT:</b>\n<code>{code_preview}</code>\n\n<b>OUTPUT</b>:\n<code>{results.strip()}</code>"
+    # ✅ Enhanced formatting for re-eval results using <pre> tags
+    final_output = f"{header}<b>INPUT:</b>\n<pre>{html.escape(code_preview)}</pre>\n\n<b>OUTPUT</b>:\n<pre>{html.escape(results.strip())}</pre>"
     
     cmd_label = "<b>Re-Eval Output</b>"
     
@@ -222,6 +240,7 @@ async def re_evaluate_command_handler(c: Client, m: Message):
         force_file=f"reval_output.txt;{cmd_label}" if len(final_output) > TGLIMITS.MESSAGE_TEXT else None,
         reply_to_message_id=m.id,
     )
+    await m.delete_if_self()
 
 
 @Altruix.register_on_cmd(
@@ -256,13 +275,14 @@ async def terminal(c: Client, m: Message):
     if not bash_code:
         return await m.handle_message("TERM_INPUT_REQUIRED")
     ms_id = m.id
-    m = await m.handle_message("CMD_RUNNING")
+    msg_ = await m.handle_message("CMD_RUNNING")
     if "p" in user_args or "f" in user_args:
         bash_code = (bash_code.replace("-p", "").replace("-f", "")).strip()
     success, output, return_code = await exec_terminal(bash_code)
-    out_text = f"<b>Input</b>\n<code>{bash_code}</code>"
+    # ✅ Using <pre> for terminal input and output to preserve formatting and support wide displays
+    out_text = f"<b>Input</b>\n<pre>{html.escape(bash_code)}</pre>"
     _out_text = out_text
-    _out_text += f'\n\n<b>{Altruix.get_string("OUTPUT")}</b>\n<code>{output or Altruix.get_string("NO_OUTPUT")}</code>\n'
+    _out_text += f'\n\n<b>{Altruix.get_string("OUTPUT")}</b>\n<pre>{html.escape(output or Altruix.get_string("NO_OUTPUT"))}</pre>\n'
     _out_text += "<b>Status</b>: "
     _out_text += "<i>Success</i> " if success else "<i>Failed</i> "
     _out_text += f"(<code>{return_code}</code>)"
@@ -283,14 +303,17 @@ async def terminal(c: Client, m: Message):
                 os.remove(file_path)
         else:
             msg = await c.send_message(Altruix.log_chat, _out_text)
-        return await m.edit_msg(f"<b>OUTPUT :</b> <a href='{msg.link}'>VIEW</a>")
-    return await m.edit_msg(
+        await msg_.edit_msg(f"<b>OUTPUT :</b> <a href='{msg.link}'>VIEW</a>")
+        await m.delete_if_self()
+        return
+    await msg_.edit_msg(
         _out_text,
         force_paste="-paste" in user_args,
         force_file=f"bash_output.txt;{caption_}" if "-file" in user_args else None,
         reply_to_message_id=ms_id,
         ttwp=ttwp,
     )
+    await m.delete_if_self()
 
 
 async def paste_logs(log_path):

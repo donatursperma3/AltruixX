@@ -18,7 +18,8 @@ logger = logging.getLogger(__name__)
 from .states import (
     user_text_confirmation_state, user_profile_edit_state, user_edit_confirmation_state,
     user_confirmation_state, user_dlphoto_state, user_purge_state,
-    user_recent_messages_state, user_mentions_state, user_privacy_state
+    user_recent_messages_state, user_mentions_state, user_privacy_state,
+    user_eval_state, user_exec_state
 )
 from .laucreate import user_laucreate_state
 
@@ -211,7 +212,7 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
         f"<b>📋 Logger Status:</b>\n"
         f"• <b>PM Logger:</b> {pm_logger_status}\n"
         f"• <b>Mention Logger:</b> {mention_logger_status}\n\n"
-        f"<b>🤖 Bot Assistant:</b> {('@' + custom_bot_username) if custom_bot_username != 'None' else 'None'} (Active Bots: {total_active_bots})\n"
+        f"<b>🤖 Bot Assistant:</b> <spoiler>{('@' + custom_bot_username) if custom_bot_username != 'None' else 'None'}</spoiler> (Active Bots: {total_active_bots})\n"
         f"<b>⚙️ Xtra-Features:</b> {xtra_count} Aktif\n"
         f"<b>🔘 Total Modul:</b> {total_mod} (UB {ub_mod}, Bot {bot_mod}, Xtra {xtra_mod})\n\n"
         f"<b>📊 Total Buttons:</b> 56 | <b>Page:</b> {button_page}/5\n"
@@ -300,7 +301,7 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
 
     try:
         await cb.edit_message_text(
-            text=text,
+            text=f"<b>ℹ️ SESSION MANAGER</b>\n\n<blockquote expandable>{text}</blockquote>",
             reply_markup=InlineKeyboardMarkup(buttons),
             parse_mode=ParseMode.HTML,
             link_preview_options=LinkPreviewOptions(is_disabled=True)
@@ -397,14 +398,28 @@ async def sessions_info_msg_handler(c: Client, m: Message):
             await process_misc_profile_input(c, m, state)
             return
 
-        # Route dev tools
+        # Route dev tools (Legacy check, can be removed if strictly using separate states)
         if state.get('action') in ['eval_python', 'exec_terminal']:
             from .dev_handlers import process_dev_input
             await process_dev_input(c, m, state)
+            del user_profile_edit_state[user_id]
             return
 
         from .profile_handlers import process_profile_edit_input
         await process_profile_edit_input(c, m)
+        return
+        
+    # 1.5 Dev Tools (Eval / Exec)
+    if user_id in user_eval_state:
+        from .dev_handlers import process_dev_input
+        await process_dev_input(c, m, user_eval_state[user_id])
+        del user_eval_state[user_id]
+        return
+        
+    if user_id in user_exec_state:
+        from .dev_handlers import process_dev_input
+        await process_dev_input(c, m, user_exec_state[user_id])
+        del user_exec_state[user_id]
         return
 
     # 2. Join / Leave / Send Message
