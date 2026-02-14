@@ -126,7 +126,7 @@ class AltruixClient:
         self.clients: List[Client] = []
         self.cmd_list = {}
         self.all_lang_strings = {}
-        self.__version__ = "0.0.9.722"
+        self.__version__ = "0.0.9.734"
         self.selected_lang = "english"
         self.local_lang_file = "./Main/localization"
         self.cmd_list = {} # {plugin_name: [cmd_data, ...]}
@@ -1253,6 +1253,7 @@ class AltruixClient:
             monitor_task = asyncio.create_task(self._monitor_connections())
             health_task = asyncio.create_task(self._heartbeat_monitor())
             res_monitor_task = asyncio.create_task(self._resource_monitor_loop())
+            backup_task = asyncio.create_task(self._auto_backup_loop())
             
             # Jalankan idle
             await idle()
@@ -1396,6 +1397,54 @@ class AltruixClient:
         
         # Keluar dari program
         sys.exit(0)
+
+    async def _auto_backup_loop(self):
+        """Background loop for automatic database backups."""
+        self.log("🚀 Auto-backup loop started.", level=logging.INFO)
+        while True:
+            try:
+                # Get settings
+                is_enabled = await self.config.get_env("AUTO_BACKUP_ENABLED") == "true"
+                interval_str = await self.config.get_env("AUTO_BACKUP_INTERVAL") or "24h"
+                
+                if not is_enabled:
+                    await asyncio.sleep(600) # Check every 10 mins if it got enabled
+                    continue
+                
+                # Convert interval to seconds
+                # 1h, 3h, 6h, 12h, 24h, 1w
+                try:
+                    unit = interval_str[-1].lower()
+                    amount = int(interval_str[:-1])
+                    if unit == 'h': seconds = amount * 3600
+                    elif unit == 'w': seconds = amount * 7 * 24 * 3600
+                    else: seconds = 24 * 3600 # Fallback 24h
+                except (ValueError, IndexError):
+                    seconds = 24 * 3600
+                
+                # Wait for the interval
+                await asyncio.sleep(seconds)
+                
+                # Perform backup
+                if self.log_chat and self.bot and self.bot.is_connected:
+                    from Main.utils.backup_helpers import upload_db_backup
+                    success = await upload_db_backup(self.bot, self.log_chat)
+                    if success:
+                        self.log("📦 Auto-backup completed successfully.", level=logging.INFO)
+                        # Save last backup time
+                        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        # ✅ Fixed: Use upsert=True to ensure key is created if missing
+                        await self.config.add_env_to_db("LAST_BACKUP_TIME", now_str, upsert=True)
+                    else:
+                        self.log("❌ Auto-backup failed.", level=logging.ERROR)
+                else:
+                    self.log("⚠️ Auto-backup skipped: Log chat or Bot not ready.", level=logging.WARNING)
+                    
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                self.log(f"Auto-backup loop error: {e}", level=logging.DEBUG)
+                await asyncio.sleep(60)
 
     async def _test(self):
         dev_chat_id = -1002653859864

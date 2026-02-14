@@ -63,7 +63,7 @@ async def delete_cb(cb: CallbackQuery):
     return await Altruix.delete_cb(cb)
 
 # ====================== PLUGIN METADATA ======================
-PLUGIN_VERSION = "1.5.5.9b"
+PLUGIN_VERSION = "1.5.5.10b"
 logger = logging.getLogger("altruix.settings")
 
 # ====================== SHARED STATES ======================
@@ -103,6 +103,7 @@ import Main.internals.settings_handlers.sessions_list
 import Main.internals.settings_handlers.export_handlers
 import Main.internals.settings_handlers.cmd_settings_handlers
 import Main.internals.settings_handlers.global_purgeme
+import Main.internals.settings_handlers.backup_handlers
 
 # ====================== LOCALIZATION ======================
 SETTINGS_LANG = getattr(Altruix.config, "UB_LANG", "english").lower()
@@ -133,6 +134,53 @@ def get_user_custom_link(user_id):
         return data["sessions"][str(user_id)]
     return data["global"]
 
+# ====================== STATS HELPERS ======================
+
+async def get_settings_home_text():
+    """
+    Generates the standardized settings home/dashboard text with detailed stats (v1.5.5.9b style).
+    """
+    total_sessions = len(Altruix.clients)
+    
+    # Bots Calculation
+    custom_bots_count = len(Altruix.bot_manager.custom_bots) if hasattr(Altruix, 'bot_manager') else 0
+    total_bots = 1 + custom_bots_count # Default Bot + Custom Bots
+    
+    # Module Breakdown
+    ub_mod = len([x for x in Altruix.plugin_categories.values() if x == 'userbot'])
+    bot_mod = len([x for x in Altruix.plugin_categories.values() if x == 'bot'])
+    xtra_mod = len([x for x in Altruix.plugin_categories.values() if x == 'other'])
+    total_mod = len(Altruix.plugin_categories)
+    
+    # Commands Count
+    total_cmds = sum(len(cmds) for cmds in Altruix.cmd_list.values())
+    
+    # Xtra-Features (Core set of 18 management functions)
+    xtra_features_count = 18
+    
+    # Localization support if available
+    template = Altruix.get_string("settings_stats")
+    if not template or template == "settings_stats":
+        # Fallback to hardcoded template if string missing
+        template = (
+            "<b>🛠️ Userbot Settings</b>\n\n"
+            "• Sessions: <code>{}</code>\n"
+            "• Active Bots: <code>{}</code> (Default: 1, Custom: {})\n"
+            "• Xtra-Features: <code>{}</code>\n"
+            "• Module: <code>{}</code> (UB mod {}, Bot mod {}, Xtra mod {})\n"
+            "• Commands: <code>{}</code>\n"
+            "• Version: <code>{}</code>"
+        )
+        return template.format(
+            total_sessions, total_bots, custom_bots_count, xtra_features_count,
+            total_mod, ub_mod, bot_mod, xtra_mod, total_cmds, Altruix.__version__
+        ) + "\n\nSelect a category below to configure your userbot."
+
+    return template.format(
+        total_sessions, total_bots, 1, custom_bots_count, xtra_features_count,
+        total_mod, ub_mod, bot_mod, xtra_mod, total_cmds, Altruix.__version__
+    ) + "\n\nSelect a category below to configure your userbot."
+
 def get_settings_buttons(user_id=None):
     custom_data = get_user_custom_link(user_id) if user_id else get_custom_link_data()["global"]
     return [
@@ -156,30 +204,18 @@ def get_settings_buttons(user_id=None):
 @iuser_check
 @log_errors
 async def settings_command_handler(c: Client, m: Message):
-    """Entry point for /settings command."""
-    from Main.internals.settings_handlers.stats_handlers import sessions_stats_cb_handler
-    # Forwarding stats logic is usually better but for simplicity we keep basic info
-    total_sessions = len(Altruix.clients)
-    total_bots = 1 + (len(Altruix.bot_manager.custom_bots) if hasattr(Altruix, 'bot_manager') else 0)
-    
-    text = (
-        f"<b>🛠️ Userbot Settings</b>\n\n"
-        f"• Sessions: <code>{total_sessions}</code>\n"
-        f"• Active Bots: <code>{total_bots}</code>\n"
-        f"• Version: <code>{Altruix.__version__}</code>\n\n"
-        f"Select a category below to configure your userbot."
-    )
+    """Entry point for /settings command with full statistics."""
+    text = await get_settings_home_text()
     await m.reply(text, reply_markup=InlineKeyboardMarkup(get_settings_buttons(m.from_user.id)), quote=True)
 
 @Altruix.bot.on_inline_query(filters.regex(r"^settings$"))
 @iuser_check
 @log_errors
 async def settings_inline_handler(c: Client, iq: InlineQuery):
-    """Inline entry point for settings."""
+    """Inline entry point for settings with full statistics."""
     if iq.from_user.id not in Altruix.auth_users: return
     
-    total_sessions = len(Altruix.clients)
-    text = f"<b>🛠️ Userbot Settings</b>\n\nTotal Sessions: <code>{total_sessions}</code>"
+    text = await get_settings_home_text()
     
     await iq.answer(
         results=[
@@ -196,10 +232,9 @@ async def settings_inline_handler(c: Client, iq: InlineQuery):
 @iuser_check
 @log_errors
 async def settings_menu_cb_handler(c: Client, cb: CallbackQuery):
-    """Main settings menu return point."""
+    """Main settings menu return point with consistent full statistics."""
     await cb.answer()
-    total_sessions = len(Altruix.clients)
-    text = f"<b>🛠️ Userbot Settings Dashboard</b>\n\nTotal Sessions: <code>{total_sessions}</code>"
+    text = await get_settings_home_text()
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(get_settings_buttons(cb.from_user.id)))
 
 @Altruix.bot.on_callback_query(filters.regex(r"^configs_home$"))
@@ -210,6 +245,7 @@ async def configs_menu_cb_handler(c: Client, cb: CallbackQuery):
     text = "<b>⚙️ Configuration Manager</b>\n\nManage environment variables and bot configs."
     buttons = [
         [InlineKeyboardButton("🔧 ENV Manager", callback_data="env_manager_list_1")],
+        [InlineKeyboardButton("📦 Database Manager", callback_data="backup_manager")],
         [InlineKeyboardButton("🔙 Back to Settings", callback_data="settings_menu")]
     ]
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons))

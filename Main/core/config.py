@@ -266,16 +266,27 @@ class Config(BaseConfig):
         return result
 
     async def get_env(self, env_key, as_list=False):
+        """
+        Retrieves an environment variable value, prioritizing database, Then cache, Then .env, Then class attributes.
+        """
         env_key = env_key.strip().upper()
         
+        # Priority 1: Cache (Fastest)
+        if env_key in self._env_cache:
+            return self._env_cache[env_key]
+        
+        # Priority 2: Database
         db_val = await self.get_env_from_db(env_key)
         if db_val is not None:
+            self._env_cache[env_key] = db_val
             return db_val
             
+        # Priority 3: .env file
         env_val = self.get_env_(env_key, as_list)
         if env_val is not None:
             return env_val
             
+        # Priority 4: Class attribute (Defaults)
         return getattr(self, env_key, None)
 
     def get_env_(self, env_key, as_list):
@@ -308,9 +319,14 @@ class Config(BaseConfig):
     async def add_env_to_db(
         self, env_name, update: Union[str, int, List[Any], dict], upsert: bool = False
     ) -> None:
-        if self.DEBUG:
-            logging.info("DEBUG mode is enabled, skipping db syncing...")
-        elif isinstance(update, dict):
+        """
+        Updates an environment variable in the database and local cache.
+        """
+        if self.DEBUG and not isinstance(update, dict):
+             logging.info(f"DEBUG mode: Syncing {env_name} to database despite flag.")
+             
+        if isinstance(update, dict):
+            # Special case for SUDO_USERS updates which often use $push/$pull
             await self.env_col.find_one_and_update(
                 {"_id": "SUDO_USERS"}, update, upsert=upsert
             )
@@ -318,8 +334,11 @@ class Config(BaseConfig):
             await self.env_col.find_one_and_update(
                 {"_id": env_name}, {"$set": {"env_value": update}}, upsert=upsert
             )
+            # Update local state/cache
             self._env_cache[env_name] = update
-        # ✅ Force Save for LocalDB
+            setattr(self, env_name, update)
+            
+        # ✅ Force Save for LocalDB immediate consistency
         if hasattr(self.env_col, "db") and hasattr(self.env_col.db, "save_now"):
             await self.env_col.db.save_now()
 
