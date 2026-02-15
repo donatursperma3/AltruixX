@@ -19,9 +19,8 @@ from .states import (
     user_text_confirmation_state, user_profile_edit_state, user_edit_confirmation_state,
     user_confirmation_state, user_dlphoto_state, user_purge_state,
     user_recent_messages_state, user_mentions_state, user_privacy_state,
-    user_eval_state, user_exec_state
+    user_eval_state, user_exec_state, user_creategroup_state
 )
-from .laucreate import user_laucreate_state
 
 # Import all sub-handlers to register them with the bot
 import Main.internals.settings_handlers.profile_handlers
@@ -33,7 +32,7 @@ import Main.internals.settings_handlers.generic_confirm
 import Main.internals.settings_handlers.stats_handlers
 import Main.internals.settings_handlers.privacy_handlers
 import Main.internals.settings_handlers.startup_handlers
-import Main.internals.settings_handlers.laucreate
+import Main.internals.settings_handlers.creategroup_handlers
 import Main.internals.settings_handlers.bulk_handlers
 import Main.internals.settings_handlers.system_handlers
 import Main.internals.settings_handlers.env_handlers
@@ -262,7 +261,7 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
             [btn(16, "download_user_photo", f"gen_conf_dl_uphoto_start_{index}_{callback_page}"), btn(17, "purge_my_msg", f"purge_msg_start_{index}_{callback_page}")],
             [btn(18, "send_message", f"gen_conf_send_message_input_{index}_{callback_page}"), btn(19, "join_group", f"gen_conf_join_chat_input_{index}_{callback_page}")],
             [btn(20, "leave_group", f"gen_conf_leave_chat_input_{index}_{callback_page}"), btn(21, "track_profile", f"gen_conf_track_profile_{index}_{callback_page}")],
-            [btn(22, "chat_stats", f"gen_conf_chat_stats_scan_{index}_{callback_page}"), btn(23, "laucreate_menu", f"laucreate_menu_{index}_{callback_page}")],
+            [btn(22, "chat_stats", f"gen_conf_chat_stats_scan_{index}_{callback_page}"), btn(23, "creategroup_menu", f"creategroup_menu_{index}_{callback_page}")],
             [btn(24, "recent_messages", f"gen_conf_recent_messages_menu_{index}_{callback_page}"), btn(25, "view_mentions", f"gen_conf_view_mentions_menu_{index}_{callback_page}")],
             [InlineKeyboardButton(Altruix.get_string("prev"), f"session_info_{index}_{callback_page}_1"), InlineKeyboardButton(Altruix.get_string("next"), f"session_info_{index}_{callback_page}_3")]
         ]
@@ -342,11 +341,10 @@ async def sessions_info_msg_handler(c: Client, m: Message):
     if text.lower() == "/cancel":
         # Clear all states
         from .env_handlers import user_env_input_state
-        from .laucreate import user_laucreate_state
         for state_dict in [user_profile_edit_state, user_dlphoto_state, user_purge_state,
                            user_join_state, user_leave_state, user_send_msg_state, user_privacy_state,
                            user_bulk_join_state, user_bulk_leave_state, user_bulk_report_state, 
-                           user_env_input_state, user_laucreate_state, user_edit_confirmation_state,
+                           user_env_input_state, user_creategroup_state, user_edit_confirmation_state,
                            user_text_confirmation_state]:
             if user_id in state_dict: del state_dict[user_id]
         await m.reply("❌ Input dibatalkan.")
@@ -530,10 +528,10 @@ async def sessions_info_msg_handler(c: Client, m: Message):
         await process_bulk_report_input(c, m, user_bulk_report_state[user_id])
         return
 
-    # 7. Laucreate Inputs
-    from .laucreate import user_laucreate_state, process_laucreate_input
-    if user_id in user_laucreate_state:
-        await process_laucreate_input(c, m, text)
+    # 7. CreateGroup Inputs
+    from .creategroup_handlers import process_creategroup_input
+    if user_id in user_creategroup_state:
+        await process_creategroup_input(c, m, text)
         return
 
     # 8. ENV Manager Inputs

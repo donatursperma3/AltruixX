@@ -42,7 +42,7 @@ from Main.plugins.userbot.xpm_logger_user import SessionManager
 # ============================================================================
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "tags"  # Renamed from mentions
-PLUGIN_VERSION = "1.7.70-TAG"  # ✅ Improved safe settings & multi-account sync
+PLUGIN_VERSION = "1.7.72-TAG"  # ✅ Improved safe settings & multi-account sync
 
 # Gunakan logger Altruix jika tersedia, atau buat baru yang konsisten
 logger = logging.getLogger("altruix.mentions")
@@ -706,32 +706,63 @@ async def save_local_storage():
         logger.error(f"Failed to save local storage: {e}")
 
 async def get_mention_setting_safe(client_id: int, key: str = "mention") -> bool:
-    """Safe method untuk membaca setting - gabungkan cache, local, dan global."""
-    # Ensure fresh settings from disk
+    """
+    ✅ ENHANCED: Primary source for Mention Logger status.
+    Prioritizes Altruix.config (Database) for 'enabled' status (mention key) 
+    to ensure synchronization with the UI dashboard.
+    Falls back to mentions_settings.json for advanced filters.
+    """
+    # Ensure fresh settings from disk (for advanced filters)
     await load_local_storage()
     
     client_id_str = str(client_id)
     
-    # 0. Resolve apply_type
-    apply_type = MENTION_APPLY_TYPES.get(client_id_str, "per_account")
-    if apply_type == "global":
-        return bool(MENTION_SETTINGS_GLOBAL.get(key, MENTION_SETTINGS_GLOBAL.get("mention", True) if key == "mention" else False))
+    # --- 1. RESOLVE ENABLED STATUS FROM DATABASE (Altruix.config) ---
+    # This is critical to fix the desync with the UI dashboard.
+    if key == "mention":
+        try:
+            # Find session index for this client_id
+            idx = -1
+            if hasattr(Altruix, "clients"):
+                for i, client in enumerate(Altruix.clients):
+                    if client.me and client.me.id == client_id:
+                        idx = i
+                        break
+            
+            if idx != -1:
+                # Resolve Apply Type (Global vs Per-Account) from Config
+                apply_type = await Altruix.config.get_env(f"MNT_LOGGER_APPLY_TYPE_{idx}") or "per_account"
+                
+                if apply_type == "global":
+                    status = await Altruix.config.get_env("MNT_LOGGER_GLOBAL") or "off"
+                else:
+                    status = await Altruix.config.get_env(f"MNT_LOGGER_{idx}") or "off"
+                
+                return status == "on"
+        except Exception as e:
+            logger.error(f"❌ Failed to fetch mention status from config for {client_id}: {e}")
 
-    # 1. Check local storage (settings per client)
+    # --- 2. FALLBACK TO JSON FOR ADVANCED FILTERS OR IF CONFIG FAILS ---
+    # Resolve apply_type from JSON (fallback)
+    apply_type_json = MENTION_APPLY_TYPES.get(client_id_str, "per_account")
+    
+    if apply_type_json == "global":
+        return bool(MENTION_SETTINGS_GLOBAL.get(key, False)) # Default False (OFF)
+
+    # Check local storage (settings per client)
     if client_id_str in MENTIONS_DATA:
         setting_data = MENTIONS_DATA[client_id_str]
         if isinstance(setting_data, dict):
-            # Check nested filters if the key is a message type (not 'mention' or 'auto_log')
+            # Check nested filters if the key is a message type
             if key not in ["mention", "auto_log", "reply_from_all", "auto_create_topic"]:
-                 filters = setting_data.get("filters", {})
-                 # Default to True if filter not specified
-                 return bool(filters.get(key, True))
-            return bool(setting_data.get(key, MENTION_SETTINGS_GLOBAL.get(key, False)))
+                 p_filters = setting_data.get("filters", {})
+                 return bool(p_filters.get(key, True))
+            return bool(setting_data.get(key, False))
         elif isinstance(setting_data, bool) and key == "mention":
             return setting_data
 
-    # 3. Fallback to GLOBAL setting
-    return bool(MENTION_SETTINGS_GLOBAL.get(key, True if key == "mention" else False))
+    # Final fallback to Global JSON
+    return bool(MENTION_SETTINGS_GLOBAL.get(key, False))
 
 async def save_mention_setting_safe(client_id: int, value: bool) -> bool:
     """Safe method untuk menyimpan setting - simpan ke cache DAN local."""
@@ -1714,8 +1745,8 @@ async def start_reply_from_all(c: Client, cb: CallbackQuery):
             client_name = mentioned_client.me.first_name if mentioned_client.me else "Unknown"
             
             instruction_msg = await cb.message.reply(
-                f"✉️ **Kirim Balasan untuk Semua Session**\n\n"
-                f"Halo {user_mention}!\n"
+                f"✉️ <b>Kirim Balasan untuk Semua Session</b>\n\n"
+                f"Halo <b>{user_mention}</b>!\n"
                 f"Pesan Anda akan dikirim dari <b>SEMUA</b> akun userbot yang aktif.\n"
                 f"Silakan balas pesan ini dengan teks balasan Anda.",
                 parse_mode=enums.ParseMode.HTML
@@ -1799,10 +1830,10 @@ async def mentions_direct_reply_callback(c: Client, cb: CallbackQuery):
         bot = Altruix.bot
         instr = await bot.send_message(
             Altruix.log_chat,
-            f"✉️ **Input Balasan Mention** (via {client_name})\n\n"
-            f"Halo {user_mention}!\n"
+            f"✉️ <b>Input Balasan Mention</b> (via {client_name})\n\n"
+            f"Halo <b>{user_mention}</b>!\n"
             f"Silakan balas pesan ini dengan teks balasan Anda.\n"
-            f"Pesan akan dikirim ke chat ID `{chat_id}`.",
+            f"Pesan akan dikirim ke chat ID <code>{chat_id}</code>.",
             reply_to_message_id=log_msg_id,
             parse_mode=enums.ParseMode.HTML
         )

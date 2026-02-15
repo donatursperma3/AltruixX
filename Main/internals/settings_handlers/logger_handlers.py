@@ -14,6 +14,7 @@ from pyrogram.enums import ParseMode
 from pyrogram.errors import UserAlreadyParticipant, FloodWait
 
 # States & Helpers
+from .utils import edit_cb
 # from .session_info import sessions_info_cb_handler
 
 # Logger
@@ -587,7 +588,8 @@ async def global_logger_toggle_handler(c: Client, cb: CallbackQuery):
     await cb.answer(f"Global {log_type.upper()} Logger: {new_val.upper()}")
     # Re-use the menu but we need a mock regex match or call it directly with adjustments
     # For simplicity, let's just create a mock with a manual type
-    cb.matches = [type('Mock', (object,), {'group': lambda x: f"{log_type}l_menu"})()] # Hacky way to reuse
+    # ✅ FIX: Use *args in lambda to ignore implicit 'self' when called as a method
+    cb.matches = [type('Mock', (object,), {'group': lambda *args: f"{log_type}l_menu"})()] 
     await global_logger_menu_handler(c, cb)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^get_log_group_link$"))
@@ -620,5 +622,6 @@ async def get_log_group_link_handler(c: Client, cb: CallbackQuery):
 async def cb_logger_settings_handler(c: Client, cb: CallbackQuery):
     """Special menu for Callback Logger."""
     # This is a bridge, for now just toggle like others
-    cb.matches = [type('Mock', (object,), {'group': lambda x: "cbl_menu"})()]
+    # ✅ FIX: Use *args in lambda to ignore implicit 'self'
+    cb.matches = [type('Mock', (object,), {'group': lambda *args: "cbl"})()]
     await global_logger_menu_handler(c, cb)

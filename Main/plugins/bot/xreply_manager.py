@@ -1,4 +1,4 @@
-PLUGIN_VERSION = "0.0.25"
+PLUGIN_VERSION = "0.0.26"
 # xreply_manager.py
 # Separated logic for handling PM Logger replies to prevent conflicts
 # Copyright (C) 2021-present by Altruix@Github, < https://github.com/Altruix >.
@@ -25,16 +25,14 @@ import os
 
 logger = logging.getLogger("altruix.reply_manager")
 
-def should_log():
-    filename = get_db_path("reply_manager_settings.json")
-    if os.path.exists(filename):
-        try:
-            with open(filename, "r") as f:
-                data = json.load(f)
-                return data.get("enabled", False)
-        except:
-            pass
-    return False
+async def should_log():
+    """
+    Check if Reply Manager logic is enabled globally.
+    Prioritizes the centralized database via Altruix.config.
+    """
+    # Sync with centralized config (Standard practice for modular settings)
+    status = await Altruix.config.get_env("REPLY_MANAGER_GLOBAL") or "off"
+    return status == "on"
 
 # ✅ Dynamic Filter for Log Chat
 async def dynamic_log_chat_filter(_, __, m: RawMessage):
@@ -56,7 +54,7 @@ async def handle_reply_input(c: Client, m: RawMessage):
     if not m.reply_to_message:
         return
         
-    do_log = should_log()
+    do_log = await should_log()
     if do_log:
         logger.info(f"ReplyManager: Detected reply in log chat {m.chat.id} from {m.from_user.id if m.from_user else 'None'}. Altruix.log_chat={Altruix.log_chat}")
 
@@ -156,15 +154,22 @@ async def handle_reply_input(c: Client, m: RawMessage):
                 f"  - Checked {len(REPLY_AS_MENTIONED_WAITING)} sessions: {active_ids}"
             )
         
-        # Only reply if it was a direct reply attempt
-        await m.reply(
-                f"⚠️ <b>Sesi Balasan Tidak Ditemukan</b>\n\n"
-                f"Balasan ke ID: <code>{reply_to_id}</code>\n"
-                f"Thread ID: <code>{thread_id}</code>\n\n"
-                f"Pastikan membalas ke pesan <b>Notifikasi Log</b> atau <b>Instruksi Balasan</b> yang baru.\n"
-                f"💡 <i>Jika di Forum, klik 'Reply' pada pesan log, bukan pada judul topik.</i>",
-                quote=True
-            )
+        # ✅ Check for Error notification toggle (REPLY_ERR_NOTIF_GLOBAL)
+        # Default is 'on' if not specified.
+        should_notify = await Altruix.config.get_env("REPLY_ERR_NOTIF_GLOBAL") or "on"
+        
+        # Only reply if it was a direct reply attempt AND toggle is ON
+        if should_notify == "on":
+            await m.reply(
+                    f"⚠️ <b>Sesi Balasan Tidak Ditemukan</b>\n\n"
+                    f"Balasan ke ID: <code>{reply_to_id}</code>\n"
+                    f"Thread ID: <code>{thread_id}</code>\n\n"
+                    f"Pastikan membalas ke pesan <b>Notifikasi Log</b> atau <b>Instruksi Balasan</b> yang baru.\n"
+                    f"💡 <i>Jika di Forum, klik 'Reply' pada pesan log, bukan pada judul topik.</i>",
+                    quote=True
+                )
+        else:
+             logger.info(f"ReplyManager: Notification suppressed for missing session (REPLY_ERR_NOTIF_GLOBAL=off)")
         return
     
     session_user_id = str(REPLY_AS_MENTIONED_WAITING[waiting_id].get("user_id", "None"))
@@ -267,7 +272,7 @@ async def pmlu_confirm_send_callback(c: Client, cb: CallbackQuery):
         client_id = int(data.get("client_id", 0)) if data.get("client_id") else 0
         admin_reply_id = data.get("admin_reply_msg_id")
         
-        do_log = should_log()
+        do_log = await should_log()
         if do_log:
             logger.info(f"ReplyManager: Starting delivery for session {waiting_id}. Target User: {chat_id}, ReplyMsg ID: {msg_id}, AdminReply ID: {admin_reply_id}, ClientID: {client_id}")
 
@@ -483,7 +488,7 @@ async def pmlu_cancel_send_callback(c: Client, cb: CallbackQuery):
 # logger.info("xreply_manager loaded successfully.")
 
 
-# ✅ HANDLER: Reply Manager Settings Command
+# ✅ HANDLER: Reply Manager Settings Command (Simplified to use shared logic)
 @Altruix.register_on_cmd(
     ["replymanager", "rm"],
     cmd_help={
@@ -506,44 +511,48 @@ async def pmlu_cancel_send_callback(c: Client, cb: CallbackQuery):
 @iuser_check
 @log_errors
 async def reply_manager_cmd_handler(c: Client, m: RawMessage):
-    """Handle /replymanager command."""
+    """
+    Handle /replymanager command by redirecting to the modular menu 
+    or processing simple on/off arguments.
+    """
     user_input = (m.command[1] if len(m.command) > 1 else "").lower().strip()
     
-    filename = get_db_path("reply_manager_settings.json")
-    data = {"enabled": False}
-    if os.path.exists(filename):
-        try:
-            with open(filename, "r") as f: data = json.load(f)
-        except: pass
-
     if not user_input or user_input == "menu":
-         enabled = data.get("enabled", False)
+         # Redirect to the main modular menu (using Bot Assistant)
+         from Main.internals.settings_handlers.message_handlers import reply_manager_menu_handler
+         # We need to mock a CallbackQuery or just call the logic
+         # For commands, it's better to just reply with the menu
+         enabled = (await Altruix.config.get_env("REPLY_MANAGER_GLOBAL") or "off") == "on"
+         auto_reply = (await Altruix.config.get_env("AUTO_REPLY_GLOBAL") or "off") == "on"
+         err_notif = (await Altruix.config.get_env("REPLY_ERR_NOTIF_GLOBAL") or "on") == "on"
          
          text = (
             "<b>💬 Reply Manager Settings</b>\n\n"
             "Kontrol apakah Bot Assistant memproses balasan di Log Group untuk diteruskan ke user.\n\n"
-            f"• <b>Status:</b> {'✅ ENABLED' if enabled else '❌ DISABLED'}"
+            f"• <b>Master Status:</b> {'✅ ENABLED' if enabled else '❌ DISABLED'}\n"
+            f"• <b>Auto Reply:</b> {'✅ ENABLED' if auto_reply else '❌ DISABLED'}\n"
+            f"• <b>Error Notif:</b> {'✅ ENABLED' if err_notif else '❌ DISABLED'}"
          )
          
          buttons = [
-            [
-                InlineKeyboardButton(f"{'Disable' if enabled else 'Enable'} Manager", callback_data="reply_manager_toggle_enabled")
-            ],
-            [
-                InlineKeyboardButton("🔙 Back", callback_data="bot_controls_menu")
-            ]
+            [InlineKeyboardButton(f"{'Disable' if enabled else 'Enable'} Manager", callback_data="toggle_reply_manager_global")],
+            [InlineKeyboardButton(f"{'Disable' if auto_reply else 'Enable'} Auto-Reply", callback_data="toggle_auto_reply_global")],
+            [InlineKeyboardButton(f"{'Disable' if err_notif else 'Enable'} Error Notif", callback_data="toggle_reply_err_notif_global")],
+            [InlineKeyboardButton("🔙 Back", callback_data="bot_controls_menu")]
         ]
          await m.reply_msg(text, reply_markup=InlineKeyboardMarkup(buttons))
          return
 
     if user_input in ["on", "enable", "yes"]:
-        data["enabled"] = True
+        await Altruix.config.sync_env_to_db("REPLY_MANAGER_GLOBAL", "on", upsert=True)
+        setattr(Altruix.config, "REPLY_MANAGER_GLOBAL", "on")
         status = "ENABLED ✅"
     elif user_input in ["off", "disable", "no"]:
-        data["enabled"] = False
+        await Altruix.config.sync_env_to_db("REPLY_MANAGER_GLOBAL", "off", upsert=True)
+        setattr(Altruix.config, "REPLY_MANAGER_GLOBAL", "off")
         status = "DISABLED ❌"
     elif user_input == "status":
-        enabled = data.get("enabled", False)
+        enabled = (await Altruix.config.get_env("REPLY_MANAGER_GLOBAL") or "off") == "on"
         status = "ENABLED ✅" if enabled else "DISABLED ❌"
         return await m.reply_msg(
             f"💬 **Reply Manager Status**\n"
@@ -551,57 +560,6 @@ async def reply_manager_cmd_handler(c: Client, m: RawMessage):
         )
     else:
         return await m.reply_msg("Invalid argument. Use: `on`, `off`, `status` or just `/rm` for menu.")
-
-    with open(filename, "w") as f:
-        json.dump(data, f, indent=4)
         
     await m.reply_msg(f"✅ Reply Manager is now **{status}**")
-
-
-# ✅ HANDLER: Reply Manager Settings Menu
-@Altruix.bot.on_callback_query(filters.regex(r"^reply_manager_menu$"))
-@iuser_check
-@log_errors
-async def reply_manager_menu_handler(c: Client, cb: CallbackQuery):
-    try:
-        # Security (Handled by @iuser_check)
-        
-
-        enabled = should_log()
-        
-        text = (
-            "<b>💬 Reply Manager Settings</b>\n\n"
-            "Kontrol apakah Bot Assistant memproses balasan di Log Group untuk diteruskan ke user.\n\n"
-            f"• <b>Status:</b> {'✅ ENABLED' if enabled else '❌ DISABLED'}"
-        )
-        
-        buttons = [
-            [
-                InlineKeyboardButton(f"{'Disable' if enabled else 'Enable'} Manager", callback_data="reply_manager_toggle_enabled")
-            ],
-            [
-                InlineKeyboardButton("🔙 Back", callback_data="bot_controls_menu")
-            ]
-        ]
-        await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=enums.ParseMode.HTML)
-    except Exception as e:
-        await cb.answer(f"❌ Error: {e}", show_alert=True)
-
-@Altruix.bot.on_callback_query(filters.regex(r"^reply_manager_toggle_enabled$"))
-@iuser_check
-@log_errors
-async def reply_manager_toggle_enabled_handler(c: Client, cb: CallbackQuery):
-    filename = get_db_path("reply_manager_settings.json")
-    data = {"enabled": False}
-    if os.path.exists(filename):
-        try:
-            with open(filename, "r") as f: data = json.load(f)
-        except: pass
-        
-    data["enabled"] = not data.get("enabled", False)
-    
-    with open(filename, "w") as f:
-        json.dump(data, f, indent=4)
-        
-    await reply_manager_menu_handler(c, cb)
 

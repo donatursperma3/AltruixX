@@ -96,20 +96,30 @@ class SessionManager:
             except Exception as e:
                 logger.error(f"SessionManager: Failed to load cache: {e}")
         
-        # Cleanup: Remove old sessions with missing thread_id
+        # Cleanup: Remove old sessions (TTL: 24h) or missing thread_id
         # These are from before the thread_id tracking was implemented
         cleaned_count = 0
+        current_time = int(time.time())
+        ttl_seconds = 86400 # 24 Hours
+        
         for session_id in list(Altruix.REPLY_AS_MENTIONED_WAITING.keys()):
             session_data = Altruix.REPLY_AS_MENTIONED_WAITING[session_id]
-            # Relaxed Cleanup: Don't delete if thread_id is missing, just set to None
+            
+            # 1. Cleanup by timestamp (TTL 24h)
+            timestamp = session_data.get("timestamp")
+            if timestamp and (current_time - timestamp > ttl_seconds):
+                del Altruix.REPLY_AS_MENTIONED_WAITING[session_id]
+                cleaned_count += 1
+                continue
+
+            # 2. Relaxed Cleanup: Don't delete if thread_id is missing, just set to None
             if session_data.get("thread_id") is None:
-                # del Altruix.REPLY_AS_MENTIONED_WAITING[session_id]
-                # cleaned_count += 1
                 session_data["thread_id"] = None # Ensure key exists
-                pass
         
         if cleaned_count > 0:
-            logger.info(f"SessionManager: Cleaned {cleaned_count} old sessions (missing thread_id)")
+            logger.info(f"SessionManager: Cleaned {cleaned_count} stale sessions (older than 24h)")
+            # Auto-save after cleaning
+            SessionManager.save()
 
 # Load sessions on startup
 SessionManager.load()

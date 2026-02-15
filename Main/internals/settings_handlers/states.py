@@ -28,3 +28,6 @@ user_sys_ctrl_state = {}
 
 # Privacy & Config States
 user_privacy_state = {}
+
+# CreateGroup State
+user_creategroup_state = {}

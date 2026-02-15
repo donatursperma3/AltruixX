@@ -1,4 +1,4 @@
-# Main/internals/settings_handlers/laucreate.py
+# Main/internals/settings_handlers/creategroup_handlers.py
 import html
 import asyncio
 from typing import Optional
@@ -8,11 +8,10 @@ from Main.core.decorators import log_errors, iuser_check
 from Main.core.client import Altruix
 from pyrogram.enums import ParseMode
 
-# Global state for laucreate (to be imported by settings.py)
-user_laucreate_state = {}
+from .states import user_creategroup_state
 
 # Default Configuration
-DEFAULT_LAUCREATE_CONFIG = {
+DEFAULT_CREATEGROUP_CONFIG = {
     "delay": 333, "count": 2, "batch_delay": 10, "batch_size": 2, "action_delay": 3.0,
     "pattern": "Group (index)", "username": None, "description": "Powered by @AlphaXProject",
     "bots": "@MissRose_bot @simixbot @Spillgame_bot @truthordaresbot @truthordares_bot @truthordarerp_bot @truthordarerln_bot @truthordares18_bot",
@@ -20,11 +19,14 @@ DEFAULT_LAUCREATE_CONFIG = {
     "photo_source": "source", "custom_photo_id": None
 }
 
-@Altruix.bot.on_callback_query(filters.regex(r"^laucreate_menu_(\d+)(?:_(\d+))?$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^creategroup_menu_(\d+)(?:_(\d+))?$"))
 @iuser_check
 @log_errors
-async def laucreate_menu_handler(c: Client, cb: CallbackQuery):
-    """Entry point: Choose Manual vs UI"""
+async def creategroup_menu_handler(c: Client, cb: CallbackQuery):
+    """
+    Entry point for the CreateGroup settings menu. 
+    Allows users to choose between manual command input or an interactive UI configuration.
+    """
     await cb.answer()
     
     session_index = int(cb.matches[0].group(1))
@@ -38,22 +40,22 @@ async def laucreate_menu_handler(c: Client, cb: CallbackQuery):
     )
     
     buttons = [
-        [InlineKeyboardButton("⌨️ Manual Input", callback_data=f"laucreate_manual_{session_index}_{page}")],
-        [InlineKeyboardButton("🎛️ Interactive UI", callback_data=f"laucreate_ui_{session_index}_{page}")],
+        [InlineKeyboardButton("⌨️ Manual Input", callback_data=f"creategroup_manual_{session_index}_{page}")],
+        [InlineKeyboardButton("🎛️ Interactive UI", callback_data=f"creategroup_ui_{session_index}_{page}")],
         [InlineKeyboardButton("🔙 Back to Session", callback_data=f"session_info_{session_index}_{page}")]
     ]
     
     await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
-@Altruix.bot.on_callback_query(filters.regex(r"^laucreate_manual_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^creategroup_manual_(\d+)_(\d+)$"))
 @iuser_check
 @log_errors
-async def laucreate_manual_handler(c: Client, cb: CallbackQuery):
+async def creategroup_manual_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
     session_index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
     
-    user_laucreate_state[cb.from_user.id] = {
+    user_creategroup_state[cb.from_user.id] = {
         "step": "input_manual",
         "session_index": session_index,
         "page": page
@@ -70,50 +72,58 @@ async def laucreate_manual_handler(c: Client, cb: CallbackQuery):
         "Ketik /cancel untuk kembali."
     )
     await cb.message.edit(text, parse_mode=ParseMode.HTML, 
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data=f"laucreate_menu_{session_index}_{page}")]]))
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_menu_{session_index}_{page}")]]))
 
-@Altruix.bot.on_callback_query(filters.regex(r"^laucreate_ui_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^creategroup_ui_(\d+)_(\d+)$"))
 @iuser_check
 @log_errors
-async def laucreate_ui_handler(c: Client, cb: CallbackQuery):
-    """Main Interactive UI"""
+async def creategroup_ui_handler(c: Client, cb: CallbackQuery):
+    """
+    Interactive UI configuration for CreateGroup.
+    Loads existing configuration or defaults and renders the adjustment menu.
+    Handles task state checking to prevent multiple overlapping tasks.
+    """
     await cb.answer()
     session_index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
     user_id = cb.from_user.id
     
     # Check if task is already running
-    from Main.plugins.userbot.xchatsanomlau import LAUCREATE_TASKS
-    task = LAUCREATE_TASKS.get("laucreate_main")
+    from Main.plugins.userbot.xcreategroup import CREATEGROUP_TASKS
+    task = CREATEGROUP_TASKS.get("creategroup_main")
     if task and task.get("running") and task.get("user_id") == user_id:
-        await render_laucreate_running_ui(cb, task, session_index, page)
+        await render_creategroup_running_ui(cb, task, session_index, page)
         return
 
-    if user_id not in user_laucreate_state or user_laucreate_state[user_id].get("step") != "ui_config":
-        if user_id in user_laucreate_state and user_laucreate_state[user_id].get("prompt_msg_id"):
-            try: await c.delete_messages(cb.message.chat.id, user_laucreate_state[user_id]["prompt_msg_id"])
+    if user_id not in user_creategroup_state or user_creategroup_state[user_id].get("step") != "ui_config":
+        if user_id in user_creategroup_state and user_creategroup_state[user_id].get("prompt_msg_id"):
+            try: await c.delete_messages(cb.message.chat.id, user_creategroup_state[user_id]["prompt_msg_id"])
             except: pass
             
-        user_laucreate_state[user_id] = {
+        user_creategroup_state[user_id] = {
             "step": "ui_config",
             "session_index": session_index,
             "page": page,
-            "config": DEFAULT_LAUCREATE_CONFIG.copy(),
+            "config": DEFAULT_CREATEGROUP_CONFIG.copy(),
             "input_mode": None,
             "ui_msg_id": cb.message.id,
             "prompt_msg_id": None
         }
     else:
-        user_laucreate_state[user_id]["step"] = "ui_config"
-        user_laucreate_state[user_id]["input_mode"] = None
-        if user_laucreate_state[user_id].get("prompt_msg_id"):
-            try: await c.delete_messages(cb.message.chat.id, user_laucreate_state[user_id]["prompt_msg_id"])
+        user_creategroup_state[user_id]["step"] = "ui_config"
+        user_creategroup_state[user_id]["input_mode"] = None
+        if user_creategroup_state[user_id].get("prompt_msg_id"):
+            try: await c.delete_messages(cb.message.chat.id, user_creategroup_state[user_id]["prompt_msg_id"])
             except: pass
-            user_laucreate_state[user_id]["prompt_msg_id"] = None
+            user_creategroup_state[user_id]["prompt_msg_id"] = None
     
-    await render_laucreate_ui(cb, user_laucreate_state[user_id])
+    await render_creategroup_ui(cb, user_creategroup_state[user_id])
 
-async def render_laucreate_ui(cb: Optional[CallbackQuery], state: dict, message: Optional[Message] = None):
+async def render_creategroup_ui(cb: Optional[CallbackQuery], state: dict, message: Optional[Message] = None):
+    """
+    Renders the configuration menu with inline adjustment buttons.
+    Displays current settings including delays, counts, batching, and bot lists.
+    """
     config = state["config"]
     idx = state["session_index"]
     pg = state["page"]
@@ -151,10 +161,10 @@ async def render_laucreate_ui(cb: Optional[CallbackQuery], state: dict, message:
     
     def adj_row(label, key, unit):
         return [
-            InlineKeyboardButton(f"➖", callback_data=f"laucreate_adj_{idx}_{pg}_{key}_sub"),
+            InlineKeyboardButton(f"➖", callback_data=f"creategroup_adj_{idx}_{pg}_{key}_sub"),
             InlineKeyboardButton(f"{label}", callback_data="noop"),
-            InlineKeyboardButton(f"➕", callback_data=f"laucreate_adj_{idx}_{pg}_{key}_add"),
-            InlineKeyboardButton(f"✏️", callback_data=f"laucreate_in_{idx}_{pg}_{key}")
+            InlineKeyboardButton(f"➕", callback_data=f"creategroup_adj_{idx}_{pg}_{key}_add"),
+            InlineKeyboardButton(f"✏️", callback_data=f"creategroup_in_{idx}_{pg}_{key}")
         ]
 
     buttons = [
@@ -165,35 +175,35 @@ async def render_laucreate_ui(cb: Optional[CallbackQuery], state: dict, message:
         adj_row(f"B.Size ({config['batch_size']})", "batch_size", ""),
         [
             InlineKeyboardButton(f"Name: {config['pattern'][:15]}...", callback_data="noop"),
-            InlineKeyboardButton("✏️ Input", callback_data=f"laucreate_in_{idx}_{pg}_pattern")
+            InlineKeyboardButton("✏️ Input", callback_data=f"creategroup_in_{idx}_{pg}_pattern")
         ],
         [
-            InlineKeyboardButton(f"User: {config['username'] or 'None'}", callback_data="noop"),
-            InlineKeyboardButton("✏️ Input", callback_data=f"laucreate_in_{idx}_{pg}_username")
+            InlineKeyboardButton(f"Username: {config['username'] or 'None'}", callback_data="noop"),
+            InlineKeyboardButton("✏️ Input", callback_data=f"creategroup_in_{idx}_{pg}_username")
         ],
         [
             InlineKeyboardButton(f"Desc: {config['description'][:15]}...", callback_data="noop"),
-            InlineKeyboardButton("✏️ Input", callback_data=f"laucreate_in_{idx}_{pg}_description")
+            InlineKeyboardButton("✏️ Input", callback_data=f"creategroup_in_{idx}_{pg}_description")
         ],
         [
-            InlineKeyboardButton(f"Photo: {'👤 Source' if config.get('photo_source') == 'source' else '🖼 Custom'}", callback_data=f"laucreate_toggle_{idx}_{pg}_photo_source"),
+            InlineKeyboardButton(f"Photo: {'👤 Source' if config.get('photo_source') == 'source' else '🖼 Custom'}", callback_data=f"creategroup_toggle_{idx}_{pg}_photo_source"),
             InlineKeyboardButton("📸 Upload Photo" if config.get('photo_source') == 'custom' else "➖", 
-                                 callback_data=f"laucreate_upload_photo_{idx}_{pg}" if config.get('photo_source') == 'custom' else "noop")
+                                 callback_data=f"creategroup_upload_photo_{idx}_{pg}" if config.get('photo_source') == 'custom' else "noop")
         ],
         [
-            InlineKeyboardButton(f"Anon Admin: {'✅ Yes' if config['anon_mode'] else '❌ No'}", callback_data=f"laucreate_toggle_{idx}_{pg}_anon_mode"),
-            InlineKeyboardButton(f"Copy Msg: {'✅ Yes' if config['copy_messages'] else '❌ No'}", callback_data=f"laucreate_toggle_{idx}_{pg}_copy_messages")
+            InlineKeyboardButton(f"Anon Admin: {'✅ Yes' if config['anon_mode'] else '❌ No'}", callback_data=f"creategroup_toggle_{idx}_{pg}_anon_mode"),
+            InlineKeyboardButton(f"Copy Msg: {'✅ Yes' if config['copy_messages'] else '❌ No'}", callback_data=f"creategroup_toggle_{idx}_{pg}_copy_messages")
         ],
         [
-            InlineKeyboardButton(f"Invite Bots: {'✅ Yes' if config['invite_bots'] else '❌ No'}", callback_data=f"laucreate_toggle_{idx}_{pg}_invite_bots")
+            InlineKeyboardButton(f"Invite Bots: {'✅ Yes' if config['invite_bots'] else '❌ No'}", callback_data=f"creategroup_toggle_{idx}_{pg}_invite_bots")
         ],
         [
             InlineKeyboardButton(f"Bots: {len(config['bots'].split() if config['bots'] else [])} usernames", callback_data="noop"),
-            InlineKeyboardButton("✏️ List", callback_data=f"laucreate_in_{idx}_{pg}_bots")
+            InlineKeyboardButton("✏️ Bot List", callback_data=f"creategroup_in_{idx}_{pg}_bots")
         ],
         [
-            InlineKeyboardButton("✅ RUN TASK", callback_data=f"laucreate_run_{idx}_{pg}"),
-            InlineKeyboardButton("🔙 Back", callback_data=f"laucreate_menu_{idx}_{pg}")
+            InlineKeyboardButton("✅ RUN TASK", callback_data=f"creategroup_run_{idx}_{pg}"),
+            InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_menu_{idx}_{pg}")
         ]
     ]
     
@@ -202,16 +212,16 @@ async def render_laucreate_ui(cb: Optional[CallbackQuery], state: dict, message:
         elif message: await message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
     except Exception: pass
 
-@Altruix.bot.on_callback_query(filters.regex(r"^laucreate_adj_(\d+)_(\d+)_(\w+)_(\w+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^creategroup_adj_(\d+)_(\d+)_(\w+)_(\w+)$"))
 @iuser_check
 @log_errors
-async def laucreate_adjust_handler(c: Client, cb: CallbackQuery):
+async def creategroup_adjust_handler(c: Client, cb: CallbackQuery):
     idx, pg, key, action = int(cb.matches[0].group(1)), int(cb.matches[0].group(2)), cb.matches[0].group(3), cb.matches[0].group(4)
     user_id = cb.from_user.id
-    if user_id not in user_laucreate_state:
+    if user_id not in user_creategroup_state:
          await cb.answer("Session expired", show_alert=True)
          return
-    conf = user_laucreate_state[user_id]["config"]
+    conf = user_creategroup_state[user_id]["config"]
     steps = {"delay": 1, "count": 1, "batch_delay": 1, "batch_size": 1, "action_delay": 1}
     limits = {"delay": (1, 300), "count": (1, 1000), "batch_delay": (0, 300), "batch_size": (1, 100), "action_delay": (0, 300)}
     val = conf.get(key, 0)
@@ -219,65 +229,65 @@ async def laucreate_adjust_handler(c: Client, cb: CallbackQuery):
     val = val + step if action == "add" else val - step
     min_v, max_v = limits.get(key, (0, 100))
     conf[key] = max(min_v, min(val, max_v))
-    await render_laucreate_ui(cb, user_laucreate_state[user_id])
+    await render_creategroup_ui(cb, user_creategroup_state[user_id])
     await cb.answer()
 
-@Altruix.bot.on_callback_query(filters.regex(r"^laucreate_in_(\d+)_(\d+)_(\w+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^creategroup_in_(\d+)_(\d+)_(\w+)$"))
 @iuser_check
 @log_errors
-async def laucreate_input_request(c: Client, cb: CallbackQuery):
+async def creategroup_input_request(c: Client, cb: CallbackQuery):
     idx, pg, field = int(cb.matches[0].group(1)), int(cb.matches[0].group(2)), cb.matches[0].group(3)
     user_id = cb.from_user.id
-    if user_id not in user_laucreate_state: return
-    user_laucreate_state[user_id].update({"input_mode": field, "step": "awaiting_input", "ui_msg_id": cb.message.id})
+    if user_id not in user_creategroup_state: return
+    user_creategroup_state[user_id].update({"input_mode": field, "step": "awaiting_input", "ui_msg_id": cb.message.id})
     field_name = {"pattern": "Group Name Pattern", "username": "Username Prefix", "bots": "Bot Usernames List", "description": "Group Description"}.get(field, field.replace("_", " ").title())
-    await cb.message.edit(f"<b>📝 Awaiting Input: {field_name}...</b>\n\nSilakan lihat instruksi pada pesan di bawah.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancel", callback_data=f"laucreate_ui_{idx}_{pg}")]]))
-    prompt_text = f"<b>✏️ Input {field_name}</b>\n\n{'Current Bots: ' + user_laucreate_state[user_id]['config']['bots'] if field == 'bots' else ''}\nSilakan kirim text yang diinginkan.\nKetik /cancel untuk membatalkan."
+    await cb.message.edit(f"<b>📝 Awaiting Input: {field_name}...</b>\n\nSilakan lihat instruksi pada pesan di bawah.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancel", callback_data=f"creategroup_ui_{idx}_{pg}")]]))
+    prompt_text = f"<b>✏️ Input {field_name}</b>\n\n{'Current Bots: ' + user_creategroup_state[user_id]['config']['bots'] if field == 'bots' else ''}\n\nSilakan kirim bot yang diinginkan untuk di add ke group.\nKetik /cancel untuk membatalkan."
     prompt_msg = await c.send_message(cb.message.chat.id, prompt_text, parse_mode=ParseMode.HTML)
-    user_laucreate_state[user_id]["prompt_msg_id"] = prompt_msg.id
+    user_creategroup_state[user_id]["prompt_msg_id"] = prompt_msg.id
 
-@Altruix.bot.on_callback_query(filters.regex(r"^laucreate_toggle_(\d+)_(\d+)_(\w+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^creategroup_toggle_(\d+)_(\d+)_(\w+)$"))
 @iuser_check
 @log_errors
-async def laucreate_toggle_handler(c: Client, cb: CallbackQuery):
+async def creategroup_toggle_handler(c: Client, cb: CallbackQuery):
     idx, pg, key = int(cb.matches[0].group(1)), int(cb.matches[0].group(2)), cb.matches[0].group(3)
     user_id = cb.from_user.id
-    if user_id in user_laucreate_state:
-        if user_laucreate_state[user_id].get("prompt_msg_id"):
-            try: await c.delete_messages(cb.message.chat.id, user_laucreate_state[user_id]["prompt_msg_id"])
+    if user_id in user_creategroup_state:
+        if user_creategroup_state[user_id].get("prompt_msg_id"):
+            try: await c.delete_messages(cb.message.chat.id, user_creategroup_state[user_id]["prompt_msg_id"])
             except: pass
-            user_laucreate_state[user_id]["prompt_msg_id"] = None
-        conf = user_laucreate_state[user_id]["config"]
+            user_creategroup_state[user_id]["prompt_msg_id"] = None
+        conf = user_creategroup_state[user_id]["config"]
         if key == "photo_source": conf["photo_source"] = "custom" if conf.get("photo_source") == "source" else "source"
         elif key in conf: conf[key] = not conf[key]
-        await render_laucreate_ui(cb, user_laucreate_state[user_id])
+        await render_creategroup_ui(cb, user_creategroup_state[user_id])
     await cb.answer()
 
-@Altruix.bot.on_callback_query(filters.regex(r"^laucreate_upload_photo_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^creategroup_upload_photo_(\d+)_(\d+)$"))
 @iuser_check
 @log_errors
-async def laucreate_upload_photo_handler(c: Client, cb: CallbackQuery):
+async def creategroup_upload_photo_handler(c: Client, cb: CallbackQuery):
     idx, pg, user_id = int(cb.matches[0].group(1)), int(cb.matches[0].group(2)), cb.from_user.id
-    if user_id not in user_laucreate_state:
+    if user_id not in user_creategroup_state:
         await cb.answer("State expired", show_alert=True)
         return
-    user_laucreate_state[user_id].update({"step": "awaiting_photo", "input_mode": "custom_photo", "ui_msg_id": cb.message.id})
-    await cb.message.edit("<b>📸 Awaiting Photo Upload...</b>\n\nSilakan lihat instruksi pada pesan di bawah.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancel", callback_data=f"laucreate_ui_{idx}_{pg}")]]))
+    user_creategroup_state[user_id].update({"step": "awaiting_photo", "input_mode": "custom_photo", "ui_msg_id": cb.message.id})
+    await cb.message.edit("<b>📸 Awaiting Photo Upload...</b>\n\nSilakan lihat instruksi pada pesan di bawah.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancel", callback_data=f"creategroup_ui_{idx}_{pg}")]]))
     prompt_msg = await c.send_message(cb.message.chat.id, "<b>📸 Upload Custom Photo</b>\n\nSilakan kirim atau reply pesan ini dengan foto yang ingin dijadikan profil grup.\nKetik /cancel untuk membatalkan.", parse_mode=ParseMode.HTML)
-    user_laucreate_state[user_id]["prompt_msg_id"] = prompt_msg.id
+    user_creategroup_state[user_id]["prompt_msg_id"] = prompt_msg.id
 
-@Altruix.bot.on_callback_query(filters.regex(r"^laucreate_run_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^creategroup_run_(\d+)_(\d+)$"))
 @iuser_check
 @log_errors
-async def laucreate_run_handler(c: Client, cb: CallbackQuery):
+async def creategroup_run_handler(c: Client, cb: CallbackQuery):
     idx, pg, user_id = int(cb.matches[0].group(1)), int(cb.matches[0].group(2)), cb.from_user.id
-    if user_id not in user_laucreate_state or "config" not in user_laucreate_state[user_id]:
+    if user_id not in user_creategroup_state or "config" not in user_creategroup_state[user_id]:
         await cb.answer("Error: Invalid state", show_alert=True)
         return
-    conf = user_laucreate_state[user_id]["config"]
+    conf = user_creategroup_state[user_id]["config"]
     photo_text = ("👤 Source Account" if conf.get('photo_source') == 'source' else "🖼 Custom Photo") + (" ✅" if conf.get('photo_source') == 'custom' and conf.get('custom_photo_id') else "")
     text = (
-        "<b>⚠️ Konfirmasi Task Laucreate</b>\n\n"
+        "<b>⚠️ Konfirmasi Task CreateGroup</b>\n\n"
         f"• <b>Pattern:</b> {html.escape(conf['pattern'])}\n"
         f"• <b>Jumlah:</b> {conf['count']} grup\n"
         f"• <b>Anon Admin:</b> {'Yes' if conf['anon_mode'] else 'No'}\n"
@@ -286,30 +296,30 @@ async def laucreate_run_handler(c: Client, cb: CallbackQuery):
         f"• <b>Invite Bots:</b> {'Yes' if conf['invite_bots'] else 'No'} ({len(conf['bots'].split() if conf['bots'] else [])})\n\n"
         "Apakah Anda yakin ingin menjalankan task ini?"
     )
-    buttons = [[InlineKeyboardButton("❌ Batal", callback_data=f"laucreate_ui_{idx}_{pg}"), InlineKeyboardButton("✅ Ya, Jalankan", callback_data=f"laucreate_confirm_task_{idx}")]]
+    buttons = [[InlineKeyboardButton("❌ Batal", callback_data=f"creategroup_ui_{idx}_{pg}"), InlineKeyboardButton("✅ Ya, Jalankan", callback_data=f"creategroup_confirm_task_{idx}")]]
     await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
-@Altruix.bot.on_callback_query(filters.regex(r"^laucreate_confirm_task_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^creategroup_confirm_task_(\d+)$"))
 @iuser_check
 @log_errors
-async def laucreate_confirm_task_handler(c: Client, cb: CallbackQuery):
+async def creategroup_confirm_task_handler(c: Client, cb: CallbackQuery):
     idx, user_id = int(cb.matches[0].group(1)), cb.from_user.id
-    if user_id not in user_laucreate_state or "config" not in user_laucreate_state[user_id]:
+    if user_id not in user_creategroup_state or "config" not in user_creategroup_state[user_id]:
         await cb.answer("Error: Invalid state", show_alert=True)
         return
-    conf = user_laucreate_state[user_id]["config"]
-    del user_laucreate_state[user_id]
-    await cb.message.edit("🚀 Memulai Laucreate Task...")
+    conf = user_creategroup_state[user_id]["config"]
+    del user_creategroup_state[user_id]
+    await cb.message.edit("🚀 Memulai CreateGroup Task...")
     try:
-        from Main.plugins.userbot.xchatsanomlau import laucreate_loop
+        from Main.plugins.userbot.xcreategroup import creategroup_loop
         control_msg = await cb.message.reply("🔄 Initializing task...")
         executor = Altruix.clients[idx]
         bots = conf["bots"].split() if conf["bots"] else []
-        asyncio.create_task(laucreate_loop(user_client=executor, bot_client=Altruix.bot, initial_message=cb.message, delay=conf["delay"], count=conf["count"], extra_delay_minutes=conf["batch_delay"], batch_size=conf["batch_size"], group_type="a", name_pattern=conf["pattern"], username_prefix=conf["username"], bot_identifiers=bots, control_message=control_msg, action_delay=conf.get("action_delay", 3.0), invite_bots=conf.get("invite_bots", False), anon_mode=conf.get("anon_mode", True), copy_messages=conf.get("copy_messages", True), description=conf.get("description", "Powered by @AlphaXProject"), photo_source=conf.get("photo_source", "source"), custom_photo_id=conf.get("custom_photo_id"), user_id=user_id))
+        asyncio.create_task(creategroup_loop(user_client=executor, bot_client=Altruix.bot, initial_message=cb.message, delay=conf["delay"], count=conf["count"], extra_delay_minutes=conf["batch_delay"], batch_size=conf["batch_size"], group_type="a", name_pattern=conf["pattern"], username_prefix=conf["username"], bot_identifiers=bots, control_message=control_msg, action_delay=conf.get("action_delay", 3.0), invite_bots=conf.get("invite_bots", False), anon_mode=conf.get("anon_mode", True), copy_messages=conf.get("copy_messages", True), description=conf.get("description", "Powered by @AlphaXProject"), photo_source=conf.get("photo_source", "source"), custom_photo_id=conf.get("custom_photo_id"), user_id=user_id))
         await cb.answer("Task started!", show_alert=True)
     except Exception as e: await cb.message.reply(f"❌ Error: {e}")
 
-async def render_laucreate_running_ui(cb: CallbackQuery, task: dict, idx: int, pg: int):
+async def render_creategroup_running_ui(cb: CallbackQuery, task: dict, idx: int, pg: int):
     status = "▶️ Running"
     if task.get("paused"): status = "⏸️ Paused"
     
@@ -318,7 +328,7 @@ async def render_laucreate_running_ui(cb: CallbackQuery, task: dict, idx: int, p
     total_count = task["params"]["count"]
     
     # Helper for current group name
-    from Main.plugins.userbot.xchatsanomlau import generate_group_name
+    from Main.plugins.userbot.xcreategroup import generate_group_name
     current_name = generate_group_name(task["params"]["name_pattern"], task["current_index"])
     
     text = (
@@ -331,56 +341,54 @@ async def render_laucreate_running_ui(cb: CallbackQuery, task: dict, idx: int, p
     
     buttons = [
         [
-            InlineKeyboardButton("🛑 Stop", callback_data=f"laucreate_control_stop_{idx}_{pg}"),
-            InlineKeyboardButton("⏸️ Pause", callback_data=f"laucreate_control_pause_{idx}_{pg}"),
-            InlineKeyboardButton("▶️ Resume", callback_data=f"laucreate_control_resume_{idx}_{pg}")
+            InlineKeyboardButton("🛑 Stop", callback_data=f"creategroup_control_stop_{idx}_{pg}"),
+            InlineKeyboardButton("⏸️ Pause", callback_data=f"creategroup_control_pause_{idx}_{pg}"),
+            InlineKeyboardButton("▶️ Resume", callback_data=f"creategroup_control_resume_{idx}_{pg}")
         ],
         [
-            InlineKeyboardButton("📋 Status Detail", callback_data=f"laucreate_status_detail_{idx}_{pg}"),
-            InlineKeyboardButton("📑 List Group", callback_data=f"laucreate_list_group_{idx}_{pg}")
+            InlineKeyboardButton("📋 Status Detail", callback_data=f"creategroup_status_detail_{idx}_{pg}"),
+            InlineKeyboardButton("📑 List Group", callback_data=f"creategroup_list_group_{idx}_{pg}")
         ],
         [
             InlineKeyboardButton("🔄 Recurring", callback_data="noop"), # Placeholder
             InlineKeyboardButton("✏️ Edit Terakhir", callback_data="noop") # Placeholder
         ],
         [
-            InlineKeyboardButton("🔙 Back", callback_data=f"laucreate_menu_{idx}_{pg}")
+            InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_menu_{idx}_{pg}")
         ]
     ]
     
     await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
-@Altruix.bot.on_callback_query(filters.regex(r"^laucreate_control_(stop|pause|resume)_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^creategroup_control_(stop|pause|resume)_(\d+)_(\d+)$"))
 @iuser_check
 @log_errors
-async def laucreate_control_handler(c: Client, cb: CallbackQuery):
+async def creategroup_control_handler(c: Client, cb: CallbackQuery):
     action, idx, pg = cb.matches[0].group(1), int(cb.matches[0].group(2)), int(cb.matches[0].group(3))
-    from Main.plugins.userbot.xchatsanomlau import LAUCREATE_TASKS
-    task = LAUCREATE_TASKS.get("laucreate_main")
+    from Main.plugins.userbot.xcreategroup import CREATEGROUP_TASKS
+    task = CREATEGROUP_TASKS.get("creategroup_main")
     
+    # Redirect to main menu if task finished
     if not task or not task.get("running"):
         await cb.answer("Task not running", show_alert=True)
-        # Redirect to main menu if task finished
-        await laucreate_ui_handler(c, cb) 
+        await creategroup_ui_handler(c, cb) 
         return
 
     if action == "stop":
-        # We need to signal the task to stop. The task checks LAUCREATE_TASKS entry.
-        # But we remove it from there to signal stop? Or set running=False?
-        # xchatsanomlau checks: if not LAUCREATE_TASKS.get(task_id, {}).get("running", True):
+        # We need to signal the task to stop. The task checks CREATEGROUP_TASKS entry.
         task["running"] = False
         # Also wake up if paused
         if task.get("pause_event"): task["pause_event"].set()
         await cb.answer("Stopping task...")
         await asyncio.sleep(1) # Give it a moment
-        await laucreate_ui_handler(c, cb)
+        await creategroup_ui_handler(c, cb)
         
     elif action == "pause":
         if not task.get("paused"):
             task["paused"] = True
             if task.get("pause_event"): task["pause_event"].clear()
             await cb.answer("Paused!")
-            await render_laucreate_running_ui(cb, task, idx, pg)
+            await render_creategroup_running_ui(cb, task, idx, pg)
         else: await cb.answer("Already paused")
             
     elif action == "resume":
@@ -388,16 +396,16 @@ async def laucreate_control_handler(c: Client, cb: CallbackQuery):
             task["paused"] = False
             if task.get("pause_event"): task["pause_event"].set()
             await cb.answer("Resumed!")
-            await render_laucreate_running_ui(cb, task, idx, pg)
+            await render_creategroup_running_ui(cb, task, idx, pg)
         else: await cb.answer("Already running")
 
-@Altruix.bot.on_callback_query(filters.regex(r"^laucreate_status_detail_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^creategroup_status_detail_(\d+)_(\d+)$"))
 @iuser_check
 @log_errors
-async def laucreate_status_detail_handler(c: Client, cb: CallbackQuery):
+async def creategroup_status_detail_handler(c: Client, cb: CallbackQuery):
     idx, pg = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
-    from Main.plugins.userbot.xchatsanomlau import LAUCREATE_TASKS
-    task = LAUCREATE_TASKS.get("laucreate_main")
+    from Main.plugins.userbot.xcreategroup import CREATEGROUP_TASKS
+    task = CREATEGROUP_TASKS.get("creategroup_main")
     
     if not task: return await cb.answer("No task running", show_alert=True)
     
@@ -412,13 +420,13 @@ async def laucreate_status_detail_handler(c: Client, cb: CallbackQuery):
         f"• <b>Username:</b> {p['username_prefix'] or 'None'}\n"
     )
     await cb.answer("Full details shown", show_alert=True)
-    buttons = [[InlineKeyboardButton("🔙 Back", callback_data=f"laucreate_ui_{idx}_{pg}")]]
+    buttons = [[InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_ui_{idx}_{pg}")]]
     await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
-@Altruix.bot.on_callback_query(filters.regex(r"^laucreate_list_group_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^creategroup_list_group_(\d+)_(\d+)$"))
 @iuser_check
 @log_errors
-async def laucreate_list_group_handler(c: Client, cb: CallbackQuery):
+async def creategroup_list_group_handler(c: Client, cb: CallbackQuery):
     idx, pg = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
     from Main.plugins.userbot.xchatsanomlau import LAUCREATE_TASKS
     task = LAUCREATE_TASKS.get("laucreate_main")
@@ -436,12 +444,12 @@ async def laucreate_list_group_handler(c: Client, cb: CallbackQuery):
     
     if len(groups) > 10: text += f"\n...and {len(groups)-10} more."
     
-    buttons = [[InlineKeyboardButton("🔙 Back", callback_data=f"laucreate_ui_{idx}_{pg}")]]
+    buttons = [[InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_ui_{idx}_{pg}")]]
     await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
-async def process_laucreate_input(c: Client, m: Message, text: str = None):
+async def process_creategroup_input(c: Client, m: Message, text: str = None):
     user_id = m.from_user.id
-    state = user_laucreate_state.get(user_id)
+    state = user_creategroup_state.get(user_id)
     if not state: return
     if state["step"] == "awaiting_photo":
         if state.get("prompt_msg_id"):
@@ -454,19 +462,20 @@ async def process_laucreate_input(c: Client, m: Message, text: str = None):
             if state.get("ui_msg_id"):
                 try: 
                     target_msg = await c.get_messages(m.chat.id, state["ui_msg_id"])
-                    await render_laucreate_ui(None, state, message=target_msg)
-                except: await render_laucreate_ui(None, state)
+                    await render_creategroup_ui(None, state, message=target_msg)
+                except: await render_creategroup_ui(None, state)
             return
         elif text and text.lower() == "/cancel":
             state["step"], state["input_mode"] = "ui_config", None
             if state.get("ui_msg_id"):
                 try:
                     target_msg = await c.get_messages(m.chat.id, state["ui_msg_id"])
-                    await render_laucreate_ui(None, state, message=target_msg)
-                except: await render_laucreate_ui(None, state)
+                    await render_creategroup_ui(None, state, message=target_msg)
+                except: await render_creategroup_ui(None, state)
             return
         else: return
-    if state["step"] == "input_manual":
+    elif state["step"] == "input_manual":
+        # Process manual command-like input string
         try:
             args = text.split()
             if len(args) < 6:
@@ -485,7 +494,7 @@ async def process_laucreate_input(c: Client, m: Message, text: str = None):
                     else: config["bots"] = ex
             else: config["pattern"] = full_args.strip('"\'')
             state["config"], state["step"] = config, "confirm_manual"
-            buttons = [[InlineKeyboardButton("✅ Run", f"laucreate_run_{state['session_index']}_{state['page']}")]]
+            buttons = [[InlineKeyboardButton("✅ Run", f"creategroup_run_{state['session_index']}_{state['page']}")]]
             await m.reply(f"Confirm Manual Run?\n{config}", reply_markup=InlineKeyboardMarkup(buttons))
         except Exception as e: await m.reply(f"Error: {e}")
     elif state["step"] == "awaiting_input":
@@ -513,6 +522,6 @@ async def process_laucreate_input(c: Client, m: Message, text: str = None):
         if state.get("ui_msg_id"):
             try:
                 target_msg = await c.get_messages(m.chat.id, state["ui_msg_id"])
-                await render_laucreate_ui(None, state, message=target_msg)
+                await render_creategroup_ui(None, state, message=target_msg)
             except: pass
         return

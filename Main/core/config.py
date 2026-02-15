@@ -80,6 +80,7 @@ class BaseConfig(object):
     LOG_CHAT_ID = digit_wrap(getenv("LOG_CHAT_ID", None))
     CACHE_LOG_ENABLED = getenv("CACHE_LOG_ENABLED", "True").lower() == "true"
     UB_LANG = getenv("UB_LANG")
+    REPLY_ERR_NOTIF_GLOBAL = getenv("REPLY_ERR_NOTIF_GLOBAL", "on")
     SUDO_CMD_HANDLER = getenv("SUDO_CMD_HANDLER") or "!"
     CMD_HANDLER = getenv("CMD_HANDLER") or "."
     try:

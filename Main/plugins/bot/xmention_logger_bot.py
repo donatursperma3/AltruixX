@@ -14,6 +14,7 @@ import html
 import logging
 import json
 import asyncio
+import time
 from pathlib import Path
 from datetime import datetime
 import aiofiles
@@ -25,37 +26,61 @@ __plugin_name__ = plugin_name if plugin_name else "xmention_logger_bot"
 logger = logging.getLogger("altruix.mention_logger_bot")
 logger.setLevel(logging.INFO)
 
+
 # Global Constants
 PLUGIN_NAME = __plugin_name__
-PLUGIN_VERSION = "1.0.54"
-STORAGE_FILE = Path(get_db_path("mention_logger_bot_settings.json"))
+PLUGIN_VERSION = "1.0.55"
+# ✅ FIX: Match the file name used in logger_handlers.py UI (plural 'mentions')
+STORAGE_FILE = Path(get_db_path("mentions_settings.json"))
 
-# Settings Cache - ✅ Default: Disabled/Off to save resources
+# Settings Cache - ✅ Default: Disabled/Off
 MENTION_LOGGER_BOT_DATA = {"enabled": False}
-REPLY_ACCESS_MODE = "sudo"  # Default: sudo users + owner
+REPLY_ACCESS_MODE = "sudo"
+LAST_LOAD_TIME = 0
 
 async def load_settings():
-    global MENTION_LOGGER_BOT_DATA, REPLY_ACCESS_MODE
+    global MENTION_LOGGER_BOT_DATA, REPLY_ACCESS_MODE, LAST_LOAD_TIME
     try:
         if STORAGE_FILE.exists():
+            # Optimization: Only load if file modified
+            current_mtime = STORAGE_FILE.stat().st_mtime
+            if current_mtime <= LAST_LOAD_TIME and MENTION_LOGGER_BOT_DATA:
+                return
+                
             async with aiofiles.open(STORAGE_FILE, 'r', encoding='utf-8') as f:
                 content = await f.read()
                 if content.strip():
                     data = json.loads(content)
+                    # UI writes enabled status in 'settings' -> 'enabled'
                     MENTION_LOGGER_BOT_DATA = data.get("settings", {"enabled": False})
+                    # Also check root level for some legacy syncs if needed
+                    if "enabled" in data and "enabled" not in MENTION_LOGGER_BOT_DATA:
+                        MENTION_LOGGER_BOT_DATA["enabled"] = data["enabled"]
+                    
                     REPLY_ACCESS_MODE = data.get("reply_access_mode", "sudo")
+                    LAST_LOAD_TIME = current_mtime
+        else:
+            MENTION_LOGGER_BOT_DATA = {"enabled": False}
     except Exception as e:
         logger.error(f"Failed to load Mention Logger Bot settings: {e}")
 
 async def save_settings():
+    # Load current file to preserve other keys
+    data = {}
+    if STORAGE_FILE.exists():
+        try:
+            with open(STORAGE_FILE, "r") as f: data = json.load(f)
+        except: pass
+        
     try:
-        data = {
-            "settings": MENTION_LOGGER_BOT_DATA,
-            "reply_access_mode": REPLY_ACCESS_MODE,
-            "version": PLUGIN_VERSION
-        }
+        data["settings"] = MENTION_LOGGER_BOT_DATA
+        data["reply_access_mode"] = REPLY_ACCESS_MODE
+        data["version"] = PLUGIN_VERSION
         async with aiofiles.open(STORAGE_FILE, 'w', encoding='utf-8') as f:
-            await f.write(json.dumps(data, indent=2))
+            await f.write(json.dumps(data, indent=2, ensure_ascii=False))
+        
+        global LAST_LOAD_TIME
+        LAST_LOAD_TIME = time.time() # Update cache state
     except Exception as e:
         logger.error(f"Failed to save Mention Logger Bot settings: {e}")
 
@@ -68,9 +93,15 @@ asyncio.create_task(load_settings())
 async def mention_logger_bot_handler(c: Client, m: RawMessage):
     """Log when bot is mentioned in groups."""
     try:
+        # ✅ Optimized: Only loads if mtime changed
         await load_settings()
         
-        if not MENTION_LOGGER_BOT_DATA.get("enabled", False):
+        # Check enabled status safely
+        is_bot_enabled = False
+        if isinstance(MENTION_LOGGER_BOT_DATA, dict):
+            is_bot_enabled = MENTION_LOGGER_BOT_DATA.get("enabled", False)
+        
+        if not is_bot_enabled:
             return
         
         if not Altruix.log_chat:

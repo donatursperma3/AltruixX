@@ -252,45 +252,61 @@ async def process_misc_profile_input(c: Client, m: Message, state: dict):
 @iuser_check
 @log_errors
 async def reply_manager_menu_handler(c: Client, cb: CallbackQuery):
-    """Global control menu for Reply Manager."""
+    """
+    Global control menu for Reply Manager (Bot Assistant progressive replies).
+    Allows toggling the master status, auto-reply, and error notifications.
+    """
     await cb.answer()
     
-    # Status
+    # 💾 Master Status (Sync from DB/Env)
     current = await Altruix.config.get_env("REPLY_MANAGER_GLOBAL") or "off"
     status_emoji = "✅ ON" if current == "on" else "❌ OFF"
     
-    # Auto Reply Status
+    # 🤖 Auto Reply Status
     auto_reply = await Altruix.config.get_env("AUTO_REPLY_GLOBAL") or "off"
     auto_reply_emoji = "✅ ON" if auto_reply == "on" else "❌ OFF"
+
+    # ⚠️ Error Notif Status (Silent non-matched replies)
+    err_notif = await Altruix.config.get_env("REPLY_ERR_NOTIF_GLOBAL") or "on"
+    err_notif_emoji = "✅ ON" if err_notif == "on" else "❌ OFF"
     
     buttons = [
-        [InlineKeyboardButton(f"Toggle Reply Manager: {status_emoji}", "toggle_reply_manager_global")],
-        [InlineKeyboardButton(f"Toggle Auto Reply: {auto_reply_emoji}", "toggle_auto_reply_global")],
+        [InlineKeyboardButton(f"Master Status: {status_emoji}", "toggle_reply_manager_global")],
+        [InlineKeyboardButton(f"Auto Reply: {auto_reply_emoji}", "toggle_auto_reply_global")],
+        [InlineKeyboardButton(f"Error Notif: {err_notif_emoji}", "toggle_reply_err_notif_global")],
         [InlineKeyboardButton("🔙 Back", "bot_controls_menu")]
     ]
     
+    from .utils import edit_cb
     await edit_cb(cb, 
         f"<b>💬 Global Reply Manager Control</b>\n\n"
         f"• 🔌 <b>Master Status:</b> {status_emoji}\n"
-        f"• 🤖 <b>Auto Reply:</b> {auto_reply_emoji}\n\n"
-        f"<i>Aksi ini akan mempengaruhi semua sesi yang menggunakan mode Global.</i>",
+        f"• 🤖 <b>Auto Reply:</b> {auto_reply_emoji}\n"
+        f"• ⚠️ <b>Error Notif:</b> {err_notif_emoji}\n\n"
+        f"<i>Aksi ini akan mempengaruhi semua sesi yang menggunakan mode Global. Toggle Error Notif berguna untuk mematikan peringatan 'Sesi Balasan Tidak Ditemukan'.</i>",
         reply_markup=InlineKeyboardMarkup(buttons),
         parse_mode=ParseMode.HTML
     )
 
-@Altruix.bot.on_callback_query(filters.regex(r"^toggle_(reply_manager|auto_reply)_global$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^toggle_(reply_manager|auto_reply|reply_err_notif)_global$"))
 @iuser_check
 @log_errors
 async def toggle_reply_manager_global_handler(c: Client, cb: CallbackQuery):
-    """Toggle global status for Reply Manager or Auto Reply."""
-    target = cb.matches[0].group(1).upper()
-    key = f"{target}_GLOBAL"
+    """
+    Toggle global status for Reply Manager components.
+    Syncs the new state to the centralized database and Altruix config object.
+    """
+    comp = cb.matches[0].group(1).upper()
+    key = f"{comp}_GLOBAL"
     
-    current = await Altruix.config.get_env(key) or "off"
+    # Special case for default 'on' vs 'off'
+    default_val = "on" if comp == "REPLY_ERR_NOTIF" else "off"
+    current = await Altruix.config.get_env(key) or default_val
     new_val = "off" if current == "on" else "on"
     
     await Altruix.config.sync_env_to_db(key, new_val, upsert=True)
     setattr(Altruix.config, key, new_val)
     
-    await cb.answer(f"Global {target.replace('_', ' ')}: {new_val.upper()}")
+    await cb.answer(f"Global {comp.replace('_', ' ')}: {new_val.upper()}")
     await reply_manager_menu_handler(c, cb)
+
