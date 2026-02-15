@@ -136,6 +136,17 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
     u_prefix = await Altruix.config.get_env(u_key) or "."
     s_prefix = await Altruix.config.get_env(s_key) or ","
 
+    # ✅ Sudo Enablement Status for Indicator
+    sudo_apply_type = await Altruix.config.get_env("SUDO_APPLY_TYPE") or "global"
+    if sudo_apply_type == "global":
+        sudo_enabled_raw = await Altruix.config.get_env("SUDO_ENABLED_GLOBAL")
+        sudo_enabled = (sudo_enabled_raw != "false") if sudo_enabled_raw else True
+    else:
+        sudo_enabled_raw = await Altruix.config.get_env(f"SUDO_ENABLED_{me.id}")
+        sudo_enabled = (sudo_enabled_raw != "false") if sudo_enabled_raw else True
+    
+    sudo_status_icon = "✅ ON" if sudo_enabled else "❌ OFF"
+
     # Total Active Bots (Main bot + all custom bots)
     total_active_bots = 1 # Main Bot Assistant
     if hasattr(Altruix, 'bot_manager'):
@@ -213,7 +224,8 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
         f"<b>Premium:</b> {'✅ YES' if me.is_premium else '❌ NO'}\n"
         f"<b>Bio:</b> {html.escape(bio)}\n"
         f"<b>Status:</b> {status_emoji} {status_icon}\n"
-        f"<b>Prefix:</b> Userbot ( <code>{u_prefix}</code> ) | Sudo ( <code>{s_prefix}</code> )\n\n"
+        f"<b>Prefix:</b> Userbot ( <code>{u_prefix}</code> ) | Sudo ( <code>{s_prefix}</code> )\n"
+        f"<b>👑 Sudo Status:</b> {sudo_status_icon}\n\n"
         f"<b>📋 Logger Status:</b>\n"
         f"• <b>PM Logger:</b> {pm_logger_status}\n"
         f"• <b>Mention Logger:</b> {mention_logger_status}\n\n"
@@ -319,7 +331,7 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
 # ⌨️ CENTRAL MESSAGE HANDLER FOR INPUTS
 # ============================================================================
 
-@Altruix.bot.on_message(filters.private & filters.user(Altruix.auth_users) & ~filters.command(["start", "settings", "help"]))
+@Altruix.bot.on_message(filters.private & Altruix.is_sudo_filter & ~filters.command(["start", "settings", "help"]))
 @iuser_check
 @log_errors
 async def sessions_info_msg_handler(c: Client, m: Message):

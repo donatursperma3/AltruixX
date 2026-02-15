@@ -99,14 +99,15 @@ def iuser_check(func):
         # type: all / sudo / non_sudo / off
         log_type = (os.getenv("CALLBACK_LOGGER_TYPE") or "all").lower()
         
-        # ✅ FIXED: Check authorization against owner, sudo users, AND all active userbot sessions
-        # This allows inline queries from userbot commands to work properly
-        is_sudo = user_id in Altruix.auth_users or user_id == Altruix.config.OWNER_ID
+        # ✅ FIXED: Check authorization using centralized helper
+        # This handles dynamic sudo users from database, static list, and per-account settings
+        c = args[0] if args and isinstance(args[0], Client) else None
+        is_sudo = await Altruix.is_sudo(user_id, client=c)
         
         # ✅ Also authorize all active userbot session IDs for inline queries
         # This ensures .ping, .help, etc. can use inline bot results
         if not is_sudo and isinstance(update, InlineQuery):
-            active_session_ids = [c.me.id for c in Altruix.clients if hasattr(c, 'me') and c.me]
+            active_session_ids = [client.me.id for client in Altruix.clients if hasattr(client, 'me') and client.me]
             is_sudo = user_id in active_session_ids
         
         should_log = False

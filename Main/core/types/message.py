@@ -434,7 +434,12 @@ class Message:
                 return await self.edit_msg(text_, **kwargs)
             if not self.from_user or not self.from_user.id:
                 return await self.edit_msg(text_, **kwargs)
-            if int(self.from_user.id) in sudo_users:
+            # ✅ REFACTOR: Use centralized is_sudo helper for authorized sender check.
+            # This ensures users added via UI (persisted in DB) are recognized correctly.
+            # We use the optimized cache to avoid DB lookups on every message.
+            is_authorized = await Altruix.is_sudo(int(self.from_user.id), client=self._client)
+            
+            if is_authorized:
                 # ✅ FIX: Always reply to the command message (self) for sudo users,
                 # even if the command itself was a reply to another message.
                 return await self.reply_msg(text_, **kwargs)

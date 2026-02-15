@@ -181,7 +181,7 @@ async def execute_export_all_sessions(c: Client, m: Message):
     user_name = html.escape(user.first_name if user.first_name else "User")
     user_link = f"<a href='tg://user?id={user_id}'>{user_name}</a>"
     
-    if user_id not in Altruix.auth_users:
+    if not await Altruix.is_sudo(user_id):
         await m.reply("⛔ You are not authorized to use this feature.")
         return
     

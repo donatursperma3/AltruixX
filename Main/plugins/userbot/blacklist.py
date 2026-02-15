@@ -123,9 +123,12 @@ async def blchat(filter, c: Client, m: Message):
 
 
 async def admin_or_sudo(c: Client, m: Message):
+    """Check if a user is an admin or authorized Sudo user."""
     status = (await c.get_chat_member(m.chat.id, m.from_user.id)).status
+    # ✅ AUTHORIZATION CHECK (Centralized & Dynamic)
+    is_sudo = await Altruix.is_sudo(m.from_user.id, client=c)
     return bool(
-        status.ADMINISTRATOR or status.OWNER or m.from_user.id in Altruix.auth_users
+        status.ADMINISTRATOR or status.OWNER or is_sudo
     )
 
 
@@ -144,7 +147,7 @@ async def del_blacklisted(c: Client, m: Message):
         data = await bl_db.find_one(
             {"chat_id": int(m.chat.id), "bl_word": msg, "client_id": my_id}
         )
-        if data and await admin_or_sudo(c, m):
+        if data and not await admin_or_sudo(c, m): # Fixed: skip admins
             if data["warns"]:
                 if m.from_user.id not in warn_count.keys():
                     warn_count[m.from_user.id] = 1

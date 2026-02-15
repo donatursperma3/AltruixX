@@ -15,60 +15,54 @@ from .file_helpers import run_in_exc
 
 
 async def parse_(client, message: Message, cmd, disable_sudo=False):
-    prefix_apply_type = await Main.Altruix.config.get_env("PREFIX_APPLY_TYPE") or "global"
+    # ✅ REFACTOR: Use HIGH-PERFORMANCE CACHE from Altruix
+    # This prevents event loop clogging from thousands of DB lookups for every message
+    prefix_apply_type = Main.Altruix._prefix_cache["apply_type"]
     
     if prefix_apply_type == "global":
-        sudo_cmd_handler = Main.Altruix.sudo_cmd_handler
-        user_cmd_handler = Main.Altruix.user_command_handler
+        sudo_cmd_handler = Main.Altruix._prefix_cache["sudo_prefix"]
+        user_cmd_handler = Main.Altruix._prefix_cache["user_prefix"]
     else:
-        user_id = client.me.id if client.me else None
-        if user_id:
-            user_cmd_handler = await Main.Altruix.config.get_env(f"CMD_HANDLER_{user_id}") or Main.Altruix.user_command_handler
-            sudo_cmd_handler = await Main.Altruix.config.get_env(f"SUDO_CMD_HANDLER_{user_id}") or Main.Altruix.sudo_cmd_handler
-        else:
-            sudo_cmd_handler = Main.Altruix.sudo_cmd_handler
-            user_cmd_handler = Main.Altruix.user_command_handler
+        # Per-Account mode
+        user_id = client.me.id if client and hasattr(client, 'me') and client.me else None
+        pa = Main.Altruix._prefix_cache["per_account"].get(user_id, {"u": Main.Altruix.user_command_handler, "s": Main.Altruix.sudo_cmd_handler})
+        user_cmd_handler = pa["u"]
+        sudo_cmd_handler = pa["s"]
 
-    # [DEBUG] Log prefix info
-    # logging.info(f"[PREFIX DEBUG] Mode: {prefix_apply_type}, User: {user_cmd_handler}, Sudo: {sudo_cmd_handler}, Msg: {message.text[:20] if message.text else 'None'}")
-
-    sd_list = [] if disable_sudo else Main.Altruix.config.SUDO_USERS
     try:
         if not message.text:
             return False
+        
         reg = re.search(
             r"^([\!\"\#\$\%\&\'\(\)\*\+\,\-\.\/\:\;\<\>\=\?\@\[\]\{\}\\\\\^\_\`\~])(\w+)(?:(?:.|\n)+)?$",
             message.text,
         )
+        if not reg:
+            return False
+
+        prefix = reg[1]
+        command_name = reg[2]
+
+        # ✅ Check for user/owner command
         if (
             (((message.from_user and message.from_user.is_self) or message.outgoing))
-            and message.text
-            and reg[1] == user_cmd_handler
-            and reg[2] in cmd
+            and prefix == user_cmd_handler
+            and command_name in cmd
         ):
             return True
-        elif (
+            
+        # ✅ Check for sudo command using centralized helper
+        if (
             message.from_user
-            and message.from_user.id in sd_list
-            and message.text
-            and reg[1] == sudo_cmd_handler
-            and reg[2] in cmd
-            and not message.from_user.is_self # ✅ Fix: Owner cannot use sudo prefix
+            and prefix == sudo_cmd_handler
+            and command_name in cmd
         ):
-            # Check if sudo is enabled
-            apply_type = await Main.Altruix.config.get_env("SUDO_APPLY_TYPE") or "global"
-            
-            if apply_type == "global":
-                sudo_enabled = await Main.Altruix.config.get_env("SUDO_ENABLED_GLOBAL")
-                sudo_enabled = sudo_enabled != "false" if sudo_enabled else True
-            else:
-                # For per-account, we need to find which client is handling this
-                # For now, default to enabled if not explicitly disabled
-                sudo_enabled = True
-            
-            if not sudo_enabled:
+            # Check if current user ID is in authorized sudo list (including per-account DB)
+            if not await Main.Altruix.is_sudo(message.from_user.id, client=client):
+                Main.Altruix.log(f"🕵️ SUDO_FILTER: User {message.from_user.id} tried command '{command_name}' but is NOT authorized.", level=20)
                 return False
-            
+
+            Main.Altruix.log(f"👑 SUDO_FILTER: Authorized sudo user {message.from_user.id} executing command '{command_name}'", level=20)
             return True
         else:
             return False

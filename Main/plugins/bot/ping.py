@@ -23,7 +23,7 @@ from pyrogram.types import (
 
 
 @Altruix.bot.on_message(
-    filters.command("ping", Altruix.bot_handler) & filters.user(Altruix.auth_users)
+    filters.command("ping", Altruix.bot_handler) & Altruix.is_sudo_filter
 )
 @log_errors
 async def ping_command_handler(c: Client, m: Message):

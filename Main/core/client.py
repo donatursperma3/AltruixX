@@ -126,7 +126,7 @@ class AltruixClient:
         self.clients: List[Client] = []
         self.cmd_list = {}
         self.all_lang_strings = {}
-        self.__version__ = "0.0.9.746D"
+        self.__version__ = "0.0.9.755D" # ✅ Optimized Sudo & Prefix Cache
         self.selected_lang = "english"
         self.local_lang_file = "./Main/localization"
         self.cmd_list = {} # {plugin_name: [cmd_data, ...]}
@@ -143,6 +143,22 @@ class AltruixClient:
         self.training_wheels_protocol = False
         self._init_logger()
         self.config = BaseConfig
+        self.db_sudo_users = set() # ✅ Dynamic Cache for Sudo Users from DB
+        self.db_sudo_sync_lock = asyncio.Lock()
+        self._auth_users_cache = set() # ✅ Optimized set for fast lookup
+        
+        # ✅ HIGH-PERFORMANCE SETTINGS CACHE
+        self._prefix_cache = {
+            "apply_type": "global",
+            "user_prefix": ".",
+            "sudo_prefix": "!",
+            "per_account": {} # {user_id: {"u": ".", "s": "!"}}
+        }
+        self._sudo_settings_cache = {
+            "apply_type": "global",
+            "enabled_global": True,
+            "per_account_enabled": {} # {user_id: bool}
+        }
 
         # ✅ Migrate JSON databases BEFORE initializing LocalDatabase
         try:
@@ -354,21 +370,165 @@ class AltruixClient:
 
     @property
     def auth_users(self):
-        # Convert SUDO_USERS to list if it's a string
-        sudo_users = self.config.SUDO_USERS
-        if isinstance(sudo_users, str):
-            # Parse comma-separated string to list of ints
-            sudo_users = [int(x.strip()) for x in sudo_users.split(',') if x.strip().isdigit()]
-        elif not isinstance(sudo_users, list):
-            sudo_users = []
+        """
+        Synchronous property for basic authorization checks (e.g. Bot filters).
+        Uses the optimized cache set.
+        """
+        return list(self._auth_users_cache)
+
+    async def is_sudo(self, user_id: int, client: Client = None) -> bool:
+        """
+        ✅ Centralized helper to check if a user is authorized as Sudo.
+        Handles both Global and Per-Account sudo settings from DB and .env.
+        Inclue Sudo Enabled/Disabled check.
+        """
+        self.log(f"🔍 DEBUG: is_sudo(user_id={user_id}, client={client.me.id if client and hasattr(client, 'me') and client.me else 'None'})", level=logging.DEBUG)
         
-        return list(
-            set(
-                sudo_users
-                + [int(acc.id) for acc in self.ourselves]
-                + [self.config.OWNER_ID]
-            )
-        )
+        if user_id == self.config.OWNER_ID:
+            self.log(f"✅ is_sudo: User {user_id} is OWNER.", level=logging.DEBUG)
+            return True
+            
+        # Check active userbot session IDs (Self is always authorized)
+        ourselves_ids = []
+        for acc in self.ourselves:
+            try:
+                ourselves_ids.append(int(acc.id))
+            except: pass
+            
+        if user_id in ourselves_ids:
+            self.log(f"✅ is_sudo: User {user_id} is in ourselves (session account).", level=logging.DEBUG)
+            return True
+
+        # ====================== ENABLEMENT CHECK ======================
+        # ✅ OPTIMIZED: Use cache if available
+        apply_type = self._sudo_settings_cache["apply_type"]
+        
+        if apply_type == "global":
+            sudo_enabled = self._sudo_settings_cache["enabled_global"]
+        else:
+            # Per-Account Sudo
+            if client and client in self.clients:
+                target_id = client.me.id
+                sudo_enabled = self._sudo_settings_cache["per_account_enabled"].get(target_id, True)
+            else:
+                # Default for Bot Assistant or unknown context
+                sudo_enabled = True
+        
+        if not sudo_enabled:
+            self.log(f"❌ is_sudo: Sudo is DISABLED ({apply_type}).", level=logging.DEBUG)
+            return False
+
+        # ====================== USER LIST CHECK ======================
+        # Check optimized cache set (Comprehensive)
+        if user_id in self._auth_users_cache:
+            self.log(f"✅ is_sudo: User {user_id} found in optimized auth_users cache.", level=logging.DEBUG)
+            return True
+
+        # Check database sudo users based on application mode (Dynamic Cache)
+        if apply_type == "global":
+            # In global mode, if user is in ANY session's sudo list, they are authorized.
+            if user_id in self.db_sudo_users:
+                self.log(f"✅ is_sudo: User {user_id} found in global db_sudo_users cache.", level=logging.DEBUG)
+                return True
+        else:
+            # In per-account mode, check if user is in the specific session's sudo list.
+            if client and client in self.clients:
+                try:
+                    target_id = client.me.id
+                    sudo_data = await self.config.get_env(f"SUDO_USERS_{target_id}")
+                    if sudo_data:
+                        uids = []
+                        if isinstance(sudo_data, str):
+                            uids = [int(x) for x in sudo_data.split() if x.isdigit()]
+                        elif isinstance(sudo_data, list):
+                            uids = [int(x) for x in sudo_data]
+                        if user_id in uids:
+                            self.log(f"✅ is_sudo: User {user_id} found in per-account DB list ({target_id}).", level=logging.DEBUG)
+                            return True
+                except Exception as e:
+                    self.log(f"Error checking per-account sudo list: {e}", level=logging.DEBUG)
+            else:
+                # Fallback: check cache if no specific client context (e.g. for general bot commands)
+                if user_id in self.db_sudo_users:
+                    self.log(f"✅ is_sudo: User {user_id} found in fallback db_sudo_users cache.", level=logging.DEBUG)
+                    return True
+        
+        self.log(f"❌ is_sudo: User {user_id} NOT AUTHORIZED.", level=logging.DEBUG)
+        return False
+
+    @property
+    def is_sudo_filter(self):
+        """
+        ✅ Dynamic Filter for Bot Assistant and other Pyrogram handlers.
+        Always evaluates the LATEST sudo status instead of using a static list.
+        """
+        async def func(_, __, update):
+            user = getattr(update, "from_user", None)
+            if not user:
+                return False
+            # We don't have client context in a general filter easily, 
+            # so it defaults to global cache check in is_sudo.
+            return await self.is_sudo(user.id)
+        return filters.create(func)
+
+    async def refresh_sudo_cache(self):
+        """
+        ✅ FIXED: Dynamically refresh the sudo users list from database for all sessions.
+        This allows sudo users added via UI to be recognized immediately.
+        """
+        async with self.db_sudo_sync_lock:
+            # ✅ REFACTOR: Use the robust config method that aggregates everything
+            all_sudo = await self.config.get_sudo()
+            new_sudo_set = set(all_sudo)
+            
+            # 2. Include Per-Account Sudo Users (for per-account logic)
+            for client in self.clients:
+                try:
+                    if not client.me: continue
+                    target_id = client.me.id
+                    db_sudo_raw = await self.config.get_env(f"SUDO_USERS_{target_id}")
+                    if db_sudo_raw:
+                        if isinstance(db_sudo_raw, str):
+                            uids = [int(x) for x in db_sudo_raw.split() if x.isdigit()]
+                        elif isinstance(db_sudo_raw, list):
+                            uids = [int(x) for x in db_sudo_raw]
+                        new_sudo_set.update(uids)
+                except Exception as e:
+                    self.log(f"Error fetching sudo from session: {e}", level=logging.DEBUG)
+            
+            self.db_sudo_users = new_sudo_set
+            
+            # ✅ REFRESH SETTINGS CACHE (Prefix & Sudo Settings)
+            self._sudo_settings_cache["apply_type"] = await self.config.get_env("SUDO_APPLY_TYPE") or "global"
+            self._prefix_cache["apply_type"] = await self.config.get_env("PREFIX_APPLY_TYPE") or "global"
+            
+            # Global Settings
+            enabled_raw = await self.config.get_env("SUDO_ENABLED_GLOBAL")
+            self._sudo_settings_cache["enabled_global"] = (enabled_raw != "false") if enabled_raw else True
+            self._prefix_cache["user_prefix"] = await self.config.get_env("CMD_HANDLER") or self.user_command_handler
+            self._prefix_cache["sudo_prefix"] = await self.config.get_env("SUDO_CMD_HANDLER") or self.sudo_cmd_handler
+            
+            # ✅ UPDATE OPTIMIZED CACHE
+            self._auth_users_cache = new_sudo_set.copy()
+            self._auth_users_cache.add(self.config.OWNER_ID)
+            for acc in self.ourselves:
+                try: self._auth_users_cache.add(int(acc.id))
+                except: pass
+            
+            # Per-Account Refresh
+            for client in self.clients:
+                try:
+                    tid = client.me.id
+                    # Sudo Enablement
+                    en_raw = await self.config.get_env(f"SUDO_ENABLED_{tid}")
+                    self._sudo_settings_cache["per_account_enabled"][tid] = (en_raw != "false") if en_raw else True
+                    # Prefix
+                    up = await self.config.get_env(f"CMD_HANDLER_{tid}") or self.user_command_handler
+                    sp = await self.config.get_env(f"SUDO_CMD_HANDLER_{tid}") or self.sudo_cmd_handler
+                    self._prefix_cache["per_account"][tid] = {"u": up, "s": sp}
+                except: pass
+                
+            self.log(f"✅ Sudo & Prefix cache refreshed: {len(self.db_sudo_users)} sudo users.", level=logging.INFO)
 
     def log(
         self,
@@ -729,8 +889,15 @@ class AltruixClient:
                     sender_id = message.from_user.id
                     current_client_id = client.me.id
                     
+                    # ✅ REFACTOR: Sudo Command Exception
+                    # If this is a sudo command, we ALLOW cross-execution.
+                    # This is because the sender's session will ignore its own sudo prefix,
+                    # so other sessions MUST handle it.
+                    s_p = self._prefix_cache["sudo_prefix"] if self._prefix_cache["apply_type"] == "global" else self._prefix_cache["per_account"].get(current_client_id, {}).get("s", self.sudo_cmd_handler)
+                    is_sudo_cmd = message.text and message.text.startswith(s_p)
+                    
                     # If sender is NOT the current client
-                    if sender_id != current_client_id:
+                    if sender_id != current_client_id and not is_sudo_cmd:
                         # Check if sender is another active client in this instance
                         other_client_ids = [c.me.id for c in self.clients if hasattr(c, 'me')]
                         if sender_id in other_client_ids:
@@ -759,13 +926,16 @@ class AltruixClient:
                 if message.text:
                     # ✅ Bot plugins with '/' prefix bypass userbot prefix check
                     if not (is_bot_plugin and is_bot_command):
-                        apply_type_p = await self.config.get_env("PREFIX_APPLY_TYPE") or "global"
+                        # ✅ REFACTOR: Use HIGH-PERFORMANCE CACHE
+                        apply_type_p = self._prefix_cache["apply_type"]
                         if apply_type_p == "global":
-                            valid_prefixes = [self.user_command_handler, self.sudo_cmd_handler]
+                            u_p = self._prefix_cache["user_prefix"]
+                            s_p = self._prefix_cache["sudo_prefix"]
+                            valid_prefixes = [u_p, s_p]
                         else:
-                            u_pref = await self.config.get_env(f"CMD_HANDLER_{client.me.id}") or self.user_command_handler
-                            s_pref = await self.config.get_env(f"SUDO_CMD_HANDLER_{client.me.id}") or self.sudo_cmd_handler
-                            valid_prefixes = [u_pref, s_pref]
+                            tid = client.me.id
+                            pa = self._prefix_cache["per_account"].get(tid, {"u": self.user_command_handler, "s": self.sudo_cmd_handler})
+                            valid_prefixes = [pa["u"], pa["s"]]
                         
                         # Only validate prefix for non-bot commands
                         if not any(message.text.startswith(p) for p in valid_prefixes):
@@ -951,7 +1121,9 @@ class AltruixClient:
                 
                 self.handler_registry.add(bot_registry_key)
 
-            bot_f = filter_s or filters.user(self.auth_users) & filters.command(
+            # ✅ FIXED: Use dynamic is_sudo_filter instead of static filters.user(self.auth_users)
+            # This ensures users added via UI are authorized immediately.
+            bot_f = filter_s or self.is_sudo_filter & filters.command(
                 list(cmd) if cmd else [], ["/", "|"] # removed "!" to avoid conflict with userbot sudo handler
             )
             self.bot.add_handler(handler_type(func_, filters=bot_f), group=group)
@@ -989,7 +1161,7 @@ class AltruixClient:
                         if is_high_ram: usage_info += f"💾 <b>RAM Usage:</b> <code>{ram}%</code>\n"
                         
                         alert_msg = (
-                            "⚠️ <b>ALTRUIX RESOURCE WARNING</b>\n\n"
+                            "⚠️ <b>USERBOT RESOURCE WARNING</b>\n\n"
                             f"{usage_info}\n"
                             "‼️ <b>Tindakan diperlukan:</b>\n"
                             "Server Anda hampir mencapai kapasitas maksimal. Mohon periksa proses yang berjalan untuk menghindari crash atau restart tak terduga."
@@ -1042,6 +1214,10 @@ class AltruixClient:
         }
         if not restart:
             await self.initialize_telegram_sessions(*args, **kwargs)
+        
+        # ✅ Load sudo users from DB into cache
+        await self.refresh_sudo_cache()
+        
         await self.update_cache()
 
     #

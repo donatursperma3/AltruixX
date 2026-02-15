@@ -54,8 +54,8 @@ async def add_session_cb_handler(_, cb: CallbackQuery):
     user = cb.from_user
     user_id = user.id
 
-    # ✅ PERIKSA IZIN: hanya auth_users yang boleh akses
-    if user_id not in Altruix.auth_users:
+    # ✅ PERIKSA IZIN: menggunakan helper is_sudo yang mendukung DB
+    if not await Altruix.is_sudo(user_id):
         return await cb.answer("⛔ Anda tidak diizinkan menambah session.", show_alert=True)
 
     # ✅ PERBAIKAN UTAMA: JANGAN GUNAKAN ReplyKeyboardMarkup DI GRUP!
@@ -92,7 +92,7 @@ async def add_session_cb_handler(_, cb: CallbackQuery):
 @Altruix.bot.on_callback_query(filters.regex("^make_session_start$"))
 @log_errors
 async def make_session_start_handler(_, cb: CallbackQuery):
-    if cb.from_user.id not in Altruix.auth_users:
+    if not await Altruix.is_sudo(cb.from_user.id):
         return await cb.answer("⛔ Tidak diizinkan.", show_alert=True)
     await cb.answer()
     await _start_add_session_process(cb)

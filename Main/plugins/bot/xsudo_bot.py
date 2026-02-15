@@ -79,7 +79,7 @@ def format_sudo_list(active_users: list[User], unfetchable_users: list[User], de
     return out
 
 
-@Altruix.bot.on_message(filters.command("listsudo", prefixes="/") & filters.private)
+@Altruix.bot.on_message(filters.command("listsudo", prefixes="/") & filters.private & Altruix.is_sudo_filter)
 @log_errors
 async def listsudo_bot_handler(c: Client, m: Message):
     """
@@ -88,19 +88,25 @@ async def listsudo_bot_handler(c: Client, m: Message):
     """
     user_id = m.from_user.id
     
-    # Authorization check
-    if user_id != Altruix.config.OWNER_ID and user_id not in Altruix.config.SUDO_USERS:
+    # ✅ AUTHORIZATION CHECK (Centralized)
+    if not await Altruix.is_sudo(user_id):
         await m.reply("⛔ You are not authorized to use this command.")
         return
     
-    processing_msg = await m.reply("<code>Processing...</code>")
+    processing_msg = await m.reply("<code>Processing sudo user list...</code>")
     
-    sudo_ids = await Altruix.config.get_sudo()
+    # ✅ GET ALL SUDO USERS (Global + DB Cache)
+    static_sudo = Altruix.config.SUDO_USERS or []
+    if isinstance(static_sudo, str):
+        static_sudo = [int(x.strip()) for x in static_sudo.split(',') if x.strip().isdigit()]
+    
+    # Combine static and cached DB users
+    sudo_ids = list(set(static_sudo + list(Altruix.db_sudo_users)))
     
     if not sudo_ids:
         await processing_msg.edit(
             "<b>Sudo Users (Total: 0)</b>\n\n"
-            "<b>Active Users (0)</b>:\n<i>No active users.</i>\n\n"
+            "<b>Active Users (0)</b>:\n<i>No active users found in listing.</i>\n\n"
             "<b>Unfetchable Users (0)</b>:\n<i>No unfetchable users.</i>\n\n"
             "<b>Deleted Users (0)</b>:\n<i>No deleted accounts.</i>"
         )
@@ -117,9 +123,9 @@ async def listsudo_bot_handler(c: Client, m: Message):
     
     client = Altruix.clients[0]
     
-    for user_id in sudo_ids:
+    for uid in sudo_ids:
         try:
-            user = await client.get_users(int(user_id))
+            user = await client.get_users(int(uid))
             if user.is_deleted:
                 deleted_users.append(user)
             else:
@@ -127,7 +133,7 @@ async def listsudo_bot_handler(c: Client, m: Message):
         except Exception:
             # If failed to fetch, create dummy user for unfetchable category
             dummy_user = User(
-                id=int(user_id),
+                id=int(uid),
                 is_deleted=False,
                 first_name=None,
                 last_name=None,

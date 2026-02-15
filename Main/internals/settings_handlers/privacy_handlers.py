@@ -161,10 +161,16 @@ async def sudo_menu_handler(c: Client, cb: CallbackQuery):
     page = int(cb.matches[0].group(2))
     button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
+    # ✅ FIX: Clear privacy state when returning to menu to stop input capturing (Tambah Sudo fix)
+    from .states import user_privacy_state
+    if cb.from_user.id in user_privacy_state:
+        del user_privacy_state[cb.from_user.id]
+
     apply_type = await Altruix.config.get_env("SUDO_APPLY_TYPE") or "global"
     apply_label = "Global" if apply_type == "global" else "Per-Account"
     
-    key = "SUDO_ENABLED_GLOBAL" if apply_type == "global" else f"SUDO_ENABLED_{index}"
+    target_id = Altruix.clients[index].me.id
+    key = "SUDO_ENABLED_GLOBAL" if apply_type == "global" else f"SUDO_ENABLED_{target_id}"
     sudo_enabled_raw = await Altruix.config.get_env(key)
     sudo_enabled = sudo_enabled_raw != "false" if sudo_enabled_raw else True
     
@@ -227,13 +233,17 @@ async def sudo_toggle_handler(c: Client, cb: CallbackQuery):
     button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
     apply_type = await Altruix.config.get_env("SUDO_APPLY_TYPE") or "global"
-    key = "SUDO_ENABLED_GLOBAL" if apply_type == "global" else f"SUDO_ENABLED_{index}"
+    target_id = Altruix.clients[index].me.id
+    key = "SUDO_ENABLED_GLOBAL" if apply_type == "global" else f"SUDO_ENABLED_{target_id}"
     
     current = await Altruix.config.get_env(key)
     new_val = "false" if current != "false" else "true"
     
     await Altruix.config.sync_env_to_db(key, new_val, upsert=True)
     setattr(Altruix.config, key, new_val)
+    
+    # ✅ Update high-performance cache immediately
+    await Altruix.refresh_sudo_cache()
     
     await cb.answer(f"Sudo {'Aktif' if new_val == 'true' else 'Nonaktif'}", show_alert=False)
     await sudo_menu_handler(c, cb)
@@ -251,6 +261,8 @@ async def sudo_mode_handler(c: Client, cb: CallbackQuery):
     new_val = "per_account" if current == "global" else "global"
     
     await Altruix.config.sync_env_to_db("SUDO_APPLY_TYPE", new_val, upsert=True)
+    # ✅ Refresh cache just in case
+    await Altruix.refresh_sudo_cache()
     await cb.answer(f"Mode: {new_val.upper()}")
     await sudo_menu_handler(c, cb)
 
@@ -265,6 +277,11 @@ async def prefix_menu_handler(c: Client, cb: CallbackQuery):
     button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     await cb.answer()
     
+    # ✅ FIX: Clear privacy state when returning to menu to stop input capturing (Prefix Edit fix)
+    from .states import user_privacy_state
+    if cb.from_user.id in user_privacy_state:
+        del user_privacy_state[cb.from_user.id]
+
     apply_type = await Altruix.config.get_env("PREFIX_APPLY_TYPE") or "global"
     u_key = "CMD_HANDLER" if apply_type == "global" else f"CMD_HANDLER_{Altruix.clients[index].me.id}"
     s_key = "SUDO_CMD_HANDLER" if apply_type == "global" else f"SUDO_CMD_HANDLER_{Altruix.clients[index].me.id}"
@@ -386,6 +403,9 @@ async def prefix_toggle_mode_handler(c: Client, cb: CallbackQuery):
     await Altruix.config.sync_env_to_db("PREFIX_APPLY_TYPE", new_val, upsert=True)
     setattr(Altruix.config, "PREFIX_APPLY_TYPE", new_val)
     
+    # ✅ Update high-performance cache immediately
+    await Altruix.refresh_sudo_cache()
+    
     await cb.answer(f"Prefix Mode: {new_val.title()}", show_alert=False)
     await prefix_menu_handler(c, cb)
 
@@ -440,6 +460,9 @@ async def process_prefix_input(c: Client, m: Message, state: dict):
     await Altruix.config.sync_env_to_db(key, new_prefix, upsert=True)
     setattr(Altruix.config, key, new_prefix)
     
+    # ✅ Update high-performance cache immediately
+    await Altruix.refresh_sudo_cache()
+    
     await m.reply(f"✅ Prefix berhasil diubah ke: <code>{new_prefix}</code>")
     from .states import user_privacy_state
     if m.from_user.id in user_privacy_state:
@@ -458,7 +481,9 @@ async def process_sudo_input(c: Client, m: Message, state: dict):
         return
         
     uid = int(uid_text)
-    key = f"SUDO_USERS_{index}"
+    session_client = Altruix.clients[index]
+    target_id = session_client.me.id
+    key = f"SUDO_USERS_{target_id}"
     current_sudo_raw = await Altruix.config.get_env(key) or ""
     
     # Handle list/string
@@ -471,6 +496,8 @@ async def process_sudo_input(c: Client, m: Message, state: dict):
         if str(uid) not in current_sudo:
             current_sudo.append(str(uid))
             await Altruix.config.sync_env_to_db(key, " ".join(current_sudo), upsert=True)
+            # ✅ Refresh Cache
+            await Altruix.refresh_sudo_cache()
             await m.reply(f"✅ User {uid} ditambahkan ke Sudo Session {index+1}.")
         else:
             await m.reply(f"ℹ️ User {uid} sudah ada di daftar Sudo.")
@@ -479,6 +506,8 @@ async def process_sudo_input(c: Client, m: Message, state: dict):
         if str(uid) in current_sudo:
             current_sudo.remove(str(uid))
             await Altruix.config.sync_env_to_db(key, " ".join(current_sudo), upsert=True)
+            # ✅ Refresh Cache
+            await Altruix.refresh_sudo_cache()
             await m.reply(f"✅ User {uid} dihapus dari Sudo Session {index+1}.")
         else:
             await m.reply(f"❌ User {uid} tidak ada di daftar Sudo.")

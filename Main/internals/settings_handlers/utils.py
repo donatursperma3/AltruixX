@@ -107,16 +107,16 @@ def gt(key):
     """Wrapper for Altruix.get_string."""
     return Altruix.get_string(key)
 
-def is_authorized(user_id: int) -> bool:
-    """Check if user is authorized (owner or sudo user)."""
-    return user_id == Altruix.config.OWNER_ID or user_id in Altruix.config.SUDO_USERS
+async def is_authorized(user_id: int, client: Client = None) -> bool:
+    """✅ Check if user is authorized using centralized database-aware helper."""
+    return await Altruix.is_sudo(user_id, client=client)
 
 async def check_authorization(cb: CallbackQuery) -> bool:
     """
     Check if callback user is authorized. 
     Returns True if authorized, False otherwise (and sends access denied message).
     """
-    if not is_authorized(cb.from_user.id):
+    if not await is_authorized(cb.from_user.id):
         msg = Altruix.get_string("ACCESS_DENIED")
         full_msg = Altruix.get_string("AUTH_NO_PERMISSION")
         await cb.answer(f"{msg} - {full_msg}", show_alert=True)
@@ -128,7 +128,7 @@ async def check_authorization_message(m: Any) -> bool:
     Check if message user is authorized. 
     Returns True if authorized, False otherwise (and sends ❌ access denied reply).
     """
-    if not is_authorized(m.from_user.id):
+    if not await is_authorized(m.from_user.id):
         msg = Altruix.get_string("ACCESS_DENIED")
         full_msg = Altruix.get_string("AUTH_NO_PERMISSION")
         await m.reply(f"❌ {msg} - {full_msg}")

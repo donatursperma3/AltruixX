@@ -425,15 +425,20 @@ class Config(BaseConfig):
         if isinstance(user_id, list):
             user_id = [int(i) for i in user_id]
         await self.add_env_to_db(
-            "SUDO_USERS", {"$push": {"user_ids": {"$each": user_id}}}, upsert=True
+            "SUDO_USERS", user_id, upsert=True
         )
 
     @var_check
     async def get_sudo(self):
         users = []
         if var := await self.env_col.find_one({"_id": "SUDO_USERS"}):
-            if var.get("user_ids"):
-                users.extend([int(i) for i in var.get("user_ids")])
+            env_val = var.get("env_value")
+            if env_val:
+                if isinstance(env_val, list):
+                    users.extend([int(i) for i in env_val])
+                elif isinstance(env_val, (int, str)):
+                    if str(env_val).isdigit():
+                        users.append(int(env_val))
         if local_var := self.SUDO_USERS:
             users.extend(local_var)
             users = list(set(users))
@@ -443,7 +448,7 @@ class Config(BaseConfig):
 
     async def del_sudo(self, user_id):
         await self.env_col.find_one_and_update(
-            {"_id": "SUDO_USERS"}, {"$pull": {"user_id": int(user_id)}}
+            {"_id": "SUDO_USERS"}, {"$pull": {"env_value": int(user_id)}}
         )
 
     async def get_pm_sts(self):

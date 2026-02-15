@@ -13,10 +13,11 @@ from Main.core.decorators import log_errors
 from pyrogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup
 
 
-@Altruix.bot.on_message(filters.command("add", "/") & filters.user(Altruix.auth_users))
+@Altruix.bot.on_message(filters.command("add", "/") & Altruix.is_sudo_filter)
 @log_errors
 async def add_session_command_handler(_, m: Message):
-    if m.from_user.id not in Altruix.auth_users:
+    # ✅ AUTHORIZATION CHECK (Centralized)
+    if not await Altruix.is_sudo(m.from_user.id):
         return await m.reply_text("Hey, I'm just a bot. Powered by @AltruixUB.")
     await m.reply(
         "Do you have the string session already generated?.",

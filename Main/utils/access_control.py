@@ -24,19 +24,14 @@ def check_reply_access(
 ) -> tuple[bool, str]:
     """
     Check if a user has permission to use reply buttons based on access mode.
-    
-    Args:
-        user: The Pyrogram User object trying to access the button
-        mode: Access mode (all/sudo/owner/mentioned)
-        owner_id: The owner's user ID
-        sudo_users: List of sudo user IDs
-        mentioned_userbot_id: ID of the userbot that was mentioned/received message (for MENTIONED mode)
-    
-    Returns:
-        tuple: (has_access: bool, reason: str)
     """
     user_id = user.id
+    from Main.core.client import Altruix
     
+    # ✅ Optimized Check: If user is in centralized cache, they are authorized for SUDO/OWNER tasks
+    # (Altruix.auth_users includes OWNER_ID, Session IDs, and all Sudo users)
+    is_globally_auth = user_id in Altruix.auth_users
+
     # Mode: ALL - anyone can reply
     if mode == ACCESS_MODE_ALL:
         return True, "Access granted (ALL mode)"
@@ -49,8 +44,10 @@ def check_reply_access(
     
     # Mode: SUDO - owner + sudo users
     if mode == ACCESS_MODE_SUDO:
+        if is_globally_auth:
+            return True, f"Access granted (SUDO)"
         if user_id == owner_id or user_id in sudo_users:
-            return True, f"Access granted (SUDO - {'owner' if user_id == owner_id else 'sudo user'})"
+            return True, f"Access granted (SUDO - legacy fallback)"
         return False, Altruix.get_string("AUTH_SUDO_ONLY")
     
     # Mode: MENTIONED - only the specific userbot account
@@ -71,15 +68,11 @@ def check_reply_access(
 def is_authorized_user(user_id: int, owner_id: int, sudo_users: List[int]) -> bool:
     """
     Simple check if user is authorized (owner or sudo).
-    
-    Args:
-        user_id: User ID to check
-        owner_id: Owner's user ID
-        sudo_users: List of sudo user IDs
-    
-    Returns:
-        bool: True if user is owner or sudo user
+    Supports dynamic cache from Altruix.
     """
+    from Main.core.client import Altruix
+    if user_id in Altruix.auth_users:
+        return True
     return user_id == owner_id or user_id in sudo_users
 
 

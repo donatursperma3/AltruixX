@@ -36,7 +36,7 @@ async def start_command_handler(_, m: Message):
             reply_markup=ReplyKeyboardRemove(),
             send_msg_if_file_invalid=True,
         )
-        if Altruix.training_wheels_protocol and m.from_user.id in Altruix.auth_users:
+        if Altruix.training_wheels_protocol and await Altruix.is_sudo(m.from_user.id):
             await m.reply(
                 "You'll have to add a user session to disable TWP, would you like to proceed?",
                 reply_markup=ReplyKeyboardMarkup(
@@ -80,8 +80,8 @@ async def start_command_handler(_, m: Message):
 @Altruix.bot.on_callback_query(filters.regex("^add_session"))
 @log_errors
 async def add_session_menu_cb_handler(_, cb: CallbackQuery):
-    # CRITICAL: Authorization check - only auth_users can add sessions
-    if cb.from_user.id not in Altruix.auth_users:
+    # CRITICAL: Authorization check - using is_sudo which supports DB users
+    if not await Altruix.is_sudo(cb.from_user.id):
         return await cb.answer(Altruix.get_string("AUTH_SESSION_ADD_DENIED"), show_alert=True)
     
     await cb.message.edit(
@@ -104,8 +104,8 @@ async def add_session_menu_cb_handler(_, cb: CallbackQuery):
 @Altruix.bot.on_callback_query(filters.regex("^session_yes"))
 @log_errors
 async def add_session_cb_handler(_, cb: CallbackQuery):
-    # CRITICAL: Authorization check - only auth_users can add sessions
-    if cb.from_user.id not in Altruix.auth_users:
+    # CRITICAL: Authorization check - using is_sudo
+    if not await Altruix.is_sudo(cb.from_user.id):
         return await cb.answer(Altruix.get_string("AUTH_SESSION_ADD_DENIED"), show_alert=True)
     
     with contextlib.suppress(Exception):

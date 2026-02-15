@@ -45,8 +45,9 @@ from Main.internals.get_session import add_session_cb_handler
 from Main.utils.file_helpers import get_db_path
 
 # ====================== AUTHORIZATION HELPER ======================
-def is_authorized(user_id: int) -> bool:
-    return user_id == Altruix.config.OWNER_ID or user_id in Altruix.config.SUDO_USERS
+async def is_authorized(user_id: int) -> bool:
+    """✅ Check if user is authorized using centralized database-aware helper."""
+    return await Altruix.is_sudo(user_id)
 
 async def check_authorization(cb: CallbackQuery) -> bool:
     from .settings_handlers.utils import check_authorization as modular_check
@@ -200,7 +201,7 @@ def get_settings_buttons(user_id=None):
 
 # ====================== CORE SETTINGS HANDLERS ======================
 
-@Altruix.bot.on_message(filters.command("settings", "/") & filters.user(Altruix.auth_users))
+@Altruix.bot.on_message(filters.command("settings", "/") & Altruix.is_sudo_filter)
 @iuser_check
 @log_errors
 async def settings_command_handler(c: Client, m: Message):
@@ -213,7 +214,9 @@ async def settings_command_handler(c: Client, m: Message):
 @log_errors
 async def settings_inline_handler(c: Client, iq: InlineQuery):
     """Inline entry point for settings with full statistics."""
-    if iq.from_user.id not in Altruix.auth_users: return
+    # ✅ AUTHORIZATION CHECK (Supports DB Users)
+    if not await Altruix.is_sudo(iq.from_user.id):
+        return
     
     text = await get_settings_home_text()
     

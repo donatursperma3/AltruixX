@@ -87,7 +87,8 @@ async def whisper_callback(c: Client, cq: CallbackQuery):
     msg_dict = MSGS_DICT[_id]
     user_id_or_username = digit_wrap(msg_dict.get("user"))
     MSG = msg_dict.get("msg")
-    if cq.from_user.id in Altruix.auth_users:
+    # ✅ AUTHORIZATION CHECK (Centralized & Dynamic)
+    if await Altruix.is_sudo(cq.from_user.id):
         return await cq.answer(MSG, True)
     if isinstance(user_id_or_username, int):
         if cq.from_user.id == int(user_id_or_username):

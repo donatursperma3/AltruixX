@@ -40,7 +40,9 @@ async def ping_ub_cmd(c: Client, m: Message):
     # ✅ DEBUG: Log function entry FIRST to verify registration
     Altruix.log(f"🎯 [PING] Function called! User: {c.me.id}, Chat: {m.chat.id}", level=20)
     user_args = m.user_args
+    
     if "c" not in user_args:
+        # with inline result
         rm = m.reply_to_message
         try:
             bot_username = Altruix.bot_manager.get_bot_username(c.me.id)
@@ -58,18 +60,18 @@ async def ping_ub_cmd(c: Client, m: Message):
             uptime = Essentials.get_readable_time(time.time() - Altruix.start_time)
             end = time.perf_counter()
             ms = round((end - start) * 1000, 2)
-            pv = f"{PLUGIN_VERSION}"
             await m.handle_message(
                 "PING_TEXT",
-                string_args=(pf["ping_emoji1"], ms, pf["ping_emoji2"], uptime, pv),
+                string_args=(pf["ping_emoji1"], ms, pf["ping_emoji2"], uptime),
             )
 
     else:
+        # without inline result
         start = time.perf_counter()
         await c.invoke(Ping(ping_id=9999999))
         uptime = Essentials.get_readable_time(time.time() - Altruix.start_time)
         end = time.perf_counter()
         ms = round((end - start) * 1000, 2)
         await m.handle_message(
-            "PING_TEXT", string_args=(pf["ping_emoji1"], ms, pf["ping_emoji2"], uptime, pv)
+            "PING_TEXT", string_args=(pf["ping_emoji1"], ms, pf["ping_emoji2"], uptime)
         )
