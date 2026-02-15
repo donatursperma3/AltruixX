@@ -86,12 +86,15 @@ async def creategroup_ui_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
     session_index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    await show_creategroup_ui(c, cb, session_index, page)
+
+async def show_creategroup_ui(c: Client, cb: CallbackQuery, session_index: int, page: int):
     user_id = cb.from_user.id
     
     # Check if task is already running
     from Main.plugins.userbot.xcreategroup import CREATEGROUP_TASKS
-    task = CREATEGROUP_TASKS.get("creategroup_main")
-    if task and task.get("running") and task.get("user_id") == user_id:
+    task = CREATEGROUP_TASKS.get(f"creategroup_{user_id}")
+    if task and task.get("running"):
         await render_creategroup_running_ui(cb, task, session_index, page)
         return
 
@@ -332,7 +335,7 @@ async def render_creategroup_running_ui(cb: CallbackQuery, task: dict, idx: int,
     current_name = generate_group_name(task["params"]["name_pattern"], task["current_index"])
     
     text = (
-        "<b>📊 Progress Laucreate</b>\n\n"
+        "<b>📊 Progress Create Group</b>\n\n"
         f"• <b>Created:</b> {created_count}/{total_count}\n"
         f"• <b>Berhasil:</b> {created_count}\n"
         f"• <b>Current:</b> {html.escape(current_name)}\n"
@@ -366,7 +369,7 @@ async def render_creategroup_running_ui(cb: CallbackQuery, task: dict, idx: int,
 async def creategroup_control_handler(c: Client, cb: CallbackQuery):
     action, idx, pg = cb.matches[0].group(1), int(cb.matches[0].group(2)), int(cb.matches[0].group(3))
     from Main.plugins.userbot.xcreategroup import CREATEGROUP_TASKS
-    task = CREATEGROUP_TASKS.get("creategroup_main")
+    task = CREATEGROUP_TASKS.get(f"creategroup_{cb.from_user.id}")
     
     # Redirect to main menu if task finished
     if not task or not task.get("running"):
@@ -381,7 +384,7 @@ async def creategroup_control_handler(c: Client, cb: CallbackQuery):
         if task.get("pause_event"): task["pause_event"].set()
         await cb.answer("Stopping task...")
         await asyncio.sleep(1) # Give it a moment
-        await creategroup_ui_handler(c, cb)
+        await show_creategroup_ui(c, cb, idx, pg)
         
     elif action == "pause":
         if not task.get("paused"):
@@ -405,7 +408,7 @@ async def creategroup_control_handler(c: Client, cb: CallbackQuery):
 async def creategroup_status_detail_handler(c: Client, cb: CallbackQuery):
     idx, pg = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
     from Main.plugins.userbot.xcreategroup import CREATEGROUP_TASKS
-    task = CREATEGROUP_TASKS.get("creategroup_main")
+    task = CREATEGROUP_TASKS.get(f"creategroup_{cb.from_user.id}")
     
     if not task: return await cb.answer("No task running", show_alert=True)
     
@@ -428,8 +431,8 @@ async def creategroup_status_detail_handler(c: Client, cb: CallbackQuery):
 @log_errors
 async def creategroup_list_group_handler(c: Client, cb: CallbackQuery):
     idx, pg = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
-    from Main.plugins.userbot.xchatsanomlau import LAUCREATE_TASKS
-    task = LAUCREATE_TASKS.get("laucreate_main")
+    from Main.plugins.userbot.xcreategroup import CREATEGROUP_TASKS
+    task = CREATEGROUP_TASKS.get(f"creategroup_{cb.from_user.id}")
     
     if not task: return await cb.answer("No task running", show_alert=True)
     

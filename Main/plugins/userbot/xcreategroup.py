@@ -45,7 +45,7 @@ import logging
 
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xcreategroup"
-PLUGIN_VERSION = "0.2.1"  # ✅ REFACTORED: Renamed to CreateGroup, enhanced logging
+PLUGIN_VERSION = "0.2.11"  # ✅ REFACTORED: Renamed to CreateGroup, enhanced logging
 
 logger = logging.getLogger("altruix.xcreategroup")
 logger.setLevel(logging.INFO)
@@ -391,7 +391,12 @@ async def creategroup_loop(
     user_id: Optional[int] = None
 ):
     """Main loop untuk membuat grup"""
-    task_id = 'creategroup_main'
+    effective_user_id = user_id or (initial_message.from_user.id if initial_message.from_user else None)
+    if not effective_user_id:
+        logger.error("Cannot determine user_id for creategroup task")
+        return
+        
+    task_id = f'creategroup_{effective_user_id}'
     created_groups = []
     batch_groups = [] # Buffer for current batch
     photo_path = None  # Cache untuk foto profil
@@ -1294,7 +1299,7 @@ async def send_completion_report(
 
         
         await control_message.edit_text(
-            f"✅ <b>Task CreateGroup Selesai</b>\n\n"
+            f"✅ <b>Task Create Group Selesai</b>\n\n"
             f"• 📊 Berhasil membuat {success_count} dari {requested_count} grup\n"
             f"• ⏱️ Durasi: {format_duration(total_duration)}\n"
             f"• 👤 User: {user_info.first_name}\n"
