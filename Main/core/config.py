@@ -49,9 +49,9 @@ class BaseConfig(object):
     BOT_MODE = getenv("BOT_MODE", False)
     AUTOPOST_CACHE = {}
     CUSTOM_BOT_MEDIA = getenv("CUSTOM_BOT_MEDIA")
-    OWNER_ID = (
-        int(getenv("OWNER_ID"))
-        if getenv("OWNER_ID") and getenv("OWNER_ID").isdigit()
+    OWNER_USERS_ID = (
+        int(getenv("OWNER_USERS_ID") or getenv("OWNER_ID"))
+        if (getenv("OWNER_USERS_ID") and getenv("OWNER_USERS_ID").isdigit()) or (getenv("OWNER_ID") and getenv("OWNER_ID").isdigit())
         else None
     )
     LOAD_ENV_TO_DB = getenv("LOAD_ENV_TO_DB", False)
@@ -81,11 +81,14 @@ class BaseConfig(object):
     CACHE_LOG_ENABLED = getenv("CACHE_LOG_ENABLED", "True").lower() == "true"
     UB_LANG = getenv("UB_LANG")
     REPLY_ERR_NOTIF_GLOBAL = getenv("REPLY_ERR_NOTIF_GLOBAL", "on")
-    SUDO_CMD_HANDLER = getenv("SUDO_CMD_HANDLER") or "!"
-    CMD_HANDLER = getenv("CMD_HANDLER") or "."
+    # ✅ RENAME: PREFIX_SUDO_USERS (Sudo commands) & PREFIX_OWNER_USER (Owner/Self commands)
+    PREFIX_SUDO_USERS = (getenv("PREFIX_SUDO_USERS") or getenv("SUDO_CMD_HANDLER") or "!")
+    PREFIX_OWNER_USER = (getenv("PREFIX_OWNER_USER") or getenv("CMD_HANDLER") or ".")
+    
     try:
-        SUDO_USERS = [
-            int(i) for i in getenv("SUDO_USERS", "").split(" ") if i.isdigit()
+        # ✅ RENAME: SUDO_USERS_ID (List of authorized users)
+        SUDO_USERS_ID = [
+            int(i) for i in (getenv("SUDO_USERS_ID") or getenv("SUDO_USERS") or "").split(" ") if i.isdigit()
         ]
     except Exception:
         raise EnvVariableTypeError(Exception)
@@ -269,8 +272,17 @@ class Config(BaseConfig):
     async def get_env(self, env_key, as_list=False):
         """
         Retrieves an environment variable value, prioritizing database, Then cache, Then .env, Then class attributes.
+        Includes BACKWARD COMPATIBILITY for renamed variables.
         """
         env_key = env_key.strip().upper()
+        
+        # ✅ BACKWARD COMPATIBILITY MAPPING
+        BC_MAP = {
+            "PREFIX_OWNER_USER": "CMD_HANDLER",
+            "PREFIX_SUDO_USERS": "SUDO_CMD_HANDLER",
+            "SUDO_USERS_ID": "SUDO_USERS",
+            "OWNER_USERS_ID": "OWNER_ID"
+        }
         
         # Priority 1: Cache (Fastest)
         if env_key in self._env_cache:
@@ -278,6 +290,14 @@ class Config(BaseConfig):
         
         # Priority 2: Database
         db_val = await self.get_env_from_db(env_key)
+        
+        # If not found with new key, try old key (Backward Compatibility)
+        if db_val is None and env_key in BC_MAP:
+            db_val = await self.get_env_from_db(BC_MAP[env_key])
+            if db_val is not None:
+                # Automigrate in cache (don't force DB write here to avoid heavy operations on every read)
+                self._env_cache[env_key] = db_val
+        
         if db_val is not None:
             self._env_cache[env_key] = db_val
             return db_val
@@ -329,7 +349,7 @@ class Config(BaseConfig):
         if isinstance(update, dict):
             # Special case for SUDO_USERS updates which often use $push/$pull
             await self.env_col.find_one_and_update(
-                {"_id": "SUDO_USERS"}, update, upsert=upsert
+                {"_id": "SUDO_USERS_ID"}, update, upsert=upsert
             )
         else:
             await self.env_col.find_one_and_update(
@@ -426,13 +446,13 @@ class Config(BaseConfig):
         if isinstance(user_id, list):
             user_id = [int(i) for i in user_id]
         await self.add_env_to_db(
-            "SUDO_USERS", user_id, upsert=True
+            "SUDO_USERS_ID", user_id, upsert=True
         )
 
     @var_check
     async def get_sudo(self):
         users = []
-        if var := await self.env_col.find_one({"_id": "SUDO_USERS"}):
+        if var := await self.env_col.find_one({"_id": "SUDO_USERS_ID"}):
             env_val = var.get("env_value")
             if env_val:
                 if isinstance(env_val, list):
@@ -440,16 +460,27 @@ class Config(BaseConfig):
                 elif isinstance(env_val, (int, str)):
                     if str(env_val).isdigit():
                         users.append(int(env_val))
-        if local_var := self.SUDO_USERS:
+        
+        # Backward compatibility check for old key
+        if not users:
+            if var := await self.env_col.find_one({"_id": "SUDO_USERS"}):
+                env_val = var.get("env_value")
+                if env_val:
+                    if isinstance(env_val, list):
+                        users.extend([int(i) for i in env_val])
+                    elif isinstance(env_val, (int, str)) and str(env_val).isdigit():
+                        users.append(int(env_val))
+
+        if local_var := getattr(self, "SUDO_USERS_ID", []):
             users.extend(local_var)
             users = list(set(users))
-            await self.add_env_to_db("SUDO_USERS", local_var)
-        self.SUDO_USERS = users
+            await self.add_env_to_db("SUDO_USERS_ID", users)
+        self.SUDO_USERS_ID = users
         return users
 
     async def del_sudo(self, user_id):
         await self.env_col.find_one_and_update(
-            {"_id": "SUDO_USERS"}, {"$pull": {"env_value": int(user_id)}}
+            {"_id": "SUDO_USERS_ID"}, {"$pull": {"env_value": int(user_id)}}
         )
 
     async def get_pm_sts(self):
