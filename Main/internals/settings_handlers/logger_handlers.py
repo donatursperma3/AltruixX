@@ -32,7 +32,7 @@ async def logger_menu_handler(c: Client, cb: CallbackQuery):
     base_key = log_type.upper()
     
     # 1. APPLY TYPE
-    apply_type = await Altruix.config.get_env(f"{base_key}_LOGGER_APPLY_TYPE_{index}") or "per_account"
+    apply_type = await Altruix.config.get_env(f"{base_key}_LOGGER_APPLY_TYPE_{index}") or "global"
     apply_label = "Global" if apply_type == "global" else "Per-Account"
     
     # 2. STATUS
@@ -108,7 +108,7 @@ async def logger_toggle_handler(c: Client, cb: CallbackQuery):
     log_type, index, page = cb.matches[0].group(1), int(cb.matches[0].group(2)), int(cb.matches[0].group(3))
     base_key = log_type.upper()
     
-    apply_type = await Altruix.config.get_env(f"{base_key}_LOGGER_APPLY_TYPE_{index}") or "per_account"
+    apply_type = await Altruix.config.get_env(f"{base_key}_LOGGER_APPLY_TYPE_{index}") or "global"
     
     if apply_type == "global":
         key = f"{base_key}_LOGGER_GLOBAL"
@@ -122,8 +122,14 @@ async def logger_toggle_handler(c: Client, cb: CallbackQuery):
     setattr(Altruix.config, key, new_val) 
     
     # ✅ SYNC TO JSON (For Userbot Loggers)
-    if log_type in ["pml", "mnt"]:
-        filename = get_db_path('pm_logger_user_settings.json' if log_type == 'pml' else 'mentions_settings.json')
+    if log_type in ["pml", "mnt", "cmdl"]:
+        if log_type == "pml":
+            filename = get_db_path('pm_logger_user_settings.json')
+        elif log_type == "mnt":
+            filename = get_db_path('mentions_settings.json')
+        else:
+            filename = get_db_path('cmd_logger_settings.json')
+
         if os.path.exists(filename):
             try:
                 with open(filename, "r") as f: data = json.load(f)
@@ -143,7 +149,7 @@ async def logger_toggle_handler(c: Client, cb: CallbackQuery):
                         data["settings"] = sessions # Ensure back-sync
                 
                 # Mention Logger Sync
-                else: 
+                elif log_type == "mnt": 
                     me_id_str = str(Altruix.clients[index].me.id)
                     if apply_type == "global":
                         if "global" not in data: data["global"] = {}
@@ -156,6 +162,18 @@ async def logger_toggle_handler(c: Client, cb: CallbackQuery):
                              data["settings"][me_id_str] = {"mention": data["settings"][me_id_str]}
                         data["settings"][me_id_str]["mention"] = (new_val == "on")
                 
+                # Command Logger Sync
+                elif log_type == "cmdl":
+                    me_id_str = str(Altruix.clients[index].me.id)
+                    if apply_type == "global":
+                        if "global" not in data: data["global"] = {}
+                        data["global"]["enabled"] = (new_val == "on")
+                        data["enabled"] = (new_val == "on") # Legacy
+                    else:
+                        if "sessions" not in data: data["sessions"] = {}
+                        if me_id_str not in data["sessions"]: data["sessions"][me_id_str] = {}
+                        data["sessions"][me_id_str]["enabled"] = (new_val == "on")
+
                 with open(filename, "w") as f: json.dump(data, f, indent=2)
             except Exception as e:
                 logger.error(f"Failed to sync {log_type} toggle to JSON: {e}")
@@ -172,14 +190,20 @@ async def logger_mode_handler(c: Client, cb: CallbackQuery):
     base_key = log_type.upper()
     key = f"{base_key}_LOGGER_APPLY_TYPE_{index}"
     
-    current = await Altruix.config.get_env(key) or "per_account"
+    current = await Altruix.config.get_env(key) or "global"
     new_val = "global" if current == "per_account" else "per_account"
     
     await Altruix.config.sync_env_to_db(key, new_val, upsert=True)
     
     # ✅ SYNC APPLY TYPE TO JSON
-    if log_type in ["pml", "mnt"]:
-        filename = get_db_path('pm_logger_user_settings.json' if log_type == 'pml' else 'mentions_settings.json')
+    if log_type in ["pml", "mnt", "cmdl"]:
+        if log_type == "pml":
+            filename = get_db_path('pm_logger_user_settings.json')
+        elif log_type == "mnt":
+            filename = get_db_path('mentions_settings.json')
+        else:
+            filename = get_db_path('cmd_logger_settings.json')
+
         if os.path.exists(filename):
             try:
                 with open(filename, "r") as f: data = json.load(f)
@@ -556,6 +580,44 @@ async def global_logger_menu_handler(c: Client, cb: CallbackQuery):
     
     key = f"{base_key}_LOGGER_GLOBAL"
     current = await Altruix.config.get_env(key) or "off"
+    
+    # Special handling for Callback Logger (cb)
+    if log_type == "cb":
+        # Map old "on" to "all" for compatibility
+        if current == "on": current = "all"
+        
+        status_text = {
+            "all": "✅ ALL Users",
+            "sudo": "🛡️ SUDO Only",
+            "nonsudo": "👤 NON-SUDO Only",
+            "off": "❌ OFF"
+        }.get(current, "❌ OFF")
+        
+        buttons = [
+            [
+                InlineKeyboardButton(f"{'✅ ' if current == 'all' else ''}All", "global_cb_filter_all"),
+                InlineKeyboardButton(f"{'✅ ' if current == 'off' else ''}Off", "global_cb_filter_off")
+            ],
+            [
+                InlineKeyboardButton(f"{'✅ ' if current == 'sudo' else ''}Sudo", "global_cb_filter_sudo"),
+                InlineKeyboardButton(f"{'✅ ' if current == 'nonsudo' else ''}Non-Sudo", "global_cb_filter_nonsudo")
+            ],
+            [InlineKeyboardButton("🔙 Back", "bot_controls_menu")]
+        ]
+        
+        await edit_cb(cb, 
+            f"<b>📊 Global {type_map[log_type]} Control</b>\n\n"
+            f"• 🔌 <b>Status Saat Ini:</b> {status_text}\n\n"
+            f"💡 <b>Deskripsi:</b>\n"
+            f"• <b>All:</b> Catat semua user.\n"
+            f"• <b>Sudo:</b> Hanya catat sudo user.\n"
+            f"• <b>Non-Sudo:</b> Hanya catat user biasa.\n"
+            f"• <b>Off:</b> Matikan logging callback.\n",
+            reply_markup=InlineKeyboardMarkup(buttons),
+            parse_mode=ParseMode.HTML
+        )
+        return
+
     status_emoji = "✅ ON" if current == "on" else "❌ OFF"
     
     buttons = [
@@ -615,6 +677,25 @@ async def get_log_group_link_handler(c: Client, cb: CallbackQuery):
         )
     except Exception as e:
         await cb.answer(f"❌ Error: {str(e)}", show_alert=True)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^global_cb_filter_(all|sudo|nonsudo|off)$"))
+@iuser_check
+@log_errors
+async def callback_logger_filter_handler(c: Client, cb: CallbackQuery):
+    """Handle filter selection for Callback Logger."""
+    new_val = cb.matches[0].group(1)
+    key = "CB_LOGGER_GLOBAL"
+    
+    await Altruix.config.sync_env_to_db(key, new_val, upsert=True)
+    setattr(Altruix.config, key, new_val)
+    
+    await cb.answer(f"Callback Logger Filter: {new_val.upper()}")
+    
+    # Return to menu to update UI
+    # Explicitly calling global_logger_menu_handler with mocked 'cb' match
+    # Group 1 match should be "cb" as expected by global_logger_menu_handler regex (pmlb|mntlb|joinl|cbl) -> "cb"
+    cb.matches = [type('Mock', (object,), {'group': lambda *args: "cbl"})()]
+    await global_logger_menu_handler(c, cb)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^cb_logger_settings$"))
 @iuser_check

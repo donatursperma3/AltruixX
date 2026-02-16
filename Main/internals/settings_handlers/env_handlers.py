@@ -100,7 +100,7 @@ async def env_manager_list_handler(c: Client, cb: CallbackQuery):
         InlineKeyboardButton("🔄 Refresh", f"env_manager_list_{page}_refresh")
     ])
     buttons.append([
-        InlineKeyboardButton("🔙 Back", "session_info_0_1_4")
+        InlineKeyboardButton("🔙 Back", "configs_home")
     ])
     
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)

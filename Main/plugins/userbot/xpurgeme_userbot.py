@@ -367,7 +367,7 @@ async def purgeme_cmd(client: Client, message: Message):
             "delay": 1.0, # Default changed to 1.0s
             "types": ["all"],
             "mode": "oldest",
-            "batch_size": 60,
+            "batch_size": 30,
             "batch_delay": 0, # Default 0 (only active if toggled)
             "offset": 0,
             "status": "config",
@@ -528,7 +528,7 @@ async def purgeme_cmd(client: Client, message: Message):
     state["start_time"] = time.time()
     count = state["count"]
     delay = state["delay"] 
-    batch_size = state.get("batch_size", 60)
+    batch_size = state.get("batch_size", 30)
     batch_delay = state.get("batch_delay", 0)
     offset = state.get("offset", 0)
     target_types = state["types"]

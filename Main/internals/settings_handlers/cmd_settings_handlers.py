@@ -122,8 +122,12 @@ async def cmd_account_settings_handler(c: Client, cb: CallbackQuery, index: int 
     client = Altruix.clients[index]
     me = getattr(client, "myself", None) or client.me
     
+    # ✅ Enhanced UI with localized title and description
+    title = Altruix.get_string("auto_delete_cmd_title")
+    desc = Altruix.get_string("auto_delete_cmd_desc")
     text = (
-        f"<b>📱 Command Settings for: {me.first_name}</b>\n\n"
+        f"<b>{title} for: {me.first_name}</b>\n\n"
+        f"<i>{desc}</i>\n\n"
         f"• <b>Mode:</b> <code>{apply_type.upper().replace('_', ' ')}</code>\n"
         f"• <b>Status:</b> <code>{status.upper()}</code>\n"
         f"• <b>Delay:</b> <code>{delay}s</code>\n\n"

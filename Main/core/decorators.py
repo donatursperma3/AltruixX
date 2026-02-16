@@ -96,8 +96,9 @@ def iuser_check(func):
         full_name = f"{user.first_name or ''} {user.last_name or ''}".strip() or "No name"
         
         # ✅ CALLBACK LOGGER CONFIGURATION
-        # type: all / sudo / non_sudo / off
-        log_type = (os.getenv("CALLBACK_LOGGER_TYPE") or "all").lower()
+        # Fetch from centralized config (synced with database)
+        # Filter modes: all / sudo / nonsudo / off
+        log_type = (await Altruix.config.get_env("CB_LOGGER_GLOBAL") or "all").lower()
         
         # ✅ FIXED: Check authorization using centralized helper
         # This handles dynamic sudo users from database, static list, and per-account settings
@@ -110,12 +111,13 @@ def iuser_check(func):
             active_session_ids = [client.me.id for client in Altruix.clients if hasattr(client, 'me') and client.me]
             is_sudo = user_id in active_session_ids
         
+        # ✅ Determine if callback should be logged based on filter mode
         should_log = False
         if log_type == "all":
             should_log = True
         elif log_type == "sudo" and is_sudo:
             should_log = True
-        elif log_type == "non_sudo" and not is_sudo:
+        elif log_type == "nonsudo" and not is_sudo:
             should_log = True
         elif log_type == "off":
             should_log = False
@@ -203,12 +205,22 @@ def iuser_check(func):
             if me and not getattr(me, "is_bot", False):
                 bot_username = f"Userbot Session ({bot_username})"
             
+            # Blank name handling
+            display_name = full_name.strip()
+            # Check if name is empty or contains only non-visible characters
+            is_blank = not display_name or all(ord(c) < 33 or ord(c) == 8203 for c in display_name)
+            final_name = "blank" if is_blank else html.escape(full_name)
+            
+            # Format Username
+            username_display = f"{username}" if username and username != "None" else "None"
+            
+            # Construct log message
             log_message = (
                 f"{Altruix.get_string('LOGGER_CALLBACK_TITLE')}\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"{Altruix.get_string('LOGGER_CALLBACK_BOT').format(bot_username)}\n"
-                f"{Altruix.get_string('LOGGER_CALLBACK_USER').format(user_id, html.escape(full_name))}\n"
-                f"{Altruix.get_string('LOGGER_CALLBACK_USERNAME').format(username)}\n"
+                f"{Altruix.get_string('LOGGER_CALLBACK_USER').format(user_id, final_name)}\n"
+                f"{Altruix.get_string('LOGGER_CALLBACK_USERNAME').format(username_display)}\n"
                 f"{Altruix.get_string('LOGGER_CALLBACK_USER_ID').format(user_id)}\n"
                 f"{Altruix.get_string('LOGGER_CALLBACK_CHAT').format(chat_info)}\n"
                 f"{Altruix.get_string('LOGGER_CALLBACK_CHAT_ID').format(chat_id)}\n"
@@ -216,7 +228,8 @@ def iuser_check(func):
                 f"{Altruix.get_string('LOGGER_CALLBACK_RESULT').format(Altruix.get_string(result_status))}\n"
                 f"{Altruix.get_string('LOGGER_CALLBACK_MSG_HEADER')}\n"
                 f"<blockquote>{html.escape(str(msg_text)[:1000])}</blockquote>\n"
-                f"{Altruix.get_string('LOGGER_CALLBACK_TIME').format(time_now)}"
+                f"{Altruix.get_string('LOGGER_CALLBACK_TIME').format(time_now)}\n\n"
+                f"{Altruix.get_string('LOGGER_CALLBACK_PRIVATE_LINK').format(user_id)}"
             )
             await send_log_message(log_message)
 

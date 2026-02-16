@@ -42,7 +42,7 @@ from Main.plugins.userbot.xpm_logger_user import SessionManager
 # ============================================================================
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "tags"  # Renamed from mentions
-PLUGIN_VERSION = "1.7.72-TAG"  # ✅ Improved safe settings & multi-account sync
+PLUGIN_VERSION = "1.7.73-TAG"  # ✅ Improved safe settings & multi-account sync
 
 # Gunakan logger Altruix jika tersedia, atau buat baru yang konsisten
 logger = logging.getLogger("altruix.mentions")
@@ -1500,7 +1500,9 @@ async def send_mention_edit_handler(c: Client, m: RawMessage):
         )
 
         # Preserve markup by fetching original msg
-        bot = Altruix.bot_manager.get_bot(c.me.id)
+        # Use Altruix.bot (Main Bot) for all operations in log chat to avoid identity mismatch
+        # Fix for error 403 MESSAGE_AUTHOR_REQUIRED
+        bot = Altruix.bot
         try:
             old_msg = await bot.get_messages(Altruix.log_chat, log_msg_id)
             markup = old_msg.reply_markup if old_msg else None

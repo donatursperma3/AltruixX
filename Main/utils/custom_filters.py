@@ -43,29 +43,23 @@ async def parse_(client, message: Message, cmd, disable_sudo=False):
         prefix = reg[1]
         command_name = reg[2]
 
-        # ✅ Check for user/owner command
-        if (
-            (((message.from_user and message.from_user.is_self) or message.outgoing))
-            and prefix == user_cmd_handler
-            and command_name in cmd
-        ):
-            return True
-            
-        # ✅ Check for sudo command using centralized helper
-        if (
-            message.from_user
-            and prefix == sudo_cmd_handler
-            and command_name in cmd
-        ):
-            # Check if current user ID is in authorized sudo list (including per-account DB)
-            if not await Main.Altruix.is_sudo(message.from_user.id, client=client):
-                Main.Altruix.log(f"🕵️ SUDO_FILTER: User {message.from_user.id} tried command '{command_name}' but is NOT authorized.", level=20)
-                return False
-
-            Main.Altruix.log(f"👑 SUDO_FILTER: Authorized sudo user {message.from_user.id} executing command '{command_name}'", level=20)
-            return True
-        else:
+        # ✅ Determine sender identity
+        is_self = (message.from_user and message.from_user.is_self) or message.outgoing
+        
+        # 1. OWNER LOGIC (User Prefix Only)
+        if is_self:
+            if prefix == user_cmd_handler and command_name in cmd:
+                return True
             return False
+
+        # 2. SUDO LOGIC (Sudo Prefix Only)
+        if prefix == sudo_cmd_handler and command_name in cmd:
+            # Check if current user ID is in authorized sudo list
+            if message.from_user and await Main.Altruix.is_sudo(message.from_user.id, client=client):
+                Main.Altruix.log(f"👑 SUDO_FILTER: Authorized sudo user {message.from_user.id} executing command '{command_name}'", level=20)
+                return True
+        
+        return False
     except Exception:
         return False
 

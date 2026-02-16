@@ -732,7 +732,9 @@ async def pm_logger_user_edit_handler(c: Client, m: RawMessage):
         )
 
         # Preserve the reply_markup by fetching it
-        bot = Altruix.bot_manager.get_bot(c.me.id)
+        # Use Altruix.bot (Main Bot) for all operations in log chat to avoid identity mismatch
+        # Fix for error 403 MESSAGE_AUTHOR_REQUIRED
+        bot = Altruix.bot
         try:
             old_msg = await bot.get_messages(Altruix.log_chat, log_msg_id)
             markup = old_msg.reply_markup if old_msg else None

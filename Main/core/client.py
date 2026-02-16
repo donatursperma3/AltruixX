@@ -126,7 +126,7 @@ class AltruixClient:
         self.clients: List[Client] = []
         self.cmd_list = {}
         self.all_lang_strings = {}
-        self.__version__ = "0.0.9.762D" # ✅ Optimized Sudo & Prefix Cache
+        self.__version__ = "0.0.9.776D" # ✅ Optimized Sudo & Prefix Cache
         self.selected_lang = "english"
         self.local_lang_file = "./Main/localization"
         self.cmd_list = {} # {plugin_name: [cmd_data, ...]}
@@ -667,10 +667,11 @@ class AltruixClient:
             return format_string
         except Exception:
             return keyword
-    def on_message(self, custom_filters, group=1, bot_mode_unsupported=False):
-        custom_filters &= ~filters.command(
-            self.cmd_list_s, [self.user_command_handler, self.sudo_cmd_handler]
-        )
+    def on_message(self, custom_filters, group=1, bot_mode_unsupported=False, allow_commands=False):
+        if not allow_commands:
+            custom_filters &= ~filters.command(
+                self.cmd_list_s, [self.user_command_handler, self.sudo_cmd_handler]
+            )
         def decorator(func):
             async def wrapper(client, message: Message):
                 # ✅ Check if session is disabled
@@ -699,7 +700,7 @@ class AltruixClient:
             return wrapper
         return decorator
 
-    def on_edited_message(self, custom_filters, group=1, bot_mode_unsupported=False):
+    def on_edited_message(self, custom_filters, group=1, bot_mode_unsupported=False, allow_commands=False):
         def decorator(func):
             async def wrapper(client, message: Message):
                 # ✅ Check if session is disabled
@@ -889,24 +890,44 @@ class AltruixClient:
                     sender_id = message.from_user.id
                     current_client_id = client.me.id
                     
-                    # ✅ REFACTOR: Sudo Command Exception
-                    # If this is a sudo command, we ALLOW cross-execution.
-                    # This is because the sender's session will ignore its own sudo prefix,
-                    # so other sessions MUST handle it.
-                    s_p = self._prefix_cache["sudo_prefix"] if self._prefix_cache["apply_type"] == "global" else self._prefix_cache["per_account"].get(current_client_id, {}).get("s", self.sudo_cmd_handler)
-                    is_sudo_cmd = message.text and message.text.startswith(s_p)
+                    # ✅ Determine role and prefixes (Optimized cache usage)
+                    is_self = sender_id == current_client_id or message.outgoing
+                    is_sudo_user = await self.is_sudo(sender_id, client=client) if not is_self else False
                     
-                    # If sender is NOT the current client
+                    if self._prefix_cache["apply_type"] == "global":
+                        u_p = self._prefix_cache["user_prefix"]
+                        s_p = self._prefix_cache["sudo_prefix"]
+                    else:
+                        pa = self._prefix_cache["per_account"].get(current_client_id, {"u": self.user_command_handler, "s": self.sudo_cmd_handler})
+                        u_p, s_p = pa["u"], pa["s"]
+
+                    is_user_cmd = message.text and message.text.startswith(u_p)
+                    is_sudo_cmd = message.text and message.text.startswith(s_p)
+
+                    # ✅ ENFORCE STRICT PREFIX SEPARATION (Requirement 1.A)
+                    if is_self:
+                        # Owner session ONLY responds to User Prefix
+                        if not is_user_cmd:
+                            return
+                    else:
+                        # Sudo user ONLY responds to Sudo Prefix
+                        if not is_sudo_cmd:
+                            return
+
+                    # ✅ CONSOLIDATED DEDUPLICATION (Requirement 1.B/C Fix)
+                    # If this is a sudo command, only the FIRST active session handles it to avoid duplicates.
+                    if is_sudo_cmd and is_sudo_user:
+                        if self.clients and client != self.clients[0]:
+                            return
+
+                    # ✅ CROSS-EXECUTION PREVENTION for multiple userbot sessions
                     if sender_id != current_client_id and not is_sudo_cmd:
-                        # Check if sender is another active client in this instance
+                        # If sender is another active client in this instance, ignore
                         other_client_ids = [c.me.id for c in self.clients if hasattr(c, 'me')]
                         if sender_id in other_client_ids:
-                            # Sender is another active client, IGNORE to prevent double response
                             return
                 
-                # ✅ DEDUPLICATION for Multi-Session
-                # If message is incoming but from self (sent from other session/phone),
-                # only the FIRST active session handles it to avoid double responses.
+                # ✅ DEDUPLICATION for Self-Messages (Distant execution from phone)
                 if not message.outgoing and message.from_user and message.from_user.is_self:
                     if self.clients and client != self.clients[0]:
                         return
@@ -917,28 +938,14 @@ class AltruixClient:
                     )
                     message.chat.type = chat_type
                 
-                # ✅ CRITICAL SAFETY CHECK: Ensure it's actually a command
-                # ✅ FIX: Check for bot plugin FIRST before validating prefix
-                # This allows bot commands with '/' to bypass userbot prefix validation
+                # ✅ Bot mode check bypass for bot handlers
                 is_bot_plugin = self.plugin_categories.get(file_name.lower()) == "bot"
                 is_bot_command = message.text and message.text.startswith("/")
                 
                 if message.text:
-                    # ✅ Bot plugins with '/' prefix bypass userbot prefix check
                     if not (is_bot_plugin and is_bot_command):
-                        # ✅ REFACTOR: Use HIGH-PERFORMANCE CACHE
-                        apply_type_p = self._prefix_cache["apply_type"]
-                        if apply_type_p == "global":
-                            u_p = self._prefix_cache["user_prefix"]
-                            s_p = self._prefix_cache["sudo_prefix"]
-                            valid_prefixes = [u_p, s_p]
-                        else:
-                            tid = client.me.id
-                            pa = self._prefix_cache["per_account"].get(tid, {"u": self.user_command_handler, "s": self.sudo_cmd_handler})
-                            valid_prefixes = [pa["u"], pa["s"]]
-                        
-                        # Only validate prefix for non-bot commands
-                        if not any(message.text.startswith(p) for p in valid_prefixes):
+                        # Final prefix validation (already gated by role logic above, but kept for safety)
+                        if not (is_user_cmd or is_sudo_cmd):
                             return
 
                 chat_type = message.chat.type

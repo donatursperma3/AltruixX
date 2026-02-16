@@ -3,9 +3,13 @@ import html
 import os
 import asyncio
 import logging
+import re
 from datetime import datetime
 from pyrogram import Client, filters
-from pyrogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton, LinkPreviewOptions
+from pyrogram.types import (
+    CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton, 
+    LinkPreviewOptions, InlineQuery, InlineQueryResultArticle, InputTextMessageContent
+)
 from Main.core.decorators import log_errors, iuser_check
 from Main.core.client import Altruix
 from pyrogram.enums import ParseMode, ChatType
@@ -59,37 +63,23 @@ async def dl_content_menu_handler(c: Client, cb: CallbackQuery):
     await cb.answer("Menu Placeholder", show_alert=True)
     # real implementation might be different, but key is:
     # InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}_2")
-@Altruix.bot.on_callback_query(filters.regex(r"session_info_(\d+)_(\d+)(?:_(\d+))?$"))
-@iuser_check
-@log_errors
-async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = None, callback_page: int = None, button_page: int = 1):
-    """Main dashboard for session information and management (53+ Buttons)."""
-    if index is None:
-        index = int(cb.matches[0].group(1))
-    if callback_page is None:
-        callback_page = int(cb.matches[0].group(2))
-    
-    
-    # Check if we have an explicit button page in the callback (optional 3rd group)
-    try:
-        match_btn_page = cb.matches[0].group(3)
-        if match_btn_page:
-            button_page = int(match_btn_page)
-    except IndexError:
-        # No 3rd group in callback data, use default button_page = 1
-        pass
 
-    await cb.answer()
-    
+async def get_session_info_data(index: int, callback_page: int, button_page: int = 1):
+    """
+    Helper function to generate text and buttons for session info dashboard.
+    Shared between callback handler and inline query handler.
+    """
     if index >= len(Altruix.clients):
-        await cb.answer("❌ Sesi tidak ditemukan.", show_alert=True)
-        return
+        return "❌ Sesi tidak ditemukan.", None
 
     client = Altruix.clients[index]
     me = getattr(client, 'myself', None)
     if not me:
-        me = await client.get_me()
-        client.myself = me
+        try:
+            me = await client.get_me()
+            client.myself = me
+        except Exception:
+            return "❌ Gagal mengambil informasi akun.", None
 
     # Menu text with account info and total button count
     try:
@@ -99,7 +89,6 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
         bio = "-"
 
     # Calculate Stats
-    start_t = datetime.fromtimestamp(Altruix.start_time).strftime("%H:%M:%S")
     ub_mod = len([x for x in Altruix.plugin_categories.values() if x == 'userbot'])
     bot_mod = len([x for x in Altruix.plugin_categories.values() if x == 'bot'])
     xtra_mod = len([x for x in Altruix.plugin_categories.values() if x == 'other'])
@@ -107,15 +96,21 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
     
     # Custom Bot Info
     custom_bot_username = "None"
+    custom_bot_id = None
     if hasattr(Altruix, 'bot_manager'):
         custom_bot_username = Altruix.bot_manager.get_bot_username(me.id) or "None"
+        if custom_bot_username != "None":
+            # Find the bot ID from custom_bots dict
+            for bot_id, bot_client in Altruix.bot_manager.custom_bots.items():
+                if bot_client.me and bot_client.me.username == custom_bot_username:
+                    custom_bot_id = bot_id
+                    break
     
     # Advanced Stats: Count active loggers/features
     xtra_count = 0
-    # Count how many of these are "ON" in DB
     feat_keys = [
         f"PM_LOGGER_STATUS_{index}", f"MENTION_LOGGER_STATUS_{index}", 
-        f"JOIN_LOGGER_STATUS_{index}", f"CMD_LOGGER_STATUS_{index}",
+        f"JOIN_LOGGER_STATUS_{index}", f"CMDL_LOGGER_{index}",
         f"GPURGEME_STATUS_{index}", f"AUTO_DELETE_CMD_STATUS_{index}"
     ]
     for k in feat_keys:
@@ -135,7 +130,7 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
     u_prefix = await Altruix.config.get_env(u_key) or "."
     s_prefix = await Altruix.config.get_env(s_key) or ","
 
-    # ✅ Sudo Enablement Status for Indicator
+    # Sudo Status
     sudo_apply_type = await Altruix.config.get_env("SUDO_APPLY_TYPE") or "global"
     if sudo_apply_type == "global":
         sudo_enabled_raw = await Altruix.config.get_env("SUDO_ENABLED_GLOBAL")
@@ -146,12 +141,12 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
     
     sudo_status_icon = "✅ ON" if sudo_enabled else "❌ OFF"
 
-    # Total Active Bots (Main bot + all custom bots)
+    # Total Active Bots
     total_active_bots = 1 # Main Bot Assistant
     if hasattr(Altruix, 'bot_manager'):
          total_active_bots += len(Altruix.bot_manager.custom_bots)
 
-    # Fetch PM Logger Status (Sync with get_pm_setting_safe logic)
+    # Logger Status Check (Optimized logic)
     pm_logger_status = "❌ OFF"
     try:
         from Main.utils.file_helpers import get_db_path as _get_db_path
@@ -161,59 +156,37 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
             with open(_pm_settings_path, "r", encoding="utf-8") as _f:
                 _pm_data = _json.load(_f)
                 _pm_sessions = _pm_data.get("settings", {}) or _pm_data.get("sessions", {})
-                _me_id_str = str(me.id)
-                
-                # Check Apply Type
-                _apply_type = _pm_data.get("apply_types", {}).get(_me_id_str, "per_account")
-                
-                if _apply_type == "global":
-                    # Global Config
-                    _pm_global_cfg = _pm_data.get("global_config", {})
-                    _pm_enabled = _pm_global_cfg.get("enabled", _pm_data.get("enabled", False))
-                else:
-                    # Per Account
-                    _setting_data = _pm_sessions.get(_me_id_str)
-                    if isinstance(_setting_data, dict):
-                        _pm_enabled = _setting_data.get("enabled", _pm_data.get("global_config", {}).get("enabled", _pm_data.get("enabled", False)))
-                    elif isinstance(_setting_data, bool):
-                        _pm_enabled = _setting_data
-                    else:
-                        # Fallback to global
-                        _pm_enabled = _pm_data.get("global_config", {}).get("enabled", _pm_data.get("enabled", False))
-                
-                if _pm_enabled:
-                    pm_logger_status = "✅ ON"
-    except Exception:
-        pass
+                _settings_data = _pm_sessions.get(str(me.id))
+                _pm_enabled = False
+                if isinstance(_settings_data, dict):
+                    _pm_enabled = _settings_data.get("enabled", False)
+                elif isinstance(_settings_data, bool):
+                    _pm_enabled = _settings_data
+                if _pm_enabled: pm_logger_status = "✅ ON"
+    except Exception: pass
     
-    # Fetch Mention Logger Status (Sync with get_mention_setting_safe logic)
     mention_logger_status = "❌ OFF"
     try:
         _mention_settings_path = _get_db_path("mentions_settings.json")
         if os.path.exists(_mention_settings_path):
             with open(_mention_settings_path, "r", encoding="utf-8") as _f:
                 _m_data = _json.load(_f)
-                _me_id_str = str(me.id)
                 _m_sessions = _m_data.get("settings", {})
-                
-                # Check Apply Type
-                _m_apply_type = _m_data.get("apply_types", {}).get(_me_id_str, "per_account")
-                
-                if _m_apply_type == "global":
-                    _m_enabled = _m_data.get("global", {}).get("mention", True)
-                else:
-                    _m_per_account = _m_sessions.get(_me_id_str, {})
-                    if isinstance(_m_per_account, dict):
-                        _m_enabled = _m_per_account.get("mention", _m_data.get("global", {}).get("mention", True))
-                    elif isinstance(_m_per_account, bool):
-                        _m_enabled = _m_per_account
-                    else:
-                        _m_enabled = _m_data.get("global", {}).get("mention", True)
-                
-                if _m_enabled:
-                    mention_logger_status = "✅ ON"
-    except Exception:
-        pass
+                _m_per_account = _m_sessions.get(str(me.id), {})
+                _m_enabled = False
+                if isinstance(_m_per_account, dict):
+                    _m_enabled = _m_per_account.get("mention", True)
+                elif isinstance(_m_per_account, bool):
+                    _m_enabled = _m_per_account
+                if _m_enabled: mention_logger_status = "✅ ON"
+    except Exception: pass
+
+    # Auto Delete Command Status
+    auto_delete_mode = await Altruix.config.get_env(f"AUTO_DELETE_CMD_TYPE_{index}") or "per_account"
+    auto_delete_status = await Altruix.config.get_env(f"AUTO_DELETE_CMD_STATUS_{index}") or "off"
+    auto_delete_delay = await Altruix.config.get_env(f"AUTO_DELETE_CMD_DELAY_{index}") or "2"
+    auto_delete_status_icon = "✅ ON" if auto_delete_status == "on" else "❌ OFF"
+    auto_delete_mode_display = auto_delete_mode.upper().replace('_', ' ')
 
     text = (
         f"<b>👤 Session Info</b>\n\n"
@@ -228,34 +201,30 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
         f"<b>📋 Logger Status:</b>\n"
         f"• <b>PM Logger:</b> {pm_logger_status}\n"
         f"• <b>Mention Logger:</b> {mention_logger_status}\n\n"
-        f"<b>🤖 Bot Assistant:</b> <spoiler>{('@' + custom_bot_username) if custom_bot_username != 'None' else 'None'}</spoiler> (Active Bots: {total_active_bots})\n"
+        f"<b>📱 {Altruix.get_string('auto_delete_cmd')}:</b> {auto_delete_status_icon} \n • Mode: <code>{auto_delete_mode_display}</code> | • Delay: <code>{auto_delete_delay}s</code>\n\n"
+        f"<b>🤖 Bot Assistant:</b> <spoiler>{f'<a href=\"tg://user?id={custom_bot_id}\">{custom_bot_username}</a>' if custom_bot_id else (f'{custom_bot_username}' if custom_bot_username != 'None' else 'None')}</spoiler> (Active Bots: {total_active_bots})\n"
         f"<b>⚙️ Xtra-Features:</b> {xtra_count} Aktif\n"
         f"<b>🔘 Total Modul:</b> {total_mod} (UB {ub_mod}, Bot {bot_mod}, Xtra {xtra_mod})\n\n"
         f"<b>📊 Total Buttons:</b> 56 | <b>Page:</b> {button_page}/5\n"
         f"<b>Manage this session:</b>"
     )
 
-    # Multi-page buttons (43+ total functionality)
-    # Helper to clean code:
     def btn(idx, key, data):
         return InlineKeyboardButton(f"[{idx}] {Altruix.get_string(key)}", data)
 
     buttons = []
-    
     if button_page == 1:
-        # Page 1: Account Basics (1-13)
         buttons = [
             [btn(1, "refresh_info", f"session_info_{index}_{callback_page}_1"), btn(2, "unlink_session", f"unlink_session_{index}")],
             [btn(3, "change_name", f"change_name_menu_{index}_{callback_page}"), btn(4, "change_bio", f"gen_conf_change_bio_{index}_{callback_page}")],
             [btn(5, "change_username", f"gen_conf_change_username_{index}_{callback_page}"), btn(6, "change_profile_photo", f"gen_conf_change_profile_photo_{index}_{callback_page}")],
             [btn(7, "upload_photo", f"gen_conf_send_profile_photo_{index}_{callback_page}"), btn(8, "delete_all_photos", f"gen_conf_delete_all_profile_photos_{index}_{callback_page}")],
             [btn(9, "backup_profile", f"gen_conf_backup_profile_{index}_{callback_page}"), btn(10, "check_limit", f"check_limit_confirm_{index}_{callback_page}")],
-            [btn(11, "view_sessions", f"gen_conf_view_all_sessions_{index}_{callback_page}"), btn(12, "join_log_group", f"join_log_group_{index}_{callback_page}")], # Added page param
+            [btn(11, "view_sessions", f"gen_conf_view_all_sessions_{index}_{callback_page}"), btn(12, "join_log_group", f"join_log_group_{index}_{callback_page}")],
             [btn(13, "toggle_session_status", f"toggle_session_confirm_{index}_{callback_page}")],
             [InlineKeyboardButton(Altruix.get_string("next"), f"session_info_{index}_{callback_page}_2")]
         ]
     elif button_page == 2:
-        # Page 2: Media & Active Tools (14-25)
         buttons = [
             [btn(14, "download_story", f"gen_conf_dlstory_session_input_{index}_{callback_page}"), btn(15, "download_content", f"gen_conf_dl_content_input_{index}_{callback_page}")],
             [btn(16, "download_user_photo", f"gen_conf_dl_uphoto_start_{index}_{callback_page}"), btn(17, "purge_my_msg", f"purge_msg_start_{index}_{callback_page}")],
@@ -266,7 +235,6 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
             [InlineKeyboardButton(Altruix.get_string("prev"), f"session_info_{index}_{callback_page}_1"), InlineKeyboardButton(Altruix.get_string("next"), f"session_info_{index}_{callback_page}_3")]
         ]
     elif button_page == 3:
-        # Page 3: Logs & Settings (26-37)
         buttons = [
             [btn(26, "pm_logger_control", f"pml_menu_{index}_{callback_page}"), btn(27, "mention_control", f"mnt_menu_{index}_{callback_page}")],
             [btn(28, "join_logger_control", f"joinl_menu_{index}_{callback_page}"), btn(29, "cmd_logger_control", f"cmdl_menu_{index}_{callback_page}")],
@@ -277,7 +245,6 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
             [InlineKeyboardButton(Altruix.get_string("prev"), f"session_info_{index}_{callback_page}_2"), InlineKeyboardButton(Altruix.get_string("next"), f"session_info_{index}_{callback_page}_4")]
         ]
     elif button_page == 4:
-        # Page 4: Advanced & Global (38-51)
         buttons = [
             [btn(38, "export_session", f"gen_conf_export_session_{index}_{callback_page}"), btn(39, "export_phone", f"gen_conf_export_phone_{index}_{callback_page}")],
             [btn(40, "export_all_sessions", f"gen_conf_export_all_sessions_{index}_{callback_page}"), btn(41, "export_all_phones", f"gen_conf_export_all_phones_{index}_{callback_page}")],
@@ -292,7 +259,6 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
             [InlineKeyboardButton(Altruix.get_string("prev"), f"session_info_{index}_{callback_page}_3"), InlineKeyboardButton(Altruix.get_string("next"), f"session_info_{index}_{callback_page}_5")]
         ]
     elif button_page == 5:
-        # Page 5: Bulk & System (52-56)
         buttons = [
             [InlineKeyboardButton(f"[52] {Altruix.get_string('bulk_join_menu')}", f"bulk_join_menu"), InlineKeyboardButton(f"[53] {Altruix.get_string('bulk_leave_menu')}", f"bulk_leave_menu")],
             [InlineKeyboardButton(f"[54] {Altruix.get_string('bulk_report_menu')}", f"bulk_report_menu"), InlineKeyboardButton(f"[55] {Altruix.get_string('sys_ctrl_restart')}", f"sys_ctrl_restart")],
@@ -300,31 +266,62 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
             [InlineKeyboardButton(f"{Altruix.get_string('prev')} (4/5)", f"session_info_{index}_{callback_page}_4")]
         ]
     
-    # Check if bulk_join_menu exists in YML, if not use literal
-    # Actually, let's just use literals for now for 49-53 if keys don't exist, but prompt demanded YML.
-    # I'll stick to btn helper if keys exist.
-    # Button 7: "upload_photo" -> used new key.
-    # Button 49: "Bulk Join" -> "bulk_join_menu" key?
-    # I should check id.yml for "bulk_join_menu". It might not exist.
-    # If not existing, Altruix.get_string returns the key.
-    # So user sees "bulk_join_menu". BAD.
-    # I will rely on the fact that if it returns key, I should have updated YML. 
-    # But I can't update YML easily without knowing all missing keys.
-    # I will use a safe get string: if get_string returns key, use a default fallback.
-    # But for now, let's assume they exist or I will add them if I see they are missing.
-    
     buttons.append([InlineKeyboardButton(Altruix.get_string("back"), callback_data=f"sessions_list_{callback_page}")])
+    return text, InlineKeyboardMarkup(buttons)
 
+@Altruix.bot.on_callback_query(filters.regex(r"session_info_(\d+)_(\d+)(?:_(\d+))?$"))
+@iuser_check
+@log_errors
+async def sessions_info_cb_handler(c: Client, cb: CallbackQuery):
+    """Callback-based session info dashboard."""
+    index = int(cb.matches[0].group(1))
+    callback_page = int(cb.matches[0].group(2))
+    button_page = int(cb.matches[0].group(3)) if cb.matches[0].group(3) else 1
+    
+    await cb.answer()
+    text, reply_markup = await get_session_info_data(index, callback_page, button_page)
+    
     try:
         await cb.edit_message_text(
             text=f"<b>ℹ️ SESSION MANAGER</b>\n\n<blockquote expandable>{text}</blockquote>",
-            reply_markup=InlineKeyboardMarkup(buttons),
+            reply_markup=reply_markup,
             parse_mode=ParseMode.HTML,
             link_preview_options=LinkPreviewOptions(is_disabled=True)
         )
     except Exception as e:
-        logger.error(f"Failed to edit message in session_info: {e}")
+        logger.error(f"Failed to edit message in session_info callback: {e}")
         await cb.answer(f"❌ Error: {e}", show_alert=True)
+
+@Altruix.bot.on_inline_query(filters.regex(r"^session_(\d+)(?:_(\d+))?$"))
+@iuser_check
+@log_errors
+async def session_info_inline_handler(c: Client, iq: InlineQuery):
+    """Inline-based session info Dashboard, used by .mysess command."""
+    # AUTHORIZATION CHECK
+    if not await Altruix.is_sudo(iq.from_user.id):
+        return
+    
+    index = int(iq.matches[0].group(1))
+    button_page = int(iq.matches[0].group(2)) if iq.matches[0].group(2) else 1
+    
+    # Generate data
+    text, reply_markup = await get_session_info_data(index, 1, button_page)
+    
+    # Answer inline query
+    results = [
+        InlineQueryResultArticle(
+            title=f"Session Info #{index}",
+            description="Open full management dashboard with 56+ buttons",
+            input_message_content=InputTextMessageContent(
+                message_text=f"<b>ℹ️ SESSION MANAGER</b>\n\n<blockquote expandable>{text}</blockquote>",
+                parse_mode=ParseMode.HTML,
+                link_preview_options=LinkPreviewOptions(is_disabled=True)
+            ),
+            reply_markup=reply_markup,
+            thumb_url="https://telegra.ph/file/0c6f5a3e1445790c9b0e2.jpg" # Optional thumb
+        )
+    ]
+    await iq.answer(results=results, cache_time=0, is_personal=True)
 
 # ============================================================================
 # ⌨️ CENTRAL MESSAGE HANDLER FOR INPUTS
