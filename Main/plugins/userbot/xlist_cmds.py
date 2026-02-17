@@ -38,10 +38,10 @@ async def list_all_cmds_handler(c: Client, m):
     
     text += f"<b>Total Plugins:</b> <code>{total_plugins}</code>\n"
     text += f"<b>Total Commands:</b> <code>{total_cmds}</code>\n\n"
-    text += f"<i>Use</i> <code>{Altruix.user_command_handler}help <plugin></code> <i>for details!</i>"
+    text += f"<i>Use</i> <code>{Altruix.prefix_owner_user}help <plugin></code> <i>for details!</i>"
     
     await m.handle_message(text)
 
 __MODULE__ = "Command List"
-__HELP__ = f"Use <code>{Altruix.user_command_handler}listcmds</code> to see all available command triggers across all plugins."
+__HELP__ = f"Use <code>{Altruix.prefix_owner_user}listcmds</code> to see all available command triggers across all plugins."
 

@@ -49,11 +49,16 @@ class BaseConfig(object):
     BOT_MODE = getenv("BOT_MODE", False)
     AUTOPOST_CACHE = {}
     CUSTOM_BOT_MEDIA = getenv("CUSTOM_BOT_MEDIA")
-    OWNER_USERS_ID = (
-        int(getenv("OWNER_USERS_ID") or getenv("OWNER_ID"))
-        if (getenv("OWNER_USERS_ID") and getenv("OWNER_USERS_ID").isdigit()) or (getenv("OWNER_ID") and getenv("OWNER_ID").isdigit())
-        else None
-    )
+    # ✅ REFACTOR: OWNER_USERS_ID is now a list to support multiple owners
+    # Fallback to OWNER_ID for single entry compatibility
+    OWNER_USERS_ID = [
+        int(i) for i in (getenv("OWNER_USERS_ID") or getenv("OWNER_ID") or "").split(" ") if i.isdigit()
+    ]
+    
+    @property
+    def OWNER_ID(self):
+        """Returns the primary owner ID for single-ID compatibility (e.g. loggers)."""
+        return self.OWNER_USERS_ID[0] if self.OWNER_USERS_ID else None
     LOAD_ENV_TO_DB = getenv("LOAD_ENV_TO_DB", False)
     CUSTOM_BT_START_MSG = getenv("CUSTOM_BT_START_MSG", "")
     SESSIONS = [i for i in getenv("SESSIONS", "").split(" ") if i != "" or None]
@@ -297,6 +302,21 @@ class Config(BaseConfig):
             if db_val is not None:
                 # Automigrate in cache (don't force DB write here to avoid heavy operations on every read)
                 self._env_cache[env_key] = db_val
+
+        # ✅ DYNAMIC SUFFIX BACKWARD COMPATIBILITY (For per-account prefixes)
+        if db_val is None:
+            # Check if key starts with new prefix base
+            if env_key.startswith("PREFIX_OWNER_USER_"):
+                suffix = env_key.replace("PREFIX_OWNER_USER_", "")
+                legacy_key = f"CMD_HANDLER_{suffix}"
+                db_val = await self.get_env_from_db(legacy_key)
+            elif env_key.startswith("PREFIX_SUDO_USERS_"):
+                suffix = env_key.replace("PREFIX_SUDO_USERS_", "")
+                legacy_key = f"SUDO_CMD_HANDLER_{suffix}"
+                db_val = await self.get_env_from_db(legacy_key)
+            
+            if db_val is not None:
+                self._env_cache[env_key] = db_val
         
         if db_val is not None:
             self._env_cache[env_key] = db_val
@@ -482,6 +502,66 @@ class Config(BaseConfig):
         await self.env_col.find_one_and_update(
             {"_id": "SUDO_USERS_ID"}, {"$pull": {"env_value": int(user_id)}}
         )
+
+    # ─── OWNER MANAGEMENT METHODS ──────────────────────────────────────────
+    
+    @var_check
+    async def add_owner(self, user_id: Union[int, str, List[Union[int, str]]]) -> None:
+        """Add a user to the authorized owners list."""
+        if isinstance(user_id, int):
+            user_id = [user_id]
+        if isinstance(user_id, str):
+            user_id = [int(user_id)]
+        if isinstance(user_id, list):
+            user_id = [int(i) for i in user_id]
+            
+        await self.add_env_to_db(
+            "OWNER_USERS_ID", user_id, upsert=True
+        )
+
+    @var_check
+    async def get_owners(self) -> List[int]:
+        """Fetch the current list of authorized owners from database and local config."""
+        owners = []
+        if var := await self.env_col.find_one({"_id": "OWNER_USERS_ID"}):
+            env_val = var.get("env_value")
+            if env_val:
+                if isinstance(env_val, list):
+                    owners.extend([int(i) for i in env_val])
+                elif isinstance(env_val, (int, str)) and str(env_val).isdigit():
+                    owners.append(int(env_val))
+        
+        # Backward compatibility check for old key
+        if not owners:
+            if var := await self.env_col.find_one({"_id": "OWNER_ID"}):
+                env_val = var.get("env_value")
+                if env_val:
+                    if isinstance(env_val, list):
+                        owners.extend([int(i) for i in env_val])
+                    elif isinstance(env_val, (int, str)) and str(env_val).isdigit():
+                        owners.append(int(env_val))
+
+        # Merge with local config
+        local_owners = getattr(self, "OWNER_USERS_ID", [])
+        if isinstance(local_owners, int):
+            local_owners = [local_owners]
+            
+        if local_owners:
+            owners.extend(local_owners)
+            owners = list(set(owners))
+            await self.add_env_to_db("OWNER_USERS_ID", owners)
+            
+        self.OWNER_USERS_ID = owners
+        return owners
+
+    async def del_owner(self, user_id: int) -> None:
+        """Remove a user from the authorized owners list."""
+        await self.env_col.find_one_and_update(
+            {"_id": "OWNER_USERS_ID"}, {"$pull": {"env_value": int(user_id)}}
+        )
+        # Update local list as well
+        if hasattr(self, "OWNER_USERS_ID") and int(user_id) in self.OWNER_USERS_ID:
+            self.OWNER_USERS_ID.remove(int(user_id))
 
     async def get_pm_sts(self):
         if await self.get_env_from_db("PM_PERMIT"):

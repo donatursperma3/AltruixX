@@ -78,7 +78,7 @@ async def sessions_menu_cb_handler(c: Client, cb: CallbackQuery):
         page = 1
 
     session_buttons, has_next, total_pages = get_sessions_buttons(page)
-    LOG_CHAT_ID = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
+    LOG_CHAT_ID = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_USERS_ID))
 
     action_buttons = [
         [

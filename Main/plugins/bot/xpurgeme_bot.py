@@ -58,13 +58,25 @@ def get_purgeme_text(state):
     chat_name = state.get("chat_name", "Unknown")
     account_name = state.get("account_name", "Unknown")
 
+    # Mapping for special types to YML keys
+    TYPE_MAP = {
+        "video_note": "VNOTE",
+        "animation": "GIF",
+        "document": "DOC",
+        "location": "LOC",
+        "contact": "CONT",
+        "venue": "VEN"
+    }
+
     # Common Header for active states
     if not types or "all" in types:
-        type_display = "ALL"
+        type_display = loc("GP_BTN_ALL") or "ALL"
     elif len(types) > 1:
-        type_display = Altruix.get_string("purgeme_multiple").format(len(types))
+        type_display = (loc("purgeme_multiple") or "Multiple ({})").format(len(types))
     else:
-        type_display = Altruix.get_string(f"GP_BTN_{types[0].upper()}") or types[0].upper()
+        raw_type = types[0].lower()
+        suffix = TYPE_MAP.get(raw_type, raw_type.upper())
+        type_display = loc(f"GP_BTN_{suffix}") or suffix
 
     header = f"{title}\n" \
              f"<b>Mode:</b> {mode.capitalize()} | <b>Type:</b> {type_display}\n" \
@@ -74,33 +86,42 @@ def get_purgeme_text(state):
              f"<b>Account:</b> {account_name}"
         
     if status == "collecting":
-        status_line = f"🔎 <b>Collecting...</b>\nFound: {processed}/{count}\nScanned: {scanned}"
+        status_line = (loc("purgeme_collecting_detailed") or "🔎 <b>Collecting...</b>\nFound: {processed}/{count}\nScanned: {scanned}").format(
+            processed=processed, count=count, scanned=scanned
+        )
         return f"{header}\n\n{status_line}"
 
     elif status == "running":
-        status_line = f"🗑 <b>Deleting...</b>\nDeleted: {processed}/{count}"
+        status_line = (loc("purgeme_deleting_detailed") or "🗑 <b>Deleting...</b>\nDeleted: {processed}/{count}").format(
+            processed=processed, count=count
+        )
         if delay > 0: status_line += f"\nDelay: {delay}s"
         return f"{header}\n\n{status_line}"
 
     elif status == "paused":
-        status_line = f"⏸ <b>PAUSED</b>\nDeleted: {processed}/{count}"
+        status_line = (loc("purgeme_paused_detailed") or "⏸ <b>PAUSED</b>\nDeleted: {processed}/{count}").format(
+            processed=processed, count=count
+        )
         return f"{header}\n\n{status_line}"
 
     elif status == "finished":
         start_time = state.get("start_time", 0)
-        duration = time.time() - start_time if start_time > 0 else 0
+        duration = round(time.time() - start_time, 2) if start_time > 0 else 0
         
         chat_link = state.get("chat_link")
         chat_display = f"<a href='{chat_link}'>{chat_name}</a>" if chat_link else f"<b>{chat_name}</b>"
         
-        return f"{title}\n\n✅ <b>Finished!</b>\nDeleted: {processed} messages\nTime: {round(duration, 2)}s\nChat: {chat_display}\nAccount: {account_name}"
+        fin_text = (loc("purgeme_finished_detailed") or "✅ <b>Finished!</b>\nDeleted: {processed} messages\nTime: {duration}s\nChat: {chat}\nAccount: {account}").format(
+            processed=processed, duration=duration, chat=chat_display, account=account_name
+        )
+        return f"{title}\n\n{fin_text}"
 
     elif status == "info":
         info_text = loc("purgeme_info_text") or "ℹ️ Info Text Not Found"
         return f"{title}\n\n{info_text}"
         
     elif status == "cancelled":
-        lbl = loc("purgeme_cancelled") or "❌ Cancelled"
+        lbl = loc("purgeme_cancelled_short") or "❌ <b>Cancelled</b>"
         return f"{title}\n\n{lbl}"
         
     return title
@@ -316,7 +337,7 @@ async def purgeme_inline_handler(client: Client, query: InlineQuery):
         
         # 🔐 Security Check: Only allow owner/sudo or the session owner to see the menu
         from Main.utils.access_control import is_authorized_user
-        if str(query.from_user.id) != str(user_id) and not is_authorized_user(query.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+        if str(query.from_user.id) != str(user_id) and not is_authorized_user(query.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
              # Return empty result or an "Unauthorized" article
              return await query.answer(
                 results=[
@@ -381,7 +402,7 @@ async def purgeme_callback_handler(client: Client, cb: CallbackQuery):
     try:
         chat_id, user_id = unique_id.rsplit("_", 1)
         from Main.utils.access_control import is_authorized_user
-        if str(cb.from_user.id) != str(user_id) and not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+        if str(cb.from_user.id) != str(user_id) and not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
             unauth = Altruix.get_string("ACCESS_DENIED")
             return await cb.answer(unauth, show_alert=True)
     except (ValueError, IndexError):
@@ -637,7 +658,7 @@ async def purgeme_start_handler(client: Client, message):
     
     # 1. Fallback if no arguments provided
     if len(message.command) <= 1:
-        if is_authorized_user(message.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+        if is_authorized_user(message.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
              # Only show response if authorized, otherwise ignore to prevent spam/discovery
              await message.reply(
                  f"👋 <b>Halo, {message.from_user.first_name}!</b>\n\n"
@@ -655,7 +676,7 @@ async def purgeme_start_handler(client: Client, message):
             chat_id, user_id = unique_id.rsplit("_", 1)
             
             # Security: Ensure only the session owner or sudo can access
-            if str(message.from_user.id) != str(user_id) and not is_authorized_user(message.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+            if str(message.from_user.id) != str(user_id) and not is_authorized_user(message.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
                 msg = Altruix.get_string("ACCESS_DENIED")
                 await message.reply(msg)
                 return

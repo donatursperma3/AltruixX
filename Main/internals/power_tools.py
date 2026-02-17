@@ -47,7 +47,7 @@ async def restart_cb_handler(c: Client, cb: CallbackQuery):
 
 
 @Altruix.bot.on_message(
-    filters.command(["restart", "reload"], "/") & filters.user(Altruix.config.OWNER_ID)
+    filters.command(["restart", "reload"], "/") & filters.user(Altruix.config.OWNER_USERS_ID)
 )
 @log_errors
 async def restart_command_handler(_, m: Message):

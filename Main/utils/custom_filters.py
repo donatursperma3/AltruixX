@@ -20,14 +20,14 @@ async def parse_(client, message: Message, cmd, disable_sudo=False):
     prefix_apply_type = Main.Altruix._prefix_cache["apply_type"]
     
     if prefix_apply_type == "global":
-        sudo_cmd_handler = Main.Altruix._prefix_cache["sudo_prefix"]
-        user_cmd_handler = Main.Altruix._prefix_cache["user_prefix"]
+        prefix_sudo_users = Main.Altruix._prefix_cache["prefix_sudo_users"]
+        prefix_owner_user = Main.Altruix._prefix_cache["prefix_owner_user"]
     else:
         # Per-Account mode
         user_id = client.me.id if client and hasattr(client, 'me') and client.me else None
-        pa = Main.Altruix._prefix_cache["per_account"].get(user_id, {"u": Main.Altruix.user_command_handler, "s": Main.Altruix.sudo_cmd_handler})
-        user_cmd_handler = pa["u"]
-        sudo_cmd_handler = pa["s"]
+        pa = Main.Altruix._prefix_cache["per_account"].get(user_id, {"u": Main.Altruix.prefix_owner_user, "s": Main.Altruix.prefix_sudo_users})
+        prefix_owner_user = pa["u"]
+        prefix_sudo_users = pa["s"]
 
     try:
         if not message.text:
@@ -48,12 +48,12 @@ async def parse_(client, message: Message, cmd, disable_sudo=False):
         
         # 1. OWNER LOGIC (User Prefix Only)
         if is_self:
-            if prefix == user_cmd_handler and command_name in cmd:
+            if prefix == prefix_owner_user and command_name in cmd:
                 return True
             return False
 
         # 2. SUDO LOGIC (Sudo Prefix Only)
-        if prefix == sudo_cmd_handler and command_name in cmd:
+        if prefix == prefix_sudo_users and command_name in cmd:
             # Check if current user ID is in authorized sudo list
             if message.from_user and await Main.Altruix.is_sudo(message.from_user.id, client=client):
                 Main.Altruix.log(f"👑 SUDO_FILTER: Authorized sudo user {message.from_user.id} executing command '{command_name}'", level=20)

@@ -126,7 +126,7 @@ class AltruixClient:
         self.clients: List[Client] = []
         self.cmd_list = {}
         self.all_lang_strings = {}
-        self.__version__ = "0.0.9.776D" # ✅ Optimized Sudo & Prefix Cache
+        self.__version__ = "0.0.9.809D" # ✅ Optimized Sudo & Prefix Cache
         self.selected_lang = "english"
         self.local_lang_file = "./Main/localization"
         self.cmd_list = {} # {plugin_name: [cmd_data, ...]}
@@ -150,8 +150,8 @@ class AltruixClient:
         # ✅ HIGH-PERFORMANCE SETTINGS CACHE
         self._prefix_cache = {
             "apply_type": "global",
-            "user_prefix": ".",
-            "sudo_prefix": "!",
+            "prefix_owner_user": ".",
+            "prefix_sudo_users": "!",
             "per_account": {} # {user_id: {"u": ".", "s": "!"}}
         }
         self._sudo_settings_cache = {
@@ -384,7 +384,7 @@ class AltruixClient:
         """
         self.log(f"🔍 DEBUG: is_sudo(user_id={user_id}, client={client.me.id if client and hasattr(client, 'me') and client.me else 'None'})", level=logging.DEBUG)
         
-        if user_id == self.config.OWNER_ID:
+        if user_id in self.config.OWNER_USERS_ID:
             self.log(f"✅ is_sudo: User {user_id} is OWNER.", level=logging.DEBUG)
             return True
             
@@ -505,12 +505,12 @@ class AltruixClient:
             # Global Settings
             enabled_raw = await self.config.get_env("SUDO_ENABLED_GLOBAL")
             self._sudo_settings_cache["enabled_global"] = (enabled_raw != "false") if enabled_raw else True
-            self._prefix_cache["user_prefix"] = await self.config.get_env("CMD_HANDLER") or self.user_command_handler
-            self._prefix_cache["sudo_prefix"] = await self.config.get_env("SUDO_CMD_HANDLER") or self.sudo_cmd_handler
+            self._prefix_cache["prefix_owner_user"] = await self.config.get_env("PREFIX_OWNER_USER") or self.prefix_owner_user
+            self._prefix_cache["prefix_sudo_users"] = await self.config.get_env("PREFIX_SUDO_USERS") or self.prefix_sudo_users
             
             # ✅ UPDATE OPTIMIZED CACHE
             self._auth_users_cache = new_sudo_set.copy()
-            self._auth_users_cache.add(self.config.OWNER_ID)
+            self._auth_users_cache.update(self.config.OWNER_USERS_ID)
             for acc in self.ourselves:
                 try: self._auth_users_cache.add(int(acc.id))
                 except: pass
@@ -523,8 +523,8 @@ class AltruixClient:
                     en_raw = await self.config.get_env(f"SUDO_ENABLED_{tid}")
                     self._sudo_settings_cache["per_account_enabled"][tid] = (en_raw != "false") if en_raw else True
                     # Prefix
-                    up = await self.config.get_env(f"CMD_HANDLER_{tid}") or self.user_command_handler
-                    sp = await self.config.get_env(f"SUDO_CMD_HANDLER_{tid}") or self.sudo_cmd_handler
+                    up = await self.config.get_env(f"PREFIX_OWNER_USER_{tid}") or self.prefix_owner_user
+                    sp = await self.config.get_env(f"PREFIX_SUDO_USERS_{tid}") or self.prefix_sudo_users
                     self._prefix_cache["per_account"][tid] = {"u": up, "s": sp}
                 except: pass
                 
@@ -670,7 +670,7 @@ class AltruixClient:
     def on_message(self, custom_filters, group=1, bot_mode_unsupported=False, allow_commands=False):
         if not allow_commands:
             custom_filters &= ~filters.command(
-                self.cmd_list_s, [self.user_command_handler, self.sudo_cmd_handler]
+                self.cmd_list_s, [self.prefix_owner_user, self.prefix_sudo_users]
             )
         def decorator(func):
             async def wrapper(client, message: Message):
@@ -895,10 +895,10 @@ class AltruixClient:
                     is_sudo_user = await self.is_sudo(sender_id, client=client) if not is_self else False
                     
                     if self._prefix_cache["apply_type"] == "global":
-                        u_p = self._prefix_cache["user_prefix"]
-                        s_p = self._prefix_cache["sudo_prefix"]
+                        u_p = self._prefix_cache["prefix_owner_user"]
+                        s_p = self._prefix_cache["prefix_sudo_users"]
                     else:
-                        pa = self._prefix_cache["per_account"].get(current_client_id, {"u": self.user_command_handler, "s": self.sudo_cmd_handler})
+                        pa = self._prefix_cache["per_account"].get(current_client_id, {"u": self.prefix_owner_user, "s": self.prefix_sudo_users})
                         u_p, s_p = pa["u"], pa["s"]
 
                     is_user_cmd = message.text and message.text.startswith(u_p)
@@ -1093,7 +1093,7 @@ class AltruixClient:
         bot_mode_unsupported=False,
     ):
         if not self.training_wheels_protocol:
-            self.config.CMD_HANDLER
+            self.config.PREFIX_OWNER_USER
             basic_filters = (
                 filter_s
                 or user_filters(list(cmd) if cmd else [], disable_sudo=disable_sudo)
@@ -1205,8 +1205,8 @@ class AltruixClient:
         if not os.path.isdir("cache"):
             os.mkdir("cache")
         await self.setup_localization()
-        self.sudo_cmd_handler = await self.config.get_env("SUDO_CMD_HANDLER") or "!"
-        self.user_command_handler = await self.config.get_env("CMD_HANDLER") or "."
+        self.prefix_sudo_users = await self.config.get_env("PREFIX_SUDO_USERS") or "!"
+        self.prefix_owner_user = await self.config.get_env("PREFIX_OWNER_USER") or "."
         self.bot_handler = await self.config.get_env("BOT_HANDLER") or "/"
         self.disabled_sudo_plugin_list = await self.config.get_env(
             "DISABLED_SUDO_CMD_LIST", []
@@ -1696,8 +1696,8 @@ class AltruixClient:
                 )
                 try:
                     self.ourselves.append(await self.bot.get_users(self.config.OWNER_ID))
-                except PeerIdInvalid:
-                    self.log(
+                except Exception:
+                    Altruix.log(
                         "Please start the bot with the account where it's ID is where you've added in the OWNER_ID field.",
                         level=40,
                     )
@@ -1974,7 +1974,7 @@ class AltruixClient:
                 self.log("[TWP] Support mode disabled - features unlocked!")
 
             # Tambahkan ke ourselves list jika bukan owner (untuk sudo checks)
-            if user_id != self.config.OWNER_ID:
+            if user_id not in self.config.OWNER_USERS_ID:
                 self.ourselves.append(me)
 
             # ✅ Load modules for this new session
@@ -2273,7 +2273,7 @@ class AltruixClient:
         **args,
     ):
         chat_id = self.log_chat
-        cmd_handler = self.config.CMD_HANDLER
+        cmd_handler = self.config.PREFIX_OWNER_USER
         headers = self.get_string("ERROR*")
         if isinstance(cmd, list):
             cmd = cmd[0]
@@ -2448,16 +2448,17 @@ class AltruixClient:
                     for _cmd_str in commands_:
                         self._command_help_message_data[
                             plugin_name
-                        ] += f"<code>{self.user_command_handler}{_cmd_str}</code>/"
+                        ] += f"<code>{self.prefix_owner_user}{_cmd_str}</code>/"
                     self._command_help_message_data[plugin_name] = (
                         self._command_help_message_data[plugin_name][:-1] + "\n"
                     )
                     self._command_help_message_data[
                         plugin_name
                     ] += f"<b>Help :</b> <i>{help_text}</i>\n"
-                    self._command_help_message_data[
-                        plugin_name
-                    ] += f"<b>Example :</b> <code>{self.user_command_handler}{example_text}</code>\n"
+                    if example_text:
+                        self._command_help_message_data[
+                            plugin_name
+                        ] += f"<b>Example :</b> <code>{self.prefix_owner_user}{example_text}</code>\n"
                     
                     # ✅ Support for 'detail' key
                     if detail_text := each_command_data.get("detail"):

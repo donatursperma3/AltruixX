@@ -29,7 +29,7 @@ PLUGIN_VERSION = "0.0.1"
 )
 @log_errors
 async def bot_delete_msg_cmd(c: Client, m: Message):
-    if not is_authorized_user(m.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+    if not is_authorized_user(m.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
         return
 
     if not m.reply_to_message:
@@ -54,7 +54,7 @@ async def bot_delete_msg_cmd(c: Client, m: Message):
 )
 @log_errors
 async def bot_silent_delete_msg_cmd(c: Client, m: Message):
-    if not is_authorized_user(m.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+    if not is_authorized_user(m.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
         return
 
     if not m.reply_to_message:

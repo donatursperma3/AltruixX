@@ -59,7 +59,7 @@ async def send_log_message(text: str, filename: str = "log_error.txt"):
         # Jika gagal ke LOG_CHAT_ID, coba ke OWNER_ID langsung
         try:
             return await Altruix.bot.send_message(
-                Altruix.config.OWNER_ID,
+                Altruix.config.OWNER_USERS_ID,
                 f"⚠️ [FALLBACK LOG]\n{text}",
                 link_preview_options=LinkPreviewOptions(is_disabled=True)
             )
@@ -353,7 +353,7 @@ def log_errors(func):
                 if user:
                     user_id = user.id
                     full_name = f"{user.first_name or ''} {user.last_name or ''}".strip() or "User"
-                    status = "Owner (Self)" if user_id == Altruix.config.OWNER_ID else ("Sudo" if user_id in Altruix.auth_users else "User")
+                    status = "Owner (Self)" if user_id in Altruix.config.OWNER_USERS_ID else ("Sudo" if user_id in Altruix.auth_users else "User")
                     user_info = f"<a href='tg://user?id={user_id}'>{html.escape(full_name)}</a> [<code>{user_id}</code>] (<b>{status}</b>)"
                 
                 # Command

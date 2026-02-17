@@ -47,8 +47,9 @@ def get_gp_status_text(state):
     deleted_count = state.get("deleted_count", 0)
     limit = state["limit"]
     delay = state["delay"]
+    delay_msg = state.get("delay_msg", 1)
     target = state["target"]
-    ignore_admin = state.get("ignore_admin", False)
+    admin_filter = state.get("admin_filter", "non_admin")
     mode = state.get("mode", "newest")
     offset = state.get("offset", 0)
     notify = state.get("notify", True)
@@ -60,7 +61,7 @@ def get_gp_status_text(state):
     client = state["client"]
     me = client.myself if hasattr(client, "myself") else None
     if me:
-        account_name = f"<a href='tg://user?id={me.id}'>{html.escape(me.first_name)}</a>"
+        account_name = f"<b><a href='tg://user?id={me.id}'>{html.escape(me.first_name)}</a></b>"
         account_str = (loc("GP_ACCOUNT_INFO") or "👤 <b>Account:</b> {}").format(account_name)
     else:
         account_str = ""
@@ -69,14 +70,16 @@ def get_gp_status_text(state):
     mode_str = loc(f"GP_BTN_MODE_{mode.upper()}") or mode.capitalize()
     filters_str = ", ".join([loc(f"GP_BTN_{f.upper()}") or f.capitalize() for f in filters_list])
     
+    admin_filter_str = loc(f"GP_BTN_ADMIN_FILTER_{admin_filter.upper()}") or admin_filter.replace("_", " ").title()
+    
     header = (
         f"{title}\n\n"
         f"{account_str}\n"
         f"{loc('GP_TARGET').format(target_str) if loc('GP_TARGET') else f'🎯 Target: {target_str}'}\n"
-        f"<b>📊 Settings:</b> <code>L:{limit} | D:{delay}s</code>\n"
-        f"<b>🛠 Config:</b> <code>M:{mode_str} | O:{offset}</code>\n"
+        f"<b>📊 Settings:</b> [ <code>L:{limit}msg | Dly_Chat:{delay}s | Dly_Msg:{delay_msg}s</code> ]\n"
+        f"<b>🛠 Config:</b> [ <code>M:{mode_str} | O:{offset}</code> ]\n"
         f"<b>🧹 Filters:</b> <code>{filters_str}</code>\n"
-        f"<b>🛡 Admin:</b> {'✅' if ignore_admin else '❌'} | <b>🔔 Notif:</b> {'✅' if notify else '❌'}\n\n"
+        f"<b>👑 Admin Filter:</b> {admin_filter_str} | <b>🔔 Notif:</b> {'✅' if notify else '❌'}\n\n"
     )
 
     if status == "idle":
@@ -94,6 +97,11 @@ def get_gp_status_text(state):
     elif status == "completed":
         status_line = loc("GP_STATUS_COMPLETED") or "✅ <b>Status:</b> <code>Completed</code>"
         status_line += f"\n🗑 <b>Total Deleted:</b> <code>{deleted_count} messages</code>"
+    elif status == "completed":
+        status_line = loc("GP_STATUS_COMPLETED") or "✅ <b>Status:</b> <code>Completed</code>"
+        status_line += f"\n🗑 <b>Total Deleted:</b> <code>{deleted_count} messages</code>"
+    elif status == "confirm_start":
+        status_line = loc("GP_STATUS_CONFIRM_START") or "⚠️ <b>Confirmation:</b> <code>Are you sure you want to start?</code>"
     else:
         status_line = f"❓ <b>Status:</b> <code>{status}</code>"
 
@@ -105,7 +113,8 @@ def get_gp_control_kb(unique_id, state):
     target = state["target"]
     limit = state["limit"]
     delay = state["delay"]
-    ignore_admin = state.get("ignore_admin", False)
+    delay_msg = state.get("delay_msg", 1)
+    admin_filter = state.get("admin_filter", "non_admin")
     mode = state.get("mode", "newest")
     offset = state.get("offset", 0)
     notify = state.get("notify", True)
@@ -133,11 +142,18 @@ def get_gp_control_kb(unique_id, state):
             InlineKeyboardButton("+2", f"gp_limit_p2_{unique_id}")
         ])
         
-        # Delay Adjustment
+        # Delay Adjustment (Per Chat)
         kb.append([
-            InlineKeyboardButton(f"Delay: {delay}s", "gp_noop"),
+            InlineKeyboardButton(f"{loc('GP_BTN_DELAY_CHAT') or 'Delay/Chat'}: {delay}s", "gp_noop"),
             InlineKeyboardButton("-2s", f"gp_delay_m2_{unique_id}"),
             InlineKeyboardButton("+2s", f"gp_delay_p2_{unique_id}")
+        ])
+
+        # Delay Adjustment (Per Msg)
+        kb.append([
+            InlineKeyboardButton(f"{loc('GP_BTN_DELAY_MSG') or 'Delay/Msg'}: {delay_msg}s", "gp_noop"),
+            InlineKeyboardButton("-0.5s", f"gp_delaymsg_m05_{unique_id}"),
+            InlineKeyboardButton("+0.5s", f"gp_delaymsg_p05_{unique_id}")
         ])
 
         # Mode Selection
@@ -201,16 +217,37 @@ def get_gp_control_kb(unique_id, state):
         ])
 
         # Advanced Options
+        admin_filter_btn_text = loc(f"GP_BTN_ADMIN_FILTER_{admin_filter.upper()}") or admin_filter.replace("_", " ").title()
         kb.append([
-            InlineKeyboardButton(("✅ " if ignore_admin else "❌ ") + (loc("GP_BTN_IGNORE_ADMIN") or "Ignore Admin"), f"gp_toggle_admin_{unique_id}")
+            InlineKeyboardButton(f"👑 {admin_filter_btn_text}", f"gp_toggle_admin_{unique_id}")
         ])
         kb.append([
             InlineKeyboardButton(loc("GP_BTN_LIST_CHATS") or "📋 List Chats", f"gp_list_groups_{unique_id}")
         ])
+        
+        # New Layout: Refresh/Info then Start/Close
         kb.append([
-            InlineKeyboardButton(loc("GP_BTN_START") or "🚀 Start GPurgeme", f"gp_start_{unique_id}"),
+            InlineKeyboardButton("🔄 Refresh", f"gp_refresh_{unique_id}"),
             InlineKeyboardButton(loc("GP_BTN_INFO") or "ℹ️ Info", f"gp_info_{unique_id}")
         ])
+        
+        if is_settings:
+             kb.append([
+                InlineKeyboardButton(loc("GP_BTN_START") or "🚀 Start GPurgeme", f"gp_start_{unique_id}"),
+                InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")
+            ])
+        else:
+            kb.append([
+                InlineKeyboardButton(loc("GP_BTN_START") or "🚀 Start GPurgeme", f"gp_start_{unique_id}"),
+                InlineKeyboardButton("❌ Close", f"gp_close_{unique_id}")
+            ])
+            
+    elif status == "confirm_start":
+        kb.append([
+            InlineKeyboardButton(loc("GP_BTN_YES") or "✅ Yes, Start", f"gp_confirm_start_{unique_id}"),
+            InlineKeyboardButton(loc("GP_BTN_NO") or "❌ No, Cancel", f"gp_confirm_cancel_{unique_id}")
+        ])
+            
     elif status == "running":
         kb.append([
             InlineKeyboardButton(loc("GP_BTN_PAUSE") or "⏸ Pause", f"gp_pause_{unique_id}"),
@@ -224,8 +261,8 @@ def get_gp_control_kb(unique_id, state):
     elif status == "info":
         kb.append([InlineKeyboardButton(loc("GP_BTN_BACK") or "🔙 Back", f"gp_back_{unique_id}")])
     
-    # Close/Refresh/Settings Back
-    if status != "running":
+    # Close/Refresh/Settings Back (Only for running/paused status now, as idle has custom layout)
+    if status in ["running", "paused"]:
         bottom_row = [InlineKeyboardButton("🔄 Refresh", f"gp_refresh_{unique_id}")]
         if is_settings:
             bottom_row.append(InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}"))
@@ -279,7 +316,7 @@ async def _perform_dashboard_update(unique_id, state, custom_text, cb):
         Altruix.log(f"GPurgeme UI Update Fail: {e}")
 
 # Core Logic: Process Chat
-async def gp_process_chat(client: Client, chat_id: int, limit: int, delay: int, state: dict):
+async def gp_process_chat(client: Client, chat_id: int, limit: int, delay: int, delay_msg: float, state: dict):
     deleted_in_chat = 0
     try:
         if state["stop_event"].is_set():
@@ -351,6 +388,8 @@ async def gp_process_chat(client: Client, chat_id: int, limit: int, delay: int, 
                 state["deleted_count"] += len(batch)
                 if deleted_in_chat % 10 == 0:
                     asyncio.create_task(update_gp_dashboard(state["unique_id"]))
+                # Message Throttle (apply after each batch)
+                if delay_msg > 0: await asyncio.sleep(delay_msg)
             except FloodWait as e:
                 await asyncio.sleep(e.value)
             except Exception: pass
@@ -361,7 +400,7 @@ async def gp_process_chat(client: Client, chat_id: int, limit: int, delay: int, 
     return deleted_in_chat
 
 # Core Logic: Get Target Chats
-async def get_target_chats(client: Client, target_type: str, ignore_admin: bool):
+async def get_target_chats(client: Client, target_type: str, admin_filter: str):
     chats = []
     ignored_count = 0
     total_scanned = 0
@@ -382,12 +421,26 @@ async def get_target_chats(client: Client, target_type: str, ignore_admin: bool)
         
         if is_target:
             should_ignore = False
-            if ignore_admin and chat_type in [enums.ChatType.GROUP, enums.ChatType.SUPERGROUP]:
+            
+            # 3-Way Admin Filter Logic
+            # 'all': Keep all (no filter)
+            # 'admin': Keep ONLY if admin/owner
+            # 'non_admin': Keep ONLY if NOT admin/owner
+            
+            if admin_filter != "all" and chat_type in [enums.ChatType.GROUP, enums.ChatType.SUPERGROUP]:
                 try:
                     me = await dialog.chat.get_member("me")
-                    if me.status in [enums.ChatMemberStatus.ADMINISTRATOR, enums.ChatMemberStatus.OWNER]:
-                        should_ignore = True
-                except: pass
+                    is_admin = me.status in [enums.ChatMemberStatus.ADMINISTRATOR, enums.ChatMemberStatus.OWNER]
+                    
+                    if admin_filter == "admin":
+                        if not is_admin: should_ignore = True
+                    elif admin_filter == "non_admin":
+                        if is_admin: should_ignore = True
+                except:
+                    # If can't get member status, assume non-admin for safety or skip?
+                    # Let's assume non-admin to be safe against accidental deletion in admin chats,
+                    # but if filter is 'admin', we might skip it.
+                    if admin_filter == "admin": should_ignore = True
             
             if should_ignore: ignored_count += 1
             else:
@@ -408,6 +461,7 @@ async def gp_global_purgeme_task(unique_id):
     target_type = state["target"]
     limit_per_chat = state["limit"]
     delay_per_chat = state["delay"]
+    delay_per_msg = state.get("delay_msg", 1)
     
     state["status"] = "running"
     state["start_time"] = time.time()
@@ -420,7 +474,7 @@ async def gp_global_purgeme_task(unique_id):
     asyncio.create_task(update_gp_dashboard(unique_id))
     
     try:
-        chats_to_process, ignored_count = await get_target_chats(client, target_type, state.get("ignore_admin", False))
+        chats_to_process, ignored_count = await get_target_chats(client, target_type, state.get("admin_filter", "non_admin"))
         state["total_chats"] = len(chats_to_process)
         asyncio.create_task(update_gp_dashboard(unique_id))
         
@@ -435,7 +489,7 @@ async def gp_global_purgeme_task(unique_id):
             state["current_chat"] = chat_data["title"]
             asyncio.create_task(update_gp_dashboard(unique_id))
             
-            deleted = await gp_process_chat(client, chat_data["id"], limit_per_chat, delay_per_chat, state)
+            deleted = await gp_process_chat(client, chat_data["id"], limit_per_chat, delay_per_chat, delay_per_msg, state)
             
             if deleted > 0:
                 state["processed_list"].append(f"• {chat_data['title']} (<code>{deleted}</code>)")
@@ -482,7 +536,7 @@ async def gpurgeme_inline_handler(client: Client, query: InlineQuery):
         user_id = int(query.matches[0].group("uid"))
         # Security: Only owner/sudo can trigger their own GP menu
         from Main.utils.access_control import is_authorized_user
-        if not is_authorized_user(query.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+        if not is_authorized_user(query.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
              return await query.answer([], cache_time=0)
         
         unique_id = f"gp_{user_id}"
@@ -500,7 +554,7 @@ async def gpurgeme_inline_handler(client: Client, query: InlineQuery):
                 
                 Altruix.GPURGEME_STATE[unique_id] = {
                     "unique_id": unique_id, "client": target_client, "status": "idle",
-                    "target": "all", "limit": 6, "delay": 6, "ignore_admin": True,
+                    "target": "all", "limit": 6, "delay": 6, "delay_msg": 1, "admin_filter": "non_admin",
                     "mode": "newest", "offset": 0, "notify": True, "filters": ["all"],
                     "deleted_count": 0, "processed_chats": 0, "total_chats": 0,
                     "processed_list": [], "stop_event": asyncio.Event(), "pause_event": asyncio.Event(),
@@ -549,7 +603,7 @@ async def open_global_purgeme_ui(c: Client, cb: CallbackQuery, index: int, page:
     if unique_id not in Altruix.GPURGEME_STATE:
         Altruix.GPURGEME_STATE[unique_id] = {
             "unique_id": unique_id, "client": client, "status": "idle",
-            "target": "all", "limit": 6, "delay": 6, "ignore_admin": True,
+            "target": "all", "limit": 6, "delay": 6, "delay_msg": 1, "admin_filter": "non_admin",
             "mode": "newest", "offset": 0, "notify": True, "filters": ["all"],
             "deleted_count": 0, "processed_chats": 0, "total_chats": 0,
             "processed_list": [], "stop_event": asyncio.Event(), "pause_event": asyncio.Event(),
@@ -560,6 +614,10 @@ async def open_global_purgeme_ui(c: Client, cb: CallbackQuery, index: int, page:
     state["is_settings"] = True
     state["index"] = index
     state["page"] = page
+    if not cb.message:
+        await cb.answer("❌ Message expired or not found.", show_alert=True)
+        return
+
     state["dashboard_msg_id"] = cb.message.id
     state["dashboard_chat_id"] = cb.message.chat.id
     state["pause_event"].set()
@@ -570,12 +628,12 @@ async def open_global_purgeme_ui(c: Client, cb: CallbackQuery, index: int, page:
     await cb.message.edit_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML, disable_web_page_preview=True)
 
 # Callback Handler
-@Altruix.bot.on_callback_query(filters.regex(r"^gp_(?P<action>target|limit|delay|pause|resume|stop|start|refresh|close|toggle|list|mode|off|notif|filter|info|back)_(?P<tail>.*)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^gp_(?P<action>target|limit|delay|delaymsg|pause|resume|stop|start|confirm|refresh|close|toggle|list|mode|off|notif|filter|info|back)_(?P<tail>.*)$"))
 @iuser_check
 @log_errors
 async def gpurgeme_callback_handler(c: Client, cb: CallbackQuery):
     from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
         return await cb.answer("⛔ Access Denied", show_alert=True)
 
     try:
@@ -610,7 +668,11 @@ async def gpurgeme_callback_handler(c: Client, cb: CallbackQuery):
             elif action == "delay":
                 if sub_action == "m2": state["delay"] = max(0, state["delay"] - 2)
                 elif sub_action == "p2": state["delay"] += 2
-                await cb.answer(f"Delay: {state['delay']}s per chat")
+                await cb.answer(f"Delay/Chat: {state['delay']}s")
+            elif action == "delaymsg":
+                if sub_action == "m05": state["delay_msg"] = max(0, state.get("delay_msg", 1) - 0.5)
+                elif sub_action == "p05": state["delay_msg"] = state.get("delay_msg", 1) + 0.5
+                await cb.answer(f"Delay/Msg: {state['delay_msg']}s")
             elif action == "mode":
                 state["mode"] = sub_action
                 await cb.answer(f"Mode: {sub_action.capitalize()}")
@@ -641,15 +703,24 @@ async def gpurgeme_callback_handler(c: Client, cb: CallbackQuery):
                 state["status"] = "idle"
                 await cb.answer()
             elif action == "toggle" and sub_action == "admin":
-                state["ignore_admin"] = not state.get("ignore_admin", False)
-                await cb.answer(f"Ignore Admin: {'ON' if state['ignore_admin'] else 'OFF'}")
+                # Cycle: non_admin -> all -> admin -> non_admin
+                current = state.get("admin_filter", "non_admin")
+                if current == "non_admin": new_state = "all"
+                elif current == "all": new_state = "admin"
+                else: new_state = "non_admin"
+                
+                state["admin_filter"] = new_state
+                # Localize feedback
+                feedback_key = f"GP_BTN_ADMIN_FILTER_{new_state.upper()}"
+                feedback = loc(feedback_key) or new_state
+                await cb.answer(f"Admin Filter: {feedback}")
             elif action == "list" and sub_action == "groups":
                 await cb.answer("Generating list...")
                 old_status = state["status"]
                 state["status"] = "listing"
                 await update_gp_dashboard(unique_id, cb=cb, state=state)
                 
-                chats, ignored_count = await get_target_chats(state["client"], state["target"], state.get("ignore_admin", False))
+                chats, ignored_count = await get_target_chats(state["client"], state["target"], state.get("admin_filter", "non_admin"))
                 chat_list = "\n".join([f"• {c['title']} (<code>{c['id']}</code>)" for c in chats[:50]])
                 if len(chats) > 50: chat_list += f"\n...and {len(chats) - 50} more"
                 
@@ -661,9 +732,20 @@ async def gpurgeme_callback_handler(c: Client, cb: CallbackQuery):
             elif action == "start":
                 if state["status"] == "running":
                     return await cb.answer("GPurgeme is already running!")
-                state["status"] = "running"
-                asyncio.create_task(gp_global_purgeme_task(unique_id))
-                await cb.answer("Global Purgeme Started!")
+                # Request Confirmation
+                state["status"] = "confirm_start"
+                await update_gp_dashboard(unique_id, cb=cb, state=state)
+                return
+            elif action == "confirm":
+                if sub_action == "start":
+                    state["status"] = "running"
+                    asyncio.create_task(gp_global_purgeme_task(unique_id))
+                    await cb.answer("Global Purgeme Started!")
+                elif sub_action == "cancel":
+                    state["status"] = "idle"
+                    await cb.answer("Cancelled.")
+                    await update_gp_dashboard(unique_id, cb=cb, state=state)
+                    return
             elif action == "pause":
                 state["pause_event"].clear()
                 state["status"] = "paused"
@@ -683,7 +765,8 @@ async def gpurgeme_callback_handler(c: Client, cb: CallbackQuery):
                 state["stop_event"].set()
                 state["pause_event"].set()
                 if unique_id in Altruix.GPURGEME_STATE: del Altruix.GPURGEME_STATE[unique_id]
-                await cb.message.delete()
+                if cb.message:
+                    await cb.message.delete()
                 return
 
         await update_gp_dashboard(unique_id, cb=cb, state=state)

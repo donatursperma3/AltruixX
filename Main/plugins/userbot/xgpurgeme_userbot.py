@@ -19,7 +19,7 @@ from Main.internals.settings_handlers.global_purgeme import (
 # Plugin Metadata
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xgpurgeme"
-PLUGIN_VERSION = "0.0.30"
+PLUGIN_VERSION = "0.0.31"
 
 @Altruix.register_on_cmd(
     ["gpurgeme"],
@@ -34,7 +34,7 @@ Mass-delete your own messages across multiple chats with interactive UI.
 • <b>Target:</b> All Chats, Groups Only, or Personal Chats only.
 • <b>Limit:</b> Number of messages to delete per each chat.
 • <b>Delay:</b> Sleep time between processing each chat to avoid floods.
-• <b>Ignore Admin:</b> Exclude groups where you are an admin.
+• <b>Admin Filter:</b> Filter by All Chats, Admin Checks, or Non-Admin Chats.
 
 <b>Controls:</b>
 Interactive dashboard allows Pausing, Resuming, and Stopping the process.
@@ -54,7 +54,7 @@ async def gpurgeme_cmd(client: Client, message: Message):
 
     # Authorization Check
     from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(message.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+    if not is_authorized_user(message.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
         return
 
     me = await _get_me(client)

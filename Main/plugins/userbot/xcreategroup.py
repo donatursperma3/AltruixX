@@ -52,7 +52,7 @@ logger.setLevel(logging.INFO)
 
 # ==================== KONFIGURASI ====================
 # Dapatkan LOG_CHAT_ID dari config Altruix
-LOG_CHAT_ID = Altruix.log_chat or Altruix.config.LOG_CHAT_ID or Altruix.config.OWNER_ID
+LOG_CHAT_ID = Altruix.log_chat or Altruix.config.LOG_CHAT_ID or Altruix.config.OWNER_USERS_ID
 
 # 🔥 PERBAIKAN: Ambil handler dari config, bukan 'hndlr'
 try:
@@ -1507,7 +1507,7 @@ async def confirm_creategroup_handler(client: Client, callback_query: CallbackQu
     
     try:
         from Main.utils.access_control import is_authorized_user
-        if not is_authorized_user(callback_query.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+        if not is_authorized_user(callback_query.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
             msg = Altruix.get_string("ACCESS_DENIED")
             return await callback_query.answer(msg, show_alert=True)
             
@@ -1711,7 +1711,7 @@ async def creategroup_control_handler(client: Client, callback_query: CallbackQu
     """Handler untuk tombol kontrol creategroup"""
     
     from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(callback_query.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+    if not is_authorized_user(callback_query.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
         msg = Altruix.get_string("ACCESS_DENIED")
         return await callback_query.answer(msg, show_alert=True)
         

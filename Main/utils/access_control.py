@@ -38,7 +38,7 @@ def check_reply_access(
     
     # Mode: OWNER - only owner
     if mode == ACCESS_MODE_OWNER:
-        if user_id == owner_id:
+        if user_id == owner_id or user_id in getattr(Altruix.config, "OWNER_USERS_ID", []):
             return True, "Access granted (OWNER)"
         return False, Altruix.get_string("AUTH_OWNER_ONLY")
     
@@ -46,7 +46,7 @@ def check_reply_access(
     if mode == ACCESS_MODE_SUDO:
         if is_globally_auth:
             return True, f"Access granted (SUDO)"
-        if user_id == owner_id or user_id in sudo_users:
+        if user_id == owner_id or user_id in sudo_users or user_id in getattr(Altruix.config, "OWNER_USERS_ID", []):
             return True, f"Access granted (SUDO - legacy fallback)"
         return False, Altruix.get_string("AUTH_SUDO_ONLY")
     
@@ -73,7 +73,7 @@ def is_authorized_user(user_id: int, owner_id: int, sudo_users: List[int]) -> bo
     from Main.core.client import Altruix
     if user_id in Altruix.auth_users:
         return True
-    return user_id == owner_id or user_id in sudo_users
+    return user_id == owner_id or user_id in sudo_users or user_id in getattr(Altruix.config, "OWNER_USERS_ID", [])
 
 
 def get_access_mode_display(mode: str, lang: str = "id") -> str:

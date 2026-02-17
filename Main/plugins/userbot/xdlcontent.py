@@ -62,7 +62,7 @@ async def dl_content_cmd_handler(c: Client, m: Message):
         await status_msg.edit(f"❌ <b>Error:</b> <code>{html.escape(str(e))}</code>")
 
 async def process_dl_content_logic(c, m, link, status_msg):
-    log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
+    log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_USERS_ID))
     
     # Parse link
     pattern = r"t\.me/(c/)?([^/]+)/(\d+)"

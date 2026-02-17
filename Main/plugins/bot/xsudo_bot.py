@@ -96,7 +96,7 @@ async def listsudo_bot_handler(c: Client, m: Message):
     processing_msg = await m.reply("<code>Processing sudo user list...</code>")
     
     # ✅ GET ALL SUDO USERS (Global + DB Cache)
-    static_sudo = Altruix.config.SUDO_USERS or []
+    static_sudo = Altruix.config.SUDO_USERS_ID or []
     if isinstance(static_sudo, str):
         static_sudo = [int(x.strip()) for x in static_sudo.split(',') if x.strip().isdigit()]
     

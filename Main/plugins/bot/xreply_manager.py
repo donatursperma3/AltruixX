@@ -72,7 +72,7 @@ async def handle_reply_input(c: Client, m: RawMessage):
             logger.debug(f"ReplyManager: Current waiting IDs: {list(REPLY_AS_MENTIONED_WAITING.keys())}")
 
     # Security: Verify if user is authorized to reply (Handled by @iuser_check)
-    # is_auth = is_authorized_user(m.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS)
+    # is_auth = is_authorized_user(m.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID)
     # ...
     
     # Check if we are waiting for a reply to this specific message
@@ -260,7 +260,7 @@ async def pmlu_confirm_send_callback(c: Client, cb: CallbackQuery):
         # Security: Allow any authorized sudo user to confirm
         # Skip strict user_id check because cb.from_user.id returns bot ID
         # Just verify that SUDO_USERS exist (means system is authorized)
-        if not Altruix.config.SUDO_USERS and not Altruix.config.OWNER_ID:
+        if not Altruix.config.SUDO_USERS_ID and not Altruix.config.OWNER_USERS_ID:
             return await cb.answer("⛔ Sistem tidak dikonfigurasi!", show_alert=True)
             
         data = REPLY_AS_MENTIONED_WAITING.pop(waiting_id)
@@ -475,7 +475,7 @@ async def pmlu_cancel_send_callback(c: Client, cb: CallbackQuery):
         if waiting_id in REPLY_AS_MENTIONED_WAITING:
             # Security: Allow any authorized sudo user to cancel
             # Skip strict user_id check because cb.from_user.id returns bot ID
-            if not Altruix.config.SUDO_USERS and not Altruix.config.OWNER_ID:
+            if not Altruix.config.SUDO_USERS_ID and not Altruix.config.OWNER_USERS_ID:
                 return await cb.answer("⛔ Sistem tidak dikonfigurasi!", show_alert=True)
             
             REPLY_AS_MENTIONED_WAITING.pop(waiting_id)

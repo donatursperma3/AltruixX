@@ -418,7 +418,7 @@ class Message:
         Juga tambahkan try-except untuk keamanan ekstra.
         """
         try:
-            sudo_users = Altruix.config.SUDO_USERS
+            sudo_users = Altruix.config.SUDO_USERS_ID
             
             # ✅ AMBIL ID CLIENT DENGAN AMAN
             client_id = (getattr(self._client, 'myself', None) or self._client.me).id
@@ -586,7 +586,7 @@ class Message:
 
 
     async def delete_if_sudo(self, **kwargs):
-        sudo_ = Altruix.config.SUDO_USERS
+        sudo_ = Altruix.config.SUDO_USERS_ID
         if self.from_user and self.from_user.is_self:
             return
         if self.from_user and self.from_user.id in sudo_:

@@ -124,8 +124,8 @@ async def get_session_info_data(index: int, callback_page: int, button_page: int
     
     # Prefix Handling
     prefix_apply_type = await Altruix.config.get_env("PREFIX_APPLY_TYPE") or "global"
-    u_key = "CMD_HANDLER" if prefix_apply_type == "global" else f"CMD_HANDLER_{me.id}"
-    s_key = "SUDO_CMD_HANDLER" if prefix_apply_type == "global" else f"SUDO_CMD_HANDLER_{me.id}"
+    u_key = "PREFIX_OWNER_USER" if prefix_apply_type == "global" else f"PREFIX_OWNER_USER_{me.id}"
+    s_key = "PREFIX_SUDO_USERS" if prefix_apply_type == "global" else f"PREFIX_SUDO_USERS_{me.id}"
     
     u_prefix = await Altruix.config.get_env(u_key) or "."
     s_prefix = await Altruix.config.get_env(s_key) or ","
@@ -146,39 +146,61 @@ async def get_session_info_data(index: int, callback_page: int, button_page: int
     if hasattr(Altruix, 'bot_manager'):
          total_active_bots += len(Altruix.bot_manager.custom_bots)
 
-    # Logger Status Check (Optimized logic)
+    # Logger Status Check (Optimized logic - Sync with Database/Config)
     pm_logger_status = "❌ OFF"
     try:
-        from Main.utils.file_helpers import get_db_path as _get_db_path
-        import json as _json
-        _pm_settings_path = _get_db_path("pm_logger_user_settings.json")
-        if os.path.exists(_pm_settings_path):
-            with open(_pm_settings_path, "r", encoding="utf-8") as _f:
-                _pm_data = _json.load(_f)
-                _pm_sessions = _pm_data.get("settings", {}) or _pm_data.get("sessions", {})
-                _settings_data = _pm_sessions.get(str(me.id))
-                _pm_enabled = False
-                if isinstance(_settings_data, dict):
-                    _pm_enabled = _settings_data.get("enabled", False)
-                elif isinstance(_settings_data, bool):
-                    _pm_enabled = _settings_data
-                if _pm_enabled: pm_logger_status = "✅ ON"
+        # Resolve Apply Type for current session
+        pml_apply_type = await Altruix.config.get_env(f"PML_LOGGER_APPLY_TYPE_{index}") or "global"
+        
+        # Check based on apply_type
+        if pml_apply_type == "global":
+            pml_current = await Altruix.config.get_env("PML_LOGGER_GLOBAL") or "off"
+        else:
+            pml_current = await Altruix.config.get_env(f"PML_LOGGER_{index}") or "off"
+            
+        if pml_current == "on":
+            pm_logger_status = "✅ ON"
+            
+        # Fallback check for JSON-only sessions if DB key is missing but JSON says enabled
+        # This covers cases where JSON was modified manually or by legacy code
+        if pm_logger_status == "❌ OFF":
+            from Main.utils.file_helpers import get_db_path as _get_db_path
+            import json as _json
+            _pm_settings_path = _get_db_path("pm_logger_user_settings.json")
+            if os.path.exists(_pm_settings_path):
+                with open(_pm_settings_path, "r", encoding="utf-8") as _f:
+                    _pm_data = _json.load(_f)
+                    _pm_sessions = _pm_data.get("settings", {}) or _pm_data.get("sessions", {})
+                    _settings_data = _pm_sessions.get(str(me.id))
+                    if isinstance(_settings_data, dict) and _settings_data.get("enabled"):
+                        pm_logger_status = "✅ ON"
+                    elif isinstance(_settings_data, bool) and _settings_data:
+                        pm_logger_status = "✅ ON"
     except Exception: pass
     
     mention_logger_status = "❌ OFF"
     try:
-        _mention_settings_path = _get_db_path("mentions_settings.json")
-        if os.path.exists(_mention_settings_path):
-            with open(_mention_settings_path, "r", encoding="utf-8") as _f:
-                _m_data = _json.load(_f)
-                _m_sessions = _m_data.get("settings", {})
-                _m_per_account = _m_sessions.get(str(me.id), {})
-                _m_enabled = False
-                if isinstance(_m_per_account, dict):
-                    _m_enabled = _m_per_account.get("mention", True)
-                elif isinstance(_m_per_account, bool):
-                    _m_enabled = _m_per_account
-                if _m_enabled: mention_logger_status = "✅ ON"
+        mnt_apply_type = await Altruix.config.get_env(f"MNT_LOGGER_APPLY_TYPE_{index}") or "global"
+        
+        if mnt_apply_type == "global":
+            mnt_current = await Altruix.config.get_env("MNT_LOGGER_GLOBAL") or "off"
+        else:
+            mnt_current = await Altruix.config.get_env(f"MNT_LOGGER_{index}") or "off"
+            
+        if mnt_current == "on":
+            mention_logger_status = "✅ ON"
+            
+        # Fallback to JSON
+        if mention_logger_status == "❌ OFF":
+            _mention_settings_path = _get_db_path("mentions_settings.json")
+            if os.path.exists(_mention_settings_path):
+                with open(_mention_settings_path, "r", encoding="utf-8") as _f:
+                    _m_data = _json.load(_f)
+                    _m_sessions = _m_data.get("settings", {})
+                    _m_per_account = _m_sessions.get(str(me.id), {})
+                    if isinstance(_m_per_account, dict) and _m_per_account.get("mention", True):
+                         # If it's a dict and explicitly enabled/missing (default true)
+                        mention_logger_status = "✅ ON"
     except Exception: pass
 
     # Auto Delete Command Status
@@ -327,7 +349,7 @@ async def session_info_inline_handler(c: Client, iq: InlineQuery):
 # ⌨️ CENTRAL MESSAGE HANDLER FOR INPUTS
 # ============================================================================
 
-@Altruix.bot.on_message(filters.private & Altruix.is_sudo_filter & ~filters.command(["start", "settings", "help"]))
+@Altruix.bot.on_message(filters.private & Altruix.is_sudo_filter & ~filters.command(["start", "settings", "help", "add"]))
 @iuser_check
 @log_errors
 async def sessions_info_msg_handler(c: Client, m: Message):

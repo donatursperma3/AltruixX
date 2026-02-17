@@ -283,8 +283,8 @@ async def prefix_menu_handler(c: Client, cb: CallbackQuery):
         del user_privacy_state[cb.from_user.id]
 
     apply_type = await Altruix.config.get_env("PREFIX_APPLY_TYPE") or "global"
-    u_key = "CMD_HANDLER" if apply_type == "global" else f"CMD_HANDLER_{Altruix.clients[index].me.id}"
-    s_key = "SUDO_CMD_HANDLER" if apply_type == "global" else f"SUDO_CMD_HANDLER_{Altruix.clients[index].me.id}"
+    u_key = "PREFIX_OWNER_USER" if apply_type == "global" else f"PREFIX_OWNER_USER_{Altruix.clients[index].me.id}"
+    s_key = "PREFIX_SUDO_USERS" if apply_type == "global" else f"PREFIX_SUDO_USERS_{Altruix.clients[index].me.id}"
     
     u_prefix = await Altruix.config.get_env(u_key) or "."
     s_prefix = await Altruix.config.get_env(s_key) or ","
@@ -453,9 +453,9 @@ async def process_prefix_input(c: Client, m: Message, state: dict):
     apply_type = await Altruix.config.get_env("PREFIX_APPLY_TYPE") or "global"
     
     if p_type == 'u':
-        key = "CMD_HANDLER" if apply_type == "global" else f"CMD_HANDLER_{Altruix.clients[index].me.id}"
+        key = "PREFIX_OWNER_USER" if apply_type == "global" else f"PREFIX_OWNER_USER_{Altruix.clients[index].me.id}"
     else:
-        key = "SUDO_CMD_HANDLER" if apply_type == "global" else f"SUDO_CMD_HANDLER_{Altruix.clients[index].me.id}"
+        key = "PREFIX_SUDO_USERS" if apply_type == "global" else f"PREFIX_SUDO_USERS_{Altruix.clients[index].me.id}"
         
     await Altruix.config.sync_env_to_db(key, new_prefix, upsert=True)
     setattr(Altruix.config, key, new_prefix)

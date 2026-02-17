@@ -549,7 +549,7 @@ async def join_log_group_handler(c: Client, cb: CallbackQuery):
     
     if index >= len(Altruix.clients): return
     session_client = Altruix.clients[index]
-    log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
+    log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_USERS_ID))
     
     try:
         chat = await Altruix.bot.get_chat(log_chat_id)
@@ -660,7 +660,7 @@ async def global_logger_toggle_handler(c: Client, cb: CallbackQuery):
 async def get_log_group_link_handler(c: Client, cb: CallbackQuery):
     """Get or generate log group invite link."""
     await cb.answer("Generating link...")
-    log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
+    log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_USERS_ID))
     
     try:
         chat = await Altruix.bot.get_chat(log_chat_id)

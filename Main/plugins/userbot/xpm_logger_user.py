@@ -37,7 +37,7 @@ logger = logging.getLogger("altruix.pm_logger_user")
 logger.setLevel(logging.INFO)
 
 PLUGIN_NAME = __plugin_name__ 
-PLUGIN_VERSION = "1.3.69C"  # ✅ Adjusted safe settings fallback logic
+PLUGIN_VERSION = "1.3.70C"  # ✅ Adjusted safe settings fallback logic
 from Main.utils.file_helpers import get_db_path
 STORAGE_FILE = Path(get_db_path("pm_logger_user_settings.json"))
 
@@ -220,7 +220,11 @@ async def load_settings():
 
                     # Ensure essential keys exist
                     if "auto_create_topic" not in PM_LOGGER_USER_DATA:
-                         PM_LOGGER_USER_DATA["auto_create_topic"] = data.get("auto_create_topic", False)
+                         PM_LOGGER_USER_DATA["auto_create_topic"] = data.get("global_config", {}).get("auto_create_topic", data.get("auto_create_topic", False))
+                    
+                    # Migration: If JSON has root 'enabled', sync to global_config
+                    if "enabled" in data and "global_config" in data and "enabled" not in data["global_config"]:
+                        data["global_config"]["enabled"] = data["enabled"]
                     
                     LAST_LOAD_TIME_PM = current_mtime
                     logger.debug(f"PM Logger settings reloaded (mtime: {current_mtime})")
@@ -392,16 +396,18 @@ async def pml_status_unified_handler(c: Client, m: AltruixMessage):
 async def pm_logger_user_handler(c: Client, m: RawMessage):
     """Log incoming private messages."""
     try:
-        # ✅ SAFETY CHECK: Basic message validity
-        if not m or not hasattr(m, 'chat') or not m.chat:
+        # ✅ SAFETY CHECK: Session Enablement
+        if Altruix.is_session_disabled(c.me.id):
             return
 
         # ✅ Dynamic Reload: Catch UI updates from settings.py
         await load_settings()
         
-        user_id_str = str(c.me.id)
-        
         # Resolve settings based on apply_type
+        user_id_str = str(c.me.id)
+        if not get_pm_setting_safe(c.me.id, "enabled"):
+            return
+        
         apply_type = PM_LOGGER_USER_DATA.get("apply_types", {}).get(user_id_str, "per_account")
         
         if apply_type == "global":
@@ -449,11 +455,15 @@ async def pm_logger_user_handler(c: Client, m: RawMessage):
             return
 
         # ✅ NEW: Handle Bot Assistant Specific Filtering
-        # If the sender is our own bot assistant, check if 'Bot Assist' is disabled
-        is_bot_assistant = (sender.id == Altruix.bot_info.id)
+        # If the sender is our own bot assistant or a custom bot assistant, check if 'Bot Assist' is disabled
+        bot_assistant_ids = [Altruix.bot_info.id]
+        if hasattr(Altruix, "bot_manager"):
+            bot_assistant_ids.extend([b.me.id for b in Altruix.bot_manager.custom_bots.values() if b.me])
+            
+        is_bot_assistant = (sender.id in bot_assistant_ids)
         if is_bot_assistant:
-            from Main.plugins.bot.xpm_logger_bot import STORAGE_FILE as BOT_STORAGE
             bot_assist_enabled = False
+            from Main.plugins.bot.xpm_logger_bot import STORAGE_FILE as BOT_STORAGE
             if BOT_STORAGE.exists():
                 try:
                     with open(BOT_STORAGE, "r") as f:
@@ -463,7 +473,7 @@ async def pm_logger_user_handler(c: Client, m: RawMessage):
                     pass
             
             if not bot_assist_enabled:
-                logger.debug(f"PMLU: Skipping message from Bot Assistant (Bot Assist is DISABLED)")
+                logger.debug(f"PMLU: Skipping message from Bot Assistant {sender.id} (Bot Assist is DISABLED)")
                 return
 
         # ✅ CAPTURE SANGMATA RESPONSE
@@ -658,7 +668,7 @@ async def pm_logger_user_handler(c: Client, m: RawMessage):
             try:
                 # Fallback to Owner if log chat fails (e.g., CHANNEL_INVALID)
                 sent_log = await Altruix.bot.send_message(
-                    int(Altruix.config.OWNER_ID),
+                    int(Altruix.config.OWNER_USERS_ID),
                     f"⚠️ <b>PMLU FALLBACK</b> (Chat {Altruix.log_chat} invalid)\n\n" + log_content,
                     parse_mode=enums.ParseMode.HTML,
                     reply_markup=InlineKeyboardMarkup(keyboard)
@@ -830,7 +840,7 @@ def generate_pmlu_menu(client_id):
 async def open_pmlu_settings_owner_handler(c: Client, cb: CallbackQuery):
     try:
         await cb.answer()
-        owner_id = Altruix.config.OWNER_ID
+        owner_id = Altruix.config.OWNER_USERS_ID
         text, markup = generate_pmlu_menu(owner_id)
         if markup:
             await Altruix.edit_cb(cb, text, reply_markup=markup, parse_mode=enums.ParseMode.HTML)
@@ -1132,14 +1142,14 @@ async def pmlu_replyall_callback(c: Client, cb: CallbackQuery):
         # Find first sudo user that is NOT the bot assistant
         # Allow: userbot owner (client_id), PM sender if sudo (chat_id), any other sudo
         user_id = None
-        if Altruix.config.SUDO_USERS:
-            for sudo_id in Altruix.config.SUDO_USERS:
+        if Altruix.config.SUDO_USERS_ID:
+            for sudo_id in Altruix.config.SUDO_USERS_ID:
                 if sudo_id != bot_id:  # Only exclude bot assistant
                     user_id = sudo_id
                     break
         
         if not user_id:
-            user_id = Altruix.config.OWNER_ID
+            user_id = Altruix.config.OWNER_USERS_ID
         today = datetime.now().strftime("%Y%m%d")
         if USER_REPLY_COUNTS[user_id][today] >= USER_REPLY_LIMIT:
              return await cb.answer(f"❌ Limit harian tercapai ({USER_REPLY_LIMIT}x).", show_alert=True)
@@ -1321,7 +1331,7 @@ async def pmlu_direct_reply_callback(c: Client, cb: CallbackQuery):
     try:
         from Main.utils.access_control import check_reply_access
         has_access, reason = check_reply_access(
-            cb.from_user, get_shared_reply_mode(), Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS
+            cb.from_user, get_shared_reply_mode(), Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID
         )
         if not has_access:
             return await cb.answer(reason, show_alert=True)
@@ -1331,7 +1341,7 @@ async def pmlu_direct_reply_callback(c: Client, cb: CallbackQuery):
         msg_key = f"{chat_id}_{msg_id}"
         
         # DEBUG: Check OWNER_ID and SUDO_USERS
-        logger.info(f"DEBUG OWNER_ID: {Altruix.config.OWNER_ID}, SUDO count: {len(Altruix.config.SUDO_USERS) if Altruix.config.SUDO_USERS else 0}")
+        logger.info(f"DEBUG OWNER_ID: {Altruix.config.OWNER_USERS_ID}, SUDO count: {len(Altruix.config.SUDO_USERS_ID) if Altruix.config.SUDO_USERS_ID else 0}")
         
         # FIXED: Allow ANY sudo user to reply
         # Only exclude: actual bot (5240721396), PM sender (chat_id), userbot accounts (client_id)
@@ -1341,15 +1351,15 @@ async def pmlu_direct_reply_callback(c: Client, cb: CallbackQuery):
         # Find first sudo user that is NOT the bot assistant
         # Allow: userbot owner (client_id), PM sender if sudo (chat_id), any other sudo
         admin_user_id = None
-        if Altruix.config.SUDO_USERS:
-            for sudo_id in Altruix.config.SUDO_USERS:
+        if Altruix.config.SUDO_USERS_ID:
+            for sudo_id in Altruix.config.SUDO_USERS_ID:
                 if sudo_id != bot_id:  # Only exclude bot assistant
                     admin_user_id = sudo_id
                     logger.info(f"Using SUDO user as admin: {admin_user_id}")
                     break
         
         if not admin_user_id:
-            admin_user_id = Altruix.config.OWNER_ID
+            admin_user_id = Altruix.config.OWNER_USERS_ID
             logger.info(f"No valid SUDO found, using OWNER_ID: {admin_user_id}")
         logger.info(
             f"PMLU Reply Callback Debug:\n"
@@ -1559,7 +1569,7 @@ async def resource_monitor():
             ram_usage = psutil.virtual_memory().percent
             
             if (cpu_usage > 90 or ram_usage > 90) and not alert_triggered:
-                log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
+                log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_USERS_ID))
                 alert_text = (
                     "🚨 <b>SYSTEM OVERLOAD ALERT</b> 🚨\n\n"
                     f"⚠️ <b>CPU Usage:</b> <code>{cpu_usage}%</code>\n"

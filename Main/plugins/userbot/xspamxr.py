@@ -92,7 +92,7 @@ VALID_EMOJIS = [
 
 # 🔥 PERBAIKAN: Ambil handler dari config, bukan 'CMD_HANDLER'
 try:
-    HANDLER = Altruix.config.HANDLERS
+    HANDLER = Altruix.config.PREFIX_OWNER_USER
     if isinstance(HANDLER, list):
         HANDLER = HANDLER[0]
 except AttributeError:
@@ -102,7 +102,7 @@ try:
     LOG_CHAT_ID = Altruix.log_chat or Altruix.config.LOG_CHAT_ID
 except AttributeError:
     try:
-        LOG_CHAT_ID = Altruix.config.OWNER_ID
+        LOG_CHAT_ID = Altruix.config.OWNER_USERS_ID
     except AttributeError:
         LOG_CHAT_ID = None
 if not LOG_CHAT_ID:
@@ -654,7 +654,7 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
 @log_errors
 async def see_msglist_handler(c: Client, cb):
     from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
         msg = Altruix.get_string("ACCESS_DENIED")
         return await cb.answer(msg, show_alert=True)
         
@@ -706,7 +706,7 @@ async def see_msglist_handler(c: Client, cb):
 async def confirm_start_handler(c: Client, cb):
     try:
         from Main.utils.access_control import is_authorized_user
-        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
             msg = Altruix.get_string("ACCESS_DENIED")
             return await cb.answer(msg, show_alert=True)
             
@@ -787,7 +787,7 @@ async def confirm_start_handler(c: Client, cb):
 @log_errors
 async def preview_msglist_from_confirm(c: Client, cb):
     from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
         msg = Altruix.get_string("ACCESS_DENIED")
         return await cb.answer(msg, show_alert=True)
         
@@ -1125,7 +1125,7 @@ async def check_all_relayspam_cmd(c: Client, m: Message):
 @log_errors
 async def toggle_purge_handler(c: Client, cb):
     from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
         return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
         
     data = cb.data
@@ -1162,7 +1162,7 @@ async def toggle_purge_handler(c: Client, cb):
 @log_errors
 async def toggle_reaction_handler(c: Client, cb):
     from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
         return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
         
     data = cb.data
@@ -1196,7 +1196,7 @@ async def toggle_reaction_handler(c: Client, cb):
 @log_errors
 async def select_emoji_handler(c: Client, cb):
     from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
         return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
         
     data = cb.data
@@ -1228,7 +1228,7 @@ async def select_emoji_handler(c: Client, cb):
 @log_errors
 async def set_emoji_handler(c: Client, cb):
     from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
         return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
         
     data = cb.data
@@ -1268,7 +1268,7 @@ async def set_emoji_handler(c: Client, cb):
 @log_errors
 async def cancel_emoji_handler(c: Client, cb):
     from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
         return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
         
     data = cb.data
@@ -1281,7 +1281,7 @@ async def cancel_emoji_handler(c: Client, cb):
 @log_errors
 async def adjust_purge_handler(c: Client, cb):
     from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
         return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
         
     data = cb.data
@@ -1331,7 +1331,7 @@ async def adjust_purge_handler(c: Client, cb):
 @log_errors
 async def increase_purge_handler(c: Client, cb):
     from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
         return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
         
     data = cb.data
@@ -1375,7 +1375,7 @@ async def increase_purge_handler(c: Client, cb):
 @log_errors
 async def decrease_purge_handler(c: Client, cb):
     from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
         return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
         
     data = cb.data
@@ -1420,7 +1420,7 @@ async def decrease_purge_handler(c: Client, cb):
 @log_errors
 async def back_purge_handler(c: Client, cb):
     from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
         return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
         
     data = cb.data
@@ -1440,7 +1440,7 @@ async def back_purge_handler(c: Client, cb):
 @log_errors
 async def cancel_adjust_purge_handler(c: Client, cb):
     from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
         return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
         
     data = cb.data
@@ -1460,7 +1460,7 @@ async def cancel_adjust_purge_handler(c: Client, cb):
 @log_errors
 async def handle_task_control(c: Client, cb):
     from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
         return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
         
     data = cb.data
@@ -1759,7 +1759,7 @@ async def handle_task_control(c: Client, cb):
 @log_errors
 async def handle_global_controls(c: Client, cb):
     from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
         msg = Altruix.get_string("ACCESS_DENIED")
         return await cb.answer(msg, show_alert=True)
         

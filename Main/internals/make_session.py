@@ -36,7 +36,7 @@ async def client_session(api_id, api_hash):
 # ─── UTIL: Kirim log ke grup (dengan fallback ke OWNER_ID) ─────────────
 async def log_to_group(text: str):
     """Kirim notifikasi ke LOG_CHAT_ID atau OWNER_ID jika gagal."""
-    log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
+    log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_USERS_ID))
     try:
         await Altruix.bot.send_message(
             log_chat_id,
@@ -103,7 +103,7 @@ async def _start_add_session_process(cb: CallbackQuery):
     user = cb.from_user
     user_id = user.id
     bot = Altruix.bot  # ✅ Gunakan bot sebagai client
-    is_sudo = user_id != Altruix.config.OWNER_ID
+    is_sudo = user_id != Altruix.config.OWNER_USERS_ID
 
     # ✅ Log ke grup jika sudo user memulai proses
     if is_sudo:

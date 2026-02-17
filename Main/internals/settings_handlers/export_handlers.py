@@ -177,7 +177,7 @@ async def execute_export_all_sessions(c: Client, m: Message):
     """Executes the export of all sessions to a file."""
     user = m.from_user
     user_id = user.id
-    log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
+    log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_USERS_ID))
     user_name = html.escape(user.first_name if user.first_name else "User")
     user_link = f"<a href='tg://user?id={user_id}'>{user_name}</a>"
     
@@ -248,7 +248,7 @@ async def execute_export_all_phones(c: Client, m: Message):
     """Executes the export of all phone numbers to a file."""
     user = m.from_user
     user_id = user.id
-    log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
+    log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_USERS_ID))
     user_name = html.escape(user.first_name if user.first_name else "User")
     user_link = f"<a href='tg://user?id={user_id}'>{user_name}</a>"
     

@@ -85,7 +85,7 @@ async def cmd_logger_handler(c: Client, m: Message):
             
         # 3. Detect prefix
         prefix_apply_type = await Altruix.config.get_env("PREFIX_APPLY_TYPE") or "global"
-        pk = "CMD_HANDLER" if prefix_apply_type == "global" else f"CMD_HANDLER_{user_id}"
+        pk = "PREFIX_OWNER_USER" if prefix_apply_type == "global" else f"PREFIX_OWNER_USER_{user_id}"
         prefix = await Altruix.config.get_env(pk) or "."
         
         if not text.startswith(prefix):

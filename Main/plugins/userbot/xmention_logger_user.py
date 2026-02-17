@@ -935,11 +935,11 @@ async def generate_mnt_menu_async(client_id):
 async def open_mentions_settings_owner_handler(c: Client, cb: CallbackQuery):
     try:
         from Main.utils.access_control import is_authorized_user
-        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
             return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
             
         await cb.answer()
-        owner_id = Altruix.config.OWNER_ID
+        owner_id = Altruix.config.OWNER_USERS_ID
         text, markup = await generate_mnt_menu_async(owner_id)
         if markup:
             await Altruix.edit_cb(cb, text, reply_markup=markup, parse_mode=enums.ParseMode.HTML)
@@ -953,7 +953,7 @@ async def open_mentions_settings_owner_handler(c: Client, cb: CallbackQuery):
 async def mnt_config_callback(c: Client, cb: CallbackQuery):
     try:
         action = cb.matches[0].group(1)
-        client_id = int(cb.matches[0].group(2)) if cb.matches[0].group(2) else Altruix.config.OWNER_ID
+        client_id = int(cb.matches[0].group(2)) if cb.matches[0].group(2) else Altruix.config.OWNER_USERS_ID
         
         settings_file = "mentions_settings.json"
         if os.path.exists(settings_file):
@@ -1320,7 +1320,7 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
             try:
                 # Fallback to Owner if log chat fails (e.g., CHANNEL_INVALID)
                 sent_log_msg = await Altruix.bot.send_message(
-                    int(Altruix.config.OWNER_ID),
+                    int(Altruix.config.OWNER_USERS_ID),
                     f"⚠️ <b>LOG FALLBACK</b> (Chat {Altruix.log_chat} invalid)\n\n" + log_message,
                     parse_mode=enums.ParseMode.HTML,
                     reply_markup=InlineKeyboardMarkup(keyboard)
@@ -1785,7 +1785,7 @@ async def mentions_direct_reply_callback(c: Client, cb: CallbackQuery):
     try:
         from Main.utils.access_control import check_reply_access
         has_access, reason = check_reply_access(
-                cb.from_user, get_shared_reply_mode(), Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS
+                cb.from_user, get_shared_reply_mode(), Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID
             )
         if not has_access:
             return await cb.answer(reason, show_alert=True)
