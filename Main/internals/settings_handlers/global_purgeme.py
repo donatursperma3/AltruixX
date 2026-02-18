@@ -185,26 +185,26 @@ def get_gp_control_kb(unique_id, state):
         # Row 1: Core Media
         kb.append([
             get_f_btn("all", "GP_BTN_ALL", "All"),
-            get_f_btn("photo", "GP_BTN_IMG", "Photo"),
-            get_f_btn("video", "GP_BTN_VID", "Video")
+            get_f_btn("photo", "GP_BTN_PHOTO", "Photo"),
+            get_f_btn("video", "GP_BTN_VIDEO", "Video")
         ])
         # Row 2: Engagement
         kb.append([
-            get_f_btn("text", "GP_BTN_TXT", "Text"),
-            get_f_btn("audio", "GP_BTN_AUD", "Audio"),
-            get_f_btn("sticker", "GP_BTN_STK", "Sticker")
+            get_f_btn("text", "GP_BTN_TEXT", "Text"),
+            get_f_btn("audio", "GP_BTN_AUDIO", "Audio"),
+            get_f_btn("sticker", "GP_BTN_STICKER", "Sticker")
         ])
         # Row 3: Rich Media
         kb.append([
-            get_f_btn("animation", "GP_BTN_GIF", "Anim"),
-            get_f_btn("document", "GP_BTN_DOC", "Doc"),
+            get_f_btn("animation", "GP_BTN_ANIMATION", "Anim"),
+            get_f_btn("document", "GP_BTN_DOCUMENT", "Doc"),
             get_f_btn("video_note", "GP_BTN_VNOTE", "VNote")
         ])
         # Row 4: Specialized
         kb.append([
-            get_f_btn("voice", "GP_BTN_VN", "Voice"),
-            get_f_btn("contact", "GP_BTN_CONT", "Contact"),
-            get_f_btn("location", "GP_BTN_LOC", "Loc")
+            get_f_btn("voice", "GP_BTN_VOICE", "Voice"),
+            get_f_btn("contact", "GP_BTN_CONTACT", "Contact"),
+            get_f_btn("location", "GP_BTN_LOCATION", "Loc")
         ])
         # Row 5: Interaction
         kb.append([

@@ -59,6 +59,33 @@ class BaseConfig(object):
     def OWNER_ID(self):
         """Returns the primary owner ID for single-ID compatibility (e.g. loggers)."""
         return self.OWNER_USERS_ID[0] if self.OWNER_USERS_ID else None
+
+    @OWNER_ID.setter
+    def OWNER_ID(self, value):
+        """Allows setting OWNER_ID for single-ID compatibility/loading."""
+        if isinstance(value, int):
+            self.OWNER_USERS_ID = [value]
+        elif isinstance(value, list):
+            self.OWNER_USERS_ID = value
+
+    @property
+    def SUDO_USERS(self):
+        """Returns the list of sudo user IDs for backward compatibility."""
+        return self.SUDO_USERS_ID
+
+    @SUDO_USERS.setter
+    def SUDO_USERS(self, value):
+        """Allows setting SUDO_USERS for backward compatibility/loading."""
+        if isinstance(value, list):
+            self.SUDO_USERS_ID = value
+        elif isinstance(value, (int, str)):
+            # Handle string/int conversion if needed (legacy fallback)
+            try:
+                if isinstance(value, str):
+                    self.SUDO_USERS_ID = [int(i) for i in value.split() if i.isdigit()]
+                else:
+                    self.SUDO_USERS_ID = [int(value)]
+            except: pass
     LOAD_ENV_TO_DB = getenv("LOAD_ENV_TO_DB", False)
     CUSTOM_BT_START_MSG = getenv("CUSTOM_BT_START_MSG", "")
     SESSIONS = [i for i in getenv("SESSIONS", "").split(" ") if i != "" or None]
@@ -87,11 +114,13 @@ class BaseConfig(object):
     UB_LANG = getenv("UB_LANG")
     REPLY_ERR_NOTIF_GLOBAL = getenv("REPLY_ERR_NOTIF_GLOBAL", "on")
     # ✅ RENAME: PREFIX_SUDO_USERS (Sudo commands) & PREFIX_OWNER_USER (Owner/Self commands)
+    # These are the new primary variables for command prefixes.
     PREFIX_SUDO_USERS = (getenv("PREFIX_SUDO_USERS") or getenv("SUDO_CMD_HANDLER") or "!")
     PREFIX_OWNER_USER = (getenv("PREFIX_OWNER_USER") or getenv("CMD_HANDLER") or ".")
     
     try:
         # ✅ RENAME: SUDO_USERS_ID (List of authorized users)
+        # Replaces legacy 'SUDO_USERS' string with a list of integers.
         SUDO_USERS_ID = [
             int(i) for i in (getenv("SUDO_USERS_ID") or getenv("SUDO_USERS") or "").split(" ") if i.isdigit()
         ]
@@ -250,10 +279,32 @@ class Config(BaseConfig):
             if isinstance(val, str) and val.strip().startswith("[") and val.strip().endswith("]"):
                 with contextlib.suppress(Exception):
                     val = ast.literal_eval(val)
+
+            # ✅ LEGACY KEY MAPPING (Redirect old keys to new attributes)
+            # This ensures that variables renamed in the codebase (e.g. OWNER_ID -> OWNER_USERS_ID)
+            # are correctly loaded from the database even if stored under old names.
+            # It facilitates a smooth transition without requiring database migrations.
+            legacy_map = {
+                "OWNER_ID": "OWNER_USERS_ID",
+                "SUDO_USERS": "SUDO_USERS_ID",
+                "CMD_HANDLER": "PREFIX_OWNER_USER",
+                "SUDO_CMD_HANDLER": "PREFIX_SUDO_USERS"
+            }
             
+            target_key = legacy_map.get(key, key)
             
-            setattr(self, key, val)
-            self._env_cache[key] = val
+            # Special handling for converting single IDs to lists for new attributes.
+            # Legacy OWNER_ID was an int, while new OWNER_USERS_ID is a list.
+            if key == "OWNER_ID" and not isinstance(val, list):
+                val = [int(val)] if str(val).isdigit() else []
+            elif key == "SUDO_USERS" and isinstance(val, str):
+                val = [int(i) for i in val.split() if i.isdigit()]
+            
+            try:
+                setattr(self, target_key, val)
+                self._env_cache[target_key] = val
+            except Exception as e:
+                logging.error(f"Error loading ENV {key} (mapped to {target_key}): {e}")
 
     # ✅ Override Session Management to Sync with DB
     def append_session(self, session: str) -> None:
@@ -459,15 +510,15 @@ class Config(BaseConfig):
 
     @var_check
     async def add_sudo(self, user_id: Union[int, str, List[Union[int, str]]]) -> None:
-        if isinstance(user_id, int):
-            user_id = [user_id]
-        if isinstance(user_id, str):
-            user_id = [int(user_id)]
-        if isinstance(user_id, list):
-            user_id = [int(i) for i in user_id]
-        await self.add_env_to_db(
-            "SUDO_USERS_ID", user_id, upsert=True
-        )
+        """Add a user or list of users to the authorized sudo list."""
+        if isinstance(user_id, (int, str)):
+            await self.add_element_to_list("SUDO_USERS_ID", int(user_id))
+        elif isinstance(user_id, list):
+            for i in user_id:
+                await self.add_element_to_list("SUDO_USERS_ID", int(i))
+        
+        # Refresh local cache
+        await self.get_sudo()
 
     @var_check
     async def get_sudo(self):
@@ -498,26 +549,26 @@ class Config(BaseConfig):
         self.SUDO_USERS_ID = users
         return users
 
-    async def del_sudo(self, user_id):
-        await self.env_col.find_one_and_update(
-            {"_id": "SUDO_USERS_ID"}, {"$pull": {"env_value": int(user_id)}}
-        )
+    async def del_sudo(self, user_id: int) -> None:
+        """Remove a user from the authorized sudo list."""
+        await self.pop_element_from_list("SUDO_USERS_ID", int(user_id))
+        # Update local list as well
+        if hasattr(self, "SUDO_USERS_ID") and int(user_id) in self.SUDO_USERS_ID:
+            self.SUDO_USERS_ID.remove(int(user_id))
 
     # ─── OWNER MANAGEMENT METHODS ──────────────────────────────────────────
     
     @var_check
     async def add_owner(self, user_id: Union[int, str, List[Union[int, str]]]) -> None:
-        """Add a user to the authorized owners list."""
-        if isinstance(user_id, int):
-            user_id = [user_id]
-        if isinstance(user_id, str):
-            user_id = [int(user_id)]
-        if isinstance(user_id, list):
-            user_id = [int(i) for i in user_id]
+        """Add a user or list of users to the authorized owners list."""
+        if isinstance(user_id, (int, str)):
+            await self.add_element_to_list("OWNER_USERS_ID", int(user_id))
+        elif isinstance(user_id, list):
+            for i in user_id:
+                await self.add_element_to_list("OWNER_USERS_ID", int(i))
             
-        await self.add_env_to_db(
-            "OWNER_USERS_ID", user_id, upsert=True
-        )
+        # Refresh local cache
+        await self.get_owners()
 
     @var_check
     async def get_owners(self) -> List[int]:

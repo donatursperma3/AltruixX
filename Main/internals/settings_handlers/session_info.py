@@ -23,8 +23,11 @@ from .states import (
     user_text_confirmation_state, user_profile_edit_state, user_edit_confirmation_state,
     user_confirmation_state, user_dlphoto_state, user_purge_state,
     user_recent_messages_state, user_mentions_state, user_privacy_state,
-    user_eval_state, user_exec_state, user_creategroup_state
+    user_eval_state, user_exec_state, user_creategroup_state,
+    user_join_state, user_leave_state, user_send_msg_state,
+    user_bulk_join_state, user_bulk_leave_state, user_bulk_report_state
 )
+from .env_handlers import user_env_input_state, process_env_input, process_env_document
 
 # Import all sub-handlers to register them with the bot
 import Main.internals.settings_handlers.profile_handlers
@@ -359,7 +362,6 @@ async def sessions_info_msg_handler(c: Client, m: Message):
 
     if text.lower() == "/cancel":
         # Clear all states
-        from .env_handlers import user_env_input_state
         for state_dict in [user_profile_edit_state, user_dlphoto_state, user_purge_state,
                            user_join_state, user_leave_state, user_send_msg_state, user_privacy_state,
                            user_bulk_join_state, user_bulk_leave_state, user_bulk_report_state, 
@@ -397,7 +399,6 @@ async def sessions_info_msg_handler(c: Client, m: Message):
         return
 
     # 1. Profile Edits
-    from .states import user_profile_edit_state
     if user_id in user_profile_edit_state:
         state = user_profile_edit_state[user_id]
         if m.photo and state.get('action') == 'change_profile_photo':
@@ -457,7 +458,6 @@ async def sessions_info_msg_handler(c: Client, m: Message):
         return
 
     # 2. Join / Leave / Send Message
-    from .states import user_join_state, user_leave_state, user_send_msg_state
     if user_id in user_join_state:
         from .message_handlers import process_join_chat
         await process_join_chat(c, m, user_join_state[user_id])
@@ -476,7 +476,6 @@ async def sessions_info_msg_handler(c: Client, m: Message):
         return
 
     # 3. Startup Msg & Prefix Edits
-    from .states import user_privacy_state
     if user_id in user_privacy_state:
         state = user_privacy_state[user_id]
         step = state.get('step')
@@ -517,7 +516,6 @@ async def sessions_info_msg_handler(c: Client, m: Message):
             return
 
     # 4. Download / Tracker Input
-    from .states import user_dlphoto_state
     if user_id in user_dlphoto_state:
         # Re-implement or call specific handler
         await m.reply(f"🔍 Memproses target: <code>{html.escape(text)}</code>...")
@@ -525,7 +523,6 @@ async def sessions_info_msg_handler(c: Client, m: Message):
         return
 
     # 5. Purge Chat Selection
-    from .states import user_purge_state
     if user_id in user_purge_state:
         # Simple handler if only waiting for chat
         await m.reply(f"🧹 Purge chat: <code>{html.escape(text)}</code>")
@@ -533,7 +530,6 @@ async def sessions_info_msg_handler(c: Client, m: Message):
         return
 
     # 6. Bulk Actions Input
-    from .states import user_bulk_join_state, user_bulk_leave_state, user_bulk_report_state
     if user_id in user_bulk_join_state:
         from .bulk_handlers import process_bulk_join_input
         await process_bulk_join_input(c, m, user_bulk_join_state[user_id])
@@ -554,7 +550,6 @@ async def sessions_info_msg_handler(c: Client, m: Message):
         return
 
     # 8. ENV Manager Inputs
-    from .env_handlers import user_env_input_state, process_env_input, process_env_document
     if user_id in user_env_input_state:
         state = user_env_input_state[user_id]
         # Check if it's a document upload

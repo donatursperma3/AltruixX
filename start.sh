@@ -78,6 +78,7 @@ if [ "$has_killed" = true ]; then
     sleep 3
 fi
 
+
 # Run the bot using the VENV python executable
 echo "Starting Altruix..."
 $VENV_PYTHON -m Main

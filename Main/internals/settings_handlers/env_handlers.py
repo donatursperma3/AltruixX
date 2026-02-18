@@ -39,10 +39,12 @@ async def env_manager_list_handler(c: Client, cb: CallbackQuery):
     if cb.from_user.id in user_env_input_state:
         del user_env_input_state[cb.from_user.id]
     
-    # Get all ENV variables
+    # Get all ENV variables and sort them alphabetically
     all_envs = {}
     if hasattr(Altruix.config, '_env_cache'):
-        all_envs = Altruix.config._env_cache
+        # Sort keys A-Z
+        sorted_keys = sorted(Altruix.config._env_cache.keys())
+        all_envs = {k: Altruix.config._env_cache[k] for k in sorted_keys}
     
     # Pagination
     items_per_page = 10
@@ -58,6 +60,7 @@ async def env_manager_list_handler(c: Client, cb: CallbackQuery):
         f"<b>🔧 Environment Manager (v1.5.5.9b)</b>\n\n"
         f"• <b>Total Variables:</b> <code>{total_envs}</code>\n"
         f"• <b>Page:</b> <code>{page}/{total_pages}</code>\n"
+        f"• <b>Sort Mode:</b> <code>Alphabetical (A-Z)</code>\n"
     )
     
     # Add timestamp if refreshed to force update
@@ -117,8 +120,9 @@ async def env_add_start_handler(c: Client, cb: CallbackQuery):
         "<b>➕ Add Environment Variable</b>\n\n"
         "Please send the variable in this format:\n"
         "<code>KEY=VALUE</code>\n\n"
-        "<b>Example:</b>\n"
-        "<code>MY_API_KEY=abc123xyz</code>\n\n"
+        "<b>Examples:</b>\n"
+        "• <b>Text:</b> <code>MY_VAR=hello world</code>\n"
+        "• <b>List:</b> <code>SUDO_USERS_ID=[123, 456, 789]</code>\n\n"
         "❌ <b>Cancel:</b> Send /cancel"
     )
     
@@ -191,7 +195,10 @@ async def env_view_handler(c: Client, cb: CallbackQuery):
         text += "\n"
     
     buttons = [
-        [InlineKeyboardButton("✏️ Edit", f"env_edit_{key}")],
+        [
+            InlineKeyboardButton(Altruix.get_string("ENV_EDIT_VALUE_BTN"), f"env_edit_val_{key}"),
+            InlineKeyboardButton(Altruix.get_string("ENV_RENAME_KEY_BTN"), f"env_rename_{key}")
+        ],
     ]
     
     if is_long:
@@ -199,12 +206,12 @@ async def env_view_handler(c: Client, cb: CallbackQuery):
     
     buttons.append([
         InlineKeyboardButton("🗑️ Delete", f"env_delete_confirm_{key}"),
-        InlineKeyboardButton("🔙 Back", "env_manager_list_1")
+        InlineKeyboardButton(Altruix.get_string("back"), "env_manager_list_1")
     ])
     
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
-@Altruix.bot.on_callback_query(filters.regex(r"^env_edit_(.+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^env_edit_val_(.+)$"))
 @iuser_check
 @log_errors
 async def env_edit_handler(c: Client, cb: CallbackQuery):
@@ -236,6 +243,28 @@ async def env_edit_handler(c: Client, cb: CallbackQuery):
         'action': 'edit',
         'key': key,
         'step': 'waiting_new_value'
+    }
+
+@Altruix.bot.on_callback_query(filters.regex(r"^env_rename_(.+)$"))
+@iuser_check
+@log_errors
+async def env_rename_handler(c: Client, cb: CallbackQuery):
+    """Initiate rename of ENV variable"""
+    if not await check_authorization(cb): return
+    await cb.answer()
+    
+    key = cb.matches[0].group(1)
+    
+    text = Altruix.get_string("ENV_RENAME_PROMPT").format(key)
+    
+    await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup([[
+        InlineKeyboardButton(Altruix.get_string("cancel"), f"env_view_{key}")
+    ]]), parse_mode=ParseMode.HTML)
+    
+    user_env_input_state[cb.from_user.id] = {
+        'action': 'rename',
+        'old_key': key,
+        'step': 'waiting_new_key'
     }
 
 @Altruix.bot.on_callback_query(filters.regex(r"^env_delete_confirm_(.+)$"))
@@ -474,9 +503,9 @@ async def env_import_start_handler(c: Client, cb: CallbackQuery):
         "• <b>.txt</b> - KEY=VALUE format (one per line)\n"
         "• <b>.json</b> - JSON object {\"KEY\": \"VALUE\"}\n\n"
         "<b>Example .txt:</b>\n"
-        "<code>API_KEY=abc123\nSECRET=xyz789</code>\n\n"
+        "<code>API_KEY=abc123\nSUDO_USERS_ID=[111, 222, 333]</code>\n\n"
         "<b>Example .json:</b>\n"
-        "<code>{\"API_KEY\": \"abc123\", \"SECRET\": \"xyz789\"}</code>\n\n"
+        "<code>{\"API_KEY\": \"abc\", \"MY_LIST\": [1, 2, 3]}</code>\n\n"
         "❌ <b>Cancel:</b> Send /cancel"
     )
     
@@ -540,11 +569,25 @@ async def process_env_input(c: Client, m: Message, state: dict):
         key = state.get('key')
         new_value = m.text.strip()
         
+        # ✅ List detection for manual text input
+        is_list = False
+        if new_value.startswith('[') and new_value.endswith(']'):
+            import ast
+            try:
+                parsed = ast.literal_eval(new_value)
+                if isinstance(parsed, list):
+                    is_list = True
+                    # We store it as a list in state
+                    new_value = parsed
+            except: pass
+
         # Show confirmation dialog
+        format_label = Altruix.get_string("ENV_FORMAT_LIST") if is_list else Altruix.get_string("ENV_FORMAT_TEXT")
         text = (
             f"<b>⚠️ Confirm Edit</b>\n\n"
             f"• <b>Key:</b> <code>{key}</code>\n"
-            f"• <b>New Value:</b> <code>{html.escape(new_value[:100])}</code>\n\n"
+            f"• <b>New Value:</b> <code>{html.escape(str(new_value)[:100])}</code>\n"
+            f"• <b>Format:</b> <code>{format_label}</code>\n\n"
             f"Are you sure you want to update this variable?"
         )
         
@@ -562,9 +605,40 @@ async def process_env_input(c: Client, m: Message, state: dict):
             'action': 'edit',
             'key': key,
             'step': 'confirming',
-            'new_value': new_value
+            'new_value': parsed if is_list else new_value
         }
+        # DON'T DELETE STATE HERE - IT'S NEEDED FOR CONFIRMATION
     
+    elif action == 'rename' and step == 'waiting_new_key':
+        # ... (keeping existing rename logic)
+        old_key = state.get('old_key')
+        new_key = m.text.strip().upper().replace(' ', '_')
+        
+        if not new_key:
+            await m.reply("❌ New name cannot be empty!")
+            return
+            
+        # Check if new key already exists
+        if hasattr(Altruix.config, new_key) or (hasattr(Altruix.config, '_env_cache') and new_key in Altruix.config._env_cache):
+            await m.reply(f"❌ Variable <code>{new_key}</code> already exists!", parse_mode=ParseMode.HTML)
+            return
+
+        # Show confirmation dialog
+        text = Altruix.get_string("ENV_RENAME_CONFIRM").format(old_key, new_key)
+        
+        buttons = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(Altruix.get_string("yes"), f"env_rename_exec_{old_key}_{new_key}"),
+                InlineKeyboardButton(Altruix.get_string("no"), f"env_view_{old_key}")
+            ]
+        ])
+        
+        await m.reply(text, parse_mode=ParseMode.HTML, reply_markup=buttons)
+        
+        # Clear state
+        if m.from_user.id in user_env_input_state:
+            del user_env_input_state[m.from_user.id]
+
     elif action == 'search' and step == 'waiting_search_term':
         search_term = m.text.strip().upper()
         
@@ -594,6 +668,40 @@ async def process_env_input(c: Client, m: Message, state: dict):
         # Clear state
         if m.from_user.id in user_env_input_state:
             del user_env_input_state[m.from_user.id]
+
+@Altruix.bot.on_callback_query(filters.regex(r"^env_rename_exec_(.+)_(.+)$"))
+@iuser_check
+@log_errors
+async def env_rename_exec_handler(c: Client, cb: CallbackQuery):
+    """Execute rename of ENV variable"""
+    if not await check_authorization(cb): return
+    
+    old_key = cb.matches[0].group(1)
+    new_key = cb.matches[0].group(2)
+    
+    try:
+        # Get current value
+        value = await Altruix.config.get_env(old_key)
+        
+        # 1. Add new key with same value
+        await Altruix.config.sync_env_to_db(new_key, value, upsert=True)
+        setattr(Altruix.config, new_key, value)
+        if hasattr(Altruix.config, '_env_cache'):
+            Altruix.config._env_cache[new_key] = value
+            
+        # 2. Delete old key
+        await Altruix.config.sync_env_to_db(old_key, None, delete=True)
+        if hasattr(Altruix.config, old_key):
+            delattr(Altruix.config, old_key)
+        if hasattr(Altruix.config, '_env_cache') and old_key in Altruix.config._env_cache:
+            del Altruix.config._env_cache[old_key]
+            
+        await cb.answer(Altruix.get_string("ENV_RENAME_SUCCESS").format(old_key, new_key), show_alert=True)
+        # Return to list
+        await env_manager_list_handler(c, cb)
+    except Exception as e:
+        logger.error(f"Error renaming ENV {old_key}: {e}")
+        await cb.answer(f"❌ Error: {str(e)}", show_alert=True)
 
 async def process_env_document(c: Client, m: Message, state: dict):
     """Process ENV manager document uploads"""
@@ -638,10 +746,20 @@ async def process_env_document(c: Client, m: Message, state: dict):
                     
                     for key, value in data.items():
                         try:
-                            await Altruix.config.sync_env_to_db(key, str(value), upsert=True)
-                            setattr(Altruix.config, key, str(value))
+                            # Detect list-like strings and parse them
+                            val_to_save = str(value)
+                            if val_to_save.startswith('[') and val_to_save.endswith(']'):
+                                import ast
+                                try:
+                                    parsed = ast.literal_eval(val_to_save)
+                                    if isinstance(parsed, list):
+                                        val_to_save = parsed
+                                except: pass
+
+                            await Altruix.config.sync_env_to_db(key, val_to_save, upsert=True)
+                            setattr(Altruix.config, key, val_to_save)
                             if hasattr(Altruix.config, '_env_cache'):
-                                Altruix.config._env_cache[key] = str(value)
+                                Altruix.config._env_cache[key] = val_to_save
                             imported += 1
                         except Exception as e:
                             errors.append(f"{key}: {str(e)}")
@@ -667,10 +785,20 @@ async def process_env_document(c: Client, m: Message, state: dict):
                         continue
                     
                     try:
-                        await Altruix.config.sync_env_to_db(key, value, upsert=True)
-                        setattr(Altruix.config, key, value)
+                        # Detect list-like strings
+                        val_to_save = value
+                        if val_to_save.startswith('[') and val_to_save.endswith(']'):
+                            import ast
+                            try:
+                                parsed = ast.literal_eval(val_to_save)
+                                if isinstance(parsed, list):
+                                    val_to_save = parsed
+                            except: pass
+
+                        await Altruix.config.sync_env_to_db(key, val_to_save, upsert=True)
+                        setattr(Altruix.config, key, val_to_save)
                         if hasattr(Altruix.config, '_env_cache'):
-                            Altruix.config._env_cache[key] = value
+                            Altruix.config._env_cache[key] = val_to_save
                         imported += 1
                     except Exception as e:
                         errors.append(f"{key}: {str(e)}")
@@ -687,17 +815,31 @@ async def process_env_document(c: Client, m: Message, state: dict):
             await m.reply(result_text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton("🔙 Back to ENV Manager", "env_manager_list_1")
             ]]))
-            
         elif action == 'edit' and step == 'waiting_new_value':
             # Use file content as new value
             key = state.get('key')
             
+        # ✅ IMPROVED: List detection for file content
+            final_value = content.strip()
+            is_list_display = False
+            if final_value.startswith('[') and final_value.endswith(']'):
+                import ast
+                try:
+                    # Validate if it's a valid list string
+                    parsed = ast.literal_eval(final_value)
+                    if isinstance(parsed, list):
+                        is_list_display = True
+                        final_value = parsed # Use actual list object
+                except: pass
+
             # Show confirmation dialog
+            format_label = Altruix.get_string("ENV_FORMAT_LIST") if is_list_display else Altruix.get_string("ENV_FORMAT_TEXT")
             text = (
                 f"<b>⚠️ Confirm Edit from File</b>\n\n"
                 f"• <b>Key:</b> <code>{key}</code>\n"
                 f"• <b>File:</b> <code>{file_name}</code>\n"
-                f"• <b>Size:</b> <code>{len(content)} chars</code>\n\n"
+                f"• <b>Size:</b> <code>{len(content)} chars</code>\n"
+                f"• <b>Format:</b> <code>{format_label}</code>\n\n"
                 f"Are you sure you want to update this variable with the file content?"
             )
             
@@ -715,12 +857,13 @@ async def process_env_document(c: Client, m: Message, state: dict):
                 'action': 'edit',
                 'key': key,
                 'step': 'confirming_file',
-                'new_value': content
+                'new_value': final_value
             }
         
-        # Clear state
-        if m.from_user.id in user_env_input_state:
-            del user_env_input_state[m.from_user.id]
+        # Only clear state if NOT in a confirmation or multi-step action
+        if action == 'import':
+            if m.from_user.id in user_env_input_state:
+                del user_env_input_state[m.from_user.id]
             
     except Exception as e:
         logger.error(f"Error processing ENV document: {e}")

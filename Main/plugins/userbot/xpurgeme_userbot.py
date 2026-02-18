@@ -1,4 +1,4 @@
-PLUGIN_VERSION = "0.0.31"
+PLUGIN_VERSION = "0.0.32"
 
 """
 Purgeme Interactive Plugin for Altruix Userbot
@@ -348,6 +348,9 @@ async def purgeme_cmd(client: Client, message: Message):
     # Check for target chat input
     input_chat = message.user_input
     chat_id = message.chat.id
+    
+    # Define local helper for localization strings
+    def loc(key): return Altruix.get_string(key)
     
     if input_chat:
         try:
@@ -804,30 +807,43 @@ async def purgeme_cmd(client: Client, message: Message):
             duration = time.time() - state.get("start_time", 0)
             duration_str = f"{round(duration, 2)}s"
             
-            # Determine final status
-            final_status = ""
+            # Determine final status emoji and text
+            status_emoji = "✅"
+            final_status = "Finished!"
             if state.get("stop_event") and state["stop_event"].is_set():
-                final_status = "⏹ Stopped"
-                status_emoji = "⚠️"
+                status_emoji = "⏹"
+                final_status = "Stopped"
             elif deleted_count == 0:
-                final_status = "❌ No messages deleted"
                 status_emoji = "⚠️"
-            else:
-                final_status = "✅ Success"
-                status_emoji = "✅"
+                final_status = "No matches found"
+            elif deleted_count < count:
+                final_status = "Partially Deleted"
+
+            # requested format:
+            # 🗑 Userbot Purgeme
+            # Mode: Oldest | Type: TEXT
+            # Target: 60 messages | Offset: 0
+            # Batch: 30 | DelayBc: 4m
+            # Chat: Sharing Bot Telegram
+            # Account: CoolKid 369
+
+            # 🗑 Deleting... (or Finished!)
+            # Deleted: 30/60
+            # Delay: 1.0s
             
+            # Use current status text directly for the bottom part or reconstruct
             log_msg = (
-                f"{status_emoji} <b>Purgeme Completed</b>\n\n"
-                f"• <b>Status:</b> {final_status}\n"
-                f"• <b>Deleted:</b> {deleted_count} messages\n"
-                f"• <b>Mode:</b> {mode.capitalize()}\n"
-                f"• <b>Duration:</b> {duration_str}\n"
-                f"• <b>Chat:</b> {chat_link} (<code>{chat_id}</code>)\n"
-                f"• <b>Type:</b> {chat_type}\n"
-                f"• <b>User:</b> {user_mention} (<code>{user_id}</code>)"
+                f"🗑 <b>Userbot Purgeme</b>\n"
+                f"• <b>Mode:</b> {mode.capitalize()} | <b>Type:</b> <code>{type_display}</code>\n"
+                f"• <b>Target:</b> <code>{count}</code> messages | <b>Offset:</b> <code>{offset}</code>\n"
+                f"• <b>Batch:</b> <code>{batch_size}</code> | <b>DelayBc:</b> <code>{int(batch_delay/60)}m</code>\n"
+                f"• <b>Chat:</b> {chat_link}\n"
+                f"• <b>Account:</b> <code>{account_name}</code>\n\n"
+                f"{status_emoji} <b>{final_status}</b>\n"
+                f"• <b>Deleted:</b> <code>{deleted_count}/{count}</code>\n"
+                f"• <b>Delay:</b> <code>{delay}s</code>"
             )
 
-            
             # Always use main bot for log chat to ensure member access
             await Altruix.bot.send_message(
                 Altruix.log_chat,
