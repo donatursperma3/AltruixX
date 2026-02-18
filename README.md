@@ -118,7 +118,7 @@ It's not necessary until you host the bot. You can get the String Session after 
 <details>
 <summary><b>Core Contributors</b></summary>
 
-> - <a href="https://www.github.com/sukri369">sukri369</a>
+> - <a href="https://www.github.com/sukri369">Sukri369</a>
 > - <a href="https://t.me/FakboiPensiun">Fakboi Pensiun</a>
 > - <a href="https://t.me/MinigramDev">Sugar Milk</a>
 > - <a href="https://t.me/coolkid369xr">CoolKid 369</a>
@@ -160,8 +160,8 @@ It's not necessary until you host the bot. You can get the String Session after 
 
 > - <a href="https://www.github.com/TeamUltroid/Ultroid">Ultroid Team</a>
 > - <a href="https://www.github.com/Altruix/Altruix">Altruix Dev</a>
-> - <a href="https://www.github.com/hikariatama/hikka">Hikka</a>
-> - <a href="https://www.github.com/UsergeTeam/Userge">Userge</a>
+> - <a href="https://www.github.com/hikariatama/hikka">Hikka Ubot</a>
+> - <a href="https://www.github.com/UsergeTeam/Userge">Userge Team</a>
 > - <a href="https://www.github.com/FridayDevs/Friday">Friday Dev</a>
 > - <a href="https://www.github.com/TgCatUB/catuserbot">Cat Ubot</a>
 > - <a href="https://www.github.com/Quiec/AsenaUserBot">Asena Ubot</a>
@@ -178,3 +178,4 @@ It's not necessary until you host the bot. You can get the String Session after 
 <p align="center">
   <img width="500" src="https://telegra.ph/file/5ee1e2ff5437b97aabf2e.png">
 </p>
+
