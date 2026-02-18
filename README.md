@@ -118,6 +118,10 @@ It's not necessary until you host the bot. You can get the String Session after 
 <details>
 <summary><b>Core Contributors</b></summary>
 
+> - <a href="https://www.github.com/sukri369">sukri369</a>
+> - <a href="https://t.me/FakboiPensiun">Fakboi Pensiun</a>
+> - <a href="https://t.me/MinigramDev">Sugar Milk</a>
+> - <a href="https://t.me/coolkid369xr">CoolKid 369</a>
 > - <a href="https://www.github.com/EverythingSuckz">EverythingSuckz</a>
 > - <a href="https://www.github.com/StarkGang">StarkGang</a>
 > - <a href="https://www.github.com/BilakshanP">BilakshanP</a>
@@ -139,7 +143,6 @@ It's not necessary until you host the bot. You can get the String Session after 
 > - <a href="https://www.github.com/N0BLEWOLF">N0BLEWOLF</a>
 > - <a href="https://www.github.com/ramanveerji">ramanveerji</a>
 > - <a href="https://www.github.com/swatv3nub">swatv3nub</a>
-> - <a href="https://www.github.com/sukri369">sukri369</a>
 
 </details>
 
@@ -155,12 +158,20 @@ It's not necessary until you host the bot. You can get the String Session after 
 <details>
 <summary><b>Inspired By</b></summary>
 
-> - <a href="https://www.github.com/TeamUltroid/Ultroid">Ultroid</a>
-> - <a href="https://www.github.com/Altruix/Altruix">Altruix</a>
+> - <a href="https://www.github.com/TeamUltroid/Ultroid">Ultroid Team</a>
+> - <a href="https://www.github.com/Altruix/Altruix">Altruix Dev</a>
 > - <a href="https://www.github.com/hikariatama/hikka">Hikka</a>
 > - <a href="https://www.github.com/UsergeTeam/Userge">Userge</a>
-> - <a href="https://www.github.com/FridayDevs/Friday">Friday</a>
-> - <a href="https://www.github.com/vckyou/GeezProjects">Geez</a>
+> - <a href="https://www.github.com/FridayDevs/Friday">Friday Dev</a>
+> - <a href="https://www.github.com/TgCatUB/catuserbot">Cat Ubot</a>
+> - <a href="https://www.github.com/Quiec/AsenaUserBot">Asena Ubot</a>
+> - <a href="https://www.github.com/friendly-telegram/friendly-telegram">Friendly Ubot</a>
+> - <a href="https://t.me/ShiiinaGroup">Shiiina Bot</a>
+> - <a href="https://www.github.com/vckyou/GeezProjects">Geez Project</a>
+> - <a href="https://www.github.com/">Veez Project</a>
+> - <a href="https://www.github.com/mrismanaziz/PyroMan-Userbot">PyroMan Ubot</a>
+> - <a href="https://t.me/AlphaXProject">Alpha-Xproject</a>
+
 
 </details>
 
