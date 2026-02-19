@@ -14,6 +14,7 @@ from Main.core.decorators import log_errors, iuser_check
 from Main.core.client import Altruix
 from pyrogram.enums import ParseMode, ChatType
 from pyrogram.errors import FloodWait
+from pyrogram import enums
 
 # Logger
 logger = logging.getLogger(__name__)
@@ -46,6 +47,7 @@ import Main.internals.settings_handlers.env_handlers
 import Main.internals.settings_handlers.toggle_session_handlers
 import Main.internals.settings_handlers.sessions_list
 import Main.internals.settings_handlers.export_handlers
+import Main.internals.settings_handlers.auto_global_purgeme
 
 @Altruix.bot.on_callback_query(filters.regex(r"^global_purgeme_(\d+)_(\d+)$"))
 @iuser_check
@@ -54,6 +56,51 @@ async def global_purgeme_cb_handler(c: Client, cb: CallbackQuery):
     idx, pg = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
     from Main.internals.settings_handlers.global_purgeme import open_global_purgeme_ui
     await open_global_purgeme_ui(c, cb, idx, pg)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^auto_gp_menu_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def auto_gp_menu_handler(c: Client, cb: CallbackQuery):
+    """Handler for Auto Global Purgeme Dashboard"""
+    index, page = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
+    from .auto_global_purgeme import auto_gp_perform_purge # actually we need the UI opener
+    from .auto_global_purgeme import get_auto_gp_status_text, get_auto_gp_kb, get_auto_gp_settings
+    
+    # Session info
+    session_client = Altruix.clients[index]
+    me = await session_client.get_me() if not getattr(session_client, "myself", None) else getattr(session_client, "myself")
+    
+    text = await get_auto_gp_status_text(me.id)
+    settings = await get_auto_gp_settings(me.id)
+    kb = get_auto_gp_kb(me.id, settings)
+    
+    await cb.message.edit_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^session_info_back_(\d+)$"))
+@iuser_check
+@log_errors
+async def session_info_back_handler(c: Client, cb: CallbackQuery):
+    """Back button handler for sub-menus returning to session info"""
+    user_id = int(cb.matches[0].group(1))
+    
+    # Find the index of this user
+    index = -1
+    for i, client in enumerate(Altruix.clients):
+        if (getattr(client, "myself", None) and client.myself.id == user_id) or (client.me and client.me.id == user_id):
+            index = i
+            break
+            
+    if index == -1:
+        return await cb.answer("❌ Session not found.", show_alert=True)
+        
+    # Return to page 5 where Auto GP button is
+    text, reply_markup = await get_session_info_data(index, 1, 5)
+    await cb.message.edit_text(
+        text=f"<b>ℹ️ SESSION MANAGER</b>\n\n<blockquote expandable>{text}</blockquote>",
+        reply_markup=reply_markup,
+        parse_mode=ParseMode.HTML,
+        link_preview_options=LinkPreviewOptions(is_disabled=True)
+    )
 
 @Altruix.bot.on_callback_query(filters.regex(r"^dl_content_menu_(\d+)_(\d+)$"))
 @iuser_check
@@ -287,7 +334,7 @@ async def get_session_info_data(index: int, callback_page: int, button_page: int
         buttons = [
             [InlineKeyboardButton(f"[52] {Altruix.get_string('bulk_join_menu')}", f"bulk_join_menu"), InlineKeyboardButton(f"[53] {Altruix.get_string('bulk_leave_menu')}", f"bulk_leave_menu")],
             [InlineKeyboardButton(f"[54] {Altruix.get_string('bulk_report_menu')}", f"bulk_report_menu"), InlineKeyboardButton(f"[55] {Altruix.get_string('sys_ctrl_restart')}", f"sys_ctrl_restart")],
-            [InlineKeyboardButton(f"[56] {Altruix.get_string('sys_ctrl_shutdown')}", f"sys_ctrl_shutdown")],
+            [InlineKeyboardButton(f"[56] {Altruix.get_string('sys_ctrl_shutdown')}", f"sys_ctrl_shutdown"), InlineKeyboardButton(f"[57] Auto GP", f"auto_gp_menu_{index}_{callback_page}")],
             [InlineKeyboardButton(f"{Altruix.get_string('prev')} (4/5)", f"session_info_{index}_{callback_page}_4")]
         ]
     

@@ -85,7 +85,7 @@ async def send_log_notification(
         
         log_message += f"• Waktu: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>"
         
-        await Altruix.bot.send_message(
+        return await Altruix.bot.send_message(
             log_chat_id, 
             log_message, 
             parse_mode=ParseMode.HTML,

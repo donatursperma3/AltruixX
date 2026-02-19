@@ -126,7 +126,7 @@ class AltruixClient:
         self.clients: List[Client] = []
         self.cmd_list = {}
         self.all_lang_strings = {}
-        self.__version__ = "0.0.9.813D" # ✅ Optimized Sudo & Prefix Cache
+        self.__version__ = "0.0.9.819D" # ✅ Optimized Sudo & Prefix Cache
         self.selected_lang = "english"
         self.local_lang_file = "./Main/localization"
         self.cmd_list = {} # {plugin_name: [cmd_data, ...]}
@@ -676,6 +676,7 @@ class AltruixClient:
             async def wrapper(client, message: Message):
                 # ✅ Check if session is disabled
                 if client.me.id in self.disabled_sessions:
+                    self.log(f"🚫 Session {client.me.id} is disabled. Dropping message {message.id}.", level=logging.DEBUG)
                     return
 
                 if str(message.chat.type).lower().startswith("chattype."):
@@ -1843,12 +1844,12 @@ class AltruixClient:
                             success_count += 1
                             if client == self.bot:
                                 # Bot logic: [1/1]
-                                log_msg = f"BERHASIL: [1/1] 🤖 Bot: {name} -» mengirim startup msg"
+                                log_msg = f"DONE: [1/1] 🤖 Bot: {name} -» send startup msg"
                             else:
                                 # Userbot logic: [current/total_userbots]
                                 userbot_index = self.clients.index(client) + 1
                                 total_userbots = len(self.clients)
-                                log_msg = f"BERHASIL: [{userbot_index}/{total_userbots}] 🦸🏼 Ubot: {name} -» mengirim startup msg"
+                                log_msg = f"DONE: [{userbot_index}/{total_userbots}] 🦸🏼 Ubot: {name} -» send startup msg"
                             
                             self.log(log_msg, level=20)
                         except FloodWait as e:
