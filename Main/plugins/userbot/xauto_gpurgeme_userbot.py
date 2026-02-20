@@ -15,7 +15,7 @@ from Main.internals.settings_handlers.auto_global_purgeme import (
 # Plugin Metadata
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xautogp"
-PLUGIN_VERSION = "0.0.36"
+PLUGIN_VERSION = "0.0.41"
 
 # Cooldown/Task tracking is now handled by GLOBAL_PURGE_LOCK in auto_global_purgeme.py
 
@@ -127,6 +127,85 @@ async def autogp_blacklist_cmd(client: Client, message: Message):
     raise StopPropagation
 
 @Altruix.register_on_cmd(
+    ["autogpdel"],
+    cmd_help={
+        "help": "Remove a specific chat from Auto-GP blacklist by its chat ID.",
+        "example": ".autogpdel -100123456789"
+    }
+)
+@iuser_check
+@log_errors
+async def autogp_del_blacklist_cmd(client: Client, message: Message):
+    """
+    Remove a specific chat_id from the Auto-GP blacklist.
+    Usage: .autogpdel <chat_id>
+    """
+    user_id = client.me.id
+
+    if not message.user_input or not message.user_input.lstrip('-').isdigit():
+        await message.edit("❌ <b>Usage:</b> <code>.autogpdel &lt;chat_id&gt;</code>")
+        raise StopPropagation
+
+    chat_id = int(message.user_input)
+    settings = await get_auto_gp_settings(user_id)
+
+    if chat_id not in settings["blacklist"]:
+        await message.edit(
+            f"⚠️ Chat <code>{chat_id}</code> is <b>NOT</b> in the Auto-GP Blacklist."
+        )
+        raise StopPropagation
+
+    settings["blacklist"].remove(chat_id)
+    await save_auto_gp_settings(user_id, settings)
+    await message.edit(
+        f"✅ Chat <code>{chat_id}</code> has been <b>REMOVED</b> from Auto-GP Blacklist.\n"
+        f"📋 Remaining blacklisted: <code>{len(settings['blacklist'])} chats</code>"
+    )
+    raise StopPropagation
+
+@Altruix.register_on_cmd(
+    ["autogpblist"],
+    cmd_help={
+        "help": "View all blacklisted chats for Auto Global Purgeme.",
+        "example": ".autogpblist"
+    }
+)
+@iuser_check
+@log_errors
+async def autogp_view_blacklist_cmd(client: Client, message: Message):
+    """
+    Display all chat IDs currently on the Auto-GP blacklist,
+    with resolved chat names where possible.
+    """
+    user_id = client.me.id
+    settings = await get_auto_gp_settings(user_id)
+    bl = settings["blacklist"]
+
+    if not bl:
+        await message.edit(
+            "📋 <b>Auto-GP Blacklist</b>\n\n"
+            "<i>Blacklist is empty. No chats are excluded.</i>"
+        )
+        raise StopPropagation
+
+    lines = []
+    for cid in bl:
+        try:
+            chat = await client.get_chat(cid)
+            name = chat.title or chat.first_name or f"Chat {cid}"
+        except Exception:
+            name = f"Chat {cid}"
+        lines.append(f"• <code>{cid}</code> — {name}")
+
+    text = (
+        f"📋 <b>Auto-GP Blacklist</b>\n"
+        f"Total: <code>{len(bl)}</code> chats\n\n"
+        + "\n".join(lines)
+    )
+    await message.edit(text)
+    raise StopPropagation
+
+@Altruix.register_on_cmd(
     ["autogpstatus"],
     cmd_help={"help": "View current Auto Global Purgeme status, limit, and active filters."}
 )
@@ -159,16 +238,44 @@ async def auto_gp_message_trigger(client: Client, message: Message):
     # Check if message has text or caption to look for prefixes
     msg_text = message.text or message.caption or ""
 
-    # Skip if message starts with a command prefix to avoid interference
-    prefixes = [Altruix.prefix_owner_user, Altruix.prefix_sudo_users]
-    if msg_text and any(msg_text.startswith(p) for p in prefixes):
-        return
-
     user_id = client.me.id
     chat_id = message.chat.id
     
-    # Retrieve settings to determine mode
+    # Retrieve settings to determine behavior
     settings = await get_auto_gp_settings(user_id)
+    
+    # Check if Auto-GP is ON
+    if not settings.get("status", False):
+        return
+
+    # 🚫 Feature 1: Respect Blacklist for Triggering
+    if settings.get("respect_bl", True) and chat_id in settings.get("blacklist", []):
+        Altruix.log(f"🕵️ Auto-GP | Trigger Chat {chat_id} is blacklisted. Skipping cycle.", level=20)
+        return
+
+    # ⌨️ Feature 2: Command Response Bypass (Skip CMDs)
+    if settings.get("skip_cmds", True):
+        # Skip if message starts with a command prefix
+        prefixes = [Altruix.config.PREFIX_OWNER_USER or ".", Altruix.config.PREFIX_SUDO_USERS or "!"]
+        if msg_text and any(msg_text.startswith(p) for p in prefixes):
+            Altruix.log(f"⌨️ Auto-GP | Trigger is a command. Skipping cycle.", level=20)
+            return
+        # Skip if trigger message is an edit
+        if getattr(message, "edit_date", None):
+             Altruix.log(f"⌨️ Auto-GP | Trigger is an EDIT. Skipping cycle.", level=20)
+             return
+        # Skip if trigger message is via bot (e.g. inline results, dashboard)
+        if getattr(message, "via_bot", None):
+             Altruix.log(f"⌨️ Auto-GP | Trigger is VIA BOT. Skipping cycle.", level=20)
+             return
+        # Skip if trigger message is a reply to a command (e.g. non-inline pong!)
+        if message.reply_to_message:
+            rep = message.reply_to_message
+            rep_text = rep.text or rep.caption or ""
+            if rep_text and any(rep_text.startswith(p) for p in prefixes):
+                Altruix.log(f"⌨️ Auto-GP | Trigger is a REPLY to a command. Skipping cycle.", level=20)
+                return
+
     cycle_mode = settings.get("cycle", "global")
 
     if cycle_mode == "global":

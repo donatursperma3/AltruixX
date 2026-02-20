@@ -1,4 +1,5 @@
 # Main/internals/settings_handlers/profile_handlers.py
+from typing import Optional
 import html
 import os
 import asyncio
@@ -44,11 +45,15 @@ async def change_name_menu_handler(c: Client, cb: CallbackQuery):
         ],
         [InlineKeyboardButton("🔙 Back", callback_data=f"session_info_{index}_{page}")]
     ]
-    await cb.message.edit(
-        text="<b>✏️ Ganti Nama</b>\n\nPilih bagian nama yang ingin Anda ubah:", 
-        reply_markup=InlineKeyboardMarkup(buttons), 
-        parse_mode=ParseMode.HTML
-    )
+    args = {
+        "text": "<b>✏️ Ganti Nama</b>\n\nPilih bagian nama yang ingin Anda ubah:", 
+        "reply_markup": InlineKeyboardMarkup(buttons), 
+        "parse_mode": ParseMode.HTML
+    }
+    if cb.message:
+        await cb.message.edit(**args)
+    else:
+        await cb.edit_message_text(**args)
 
 @Altruix.bot.on_callback_query(filters.regex(r"change_(first|last)_name_(\d+)_(\d+)"))
 @iuser_check
@@ -70,15 +75,19 @@ async def change_name_handler(c: Client, cb: CallbackQuery):
     label = "Depan" if name_type == "first" else "Belakang"
     note = "Nama depan maksimal 64 karakter" if name_type == "first" else "Kirim 'kosong' untuk menghapus nama belakang"
     
-    await cb.message.edit(
-        text=f"✏️ <b>Ganti Nama {label}</b>\n\n"
-             f"Silakan kirim nama {label.lower()} baru untuk akun ini.\n\n"
-             f"⚠️ <b>Note:</b>\n"
-             f"• {note}\n"
-             f"• Tidak boleh mengandung karakter khusus\n\n"
-             f"❌ <b>Cancel:</b> Kirim /cancel",
-        parse_mode=ParseMode.HTML
-    )
+    args = {
+        "text": f"✏️ <b>Ganti Nama {label}</b>\n\n"
+              f"Silakan kirim nama {label.lower()} baru untuk akun ini.\n\n"
+              f"⚠️ <b>Note:</b>\n"
+              f"• {note}\n"
+              f"• Tidak boleh mengandung karakter khusus\n\n"
+              f"❌ <b>Cancel:</b> Kirim /cancel",
+        "parse_mode": ParseMode.HTML
+    }
+    if cb.message:
+        await cb.message.edit(**args)
+    else:
+        await cb.edit_message_text(**args)
 
 @Altruix.bot.on_callback_query(filters.regex(r"change_bio_(\d+)_(\d+)"))
 @Altruix.bot.on_callback_query(filters.regex(r"^gen_conf_change_bio_(\d+)_(\d+)$"))
@@ -96,16 +105,20 @@ async def change_bio_handler(c: Client, cb: CallbackQuery):
         'page': page
     }
     
-    await cb.message.edit(
-        text="📝 <b>Ganti Bio</b>\n\n"
-             "Silakan kirim bio baru untuk akun ini.\n"
-             "Maksimal 70 karakter.\n\n"
-             "⚠️ <b>Note:</b>\n"
-             "• Bio akan tampil di profil\n"
-             "• Bisa berisi emoji dan link\n\n"
-             "❌ <b>Cancel:</b> Kirim /cancel",
-        parse_mode=ParseMode.HTML
-    )
+    args = {
+        "text": "📝 <b>Ganti Bio</b>\n\n"
+              "Silakan kirim bio baru untuk akun ini.\n"
+              "Maksimal 70 karakter.\n\n"
+              "⚠️ <b>Note:</b>\n"
+              "• Bio akan tampil di profil\n"
+              "• Bisa berisi emoji dan link\n\n"
+              "❌ <b>Cancel:</b> Kirim /cancel",
+        "parse_mode": ParseMode.HTML
+    }
+    if cb.message:
+        await cb.message.edit(**args)
+    else:
+        await cb.edit_message_text(**args)
 
 @Altruix.bot.on_callback_query(filters.regex(r"change_username_(\d+)_(\d+)"))
 @Altruix.bot.on_callback_query(filters.regex(r"^gen_conf_change_username_(\d+)_(\d+)$"))
@@ -123,17 +136,21 @@ async def change_username_handler(c: Client, cb: CallbackQuery):
         'page': page
     }
     
-    await cb.message.edit(
-        text="👤 <b>Ganti Username</b>\n\n"
-             "Silakan kirim username baru (tanpa @).\n"
-             "Contoh: username_baru\n\n"
-             "⚠️ <b>Note:</b>\n"
-             "• Username harus unik dan tersedia\n"
-             "• Minimal 5 karakter\n"
-             "• Hanya boleh mengandung huruf, angka, dan underscore\n\n"
-             "❌ <b>Cancel:</b> Kirim /cancel",
-        parse_mode=ParseMode.HTML
-    )
+    args = {
+        "text": "👤 <b>Ganti Username</b>\n\n"
+              "Silakan kirim username baru (tanpa @).\n"
+              "Contoh: username_baru\n\n"
+              "⚠️ <b>Note:</b>\n"
+              "• Username harus unik dan tersedia\n"
+              "• Minimal 5 karakter\n"
+              "• Hanya boleh mengandung huruf, angka, dan underscore\n\n"
+              "❌ <b>Cancel:</b> Kirim /cancel",
+        "parse_mode": ParseMode.HTML
+    }
+    if cb.message:
+        await cb.message.edit(**args)
+    else:
+        await cb.edit_message_text(**args)
 
 @Altruix.bot.on_callback_query(filters.regex(r"change_profile_photo_(\d+)_(\d+)"))
 @Altruix.bot.on_callback_query(filters.regex(r"^gen_conf_change_profile_photo_(\d+)_(\d+)$"))
@@ -151,16 +168,20 @@ async def change_profile_photo_handler(c: Client, cb: CallbackQuery):
         'page': page
     }
     
-    await cb.message.edit(
-        text="🖼️ <b>Ganti Foto Profil</b>\n\n"
-             "Silakan kirim foto baru untuk profil akun ini.\n\n"
-             "⚠️ <b>Note:</b>\n"
-             "• Foto harus dalam format JPEG/PNG\n"
-             "• Ukuran maksimal 10MB\n"
-             "• Foto lama akan diganti\n\n"
-             "❌ <b>Cancel:</b> Kirim /cancel",
-        parse_mode=ParseMode.HTML
-    )
+    args = {
+        "text": "🖼️ <b>Ganti Foto Profil</b>\n\n"
+              "Silakan kirim foto baru untuk profil akun ini.\n\n"
+              "⚠️ <b>Note:</b>\n"
+              "• Foto harus dalam format JPEG/PNG\n"
+              "• Ukuran maksimal 10MB\n"
+              "• Foto lama akan diganti\n\n"
+              "❌ <b>Cancel:</b> Kirim /cancel",
+        "parse_mode": ParseMode.HTML
+    }
+    if cb.message:
+        await cb.message.edit(**args)
+    else:
+        await cb.edit_message_text(**args)
 
 @Altruix.bot.on_callback_query(filters.regex(r"delete_all_profile_photos_(\d+)_(\d+)"))
 @Altruix.bot.on_callback_query(filters.regex(r"^gen_conf_delete_all_profile_photos_(\d+)_(\d+)$"))
@@ -179,26 +200,31 @@ async def delete_all_profile_photos_handler(c: Client, cb: CallbackQuery):
         'delay': 2
     }
     
-    await cb.message.edit(
-        text="🗑️ <b>Konfirmasi Hapus Semua Foto Profil</b>\n\n"
-             "Apakah Anda yakin ingin menghapus SEMUA foto profil akun ini?\n\n"
-             "⚠️ <b>PERINGATAN:</b>\n"
-             "• Tindakan ini tidak dapat dibatalkan\n"
-             "• Semua foto profil akan dihapus permanen\n\n"
-             "Lanjutkan?",
-        reply_markup=InlineKeyboardMarkup([
+    args = {
+        "text": "🗑️ <b>Konfirmasi Hapus Semua Foto Profil</b>\n\n"
+              "Apakah Anda yakin ingin menghapus SEMUA foto profil akun ini?\n\n"
+              "⚠️ <b>PERINGATAN:</b>\n"
+              "• Tindakan ini tidak dapat dibatalkan\n"
+              "• Semua foto profil akan dihapus permanen\n\n"
+              "Lanjutkan?",
+        "reply_markup": InlineKeyboardMarkup([
             [
                 InlineKeyboardButton("✅ Ya, Hapus Semua", f"edit_confirm_yes_{user_id}"),
                 InlineKeyboardButton("❌ Tidak", f"session_info_{index}_{page}")
             ]
         ]),
-        parse_mode=ParseMode.HTML
-    )
+        "parse_mode": ParseMode.HTML
+    }
+    if cb.message:
+        await cb.message.edit(**args)
+    else:
+        await cb.edit_message_text(**args)
 
-async def delete_all_profile_photos_process(c: Client, m: Message, session_index: int, page: int, delay: int):
+async def delete_all_profile_photos_process(c: Client, m: Optional[Message], session_index: int, page: int, delay: int, user_id: int = None):
     """Actual process of deleting all profile photos with delay and logging"""
     if session_index >= len(Altruix.clients):
-        await m.reply("❌ Session tidak ditemukan.")
+        if m: await m.reply("❌ Session tidak ditemukan.")
+        elif user_id: await c.send_message(user_id, "❌ Session tidak ditemukan.")
         return
     
     session_client = Altruix.clients[session_index]
@@ -210,32 +236,43 @@ async def delete_all_profile_photos_process(c: Client, m: Message, session_index
         
         total = len(photos)
         if total == 0:
-            await m.reply("ℹ️ Akun ini tidak memiliki foto profil.")
+            if m: await m.reply("ℹ️ Akun ini tidak memiliki foto profil.")
+            elif user_id: await c.send_message(user_id, "ℹ️ Akun ini tidak memiliki foto profil.")
             return
         
-        status_msg = await m.reply(f"🔄 Menghapus {total} foto profil dengan delay {delay}s...")
+        status_text = f"🔄 Menghapus {total} foto profil dengan delay {delay}s..."
+        status_msg = None
+        if m: status_msg = await m.reply(status_text)
+        elif user_id: status_msg = await c.send_message(user_id, status_text)
         
         deleted = 0
         for i, photo in enumerate(photos, 1):
             try:
                 await session_client.delete_profile_photos(photo.file_id)
                 deleted += 1
-                if i % 5 == 0 or i == total:
-                    await status_msg.edit(f"🔄 Progress: {i}/{total} foto dihapus.")
+                if status_msg and (i % 5 == 0 or i == total):
+                    try: await status_msg.edit(f"🔄 Progress: {i}/{total} foto dihapus.")
+                    except: pass
                 if i < total:
                     await asyncio.sleep(delay)
             except FloodWait as e:
-                await status_msg.edit(f"⏳ FloodWait: Menunggu {e.value}s...")
+                if status_msg:
+                    try: await status_msg.edit(f"⏳ FloodWait: Menunggu {e.value}s...")
+                    except: pass
                 await asyncio.sleep(e.value)
                 await session_client.delete_profile_photos(photo.file_id)
                 deleted += 1
             except Exception as e:
                 logger.error(f"Error delete photo {i}: {e}")
         
-        await m.reply(f"✅ Selesai! {deleted}/{total} foto profil berhasil dihapus.")
+        final_msg = f"✅ Selesai! {deleted}/{total} foto profil berhasil dihapus."
+        if m: await m.reply(final_msg)
+        elif user_id: await c.send_message(user_id, final_msg)
         
     except Exception as e:
-        await m.reply(f"❌ Error: {str(e)}")
+        err_msg = f"❌ Error: {str(e)}"
+        if m: await m.reply(err_msg)
+        elif user_id: await c.send_message(user_id, err_msg)
         logger.error(f"Error in delete_all_profile_photos_process: {e}")
 
 # Note: The Yes/No confirmation logic for edits is handled in session_info.py's text handler or dedicated callback.

@@ -19,7 +19,8 @@ async def send_log_notification(
     user: Any, 
     success: bool, 
     error_msg: str = None,
-    additional_info: Dict[str, Any] = None
+    additional_info: Dict[str, Any] = None,
+    edit_message: Any = None
 ):
     """Mengirim notifikasi ke log group untuk semua aksi"""
     try:
@@ -59,20 +60,20 @@ async def send_log_notification(
         }
         
         action_text = action_map.get(action, action)
-        status = "✅ BERHASIL" if success else "❌ GAGAL"
+        status = "✅ SUCCESS" if success else "❌ FAILED"
         
         # Buat pesan log
         log_message = (
-            f"📢 <b>AKSI PROFIL - {action_text}</b>\n"
+            f"📢 <b>PROFIL ACTIONS - {action_text}</b>\n\n"
             f"• Status: <b>{status}</b>\n"
-            f"• User: <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a>\n"
+            f"• User: <b><a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a></b>\n"
             f"• User ID: <code>{user.id}</code>\n"
         )
         
         if session_info:
             log_message += (
-                f"• Akun: <a href='tg://user?id={session_info.id}'>{html.escape(session_info.first_name or '')}</a>\n"
-                f"• Akun ID: <code>{session_info.id}</code>\n"
+                f"• Account: <b><a href='tg://user?id={session_info.id}'>{html.escape(session_info.first_name or '')}</a></b>\n"
+                f"• Account ID: <code>{session_info.id}</code>\n"
             )
         
         if error_msg:
@@ -81,9 +82,24 @@ async def send_log_notification(
         if additional_info:
             for key, value in additional_info.items():
                 if value and str(value).strip():
-                    log_message += f"• {key}: <code>{html.escape(str(value))}</code>\n"
+                    val_str = str(value)
+                    if "<a href=" in val_str:
+                        log_message += f"• {key}: {val_str}\n"
+                    else:
+                        log_message += f"• {key}: <code>{html.escape(val_str)}</code>\n"
         
-        log_message += f"• Waktu: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>"
+        log_message += f"• Time: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>"
+        
+        if edit_message:
+            try:
+                return await edit_message.edit_text(
+                    log_message, 
+                    parse_mode=ParseMode.HTML,
+                    disable_web_page_preview=True
+                )
+            except Exception as e:
+                logger.error(f"Failed to edit log message: {e}")
+                # Fallback to sending a new message if edit fails
         
         return await Altruix.bot.send_message(
             log_chat_id, 

@@ -45,7 +45,7 @@ import logging
 
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xcreategroup"
-PLUGIN_VERSION = "0.2.11"  # ✅ REFACTORED: Renamed to CreateGroup, enhanced logging
+PLUGIN_VERSION = "0.2.12"  # ✅ REFACTORED: Renamed to CreateGroup, enhanced logging
 
 logger = logging.getLogger("altruix.xcreategroup")
 logger.setLevel(logging.INFO)

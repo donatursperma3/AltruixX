@@ -74,7 +74,7 @@ async def auto_gp_menu_handler(c: Client, cb: CallbackQuery):
     settings = await get_auto_gp_settings(me.id)
     kb = get_auto_gp_kb(me.id, settings)
     
-    await cb.message.edit_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+    await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^session_info_back_(\d+)$"))
 @iuser_check
@@ -95,12 +95,17 @@ async def session_info_back_handler(c: Client, cb: CallbackQuery):
         
     # Return to page 5 where Auto GP button is
     text, reply_markup = await get_session_info_data(index, 1, 5)
-    await cb.message.edit_text(
-        text=f"<b>ℹ️ SESSION MANAGER</b>\n\n<blockquote expandable>{text}</blockquote>",
-        reply_markup=reply_markup,
-        parse_mode=ParseMode.HTML,
-        link_preview_options=LinkPreviewOptions(is_disabled=True)
-    )
+    args = {
+        "text": f"<b>ℹ️ SESSION MANAGER</b>\n\n<blockquote expandable>{text}</blockquote>",
+        "reply_markup": reply_markup,
+        "parse_mode": ParseMode.HTML,
+        "link_preview_options": LinkPreviewOptions(is_disabled=True)
+    }
+    
+    if cb.message:
+        await cb.message.edit_text(**args)
+    else:
+        await cb.edit_message_text(**args)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^dl_content_menu_(\d+)_(\d+)$"))
 @iuser_check
@@ -667,7 +672,8 @@ async def edit_confirm_handler(c: Client, cb: CallbackQuery):
     
     if action == 'delete_all_profile_photos':
         from .profile_handlers import delete_all_profile_photos_process
-        await delete_all_profile_photos_process(c, cb.message, index, page, state.get('delay', 2))
+        # If cb.message is None, we pass None and the process handler should handle it
+        await delete_all_profile_photos_process(c, cb.message, index, page, state.get('delay', 2), user_id=user_id)
         if user_id in user_edit_confirmation_state: del user_edit_confirmation_state[user_id]
     
     # Handle other confirmation actions here if needed

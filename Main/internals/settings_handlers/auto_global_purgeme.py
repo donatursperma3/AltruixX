@@ -54,6 +54,11 @@ async def get_auto_gp_settings(user_id):
     
     # Target Chat scope (Global: All targets / Current: Only active chat)
     cycle = await Altruix.config.get_env(f"AUTO_GP_CYCLE_{user_id}") or "global"
+    
+    # Advanced Logic settings
+    respect_bl = (await Altruix.config.get_env(f"AUTO_GP_RESPECT_BL_{user_id}") or "on") == "on"
+    skip_cmds = (await Altruix.config.get_env(f"AUTO_GP_SKIP_CMDS_{user_id}") or "on") == "on"
+    keep_recent = int(await Altruix.config.get_env(f"AUTO_GP_KEEP_RECENT_{user_id}") or 6)
 
     return {
         "status": is_on,
@@ -67,7 +72,10 @@ async def get_auto_gp_settings(user_id):
         "notify": notify,
         "filters": filters_list,
         "admin_filter": admin_filter,
-        "blacklist": blacklist
+        "blacklist": blacklist,
+        "respect_bl": respect_bl,
+        "skip_cmds": skip_cmds,
+        "keep_recent": keep_recent
     }
 
 async def save_auto_gp_settings(user_id, settings):
@@ -87,6 +95,9 @@ async def save_auto_gp_settings(user_id, settings):
     await Altruix.config.sync_env_to_db(f"AUTO_GP_FILTERS_{user_id}", ",".join(settings["filters"]), upsert=True)
     await Altruix.config.sync_env_to_db(f"AUTO_GP_ADMIN_FILTER_{user_id}", settings["admin_filter"], upsert=True)
     await Altruix.config.sync_env_to_db(f"AUTO_GP_BLACKLIST_{user_id}", ",".join(map(str, settings["blacklist"])), upsert=True)
+    await Altruix.config.sync_env_to_db(f"AUTO_GP_RESPECT_BL_{user_id}", "on" if settings.get("respect_bl", True) else "off", upsert=True)
+    await Altruix.config.sync_env_to_db(f"AUTO_GP_SKIP_CMDS_{user_id}", "on" if settings.get("skip_cmds", True) else "off", upsert=True)
+    await Altruix.config.sync_env_to_db(f"AUTO_GP_KEEP_RECENT_{user_id}", str(settings.get("keep_recent", 6)), upsert=True)
 
 def loc(key, *args):
     """
@@ -122,7 +133,10 @@ async def get_auto_gp_status_text(user_id, current_chat_id=None):
     mode_str = settings["mode"].capitalize()
     filters_display = ", ".join([loc(f"GP_BTN_{f.upper()}") for f in settings["filters"]])
     admin_filter_text = loc(f"GP_BTN_ADMIN_FILTER_{settings['admin_filter'].upper()}")
-    notify_str = "✅ ON" if settings["notify"] else "❌ OFF"
+    respect_bl_str = "✅ ON" if settings.get("respect_bl", True) else "❌ OFF"
+    skip_cmds_str = "✅ ON" if settings.get("skip_cmds", True) else "❌ OFF"
+    notify_str = "✅ ON" if settings.get("notify", True) else "❌ OFF"
+    keep_recent = settings.get("keep_recent", 6)
     
     blacklist_status = ""
     if current_chat_id:
@@ -150,6 +164,7 @@ async def get_auto_gp_status_text(user_id, current_chat_id=None):
         f"<b>🛠 Config:</b> [ <code>Mode:{mode_str} | Offset:{settings['offset']}</code> ]\n"
         f"<b>🧹 Filters:</b> <code>{filters_display}</code>\n"
         f"<b>👑 Admin Filter:</b> {admin_filter_text} | <b>🔔 Notif:</b> {notify_str}\n"
+        f"<b>🧠 Advanced:</b> [ <code>Res BL:{respect_bl_str} | Skip Cmd:{skip_cmds_str} | Keep:{keep_recent}msg</code> ]\n"
         f"<b>🚫 Blacklisted:</b> <code>{len(settings['blacklist'])} chats</code>{blacklist_status}\n\n"
         f"<b>Status: {status_emoji} {status_text}</b>\n\n"
         f"<i>Automated purging triggers every time you send an outgoing message.</i>"
@@ -165,10 +180,6 @@ def get_auto_gp_kb(user_id, settings, current_chat_id=None):
     cycle = settings.get("cycle", "global")
     mode = settings.get("mode", "newest")
     
-    # 🟢 Row: Master Status Toggle
-    status_btn = "🔴 Disable Auto-GP Now" if settings["status"] else "🟢 Enable Auto-GP Now"
-    kb.append([InlineKeyboardButton(status_btn, f"autogp_toggle_{user_id}")])
-    
     # 🎯 Row: Target Type Selection
     kb.append([
         InlineKeyboardButton(("✅ " if target == "all" else "") + loc("GP_BTN_TARGET_ALL"), f"autogp_target_all_{user_id}"),
@@ -177,23 +188,20 @@ def get_auto_gp_kb(user_id, settings, current_chat_id=None):
     ])
 
     # 🔄 Row: Cycle Target (Global / Smart / Force)
-    # [Cycle: Global/Smart/Force]
-    # [Global][Smart][Force]
     kb.append([
         InlineKeyboardButton(f"Cycle Mode: {cycle.upper().replace('_', ' ')}", "autogp_noop")
     ])
     kb.append([
-        InlineKeyboardButton(("✅ " if cycle == "global" else "") + "Global 🌍", f"autogp_cycle_global_{user_id}"),
-        InlineKeyboardButton(("✅ " if cycle == "current_smart" else "") + "Smart 🔆", f"autogp_cycle_current_smart_{user_id}"),
-        InlineKeyboardButton(("✅ " if cycle == "current_force" else "") + "Force ⚠️", f"autogp_cycle_current_force_{user_id}")
+        InlineKeyboardButton(("✅ " if cycle == "global" else "") + "Global", f"autogp_cycle_global_{user_id}"),
+        InlineKeyboardButton(("✅ " if cycle == "current_smart" else "") + "C-Smart", f"autogp_cycle_current_smart_{user_id}"),
+        InlineKeyboardButton(("✅ " if cycle == "current_force" else "") + "C-Force", f"autogp_cycle_current_force_{user_id}")
     ])
     
-    # ... (Rest of rows same logic) ...
     # 🔢 Row: Purge Limit Control (-/+ 2)
     kb.append([
         InlineKeyboardButton(f"Limit: {settings['limit']}", "autogp_noop"),
-        InlineKeyboardButton("-2", f"autogp_limit_m2_{user_id}"),
-        InlineKeyboardButton("+2", f"autogp_limit_p2_{user_id}")
+        InlineKeyboardButton("-2 msg", f"autogp_limit_m2_{user_id}"),
+        InlineKeyboardButton("+2 msg", f"autogp_limit_p2_{user_id}")
     ])
     
     # ⏱ Row: Inter-Chat Delay (in seconds)
@@ -227,50 +235,57 @@ def get_auto_gp_kb(user_id, settings, current_chat_id=None):
 
     # 🔔 Row: Notification Toggle
     kb.append([
-        InlineKeyboardButton(("✅ Notif ON" if settings["notify"] else "❌ Notif OFF"), f"autogp_notif_{user_id}")
+        InlineKeyboardButton(("Notif: ✅ ON" if settings["notify"] else "Notif: ❌ OFF"), f"autogp_notif_{user_id}")
     ])
 
-    # 🧹 Grid: Content Filter Selection (15 types + Dice)
+    # 🧹 Row: Message Filter Sub-Menu Entry
     f_list = settings["filters"]
-    def get_f_btn(f_type, label_key, def_label):
-        label = loc(label_key) or def_label
-        active = "✅" if f_type in f_list else "☑️"
-        return InlineKeyboardButton(f"{active} {label}", f"autogp_filter_{f_type}_{user_id}")
-
-    kb.append([get_f_btn("all", "GP_BTN_ALL", "All"), get_f_btn("photo", "GP_BTN_PHOTO", "Photo"), get_f_btn("video", "GP_BTN_VIDEO", "Video")])
-    kb.append([get_f_btn("text", "GP_BTN_TEXT", "Text"), get_f_btn("audio", "GP_BTN_AUDIO", "Audio"), get_f_btn("sticker", "GP_BTN_STICKER", "Sticker")])
-    kb.append([get_f_btn("animation", "GP_BTN_ANIMATION", "Anim"), get_f_btn("document", "GP_BTN_DOCUMENT", "Doc"), get_f_btn("video_note", "GP_BTN_VNOTE", "VNote")])
-    kb.append([get_f_btn("voice", "GP_BTN_VOICE", "Voice"), get_f_btn("contact", "GP_BTN_CONTACT", "Contact"), get_f_btn("location", "GP_BTN_LOCATION", "Loc")])
-    kb.append([get_f_btn("venue", "GP_BTN_VENUE", "Venue"), get_f_btn("game", "GP_BTN_GAME", "Game"), get_f_btn("poll", "GP_BTN_POLL", "Poll")])
-    kb.append([get_f_btn("dice", "GP_BTN_DICE", "Dice")])
+    active_count = len(f_list)
+    filter_preview = "All Types" if "all" in f_list else f"{active_count} selected"
+    kb.append([InlineKeyboardButton(f"🧹 Message Filters: {filter_preview}", f"autogp_filtermenu_{user_id}")])
 
     # 👑 Row: Administrative Access Filter
     admin_filter_active = loc(f"GP_BTN_ADMIN_FILTER_{settings['admin_filter'].upper()}")
     kb.append([InlineKeyboardButton(f"👑 Admin Filter: {admin_filter_active}", f"autogp_toggleadmin_{user_id}")])
+
+    # 🧠 Row: Respect Blacklist + Skip Commands
+    respect_bl_btn = "🚫 Respect BL: ON" if settings.get("respect_bl", True) else "🚫 Respect BL: OFF"
+    skip_cmds_btn = "⌨️ Skip CMD: ON" if settings.get("skip_cmds", True) else "⌨️ Skip CMD: OFF"
+    kb.append([
+        InlineKeyboardButton(respect_bl_btn, f"autogp_respectbl_{user_id}"),
+        InlineKeyboardButton(skip_cmds_btn, f"autogp_skipcmds_{user_id}")
+    ])
+
+    # ⏳ Row: Keep Recent Messages
+    keep_recent = settings.get("keep_recent", 6)
+    kb.append([
+        InlineKeyboardButton(f"Keep Rcnt: {keep_recent}", "autogp_noop"),
+        InlineKeyboardButton("-2 msg", f"autogp_keep_m2_{user_id}"),
+        InlineKeyboardButton("+2 msg", f"autogp_keep_p2_{user_id}")
+    ])
     
-    # 🚫 Row: Interactive Blacklist Management
-    bl_buttons = []
-    if current_chat_id: # Show toggle only if we have context of the chat
+    # 🚫 Row: Interactive Blacklist for current chat
+    if current_chat_id:
         is_bl = current_chat_id in settings["blacklist"]
         btn_text = "✅ Active (Whitelist)" if is_bl else "🚫 Blacklist This Chat"
-        bl_buttons.append(InlineKeyboardButton(btn_text, f"autogp_bl_togglecid_{user_id}"))
-    
-    bl_buttons.append(InlineKeyboardButton(loc("autogp_bl_list"), f"autogp_bl_list_{user_id}"))
-    kb.append(bl_buttons)
+        kb.append([InlineKeyboardButton(btn_text, f"autogp_bl_togglecid_{user_id}")])
 
-    # 📋 Row: Target Chat Listing
+    # 📋 Row: List Blacklist + List Chats (combined)
     kb.append([
+        InlineKeyboardButton("🚫 List Blacklist", f"autogp_bl_list_{user_id}"),
         InlineKeyboardButton(loc("GP_BTN_LIST_CHATS"), f"autogp_list_target_{user_id}")
     ])
     
-    # 🔄 Row: Global Menu Controls
+    # 🔄 Row: Refresh + Info
     kb.append([
         InlineKeyboardButton("🔄 Refresh", f"autogp_refresh_{user_id}"),
         InlineKeyboardButton(loc("GP_BTN_INFO"), f"autogp_info_{user_id}")
     ])
     
-    # ❌ Row: Close Dashboard
+    # 🟢/🔴 Row: Enable/Disable + Close Menu
+    status_btn = "🔴 Disable Auto-GP" if settings["status"] else "🟢 Enable Auto-GP"
     kb.append([
+        InlineKeyboardButton(status_btn, f"autogp_toggle_{user_id}"),
         InlineKeyboardButton("❌ Close Menu", f"autogp_close_{user_id}")
     ])
     
@@ -281,17 +296,114 @@ def get_autogp_info_text():
     Returns the detailed help/info text for Auto-GP.
     """
     return (
-        "<b>🤖 AUTO GLOBAL PURGEME - INFORMATION</b>\n\n"
-        "<b>🔄 Cycle Modes:</b>\n"
-        "• <b>Global 🌍:</b> Triggers a full scan of ALL target chats (Groups/Private/etc). Safe and thorough.\n"
-        "• <b>Current Smart 🔆:</b> Purges ONLY the current chat, but <b>Respects</b> Blacklist and Admin Filters. If the current chat is blacklisted, it does nothing.\n"
-        "• <b>Current Force ⚠️:</b> Purges the current chat immediately, <b>IGNORING</b> all safeguards (Blacklist, Admin Filter, Target Type). Use with caution.\n\n"
-        "<b>🎯 Targets & Filters:</b>\n"
-        "• <b>All/Groups/Personal:</b> Defines which chats are scanned in Global Mode.\n"
-        "• <b>Admin Filter:</b> Skips chats where you aren't admin (except in Force Mode).\n"
-        "• <b>Blacklist:</b> Chats here are skipped (except in Force Mode).\n\n"
-        "<b>⏱ Delays:</b>\n"
-        "• <b>Delay/Chat:</b> Wait time between processing chats in Global Mode.\n"
+        "<b>🤖 AUTO GLOBAL PURGEME - COMPREHENSIVE GUIDE</b>\n\n"
+        "<b>🔄 CYCLE MODES (Trigger Logic):</b>\n"
+        "• <b>Global 🌍:</b> Memproses SEMUA chat yang sesuai target. Aman & menyeluruh.\n"
+        "• <b>Current Smart 🔆:</b> Hanya proses chat saat ini & <b>Hormati</b> Blacklist/Admin Filter.\n"
+        "• <b>Current Force ⚠️:</b> Paksa hapus chat saat ini, <b>ABAIKAN</b> semua batasan (Use with Caution!).\n\n"
+        "<b>🎯 TARGETS & ACCESS:</b>\n"
+        "• <b>Groups/Personal/All:</b> Jenis chat yang akan diproses pada mode Global.\n"
+        "• <b>Admin Filter:</b> Pilih untuk hapus hanya di grup di mana Anda Admin, Non-Admin, atau keduanya.\n"
+        "• <b>Blacklist Manager:</b> Daftar chat yang akan dilewati secara otomatis.\n\n"
+        "<b>📊 DELETION SETTINGS:</b>\n"
+        "• <b>Limit:</b> Jumlah maksimal pesan yang dihapus per chat dalam satu siklus.\n"
+        "• <b>Mode Search:</b> <i>Newest</i> (hapus dari terbaru) or <i>Oldest</i> (hapus dari terlama).\n"
+        "• <b>Skip Offset:</b> Melewati <code>N</code> pesan teratas dalam pencarian (misal sisakan 5 pesan teratas).\n\n"
+        "<b>⏱ DELAY CONTROL:</b>\n"
+        "• <b>Delay/Chat:</b> Jeda waktu antar pemrosesan chat pada mode Global.\n"
+        "• <b>Delay/Msg:</b> Jeda waktu antar penghapusan pesan (mencegah FloodWait).\n\n"
+        "<b>🧠 ADVANCED LOGIC:</b>\n"
+        "• <b>Respect Blacklist:</b> Jika ON, pesan di chat blacklist tidak akan memicu siklus Auto-GP.\n"
+        "• <b>Cmd Bypass:</b> Lewati pesan Command (.ping, dll) & BALASANnya agar tidak terhapus.\n"
+        "• <b>Keep Recent:</b> Safety buffer untuk menjaga <code>N</code> pesan terbaru tetap aman.\n\n"
+        "<b>🔔 OTHER:</b>\n"
+        "• <b>Logs/Notif:</b> Kirim notifikasi hasil pembersihan ke log chat.\n"
+        "• <b>Master Switch:</b> Aktifkan/Matikan seluruh sistem Auto-GP secara instan."
+    )
+
+def get_autogp_filter_submenu_text(settings):
+    """
+    Generates the text for the filter sub-menu with a live preview
+    of currently active message type filters.
+    """
+    f_list = settings.get("filters", ["all"])
+    
+    # All 16 filter types with their display info
+    ALL_FILTER_TYPES = [
+        ("all", "All Types", "📦"),
+        ("text", "Text", "📝"), ("photo", "Photo", "🖼"), ("video", "Video", "🎬"),
+        ("audio", "Audio", "🎵"), ("voice", "Voice", "🎤"), ("sticker", "Sticker", "🎨"),
+        ("animation", "Animation/GIF", "🎞"), ("document", "Document", "📄"), ("video_note", "Video Note", "⏺"),
+        ("contact", "Contact", "👤"), ("location", "Location", "📍"), ("venue", "Venue", "🏛"),
+        ("game", "Game", "🎮"), ("poll", "Poll", "📊"), ("dice", "Dice", "🎲")
+    ]
+    
+    # Build live preview
+    preview_lines = []
+    for f_type, f_name, f_icon in ALL_FILTER_TYPES:
+        status = "✅" if f_type in f_list else "☑️"
+        preview_lines.append(f"{status} {f_icon} {f_name}")
+    
+    text = (
+        "<b>🧹 MESSAGE TYPE FILTERS</b>\n\n"
+        "<b>Live Preview:</b>\n"
+        + "\n".join(preview_lines) + "\n\n"
+        "<i>Tap buttons below to toggle each filter type.\n"
+        "Active filters determine which message types are purged.</i>"
+    )
+    return text
+
+def get_autogp_filter_submenu_kb(user_id, settings):
+    """
+    Constructs the filter sub-menu keyboard with all 16 message types.
+    Organized in a clean grid layout with Back button.
+    """
+    kb = []
+    f_list = settings.get("filters", ["all"])
+    
+    def get_f_btn(f_type, label_key, def_label):
+        label = loc(label_key) or def_label
+        active = "✅" if f_type in f_list else "☑️"
+        return InlineKeyboardButton(f"{active} {label}", f"autogp_filter_{f_type}_{user_id}")
+    
+    # Row 1: All
+    kb.append([get_f_btn("all", "GP_BTN_ALL", "All Types")])
+    # Row 2-3: Common media
+    kb.append([get_f_btn("text", "GP_BTN_TEXT", "Text"), get_f_btn("photo", "GP_BTN_PHOTO", "Photo"), get_f_btn("video", "GP_BTN_VIDEO", "Video")])
+    kb.append([get_f_btn("audio", "GP_BTN_AUDIO", "Audio"), get_f_btn("sticker", "GP_BTN_STICKER", "Sticker"), get_f_btn("voice", "GP_BTN_VOICE", "Voice")])
+    # Row 4-5: Other media
+    kb.append([get_f_btn("animation", "GP_BTN_ANIMATION", "Anim"), get_f_btn("document", "GP_BTN_DOCUMENT", "Doc"), get_f_btn("video_note", "GP_BTN_VNOTE", "VNote")])
+    kb.append([get_f_btn("contact", "GP_BTN_CONTACT", "Contact"), get_f_btn("location", "GP_BTN_LOCATION", "Loc"), get_f_btn("venue", "GP_BTN_VENUE", "Venue")])
+    # Row 6: Misc
+    kb.append([get_f_btn("game", "GP_BTN_GAME", "Game"), get_f_btn("poll", "GP_BTN_POLL", "Poll"), get_f_btn("dice", "GP_BTN_DICE", "Dice")])
+    # Back button
+    kb.append([InlineKeyboardButton("⬅️ Back to Dashboard", f"autogp_back_{user_id}")])
+    
+    return InlineKeyboardMarkup(kb)
+
+def get_autogp_cmd_help_text(plugin_version="unknown"):
+    """
+    Returns formatted help text showing all manual commands from
+    xauto_gpurgeme_userbot.py with their descriptions.
+    """
+    return (
+        f"<b>📋 AUTO GLOBAL PURGEME - COMMANDS</b>\n"
+        f"<code>Plugin v{plugin_version}</code>\n\n"
+        "<b>Available Commands:</b>\n\n"
+        "• <code>.autogp</code>\n"
+        "  ↳ Open Auto-GP Dashboard via Bot Assistant\n\n"
+        "• <code>.autogpon</code> / <code>.autogpoff</code>\n"
+        "  ↳ Quick toggle Auto-GP ON or OFF\n\n"
+        "• <code>.autogpbl [chat_id]</code>\n"
+        "  ↳ Toggle blacklist for current/specified chat\n\n"
+        "• <code>.autogpdel &lt;chat_id&gt;</code>\n"
+        "  ↳ Remove a specific chat from blacklist\n\n"
+        "• <code>.autogpblist</code>\n"
+        "  ↳ View all blacklisted chats\n\n"
+        "• <code>.autogpstatus</code>\n"
+        "  ↳ View current Auto-GP status and config\n\n"
+        "<i>Use the dashboard for advanced settings like\n"
+        "filters, delays, cycle modes, and more.</i>"
     )
 
 async def get_auto_gp_target_chats(client: Client, target_type: str, admin_filter: str, blacklist: list):
@@ -344,6 +456,7 @@ async def get_autogp_bl_text(client, settings, page=0):
     """
     Generate the text for the blacklist manager with clickable chat names.
     Supports hyperlinks for Android/iOS/Desktop.
+    Resolves chat names via userbot client for better access (even non-admin groups).
     """
     bl = settings["blacklist"]
     start = page * 10
@@ -358,29 +471,50 @@ async def get_autogp_bl_text(client, settings, page=0):
         text += "<i>Blacklist is empty.</i>"
         return text
 
+    # Determine the best client for resolving chats
+    # Prefer userbot client (has broader access than bot client)
+    resolve_client = client
+    # Extract user_id from settings keys if possible, or check Altruix.clients
+    for cl in Altruix.clients:
+        if cl.me and cl.is_connected:
+            resolve_client = cl
+            break
+
     # Dynamic fetching of chat info for hyperlinks
-    tasks = [client.get_chat(cid) for cid in chunk]
-    chats = await asyncio.gather(*tasks, return_exceptions=True)
-    
-    for i, cid in enumerate(chunk):
-        chat = chats[i]
+    # Use individual try/except per chat for robust resolution
+    for cid in chunk:
         name = f"Chat {cid}"
         link = None
         
-        if not isinstance(chat, Exception):
+        try:
+            chat = await resolve_client.get_chat(cid)
+            # Resolve name: prefer title (groups), then first_name (users)
             name = chat.title or chat.first_name or f"Chat {cid}"
+            name = html.escape(name)
             if chat.username:
                 link = f"https://t.me/{chat.username}"
             elif str(cid).startswith("-100"):
                 link = f"https://t.me/c/{str(cid)[4:]}/1"
             elif cid > 0:
                 link = f"tg://user?id={cid}"
-        else:
-            # Fallback links if get_chat fails
-            if str(cid).startswith("-100"):
-                link = f"https://t.me/c/{str(cid)[4:]}/1"
-            elif cid > 0:
-                link = f"tg://user?id={cid}"
+        except Exception:
+            # Fallback: try with bot client if userbot failed
+            try:
+                chat = await client.get_chat(cid)
+                name = chat.title or chat.first_name or f"Chat {cid}"
+                name = html.escape(name)
+                if chat.username:
+                    link = f"https://t.me/{chat.username}"
+                elif str(cid).startswith("-100"):
+                    link = f"https://t.me/c/{str(cid)[4:]}/1"
+                elif cid > 0:
+                    link = f"tg://user?id={cid}"
+            except Exception:
+                # Final fallback: generate hyperlink without chat name
+                if str(cid).startswith("-100"):
+                    link = f"https://t.me/c/{str(cid)[4:]}/1"
+                elif cid > 0:
+                    link = f"tg://user?id={cid}"
         
         if link:
             text += f"• <a href='{link}'>{name}</a> (<code>{cid}</code>)\n"
@@ -392,7 +526,7 @@ async def get_autogp_bl_text(client, settings, page=0):
 def get_autogp_bl_kb(user_id, settings, page=0):
     """
     Generates a sub-menu for managing blacklisted chats.
-    Includes [ID][Remove] layout and [Back][Page N] navigation.
+    Includes [ID][Remove] layout, [Add Chat] button, and [Back][Page N] navigation.
     """
     kb = []
     bl = settings["blacklist"]
@@ -408,19 +542,22 @@ def get_autogp_bl_kb(user_id, settings, page=0):
             InlineKeyboardButton("🗑 Remove", f"autogp_bl_rem_{cid}_{user_id}")
         ])
     
-    # Footer Navigation as per mockup
-    nav = []
-    nav.append(InlineKeyboardButton(loc("GP_BTN_BACK"), f"autogp_refresh_{user_id}"))
+    # ➕ Add Chat to Blacklist button (input-based)
+    kb.append([InlineKeyboardButton("➕ Add Chat", f"autogp_bl_addchat_{user_id}")])
     
+    # Footer Navigation
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(f"◀️ Page {page}", f"autogp_bl_page_{page-1}_{user_id}"))
+    nav.append(InlineKeyboardButton(loc("GP_BTN_BACK"), f"autogp_refresh_{user_id}"))
     if end < len(bl):
-         nav.append(InlineKeyboardButton(f"Page {page+2} ▶️", f"autogp_bl_page_{page+1}_{user_id}"))
-    elif page > 0:
-         nav.insert(0, InlineKeyboardButton(f"◀️ Page {page}", f"autogp_bl_page_{page-1}_{user_id}"))
+        nav.append(InlineKeyboardButton(f"Page {page+2} ▶️", f"autogp_bl_page_{page+1}_{user_id}"))
          
     kb.append(nav)
     return InlineKeyboardMarkup(kb)
 
-@Altruix.bot.on_callback_query(filters.regex(r"^autogp_(?P<action>target|cycle|limit|delay|delaymsg|mode|off|notif|filter|toggleadmin|bl|refresh|close|toggle|list|info|back|noop)_(?P<tail>.*)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^autogp_(?P<action>target|cycle|limit|delay|delaymsg|mode|off|notif|filter|filtermenu|toggleadmin|bl|refresh|close|toggle|list|info|showcmd|back|noop|respectbl|skipcmds|keep)_(?P<tail>.*)$"))
+# NOTE: 'bl' action handles sub_actions: togglecid, addchat, list, page_N, rem_ID
 @iuser_check
 @log_errors
 async def auto_gp_callback_handler(c: Client, cb: CallbackQuery):
@@ -449,10 +586,15 @@ async def auto_gp_callback_handler(c: Client, cb: CallbackQuery):
     # 🧩 LOGIC: No-Operation (for info buttons)
     if action == "noop": return await cb.answer()
     
-    # ⚙️ LOGIC: Master Killswitch
+    # ⚙️ LOGIC: Master Killswitch (with alert)
     elif action == "toggle":
         settings["status"] = not settings["status"]
-        await cb.answer(f"✅ Auto-GP marked as {'ENABLED' if settings['status'] else 'DISABLED'}")
+        status_str = " ✅ ENABLED" if settings["status"] else "🔴 DISABLED "
+        await cb.answer(
+            f"AUTO GLOBAL PURGEME: {status_str}\n\n"
+            f"{'Automated purging is ACTIVE. Messages will be purged on every outgoing message.' if settings['status'] else 'Automated purging is STOPPED. No messages will be purged.'}",
+            show_alert=True
+        )
     
     # 🎯 LOGIC: Target Chat Filtering
     elif action == "target":
@@ -497,8 +639,22 @@ async def auto_gp_callback_handler(c: Client, cb: CallbackQuery):
     elif action == "notif":
         settings["notify"] = not settings.get("notify", True)
         await cb.answer(f"🔔 Logs: {'ON' if settings['notify'] else 'OFF'}")
+
+    # 🧠 LOGIC: Advanced Logic Toggles
+    elif action == "respectbl":
+        settings["respect_bl"] = not settings.get("respect_bl", True)
+        await cb.answer(f"🚫 Respect Blacklist: {'ON' if settings['respect_bl'] else 'OFF'}")
+
+    elif action == "skipcmds":
+        settings["skip_cmds"] = not settings.get("skip_cmds", True)
+        await cb.answer(f"⌨️ Skip Commands: {'ON' if settings['skip_cmds'] else 'OFF'}")
+
+    elif action == "keep":
+        if sub_action == "m2": settings["keep_recent"] = max(0, settings.get("keep_recent", 6) - 2)
+        elif sub_action == "p2": settings["keep_recent"] = settings.get("keep_recent", 6) + 2
+        await cb.answer(f"Keep Recent: {settings['keep_recent']} messages")
         
-    # 🧹 LOGIC: Media Content Filters (Smart Toggle)
+    # 🧹 LOGIC: Media Content Filters (Smart Toggle) — stays in sub-menu
     elif action == "filter":
         f_type = sub_action
         f_list = settings.get("filters", ["all"])
@@ -510,7 +666,15 @@ async def auto_gp_callback_handler(c: Client, cb: CallbackQuery):
                 if not f_list: f_list = ["all"]
             else: f_list.append(f_type)
         settings["filters"] = f_list
-        await cb.answer("🧹 Filter Grid Synchronized")
+        await save_auto_gp_settings(user_id, settings)
+        await cb.answer("🧹 Filter Updated")
+        # Re-render filter sub-menu with live preview
+        text = get_autogp_filter_submenu_text(settings)
+        kb = get_autogp_filter_submenu_kb(user_id, settings)
+        try:
+            await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+        except MessageNotModified: pass
+        return
     
     # 👑 LOGIC: Admin Rights Strategy
     elif action == "toggleadmin":
@@ -532,12 +696,50 @@ async def auto_gp_callback_handler(c: Client, cb: CallbackQuery):
             else:
                 settings["blacklist"].append(chat_id)
                 await cb.answer("🚫 Blacklisted: Auto-GP will now skip this chat.")
+        elif sub_action == "addchat": # Prompt user for chat_id or @username input
+            if not chat_id:
+                await cb.answer("❌ This feature requires a direct message context (not inline mode).\nUse .autogpbl <chat_id> command instead.", show_alert=True)
+                return
+            await cb.answer()
+            prompt_msg = await c.send_message(
+                chat_id,
+                "<b>➕ Add Chat to Blacklist</b>\n\n"
+                "Send the <b>Chat ID</b> or <b>@username</b> to add:\n\n"
+                "<i>Examples:</i>\n"
+                "• <code>-1001234567890</code>\n"
+                "• <code>@groupusername</code>\n\n"
+                "Send /cancel to abort.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("❌ Cancel", f"autogp_bl_canceladd_{user_id}")]
+                ])
+            )
+            # Store waiting state
+            dash_msg_id = cb.message.id if cb.message else None
+            async with STATE_LOCK:
+                AUTO_GP_DASH_STATE[f"bl_add_{chat_id}"] = {
+                    "user_id": user_id,
+                    "prompt_msg_id": prompt_msg.id,
+                    "dash_msg_id": dash_msg_id,
+                    "from_user_id": cb.from_user.id,
+                }
+            return
+        elif sub_action == "canceladd": # Cancel add-chat input
+            cancel_chat_id = cb.message.chat.id if cb.message else chat_id
+            if cancel_chat_id:
+                async with STATE_LOCK:
+                    AUTO_GP_DASH_STATE.pop(f"bl_add_{cancel_chat_id}", None)
+            await cb.answer("❌ Add chat cancelled.")
+            try:
+                if cb.message:
+                    await cb.message.delete()
+            except: pass
+            return
         elif sub_action == "list" or sub_action.startswith("page"): # Open sub-menu list
             page = 0
             if sub_action.startswith("page"): page = int(sub_action.split("_")[1])
             kb = get_autogp_bl_kb(user_id, settings, page)
             text = await get_autogp_bl_text(c, settings, page)
-            await cb.edit_message_text(text, reply_markup=kb)
+            await cb.edit_message_text(text, reply_markup=kb, disable_web_page_preview=True)
             return
         elif sub_action.startswith("rem_"): # Individual item removal from list
             target_id = int(sub_action.split("_")[1])
@@ -547,7 +749,7 @@ async def auto_gp_callback_handler(c: Client, cb: CallbackQuery):
             await save_auto_gp_settings(user_id, settings)
             kb = get_autogp_bl_kb(user_id, settings, 0)
             text = await get_autogp_bl_text(c, settings, 0)
-            await cb.edit_message_text(text, reply_markup=kb)
+            await cb.edit_message_text(text, reply_markup=kb, disable_web_page_preview=True)
             return
 
     # 📋 LOGIC: Target Chat Listing
@@ -573,11 +775,35 @@ async def auto_gp_callback_handler(c: Client, cb: CallbackQuery):
         await cb.edit_message_text(text, reply_markup=kb, disable_web_page_preview=True)
         return
 
-    # ℹ️ LOGIC: Info Menu
+    # 🧹 LOGIC: Filter Sub-Menu
+    elif action == "filtermenu":
+        text = get_autogp_filter_submenu_text(settings)
+        kb = get_autogp_filter_submenu_kb(user_id, settings)
+        await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+        return
+
+    # ℹ️ LOGIC: Info Menu (with Show CMD button)
     elif action == "info":
         text = get_autogp_info_text()
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton(loc("GP_BTN_BACK"), f"autogp_back_{user_id}")]])
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📋 Show CMD", f"autogp_showcmd_{user_id}")],
+            [InlineKeyboardButton(loc("GP_BTN_BACK"), f"autogp_back_{user_id}")]
+        ])
         await cb.edit_message_text(text, reply_markup=kb)
+        return
+
+    # 📋 LOGIC: Show CMD Help
+    elif action == "showcmd":
+        # Try to get plugin version from the userbot module
+        try:
+            from Main.plugins.userbot.xauto_gpurgeme_userbot import PLUGIN_VERSION
+        except ImportError:
+            PLUGIN_VERSION = "unknown"
+        text = get_autogp_cmd_help_text(PLUGIN_VERSION)
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(loc("GP_BTN_BACK"), f"autogp_info_{user_id}")]
+        ])
+        await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
         return
 
     # 🔙 LOGIC: Return to Dashboard
@@ -656,11 +882,36 @@ async def auto_gp_perform_purge(client: Client, chat_id: int, trigger_msg_id: in
         Altruix.log(f"💤 Auto-GP | Status is OFF for user {user_id}. Skipping.", level=20)
         return
     
-    # 🛑 Blacklist Check (Bypassed in Current Mode)
+    # 🛑 Blacklist & Trigger Guard (Feature 1: Respect Blacklist)
     if not bypass_guards:
-        if chat_id in settings["blacklist"]:
+        respect_bl = settings.get("respect_bl", True)
+        if respect_bl and chat_id in settings["blacklist"]:
+            Altruix.log(f"🕵️ Auto-GP | Respecting Blacklist for chat {chat_id}. Trigger Skipped.", level=20)
+            return
+        elif chat_id in settings["blacklist"] and not respect_bl:
+            Altruix.log(f"⚠️ Auto-GP | Chat {chat_id} is blacklisted but 'Respect Blacklist' is OFF. Proceeding.", level=20)
+            # We don't return here if respect_bl is OFF, allowing it to proceed (useful for specific configs)
+            pass
+        elif chat_id in settings["blacklist"]: 
             Altruix.log(f"🕵️ Auto-GP | Chat {chat_id} is blacklisted. Skipping.", level=20)
             return
+
+    # ⌨️ Feature 2: Command Response Bypass (Skip CMDs)
+    if not bypass_guards and settings.get("skip_cmds", True):
+        # 1. Skip if the trigger message itself is a command
+        if message and message.text:
+            prefixes = Altruix.config.PREFIXES or [".", "!", "/"]
+            if any(message.text.startswith(p) for p in prefixes):
+                Altruix.log(f"⌨️ Auto-GP | Trigger message is a command. Skipping cycle.", level=20)
+                return
+        # 2. Skip if the trigger message is an edited message (often a command response update)
+        if message and message.edit_date:
+             Altruix.log(f"⌨️ Auto-GP | Trigger message is an EDIT. Skipping cycle.", level=20)
+             return
+        # 3. Skip if the trigger message is sent via a bot (Feature: via_bot bypass)
+        if message and message.via_bot:
+             Altruix.log(f"⌨️ Auto-GP | Trigger message is sent VIA BOT (@{message.via_bot.username}). Skipping cycle.", level=20)
+             return
     
     # 🎯 Get Chat context (avoid redundant API call if message is provided)
     chat = None
@@ -679,6 +930,27 @@ async def auto_gp_perform_purge(client: Client, chat_id: int, trigger_msg_id: in
 
     # Use message.id as trigger if provided
     current_trigger_id = trigger_msg_id or (message.id if message else None)
+
+    # 🔧 Configuration extraction (Moved up for logging)
+    limit = settings["limit"]
+    target_filters = settings["filters"]
+    mode = settings.get("mode", "newest")
+    offset = settings.get("offset", 0)
+    delay_msg = settings.get("delay_msg", 1.0)
+    delay_chat = settings.get("delay", 1.0)
+
+    # 🔗 Construct Chat Hyperlink
+    chat_title = chat.title or "Private"
+    chat_hyperlink = html.escape(chat_title)
+    if message and message.link:
+        chat_hyperlink = f"<a href='{message.link}'>{html.escape(chat_title)}</a>"
+    elif chat.username:
+        chat_hyperlink = f"<a href='https://t.me/{chat.username}'>{html.escape(chat_title)}</a>"
+    elif str(chat_id).startswith("-100"):
+        stripped_id = str(chat_id)[4:]
+        chat_hyperlink = f"<a href='https://t.me/c/{stripped_id}/999999999'>{html.escape(chat_title)}</a>"
+    else:
+        chat_hyperlink = f"<a href='tg://user?id={chat_id}'>{html.escape(chat_title)}</a>"
 
     # 🎯 Target Type Check (Bypassed in Current Mode)
     if not bypass_guards:
@@ -722,26 +994,52 @@ async def auto_gp_perform_purge(client: Client, chat_id: int, trigger_msg_id: in
                     client, "auto_global_purgeme", target_idx, client.me, True, 
                     additional_info={
                         "Type": "🤖 Auto-GP Processing...",
-                        "Chat": f"{chat_id} ({chat.title or 'Private'})",
-                        "Status": "🔍 Scanning/Cleaning..."
+                        "Chat": chat_hyperlink,
+                        "ChatID": f"{chat_id}",
+                        "Status": "🔍 Scanning/Cleaning...",
+                        "Delay/Msg": f"{delay_msg}s",
+                        "Delay/Chat": f"{delay_chat}s"
                     }
                 )
         except Exception as e:
             Altruix.log(f"⚠️ Auto-GP Initial Log Error: {e}", level=30)
     
-    # Configuration extraction
-    limit = settings["limit"]
-    target_filters = settings["filters"]
-    mode = settings.get("mode", "newest")
-    offset = settings.get("offset", 0)
-    
     # 🔍 STEP 1: Search and Match messages
     collected_ids = []
-    Altruix.log(f"🔎 Auto-GP | Scanning chat {chat_id} (Limit: {limit}, Offset: {offset})...", level=20)
-    # Fetch slightly more than needed to account for offset and the message that triggered this
-    async for msg in client.search_messages(chat_id, from_user="me", limit=limit + offset + 5):
-        if current_trigger_id and msg.id == current_trigger_id: continue # Don't delete the command itself if it matches
+    keep_recent = settings.get("keep_recent", 6)
+    skip_cmds = settings.get("skip_cmds", True)
+    prefixes = [Altruix.config.PREFIX_OWNER_USER or ".", Altruix.config.PREFIX_SUDO_USERS or "!"]
+    
+    Altruix.log(f"🔎 Auto-GP | Scanning chat {chat_id} (Limit: {limit}, Offset: {offset}, Keep: {keep_recent})...", level=20)
+    
+    # Fetch more to account for 'Keep Recent' buffer
+    fetch_limit = limit + offset + keep_recent + 10 
+    match_count = 0
+    
+    async for msg in client.search_messages(chat_id, from_user="me", limit=fetch_limit):
+        if current_trigger_id and msg.id == current_trigger_id: continue 
             
+        # ⏳ Feature 3: Keep Recent Messages Buffer
+        # If we are within the 'keep_recent' most recent messages, skip them
+        match_count += 1
+        if match_count <= keep_recent:
+            continue
+
+        # ⌨️ Feature 2: Skip Commands in scan
+        if skip_cmds:
+            if msg.text and any(msg.text.startswith(p) for p in prefixes):
+                continue
+            if msg.via_bot:
+                continue
+            if msg.reply_to_message_id:
+                try:
+                    rep = await client.get_messages(chat_id, msg.reply_to_message_id)
+                    if rep and (rep.text or rep.caption):
+                        rep_text = rep.text or rep.caption or ""
+                        if any(rep_text.startswith(p) for p in prefixes):
+                            continue
+                except: pass
+
         should_include = False
         if "all" in target_filters: should_include = True
         else:
@@ -779,7 +1077,6 @@ async def auto_gp_perform_purge(client: Client, chat_id: int, trigger_msg_id: in
 
     # 🗑 STEP 3: Execution of Batched Deletions
     deleted_count = 0
-    delay_msg = settings.get("delay_msg", 1.0)
     Altruix.log(f"🗑 Auto-GP | Deleting {len(collected_ids)} matched messages in chat {chat_id}...", level=20)
     for i in range(0, len(collected_ids), 100): # Telegram allows max 100 per delete call
         batch = collected_ids[i:i+100]
@@ -810,22 +1107,20 @@ async def auto_gp_perform_purge(client: Client, chat_id: int, trigger_msg_id: in
                 
                 final_info = {
                     "Type": "✅ Auto-GP Cycle Complete",
-                    "Chat": f"{chat_id} ({chat.title or 'Private'})",
+                    "Chat": chat_hyperlink,
+                    "ChatID": f"{chat_id}",
                     "Deleted": f"{deleted_count} messages purged",
                     "Limit": f"{limit} items configured",
-                    "Filters": f"{', '.join(target_filters)} active"
+                    "Filters": f"{', '.join(target_filters)} active",
+                    "Delay/Msg": f"{delay_msg}s",
+                    "Delay/Chat": f"{delay_chat}s"
                 }
-                
-                # If we have an initial log message, try to update it; otherwise send a new one
-                if log_msg:
-                    try:
-                        await log_msg.delete()
-                    except: pass
                 
                 Altruix.log(f"✅ Auto-GP | Cycle Complete for {chat_id}. Deleted: {deleted_count}", level=20)
                 await send_log_notification(
                     client, "auto_global_purgeme", idx, client.me, True, 
-                    additional_info=final_info
+                    additional_info=final_info,
+                    edit_message=log_msg
                 )
         except Exception as e:
             Altruix.log(f"Auto-GP Log Dispatch Error: {e}", level=30)
@@ -882,3 +1177,152 @@ async def auto_gp_global_cycle(client: Client):
             
         except Exception as e:
             Altruix.log(f"💥 Auto-GP Global Cycle Critical Error: {e}", level=40)
+
+# 🆕 BOT MESSAGE HANDLER: Catch user input for blacklist add-chat flow
+# Works in both private and group chats; strictly validates sender authorization.
+@Altruix.bot.on_message(~filters.bot & ~filters.channel, group=50)
+@log_errors
+async def autogp_bl_add_input_handler(client: Client, message: Message):
+    """
+    Catches user input when in 'add chat to blacklist' state.
+    Expects a chat_id (numeric) or @username.
+    
+    Security:
+    - Only processes messages from the EXACT user who pressed '➕ Add Chat'
+    - Validates via from_user_id stored in AUTO_GP_DASH_STATE
+    - All other messages in the same chat are silently ignored
+    """
+    # Must have a sender (no anonymous/channel messages)
+    if not message.from_user:
+        return
+    
+    chat_id_key = f"bl_add_{message.chat.id}"
+    
+    async with STATE_LOCK:
+        state = AUTO_GP_DASH_STATE.get(chat_id_key)
+    
+    if not state:
+        return  # Not in add-chat state for this chat, ignore
+    
+    # 🔒 STRICT AUTH: Only accept input from the exact user who pressed the button
+    if message.from_user.id != state["from_user_id"]:
+        return  # Silently ignore messages from anyone else
+    
+    user_input = (message.text or "").strip()
+    user_id = state["user_id"]
+    
+    # Handle /cancel command
+    if user_input.lower() == "/cancel":
+        async with STATE_LOCK:
+            AUTO_GP_DASH_STATE.pop(chat_id_key, None)
+        try:
+            await client.delete_messages(message.chat.id, [state["prompt_msg_id"], message.id])
+        except: pass
+        return
+    
+    # Validate input: must be numeric chat_id or @username
+    if not user_input:
+        return
+    
+    resolved_chat_id = None
+    resolved_name = "Unknown"
+    
+    try:
+        # Try to resolve via the userbot client (has more access)
+        target_client = next((cl for cl in Altruix.clients if cl.me and cl.me.id == user_id), None)
+        resolve_client = target_client or client
+        
+        if user_input.lstrip('-').isdigit():
+            # Numeric chat_id
+            target_id = int(user_input)
+            try:
+                chat_info = await resolve_client.get_chat(target_id)
+                resolved_chat_id = chat_info.id
+                resolved_name = chat_info.title or chat_info.first_name or str(resolved_chat_id)
+            except Exception:
+                resolved_chat_id = target_id
+                resolved_name = f"Chat {target_id}"
+        elif user_input.startswith("@"):
+            # @username
+            chat_info = await resolve_client.get_chat(user_input)
+            resolved_chat_id = chat_info.id
+            resolved_name = chat_info.title or chat_info.first_name or user_input
+        else:
+            # Try as-is (could be username without @)
+            chat_info = await resolve_client.get_chat(user_input)
+            resolved_chat_id = chat_info.id
+            resolved_name = chat_info.title or chat_info.first_name or user_input
+    except Exception as e:
+        await client.send_message(
+            message.chat.id,
+            f"❌ <b>Could not resolve:</b> <code>{html.escape(user_input)}</code>\n"
+            f"<i>Error: {html.escape(str(e))}</i>\n\n"
+            "Please try again with a valid chat ID or @username.",
+        )
+        try:
+            await message.delete()
+        except: pass
+        return
+    
+    if resolved_chat_id is None:
+        await client.send_message(
+            message.chat.id,
+            "❌ <b>Invalid input.</b> Send a numeric Chat ID or @username."
+        )
+        try:
+            await message.delete()
+        except: pass
+        return
+    
+    # Check if already blacklisted
+    settings = await get_auto_gp_settings(user_id)
+    if resolved_chat_id in settings["blacklist"]:
+        await client.send_message(
+            message.chat.id,
+            f"⚠️ <b>{html.escape(resolved_name)}</b> (<code>{resolved_chat_id}</code>) is already in the blacklist."
+        )
+        # Clean up
+        async with STATE_LOCK:
+            AUTO_GP_DASH_STATE.pop(chat_id_key, None)
+        try:
+            await client.delete_messages(message.chat.id, [state["prompt_msg_id"], message.id])
+        except: pass
+        return
+    
+    # Add to blacklist
+    settings["blacklist"].append(resolved_chat_id)
+    await save_auto_gp_settings(user_id, settings)
+    
+    # Clean up state and prompt
+    async with STATE_LOCK:
+        AUTO_GP_DASH_STATE.pop(chat_id_key, None)
+    try:
+        await client.delete_messages(message.chat.id, [state["prompt_msg_id"], message.id])
+    except: pass
+    
+    # Send success and refresh dashboard blacklist view
+    success_msg = await client.send_message(
+        message.chat.id,
+        f"✅ <b>{html.escape(resolved_name)}</b> (<code>{resolved_chat_id}</code>) "
+        f"has been <b>ADDED</b> to Auto-GP Blacklist.\n"
+        f"📋 Total blacklisted: <code>{len(settings['blacklist'])} chats</code>"
+    )
+    
+    # Auto-delete success message after 5 seconds
+    async def _cleanup():
+        await asyncio.sleep(5)
+        try:
+            await success_msg.delete()
+        except: pass
+    asyncio.create_task(_cleanup())
+    
+    # Refresh the dashboard blacklist view if we have the dashboard message
+    try:
+        kb = get_autogp_bl_kb(user_id, settings, 0)
+        text = await get_autogp_bl_text(client, settings, 0)
+        await client.edit_message_text(
+            message.chat.id, state["dash_msg_id"],
+            text, reply_markup=kb, disable_web_page_preview=True
+        )
+    except Exception as e:
+        logger.debug(f"Auto-GP BL Dashboard refresh error: {e}")

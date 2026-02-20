@@ -45,7 +45,10 @@ async def creategroup_menu_handler(c: Client, cb: CallbackQuery):
         [InlineKeyboardButton("🔙 Back to Session", callback_data=f"session_info_{session_index}_{page}")]
     ]
     
-    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    if cb.message:
+        await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    else:
+        await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^creategroup_manual_(\d+)_(\d+)$"))
 @iuser_check
@@ -71,8 +74,12 @@ async def creategroup_manual_handler(c: Client, cb: CallbackQuery):
         "• <code>(tanggal)</code>: Tanggal\n\n"
         "Ketik /cancel untuk kembali."
     )
-    await cb.message.edit(text, parse_mode=ParseMode.HTML, 
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_menu_{session_index}_{page}")]]))
+    if cb.message:
+        await cb.message.edit(text, parse_mode=ParseMode.HTML, 
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_menu_{session_index}_{page}")]]))
+    else:
+        await cb.edit_message_text(text, parse_mode=ParseMode.HTML, 
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_menu_{session_index}_{page}")]]))
 
 @Altruix.bot.on_callback_query(filters.regex(r"^creategroup_ui_(\d+)_(\d+)$"))
 @iuser_check
@@ -100,7 +107,9 @@ async def show_creategroup_ui(c: Client, cb: CallbackQuery, session_index: int, 
 
     if user_id not in user_creategroup_state or user_creategroup_state[user_id].get("step") != "ui_config":
         if user_id in user_creategroup_state and user_creategroup_state[user_id].get("prompt_msg_id"):
-            try: await c.delete_messages(cb.message.chat.id, user_creategroup_state[user_id]["prompt_msg_id"])
+            try:
+                if cb.message:
+                    await c.delete_messages(cb.message.chat.id, user_creategroup_state[user_id]["prompt_msg_id"])
             except: pass
             
         user_creategroup_state[user_id] = {
@@ -109,14 +118,16 @@ async def show_creategroup_ui(c: Client, cb: CallbackQuery, session_index: int, 
             "page": page,
             "config": DEFAULT_CREATEGROUP_CONFIG.copy(),
             "input_mode": None,
-            "ui_msg_id": cb.message.id,
+            "ui_msg_id": cb.message.id if cb.message else None,
             "prompt_msg_id": None
         }
     else:
         user_creategroup_state[user_id]["step"] = "ui_config"
         user_creategroup_state[user_id]["input_mode"] = None
         if user_creategroup_state[user_id].get("prompt_msg_id"):
-            try: await c.delete_messages(cb.message.chat.id, user_creategroup_state[user_id]["prompt_msg_id"])
+            try:
+                if cb.message:
+                    await c.delete_messages(cb.message.chat.id, user_creategroup_state[user_id]["prompt_msg_id"])
             except: pass
             user_creategroup_state[user_id]["prompt_msg_id"] = None
     
@@ -211,7 +222,11 @@ async def render_creategroup_ui(cb: Optional[CallbackQuery], state: dict, messag
     ]
     
     try:
-        if cb: await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+        if cb:
+            if cb.message:
+                await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+            else:
+                await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
         elif message: await message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
     except Exception: pass
 
@@ -242,12 +257,15 @@ async def creategroup_input_request(c: Client, cb: CallbackQuery):
     idx, pg, field = int(cb.matches[0].group(1)), int(cb.matches[0].group(2)), cb.matches[0].group(3)
     user_id = cb.from_user.id
     if user_id not in user_creategroup_state: return
-    user_creategroup_state[user_id].update({"input_mode": field, "step": "awaiting_input", "ui_msg_id": cb.message.id})
+    user_creategroup_state[user_id].update({"input_mode": field, "step": "awaiting_input", "ui_msg_id": cb.message.id if cb.message else None})
     field_name = {"pattern": "Group Name Pattern", "username": "Username Prefix", "bots": "Bot Usernames List", "description": "Group Description"}.get(field, field.replace("_", " ").title())
-    await cb.message.edit(f"<b>📝 Awaiting Input: {field_name}...</b>\n\nSilakan lihat instruksi pada pesan di bawah.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancel", callback_data=f"creategroup_ui_{idx}_{pg}")]]))
-    prompt_text = f"<b>✏️ Input {field_name}</b>\n\n{'Current Bots: ' + user_creategroup_state[user_id]['config']['bots'] if field == 'bots' else ''}\n\nSilakan kirim bot yang diinginkan untuk di add ke group.\nKetik /cancel untuk membatalkan."
-    prompt_msg = await c.send_message(cb.message.chat.id, prompt_text, parse_mode=ParseMode.HTML)
-    user_creategroup_state[user_id]["prompt_msg_id"] = prompt_msg.id
+    if cb.message:
+        await cb.message.edit(f"<b>📝 Awaiting Input: {field_name}...</b>\n\nSilakan lihat instruksi pada pesan di bawah.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancel", callback_data=f"creategroup_ui_{idx}_{pg}")]]))
+        prompt_text = f"<b>✏️ Input {field_name}</b>\n\n{'Current Bots: ' + user_creategroup_state[user_id]['config']['bots'] if field == 'bots' else ''}\n\nSilakan kirim bot yang diinginkan untuk di add ke group.\nKetik /cancel untuk membatalkan."
+        prompt_msg = await c.send_message(cb.message.chat.id, prompt_text, parse_mode=ParseMode.HTML)
+        user_creategroup_state[user_id]["prompt_msg_id"] = prompt_msg.id
+    else:
+        await cb.answer("❌ This feature requires a direct message context.", show_alert=True)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^creategroup_toggle_(\d+)_(\d+)_(\w+)$"))
 @iuser_check
@@ -257,7 +275,9 @@ async def creategroup_toggle_handler(c: Client, cb: CallbackQuery):
     user_id = cb.from_user.id
     if user_id in user_creategroup_state:
         if user_creategroup_state[user_id].get("prompt_msg_id"):
-            try: await c.delete_messages(cb.message.chat.id, user_creategroup_state[user_id]["prompt_msg_id"])
+            try:
+                if cb.message:
+                    await c.delete_messages(cb.message.chat.id, user_creategroup_state[user_id]["prompt_msg_id"])
             except: pass
             user_creategroup_state[user_id]["prompt_msg_id"] = None
         conf = user_creategroup_state[user_id]["config"]
@@ -274,10 +294,13 @@ async def creategroup_upload_photo_handler(c: Client, cb: CallbackQuery):
     if user_id not in user_creategroup_state:
         await cb.answer("State expired", show_alert=True)
         return
-    user_creategroup_state[user_id].update({"step": "awaiting_photo", "input_mode": "custom_photo", "ui_msg_id": cb.message.id})
-    await cb.message.edit("<b>📸 Awaiting Photo Upload...</b>\n\nSilakan lihat instruksi pada pesan di bawah.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancel", callback_data=f"creategroup_ui_{idx}_{pg}")]]))
-    prompt_msg = await c.send_message(cb.message.chat.id, "<b>📸 Upload Custom Photo</b>\n\nSilakan kirim atau reply pesan ini dengan foto yang ingin dijadikan profil grup.\nKetik /cancel untuk membatalkan.", parse_mode=ParseMode.HTML)
-    user_creategroup_state[user_id]["prompt_msg_id"] = prompt_msg.id
+    user_creategroup_state[user_id].update({"step": "awaiting_photo", "input_mode": "custom_photo", "ui_msg_id": cb.message.id if cb.message else None})
+    if cb.message:
+        await cb.message.edit("<b>📸 Awaiting Photo Upload...</b>\n\nSilakan lihat instruksi pada pesan di bawah.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancel", callback_data=f"creategroup_ui_{idx}_{pg}")]]))
+        prompt_msg = await c.send_message(cb.message.chat.id, "<b>📸 Upload Custom Photo</b>\n\nSilakan kirim atau reply pesan ini dengan foto yang ingin dijadikan profil grup.\nKetik /cancel untuk membatalkan.", parse_mode=ParseMode.HTML)
+        user_creategroup_state[user_id]["prompt_msg_id"] = prompt_msg.id
+    else:
+        await cb.answer("❌ This feature requires a direct message context.", show_alert=True)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^creategroup_run_(\d+)_(\d+)$"))
 @iuser_check
@@ -300,7 +323,10 @@ async def creategroup_run_handler(c: Client, cb: CallbackQuery):
         "Apakah Anda yakin ingin menjalankan task ini?"
     )
     buttons = [[InlineKeyboardButton("❌ Batal", callback_data=f"creategroup_ui_{idx}_{pg}"), InlineKeyboardButton("✅ Ya, Jalankan", callback_data=f"creategroup_confirm_task_{idx}")]]
-    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    if cb.message:
+        await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    else:
+        await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^creategroup_confirm_task_(\d+)$"))
 @iuser_check
@@ -312,15 +338,27 @@ async def creategroup_confirm_task_handler(c: Client, cb: CallbackQuery):
         return
     conf = user_creategroup_state[user_id]["config"]
     del user_creategroup_state[user_id]
-    await cb.message.edit("🚀 Memulai CreateGroup Task...")
+    if cb.message:
+        await cb.message.edit("🚀 Memulai CreateGroup Task...")
+    else:
+        await cb.edit_message_text("🚀 Memulai CreateGroup Task...")
+        
     try:
         from Main.plugins.userbot.xcreategroup import creategroup_loop
-        control_msg = await cb.message.reply("🔄 Initializing task...")
+        if cb.message:
+            control_msg = await cb.message.reply("🔄 Initializing task...")
+        else:
+            control_msg = await c.send_message(cb.from_user.id, "🔄 Initializing task...")
+            
         executor = Altruix.clients[idx]
         bots = conf["bots"].split() if conf["bots"] else []
         asyncio.create_task(creategroup_loop(user_client=executor, bot_client=Altruix.bot, initial_message=cb.message, delay=conf["delay"], count=conf["count"], extra_delay_minutes=conf["batch_delay"], batch_size=conf["batch_size"], group_type="a", name_pattern=conf["pattern"], username_prefix=conf["username"], bot_identifiers=bots, control_message=control_msg, action_delay=conf.get("action_delay", 3.0), invite_bots=conf.get("invite_bots", False), anon_mode=conf.get("anon_mode", True), copy_messages=conf.get("copy_messages", True), description=conf.get("description", "Powered by @AlphaXProject"), photo_source=conf.get("photo_source", "source"), custom_photo_id=conf.get("custom_photo_id"), user_id=user_id))
         await cb.answer("Task started!", show_alert=True)
-    except Exception as e: await cb.message.reply(f"❌ Error: {e}")
+    except Exception as e:
+        if cb.message:
+            await cb.message.reply(f"❌ Error: {e}")
+        else:
+            await c.send_message(cb.from_user.id, f"❌ Error: {e}")
 
 async def render_creategroup_running_ui(cb: CallbackQuery, task: dict, idx: int, pg: int):
     status = "▶️ Running"
@@ -361,7 +399,10 @@ async def render_creategroup_running_ui(cb: CallbackQuery, task: dict, idx: int,
         ]
     ]
     
-    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    if cb.message:
+        await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    else:
+        await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^creategroup_control_(stop|pause|resume)_(\d+)_(\d+)$"))
 @iuser_check
@@ -424,7 +465,10 @@ async def creategroup_status_detail_handler(c: Client, cb: CallbackQuery):
     )
     await cb.answer("Full details shown", show_alert=True)
     buttons = [[InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_ui_{idx}_{pg}")]]
-    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    if cb.message:
+        await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    else:
+        await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^creategroup_list_group_(\d+)_(\d+)$"))
 @iuser_check
@@ -448,7 +492,10 @@ async def creategroup_list_group_handler(c: Client, cb: CallbackQuery):
     if len(groups) > 10: text += f"\n...and {len(groups)-10} more."
     
     buttons = [[InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_ui_{idx}_{pg}")]]
-    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    if cb.message:
+        await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    else:
+        await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
 async def process_creategroup_input(c: Client, m: Message, text: str = None):
     user_id = m.from_user.id
