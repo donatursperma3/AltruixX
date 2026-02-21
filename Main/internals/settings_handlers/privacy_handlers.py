@@ -216,7 +216,7 @@ async def sudo_add_remove_start_handler(c: Client, cb: CallbackQuery):
     }
     
     label = "Tambah" if action_type == "add" else "Hapus"
-    await cb.message.edit(
+    await cb.edit_message_text(
         text=f"👑 <b>{label} Sudo User</b>\n\n"
              f"Silakan kirim <b>User ID</b> yang ingin di{label.lower()}.\n\n"
              f"❌ <b>Cancel:</b> /cancel",
@@ -421,7 +421,7 @@ async def prefix_edit_start_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
     
     label = "Userbot" if p_type == 'u' else "Sudo"
-    await cb.message.edit(
+    await cb.edit_message_text(
         f"📝 <b>Edit {label} Prefix</b>\n\n"
         f"Silakan kirim karakter tunggal yang ingin dijadikan prefix baru.\n"
         f"Contoh: <code>.</code> atau <code>!</code> atau <code>,</code>\n\n"
@@ -587,9 +587,10 @@ async def edit_cl_start_handler(c: Client, cb: CallbackQuery):
     Altruix.user_track_state[cb.from_user.id] = {"step": f"edit_cl_{target}"}
     
     label = "Teks" if target == "text" else "Link"
-    await cb.message.edit(
+    await cb.edit_message_text(
         f"📝 <b>Edit Custom {label}</b>\n\n"
         f"Silakan kirim {label.lower()} baru untuk tombol dashboard.\n\n"
         f"❌ <b>Batal:</b> Kirim /cancel",
+        parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Batal", "custom_link_settings")]])
     )

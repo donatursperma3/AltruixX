@@ -126,7 +126,7 @@ class AltruixClient:
         self.clients: List[Client] = []
         self.cmd_list = {}
         self.all_lang_strings = {}
-        self.__version__ = "0.0.9.845D" # ✅ Optimized Sudo & Prefix Cache
+        self.__version__ = "0.0.9.859D" # ✅ Optimized Sudo & Prefix Cache
         self.selected_lang = "english"
         self.local_lang_file = "./Main/localization"
         self.cmd_list = {} # {plugin_name: [cmd_data, ...]}
@@ -267,10 +267,25 @@ class AltruixClient:
             self.log(f"edit_cb failed: {e}", level=logging.ERROR)
 
     async def delete_cb(self, cb: CallbackQuery):
+        """ ✅ Hardened delete utility that handles both regular and inline modes safely. """
         try:
-            await cb.message.delete()
+            if cb.message:
+                await cb.message.delete()
+            else:
+                # Handle Inline Mode (results sent via bot)
+                await cb.edit_message_text(
+                    "<b>❌ Menu Closed</b>\n<i>The session has been terminated safely.</i>", 
+                    parse_mode=ParseMode.HTML
+                )
         except Exception as e:
-            self.log(f"delete_cb failed: {e}", level=logging.ERROR)
+            # Fallback if deletion is not allowed or message is too old
+            try:
+                await cb.edit_message_text(
+                    "<b>❌ Closed</b>", 
+                    parse_mode=ParseMode.HTML
+                )
+            except: pass
+            self.log(f"delete_cb failed (fallback applied): {e}", level=logging.ERROR)
     def load_disabled_sessions(self):
         """Load list of disabled user_ids from file."""
         try:
@@ -2154,18 +2169,19 @@ class AltruixClient:
         
         # Detect ParseMode
         parse_mode = ParseMode.HTML
-        if "(md2)" in text:
+        if "(md2)" in text or "(markdown2)" in text:
             parse_mode = ParseMode.MARKDOWN
-            text = text.replace("(md2)", "")
-        elif "(markdown2)" in text:
-            parse_mode = ParseMode.MARKDOWN
-            text = text.replace("(markdown2)", "")
+            text = text.replace("(md2)", "").replace("(markdown2)", "")
+        elif "(html)" in text:
+            parse_mode = ParseMode.HTML
+            text = text.replace("(html)", "")
         
         replacements = {
             # Standard placeholders
             "ub_version": self.__version__,
+            "kurigram_version": pyrogram.__version__,
             "pyrogram_version": pyrogram.__version__,
-            "python_version": platform.python_version(),
+            "python_version": platform.python_version().split()[0],
             "ub_plugins": ub_plugins,
             "bot_plugins": bot_plugins,
             "index": (index + 1) if index is not None and index >= 0 else "N/A",
@@ -2175,39 +2191,56 @@ class AltruixClient:
             
             # Legacy/Requested (userbot version) style
             "(userbot version)": self.__version__,
+            "(kurigram version)": pyrogram.__version__,
             "(pyrogram version)": pyrogram.__version__,
-            "(python version)": platform.python_version(),
-            "(userbot plugins)": ub_plugins,
-            "(bot plugins)": bot_plugins,
+            "(python version)": platform.python_version().split()[0],
+            "(total userbot plugins)": ub_plugins,
+            "(total bot plugins)": bot_plugins,
             "(session index)": (index + 1) if index is not None and index >= 0 else "N/A",
             "(total sessions)": total_sessions,
             "(total commands)": self.total_commands,
+            "(userbot plugins)": ub_plugins,
+            "(bot plugins)": bot_plugins,
 
         }
         
         if me:
             first = me.first_name or ""
             last = me.last_name or ""
+            full = f"{first} {last}".strip()
+            
             # Escape only for HTML mode
             m_first = html.escape(first) if parse_mode == ParseMode.HTML else first
+            m_full = html.escape(full) if parse_mode == ParseMode.HTML else full
+            
             mention = f'<a href="tg://user?id={me.id}">{m_first}</a>' if parse_mode == ParseMode.HTML else f"[{first}](tg://user?id={me.id})"
+            mention_full = f'<a href="tg://user?id={me.id}">{m_full}</a>' if parse_mode == ParseMode.HTML else f"[{full}](tg://user?id={me.id})"
             username = f"@{me.username}" if me.username else ""
             
             replacements.update({
                 "first_name": first,
                 "last_name": last,
+                "full_name": full,
                 "mention": mention,
-                "mention_first_name": mention, # Backward compatibility
+                "mention_name": mention,
+                "mention_first_name": mention,
+                "mention_full_name": mention_full,
                 "user_name": username,
                 "user_id": me.id,
+                "session_name": first,
                 
                 "(first name)": first,
                 "(last name)": last,
+                "(full name)": full,
                 "(mention)": mention,
+                "(mention name)": mention,
+                "(mention userbot)": mention,
                 "(mention session)": mention,
                 "(mention session/userbot client)": mention,
+                "(mention full name)": mention_full,
                 "(user name)": username,
                 "(user id)": me.id,
+                "(session name)": first,
             })
             
         # Perform replacement for {} style

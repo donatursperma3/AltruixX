@@ -11,7 +11,8 @@ from Main.core.types.message import Message
 from pyrogram.types import (
     CallbackQuery, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove,
     InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions, User,
-    Chat, MessageEntity, InlineQuery, InlineQueryResultArticle, InputTextMessageContent
+    Chat, MessageEntity, InlineQuery, InlineQueryResultArticle, InputTextMessageContent,
+    ChosenInlineResult
 )
 import json
 import os
@@ -105,6 +106,7 @@ import Main.internals.settings_handlers.export_handlers
 import Main.internals.settings_handlers.cmd_settings_handlers
 import Main.internals.settings_handlers.global_purgeme
 import Main.internals.settings_handlers.backup_handlers
+import Main.internals.settings_handlers.custom_alert_handlers
 
 # ====================== LOCALIZATION ======================
 SETTINGS_LANG = getattr(Altruix.config, "UB_LANG", "english").lower()
@@ -209,7 +211,7 @@ async def settings_command_handler(c: Client, m: Message):
     text = await get_settings_home_text()
     await m.reply(text, reply_markup=InlineKeyboardMarkup(get_settings_buttons(m.from_user.id)), quote=True)
 
-@Altruix.bot.on_inline_query(filters.regex(r"^settings$"))
+@Altruix.bot.on_inline_query(filters.regex(r"^settings(?:\s|$)"))
 @iuser_check
 @log_errors
 async def settings_inline_handler(c: Client, iq: InlineQuery):
@@ -218,18 +220,68 @@ async def settings_inline_handler(c: Client, iq: InlineQuery):
     if not await Altruix.is_sudo(iq.from_user.id):
         return
     
+    # Extract metadata if present
+    query = iq.query
+    chat_id = "N/A"
+    chat_title = "N/A"
+    
+    if "cid=" in query:
+        if m := re.search(r"cid=(-?\d+)", query):
+            chat_id = m.group(1)
+            
+    if "ctit=" in query:
+        import base64
+        try:
+            if m := re.search(r"ctit=([^&\s]+)", query):
+                chat_title = base64.b64decode(m.group(1)).decode('utf-8')
+        except: pass
+
     text = await get_settings_home_text()
+    result_identity = f"settings_{chat_id}"
     
     await iq.answer(
         results=[
             InlineQueryResultArticle(
+                id=result_identity,
                 title="Userbot Settings",
+                description=f"Manage dashboard for {chat_title if chat_title != 'N/A' else 'General'}",
                 input_message_content=InputTextMessageContent(text, parse_mode=ParseMode.HTML),
                 reply_markup=InlineKeyboardMarkup(get_settings_buttons(iq.from_user.id))
             )
         ],
         cache_time=0, is_personal=True
     )
+
+@Altruix.bot.on_chosen_inline_result(filters.regex(r"^settings_(-?\d+|N/A)"))
+@iuser_check
+@log_errors
+async def settings_chosen_handler(c: Client, cir: ChosenInlineResult):
+    """Capture inline metadata for general settings dashboard."""
+    inline_msg_id = cir.inline_message_id
+    if not inline_msg_id: return
+    
+    try:
+        chat_id = cir.result_id.split("_")[1]
+        chat_title = "Group/Chat"
+        
+        if chat_id != "N/A":
+            try:
+                chat = await c.get_chat(int(chat_id))
+                chat_title = chat.title or chat.first_name or "Chat"
+            except: pass
+
+        await Altruix.local_db.inline_col.find_one_and_update(
+            {"_id": inline_msg_id},
+            {"$set": {
+                "_id": inline_msg_id,
+                "chat_id": chat_id,
+                "chat_title": chat_title,
+                "timestamp": datetime.now().timestamp()
+            }},
+            upsert=True
+        )
+    except Exception as e:
+        logger.error(f"Error in settings_chosen_handler: {e}")
 
 @Altruix.bot.on_callback_query(filters.regex(r"^settings_menu$"))
 @iuser_check

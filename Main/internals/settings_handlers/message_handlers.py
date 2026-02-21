@@ -29,13 +29,12 @@ async def purge_msg_start_handler(c: Client, cb: CallbackQuery):
     
     user_purge_state[user_id] = {'session_index': index, 'page': page, 'step': 'waiting_chat'}
     
-    await cb.message.edit(
+    await cb.edit_message_text(
         text="<b>🧹 Purge My Message</b>\n\n"
              "Menghapus pesan Anda sendiri di chat tertentu.\n"
              "Silakan kirim <b>Username</b> atau <b>ID</b> target chat.\n\n"
              "❌ <b>Cancel:</b> /cancel",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]]),
-        parse_mode=ParseMode.HTML
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]])
     )
 
 @Altruix.bot.on_callback_query(filters.regex(r"rpm_conf_(\d+)_(-?\d+)_(\d+)"))
@@ -52,7 +51,7 @@ async def rpm_conf_handler(c: Client, cb: CallbackQuery):
             InlineKeyboardButton("❌ No", f"session_info_{index}_1")
         ]
     ]
-    await cb.message.edit(
+    await cb.edit_message_text(
         "<b>❓ Konfirmasi Reply PM</b>\n\n"
         "Kirim balasan otomatis ke pengirim mention melalui PM?",
         reply_markup=InlineKeyboardMarkup(buttons),
@@ -90,10 +89,11 @@ async def join_chat_input_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
     from .states import user_join_state
     user_join_state[cb.from_user.id] = {'session_index': index, 'page': page, 'step': 'waiting_link'}
-    await cb.message.edit(
+    await cb.edit_message_text(
         "<b>➕ Join Chat</b>\n\n"
         "Silakan kirim <b>Invite Link</b> atau <b>Username</b> grup/channel yang ingin dimasuki.\n\n"
         "❌ <b>Cancel:</b> /cancel",
+        parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]])
     )
 
@@ -106,10 +106,11 @@ async def leave_chat_input_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
     from .states import user_leave_state
     user_leave_state[cb.from_user.id] = {'session_index': index, 'page': page, 'step': 'waiting_chat'}
-    await cb.message.edit(
+    await cb.edit_message_text(
         "<b>➖ Leave Chat</b>\n\n"
         "Silakan kirim <b>Username</b> atau <b>ID</b> grup/channel yang ingin ditinggalkan.\n\n"
         "❌ <b>Cancel:</b> /cancel",
+        parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]])
     )
 
@@ -122,10 +123,11 @@ async def send_message_input_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
     from .states import user_send_msg_state
     user_send_msg_state[cb.from_user.id] = {'session_index': index, 'page': page, 'step': 'waiting_target'}
-    await cb.message.edit(
+    await cb.edit_message_text(
         "<b>💬 Send Message</b>\n\n"
         "Silakan kirim <b>Target (Username/ID)</b> tujuan pengiriman pesan.\n\n"
         "❌ <b>Cancel:</b> /cancel",
+        parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]])
     )
 async def process_join_chat(c: Client, m: Message, state: dict):

@@ -259,13 +259,22 @@ async def creategroup_input_request(c: Client, cb: CallbackQuery):
     if user_id not in user_creategroup_state: return
     user_creategroup_state[user_id].update({"input_mode": field, "step": "awaiting_input", "ui_msg_id": cb.message.id if cb.message else None})
     field_name = {"pattern": "Group Name Pattern", "username": "Username Prefix", "bots": "Bot Usernames List", "description": "Group Description"}.get(field, field.replace("_", " ").title())
+    text = f"<b>📝 Awaiting Input: {field_name}...</b>\n\nSilakan lihat instruksi pada pesan di bawah."
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancel", callback_data=f"creategroup_ui_{idx}_{pg}")]])
+    
     if cb.message:
-        await cb.message.edit(f"<b>📝 Awaiting Input: {field_name}...</b>\n\nSilakan lihat instruksi pada pesan di bawah.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancel", callback_data=f"creategroup_ui_{idx}_{pg}")]]))
-        prompt_text = f"<b>✏️ Input {field_name}</b>\n\n{'Current Bots: ' + user_creategroup_state[user_id]['config']['bots'] if field == 'bots' else ''}\n\nSilakan kirim bot yang diinginkan untuk di add ke group.\nKetik /cancel untuk membatalkan."
-        prompt_msg = await c.send_message(cb.message.chat.id, prompt_text, parse_mode=ParseMode.HTML)
-        user_creategroup_state[user_id]["prompt_msg_id"] = prompt_msg.id
+        await cb.message.edit(text, reply_markup=kb)
+        chat_id = cb.message.chat.id
     else:
-        await cb.answer("❌ This feature requires a direct message context.", show_alert=True)
+        await cb.edit_message_text(text, reply_markup=kb)
+        chat_id = cb.from_user.id
+        
+    prompt_text = f"<b>✏️ Input {field_name}</b>\n\n{'Current Bots: ' + user_creategroup_state[user_id]['config']['bots'] if field == 'bots' else ''}\n\nSilakan kirim bot yang diinginkan untuk di add ke group.\nKetik /cancel untuk membatalkan."
+    try:
+        prompt_msg = await c.send_message(chat_id, prompt_text, parse_mode=ParseMode.HTML)
+        user_creategroup_state[user_id]["prompt_msg_id"] = prompt_msg.id
+    except Exception as e:
+        logger.error(f"Failed to send prompt in creategroup: {e}")
 
 @Altruix.bot.on_callback_query(filters.regex(r"^creategroup_toggle_(\d+)_(\d+)_(\w+)$"))
 @iuser_check
@@ -295,12 +304,21 @@ async def creategroup_upload_photo_handler(c: Client, cb: CallbackQuery):
         await cb.answer("State expired", show_alert=True)
         return
     user_creategroup_state[user_id].update({"step": "awaiting_photo", "input_mode": "custom_photo", "ui_msg_id": cb.message.id if cb.message else None})
+    text = "<b>📸 Awaiting Photo Upload...</b>\n\nSilakan lihat instruksi pada pesan di bawah."
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancel", callback_data=f"creategroup_ui_{idx}_{pg}")]])
+    
     if cb.message:
-        await cb.message.edit("<b>📸 Awaiting Photo Upload...</b>\n\nSilakan lihat instruksi pada pesan di bawah.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancel", callback_data=f"creategroup_ui_{idx}_{pg}")]]))
-        prompt_msg = await c.send_message(cb.message.chat.id, "<b>📸 Upload Custom Photo</b>\n\nSilakan kirim atau reply pesan ini dengan foto yang ingin dijadikan profil grup.\nKetik /cancel untuk membatalkan.", parse_mode=ParseMode.HTML)
-        user_creategroup_state[user_id]["prompt_msg_id"] = prompt_msg.id
+        await cb.message.edit(text, reply_markup=kb)
+        chat_id = cb.message.chat.id
     else:
-        await cb.answer("❌ This feature requires a direct message context.", show_alert=True)
+        await cb.edit_message_text(text, reply_markup=kb)
+        chat_id = cb.from_user.id
+        
+    try:
+        prompt_msg = await c.send_message(chat_id, "<b>📸 Upload Custom Photo</b>\n\nSilakan kirim atau reply pesan ini dengan foto yang ingin dijadikan profil grup.\nKetik /cancel untuk membatalkan.", parse_mode=ParseMode.HTML)
+        user_creategroup_state[user_id]["prompt_msg_id"] = prompt_msg.id
+    except Exception as e:
+        logger.error(f"Failed to send photo prompt in creategroup: {e}")
 
 @Altruix.bot.on_callback_query(filters.regex(r"^creategroup_run_(\d+)_(\d+)$"))
 @iuser_check

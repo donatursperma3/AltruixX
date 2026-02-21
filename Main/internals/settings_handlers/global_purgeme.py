@@ -618,14 +618,14 @@ async def open_global_purgeme_ui(c: Client, cb: CallbackQuery, index: int, page:
         await cb.answer("❌ Message expired or not found.", show_alert=True)
         return
 
-    state["dashboard_msg_id"] = cb.message.id
-    state["dashboard_chat_id"] = cb.message.chat.id
+    state["dashboard_msg_id"] = cb.message.id if cb.message else None
+    state["dashboard_chat_id"] = cb.message.chat.id if cb.message else None
     state["pause_event"].set()
 
     text = get_gp_status_text(state)
     kb = get_gp_control_kb(unique_id, state)
     
-    await cb.message.edit_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML, disable_web_page_preview=True)
+    await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML, disable_web_page_preview=True)
 
 # Callback Handler
 @Altruix.bot.on_callback_query(filters.regex(r"^gp_(?P<action>target|limit|delay|delaymsg|pause|resume|stop|start|confirm|refresh|close|toggle|list|mode|off|notif|filter|info|back)_(?P<tail>.*)$"))

@@ -25,7 +25,7 @@ async def chat_stats_scan_handler(c: Client, cb: CallbackQuery):
     client = Altruix.clients[index]
     
     try:
-        status_msg = await cb.message.edit("🔄 <b>Scanning Dialogs... (Checking Permissions)</b>", parse_mode=ParseMode.HTML)
+        await cb.edit_message_text("🔄 <b>Scanning Dialogs... (Checking Permissions)</b>", parse_mode=ParseMode.HTML)
         
         owned_groups = 0
         admin_groups = 0
@@ -64,14 +64,14 @@ async def chat_stats_scan_handler(c: Client, cb: CallbackQuery):
             f"<i>💡 Total Managed: {owned_groups + admin_groups + owned_channels + admin_channels}</i>"
         )
         
-        await status_msg.edit(
+        await cb.edit_message_text(
             txt,
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]]),
             parse_mode=ParseMode.HTML
         )
         await send_log_notification(c, 'chat_stats_scan', index, cb.from_user, True)
     except Exception as e:
-        await cb.message.edit(f"❌ Error scanning stats: {str(e)}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]]))
+        await cb.edit_message_text(f"❌ Error scanning stats: {str(e)}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]]))
         await send_log_notification(c, 'chat_stats_scan', index, cb.from_user, False, str(e))
 
 @Altruix.bot.on_callback_query(filters.regex("^sessions_stats$"))

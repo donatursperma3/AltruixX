@@ -25,6 +25,7 @@ class MongoDB:
         self.user_col: AgnosticCollection = self._db_name["USERS"]
         self.env_col: AgnosticCollection = self._db_name["ENV"]
         self.stickers_col: AgnosticCollection = self._db_name["STICKERS"]
+        self.inline_col: AgnosticCollection = self._db_name["INLINE_METADATA"]
 
     async def ping(self):
         return await self._db_name.command("ping")
@@ -137,6 +138,7 @@ class LocalDatabase:
         self.user_col = LocalCollection(self, "USERS")
         self.env_col = LocalCollection(self, "ENV")
         self.stickers_col = LocalCollection(self, "STICKERS")
+        self.inline_col = LocalCollection(self, "INLINE_METADATA")
 
     def _load(self):
         if not path.exists(self.path):

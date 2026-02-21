@@ -22,6 +22,7 @@ from pyrogram.errors import (
     MessageEmpty, MessageIdInvalid, BotInlineDisabled, MessageNotModified,
     UserNotParticipant, MessageTooLong, QueryIdInvalid # ✅ Added
 )
+from pyrogram.enums import ParseMode
 from pyrogram.types import LinkPreviewOptions, ReplyParameters
 from Main.utils.file_helpers import make_file_from_text # ✅ Added
 
@@ -39,6 +40,7 @@ async def send_log_message(text: str, filename: str = "log_error.txt"):
         return await Altruix.bot.send_message(
             log_chat_id,
             text,
+            parse_mode=ParseMode.HTML,
             link_preview_options=LinkPreviewOptions(is_disabled=True)
         )
     except MessageTooLong:
@@ -48,7 +50,8 @@ async def send_log_message(text: str, filename: str = "log_error.txt"):
             msg = await Altruix.bot.send_document(
                 log_chat_id,
                 file_path,
-                caption=f"📄 <b>Log message too long</b>\nTime: <code>{datetime.now().strftime('%H:%M:%S')}</code>"
+                caption=f"📄 <b>Log message too long</b>\nTime: <code>{datetime.now().strftime('%H:%M:%S')}</code>",
+                parse_mode=ParseMode.HTML
             )
             if os.path.exists(file_path):
                 os.remove(file_path)
@@ -59,8 +62,9 @@ async def send_log_message(text: str, filename: str = "log_error.txt"):
         # Jika gagal ke LOG_CHAT_ID, coba ke OWNER_ID langsung
         try:
             return await Altruix.bot.send_message(
-                Altruix.config.OWNER_USERS_ID,
+                Altruix.config.OWNER_ID,
                 f"⚠️ [FALLBACK LOG]\n{text}",
+                parse_mode=ParseMode.HTML,
                 link_preview_options=LinkPreviewOptions(is_disabled=True)
             )
         except Exception:
@@ -126,116 +130,140 @@ def iuser_check(func):
             result_status = "AUTHORIZED"
         else:
             if isinstance(update, CallbackQuery):
-                result_status = "AUTH_BUTTON_DENIED"
+                # ✅ FIX: The ID must be the USERBOT session owner's ID, not the bot assistant's ID.
+                # The custom alert is saved under the userbot's user ID (from Altruix.clients),
+                # while `c.me` here is the bot assistant (@coolkidxbot), NOT the userbot.
+                # We fall back to the first active userbot session for global mode.
+                owner_id = Altruix.config.OWNER_ID
+                if Altruix.clients:
+                    first_client = Altruix.clients[0]
+                    if hasattr(first_client, 'me') and first_client.me:
+                        owner_id = first_client.me.id
+                from Main.utils.file_helpers import get_user_custom_alert
+                alert_data = get_user_custom_alert(owner_id)
+                if alert_data.get("mode") == "custom":
+                    result_status = alert_data.get("text", Altruix.get_string("AUTH_BUTTON_DENIED"))
+                else:
+                    result_status = Altruix.get_string("AUTH_BUTTON_DENIED")
             elif isinstance(update, InlineQuery):
                 result_status = "AUTH_FEATURE_DENIED"
             else:
                 result_status = "AUTH_FEATURE_DENIED"
 
-        if should_log:
-            chat_info = "N/A"
-            chat_id = "N/A"
-            cb_data = "N/A"
-            msg_text = "N/A"
-            
-            if isinstance(update, CallbackQuery):
-                cb_data = update.data or "No Data"
-                if update.message:
-                    chat = update.message.chat
-                    chat_id = chat.id
-                    
-                    from pyrogram.enums import ChatType
-                    
-                    # Chat Label/Hyperlink
-                    if chat.type == ChatType.PRIVATE:
-                        chat_type_str = "👤 Private"
-                        chat_label = f"{chat.first_name or ''} {chat.last_name or ''}".strip() or "User"
-                    elif chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
-                        chat_type_str = "👥 Group"
-                        chat_label = chat.title or "Unknown Group"
-                    elif chat.type == ChatType.CHANNEL:
-                        chat_type_str = "📢 Channel"
-                        chat_label = chat.title or "Unknown Channel"
-                    else:
-                        chat_type_str = "💬 Chat"
-                        chat_label = chat.title or "Unknown"
-
-                    if chat.username:
-                        chat_info = f"{chat_type_str}: <a href='https://t.me/{chat.username}'>{html.escape(chat_label)}</a>"
-                    elif chat.id:
-                        # For privates/groups without username
-                        chat_info = f"{chat_type_str}: <b>{html.escape(chat_label)}</b>"
-                    else:
-                        chat_info = f"{chat_type_str}: <b>{html.escape(chat_label)}</b>"
-                    
-                    msg_text = update.message.text or update.message.caption or "[No Text/Media]"
-                else:
-                    # ✅ HANDLE INLINE CALLBACKS (Where update.message is None)
-                    chat_info = "📱 Inline Interface"
-                    chat_id = "Inline"
-                    
-                    import re
-                    if cid_match := re.search(r"cid=(-?\d+)", cb_data):
-                        extracted_cid = cid_match.group(1)
-                        chat_id = extracted_cid
-                        chat_info = f"📱 Inline Chat (ID: <code>{extracted_cid}</code>)"
-                    
-                    msg_text = "[Inline Callback Result]"
-            elif isinstance(update, InlineQuery):
-                cb_data = f"Inline Query: {update.query}"
-                chat_info = "Inline Query"
-            
-            time_now = datetime.now().strftime("%H:%M:%S")
-            
-            # Accurate Bot Identification
-            me = getattr(client, "me", None) if 'client' in locals() else None
-            # If client not in args, try to find it
-            if not me:
-                for arg in args:
-                    if isinstance(arg, Client):
-                        client = arg
-                        me = getattr(client, "me", None)
-                        break
-
-            if client and not me:
-                try: me = await client.get_me()
-                except: me = None
-            
-            bot_username = f"@{me.username}" if me and me.username else "Unknown Bot"
-            if me and not getattr(me, "is_bot", False):
-                bot_username = f"Userbot Session ({bot_username})"
-            
-            # Blank name handling
-            display_name = full_name.strip()
-            # Check if name is empty or contains only non-visible characters
-            is_blank = not display_name or all(ord(c) < 33 or ord(c) == 8203 for c in display_name)
-            final_name = "blank" if is_blank else html.escape(full_name)
-            
-            # Format Username
-            username_display = f"{username}" if username and username != "None" else "None"
-            
-            # Construct log message
-            log_message = (
-                f"{Altruix.get_string('LOGGER_CALLBACK_TITLE')}\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"{Altruix.get_string('LOGGER_CALLBACK_BOT').format(bot_username)}\n"
-                f"{Altruix.get_string('LOGGER_CALLBACK_USER').format(user_id, final_name)}\n"
-                f"{Altruix.get_string('LOGGER_CALLBACK_USERNAME').format(username_display)}\n"
-                f"{Altruix.get_string('LOGGER_CALLBACK_USER_ID').format(user_id)}\n"
-                f"{Altruix.get_string('LOGGER_CALLBACK_CHAT').format(chat_info)}\n"
-                f"{Altruix.get_string('LOGGER_CALLBACK_CHAT_ID').format(chat_id)}\n"
-                f"{Altruix.get_string('LOGGER_CALLBACK_DATA').format(cb_data)}\n"
-                f"{Altruix.get_string('LOGGER_CALLBACK_RESULT').format(Altruix.get_string(result_status))}\n"
-                f"{Altruix.get_string('LOGGER_CALLBACK_MSG_HEADER')}\n"
-                f"<blockquote>{html.escape(str(msg_text)[:1000])}</blockquote>\n"
-                f"{Altruix.get_string('LOGGER_CALLBACK_TIME').format(time_now)}\n\n"
-                f"{Altruix.get_string('LOGGER_CALLBACK_PRIVATE_LINK').format(user_id)}"
-            )
-            await send_log_message(log_message)
 
         if is_sudo:
+            # ✅ PERF: Run handler IMMEDIATELY, then log in background (fire & forget)
+            async def _log_and_auth():
+                if should_log:
+                    chat_info = "N/A"
+                    chat_id = "N/A"
+                    cb_data = "N/A"
+                    msg_text = "N/A"
+                    
+                    if isinstance(update, CallbackQuery):
+                        cb_data = update.data or "No Data"
+                        if update.message:
+                            chat = update.message.chat
+                            
+                            from pyrogram.enums import ChatType
+                            
+                            # Chat Label/Hyperlink
+                            if chat.type == ChatType.PRIVATE:
+                                chat_type_str = "👤 Private"
+                                chat_label = f"{chat.first_name or ''} {chat.last_name or ''}".strip() or "User"
+                            elif chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
+                                chat_type_str = "👥 Group"
+                                chat_label = chat.title or "Unknown Group"
+                            elif chat.type == ChatType.CHANNEL:
+                                chat_type_str = "📢 Channel"
+                                chat_label = chat.title or "Unknown Channel"
+                            else:
+                                chat_type_str = "💬 Chat"
+                                chat_label = chat.title or "Unknown"
+
+                            if chat.username:
+                                chat_info = f"{chat_type_str}: <a href='https://t.me/{chat.username}'>{html.escape(chat_label)}</a>"
+                            elif chat.id:
+                                chat_info = f"{chat_type_str}: <b>{html.escape(chat_label)}</b>"
+                            else:
+                                chat_info = f"{chat_type_str}: <b>{html.escape(chat_label)}</b>"
+                            
+                            msg_text = update.message.text or update.message.caption or "[No Text/Media]"
+                        else:
+                            chat_info = "📱 Inline Interface"
+                            chat_id = "Inline"
+                            
+                            if hasattr(update, "inline_message_id") and update.inline_message_id:
+                                try:
+                                    cache = await Altruix.local_db.inline_col.find_one({"_id": update.inline_message_id})
+                                    if cache:
+                                        chat_id = cache.get("chat_id", "Inline")
+                                        chat_title = cache.get("chat_title", "Inline Chat")
+                                        if chat_id != "Inline" and chat_id != "N/A":
+                                            chat_info = f"📱 {chat_title} (<code>{chat_id}</code>)"
+                                        else:
+                                            chat_info = f"📱 {chat_title}"
+                                except Exception:
+                                    pass
+
+                            import re
+                            if chat_id == "Inline" and (cid_match := re.search(r"cid=(-?\d+)", cb_data)):
+                                extracted_cid = cid_match.group(1)
+                                chat_id = extracted_cid
+                                chat_info = f"📱 Inline Chat (ID: <code>{extracted_cid}</code>)"
+                            
+                            msg_text = "[Inline Callback Result]"
+                    elif isinstance(update, InlineQuery):
+                        cb_data = f"Inline Query: {update.query}"
+                        chat_info = "Inline Query"
+                    
+                    time_now = datetime.now().strftime("%H:%M:%S")
+                    
+                    me = getattr(client, "me", None) if 'client' in locals() else None
+                    if not me:
+                        for arg in args:
+                            if isinstance(arg, Client):
+                                _c = arg
+                                me = getattr(_c, "me", None)
+                                break
+
+                    if client and not me:
+                        try: me = await client.get_me()
+                        except: me = None
+                    
+                    bot_username = f"@{me.username}" if me and me.username else "Unknown Bot"
+                    if me and not getattr(me, "is_bot", False):
+                        bot_username = f"Userbot Session ({bot_username})"
+                    
+                    display_name = full_name.strip()
+                    is_blank = not display_name or all(ord(ch) < 33 or ord(ch) == 8203 for ch in display_name)
+                    final_name = "blank" if is_blank else html.escape(full_name)
+                    username_display = f"{username}" if username and username != "None" else "None"
+                    
+                    log_message = (
+                        f"{Altruix.get_string('LOGGER_CALLBACK_TITLE')}\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"{Altruix.get_string('LOGGER_CALLBACK_BOT').format(html.escape(bot_username))}\n"
+                        f"{Altruix.get_string('LOGGER_CALLBACK_USER').format(user_id, final_name)}\n"
+                        f"{Altruix.get_string('LOGGER_CALLBACK_USERNAME').format(username_display)}\n"
+                        f"{Altruix.get_string('LOGGER_CALLBACK_USER_ID').format(user_id)}\n"
+                        f"{Altruix.get_string('LOGGER_CALLBACK_CHAT').format(chat_info)}\n"
+                        f"{Altruix.get_string('LOGGER_CALLBACK_CHAT_ID').format(chat_id)}\n"
+                        f"{Altruix.get_string('LOGGER_CALLBACK_DATA').format(html.escape(cb_data))}\n"
+                        f"{Altruix.get_string('LOGGER_CALLBACK_RESULT').format(html.escape(Altruix.get_string('AUTHORIZED')))}\n"
+                        f"{Altruix.get_string('LOGGER_CALLBACK_MSG_HEADER')}\n"
+                        f"<blockquote>{html.escape(str(msg_text)[:1000])}</blockquote>\n"
+                        f"{Altruix.get_string('LOGGER_CALLBACK_TIME').format(time_now)}\n\n"
+                        f"{Altruix.get_string('LOGGER_CALLBACK_PRIVATE_LINK').format(user_id)}"
+                    )
+                    await send_log_message(log_message)
+
             try:
-                return await func(*args, **kwargs)
+                # ✅ Fire handler immediately, log concurrently (non-blocking)
+                import asyncio as _asyncio
+                result_coro = func(*args, **kwargs)
+                _asyncio.create_task(_log_and_auth())
+                return await result_coro
             except MessageNotModified:
                 if isinstance(update, CallbackQuery):
                     await update.answer("ℹ️ Tidak ada perubahan diperlukan.", show_alert=True)
@@ -246,17 +274,74 @@ def iuser_check(func):
                     f"• Fungsi: <code>{func.__name__}</code>\n"
                     f"• Error: <code>{str(e)}</code>"
                 )
-                await send_log_message(error_text)
+                import asyncio as _asyncio
+                _asyncio.create_task(send_log_message(error_text))
                 if isinstance(update, CallbackQuery):
                     try:
                         await update.answer("❌ Terjadi kesalahan internal. Owner telah diberi tahu.", show_alert=True)
                     except QueryIdInvalid:
                         pass
         else:
+            # ✅ For non-sudo: show the alert popup, then log in background
+            if should_log:
+                async def _log_denied():
+                    chat_id = "Inline"
+                    cb_data = update.data or "No Data" if isinstance(update, CallbackQuery) else "N/A"
+                    chat_info = "📱 Inline Interface" if isinstance(update, CallbackQuery) and not update.message else "N/A"
+                    msg_text = "[Inline Callback Result]"
+                    time_now = datetime.now().strftime("%H:%M:%S")
+                    
+                    if isinstance(update, CallbackQuery) and update.message:
+                        chat = update.message.chat
+                        from pyrogram.enums import ChatType
+                        chat_label = chat.title or f"{chat.first_name or ''} {chat.last_name or ''}".strip() or "User"
+                        if chat.type == ChatType.PRIVATE: prefix = "👤 Private"
+                        elif chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]: prefix = "👥 Group"
+                        elif chat.type == ChatType.CHANNEL: prefix = "📢 Channel"
+                        else: prefix = "💬 Chat"
+                        chat_info = f"{prefix}: <b>{html.escape(chat_label)}</b>"
+                        chat_id = chat.id
+                        msg_text = update.message.text or update.message.caption or "[No Text/Media]"
+                    
+                    me = None
+                    for arg in args:
+                        if isinstance(arg, Client):
+                            me = getattr(arg, "me", None)
+                            break
+                    bot_username = f"@{me.username}" if me and me.username else "Unknown Bot"
+                    if me and not getattr(me, "is_bot", False):
+                        bot_username = f"Userbot Session ({bot_username})"
+                    
+                    display_name = full_name.strip()
+                    is_blank = not display_name or all(ord(ch) < 33 or ord(ch) == 8203 for ch in display_name)
+                    final_name = "blank" if is_blank else html.escape(full_name)
+                    username_display = f"{username}" if username and username != "None" else "None"
+                    
+                    log_message = (
+                        f"{Altruix.get_string('LOGGER_CALLBACK_TITLE')}\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"{Altruix.get_string('LOGGER_CALLBACK_BOT').format(html.escape(bot_username))}\n"
+                        f"{Altruix.get_string('LOGGER_CALLBACK_USER').format(user_id, final_name)}\n"
+                        f"{Altruix.get_string('LOGGER_CALLBACK_USERNAME').format(username_display)}\n"
+                        f"{Altruix.get_string('LOGGER_CALLBACK_USER_ID').format(user_id)}\n"
+                        f"{Altruix.get_string('LOGGER_CALLBACK_CHAT').format(chat_info)}\n"
+                        f"{Altruix.get_string('LOGGER_CALLBACK_CHAT_ID').format(chat_id)}\n"
+                        f"{Altruix.get_string('LOGGER_CALLBACK_DATA').format(html.escape(cb_data))}\n"
+                        f"{Altruix.get_string('LOGGER_CALLBACK_RESULT').format(html.escape(result_status))}\n"
+                        f"{Altruix.get_string('LOGGER_CALLBACK_MSG_HEADER')}\n"
+                        f"<blockquote>{html.escape(str(msg_text)[:1000])}</blockquote>\n"
+                        f"{Altruix.get_string('LOGGER_CALLBACK_TIME').format(time_now)}\n\n"
+                        f"{Altruix.get_string('LOGGER_CALLBACK_PRIVATE_LINK').format(user_id)}"
+                    )
+                    await send_log_message(log_message)
+
+                import asyncio as _asyncio
+                _asyncio.create_task(_log_denied())
+
             if isinstance(update, CallbackQuery):
                 try:
                     await update.answer(
-                        Altruix.get_string("AUTH_BUTTON_DENIED"),
+                        result_status if 'result_status' in locals() else Altruix.get_string("AUTH_BUTTON_DENIED"),
                         show_alert=True,
                         cache_time=5
                     )

@@ -27,10 +27,11 @@ async def dlstory_input_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
     user_id = cb.from_user.id
     user_profile_edit_state[user_id] = {'action': 'download_story', 'session_index': index, 'page': page}
-    await cb.message.edit(
+    await cb.edit_message_text(
         "📥 <b>Download Story</b>\n\n"
         "Silakan kirim <b>Username</b> atau <b>ID</b> user yang ingin didownload story-nya.\n\n"
         "❌ <b>Cancel:</b> /cancel",
+        parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]])
     )
 
@@ -48,10 +49,11 @@ async def dllink_input_handler(c: Client, cb: CallbackQuery):
     
     user_id = cb.from_user.id
     user_profile_edit_state[user_id] = {'action': 'download_content', 'session_index': index, 'page': page}
-    await cb.message.edit(
+    await cb.edit_message_text(
         "💾 <b>Download Content</b>\n\n"
         "Silakan kirim <b>Link Pesan</b> (t.me/...) yang ingin didownload kontennya.\n\n"
         "❌ <b>Cancel:</b> /cancel",
+        parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]])
     )
 

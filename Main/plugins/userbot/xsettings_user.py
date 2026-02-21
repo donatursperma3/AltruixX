@@ -10,6 +10,7 @@
 PLUGIN_VERSION = "0.0.21"
 import asyncio
 import html
+import base64
 from Main import Altruix
 from pyrogram import Client
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -32,8 +33,14 @@ async def ub_settings_handler(c: Client, m):
     bot_username = Altruix.bot_manager.get_bot_username(c.me.id)
     
     try:
+        # Encode chat title for query safety
+        chat_obj = m.chat
+        chat_title = chat_obj.title or chat_obj.first_name or "Chat"
+        encoded_title = base64.b64encode(chat_title.encode('utf-8')).decode('utf-8')
+        
         # 2. Ambil hasil inline bot untuk query 'settings'
-        results = await c.get_inline_bot_results(bot_username, "settings")
+        # Add metadata to query
+        results = await c.get_inline_bot_results(bot_username, f"settings cid={chat} ctit={encoded_title}")
         
         if results and results.results:
             # 3. Kirim hasil inline ke chat
@@ -82,10 +89,14 @@ async def mysess_handler(c: Client, m):
         bot_username = Altruix.bot_manager.get_bot_username(me.id)
         
         # 2. Ambil hasil inline bot untuk query 'session_{index}'
-        # Ini akan memicu session_info_inline_handler di session_info.py
-        # yang mengembalikan Full Dashboard dengan 56+ tombol.
+        # Encode chat title
+        chat_obj = m.chat
+        chat_title = chat_obj.title or chat_obj.first_name or "Chat"
+        encoded_title = base64.b64encode(chat_title.encode('utf-8')).decode('utf-8')
+        
         try:
-            results = await c.get_inline_bot_results(bot_username, f"session_{index}")
+            query_str = f"session_{index} cid={chat} ctit={encoded_title}"
+            results = await c.get_inline_bot_results(bot_username, query_str)
             
             if results and results.results:
                 # 3. Kirim hasil inline ke chat

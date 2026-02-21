@@ -90,7 +90,8 @@ async def logger_menu_handler(c: Client, cb: CallbackQuery):
         
     buttons.append([InlineKeyboardButton("🔙 Back", callback_data=f"session_info_{index}_{page}_3")]) # Fixed page return to 3 (Logs Page)
     
-    await cb.message.edit(
+    await edit_cb(
+        cb,
         f"<b>📊 {type_map[log_type]} Control</b>\n\n"
         f"• 🔌 <b>Status:</b> {status_emoji}\n"
         f"• ⚙️ <b>Apply Type:</b> <code>{apply_label}</code>\n"
@@ -328,7 +329,7 @@ async def pmlf_menu_handler(c: Client, cb: CallbackQuery):
         ],
         [InlineKeyboardButton("🔙 Back to PM Logger", f"pml_menu_{index}_{page}")]
     ]
-    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
 async def show_pmlf_list(c: Client, cb: CallbackQuery, logger_type: str, source: str, index: int, page: int):
     """
@@ -382,7 +383,7 @@ async def show_pmlf_list(c: Client, cb: CallbackQuery, logger_type: str, source:
         buttons.append(row)
         
     buttons.append([InlineKeyboardButton("🔙 Back", f"pmlf_menu_{logger_type}_{index}_{page}")])
-    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^pmlfl_(user|bot)_(user|bot)_(\d+)_(\d+)$"))
 @iuser_check
@@ -452,7 +453,7 @@ async def mntf_menu_handler(c: Client, cb: CallbackQuery):
         ],
         [InlineKeyboardButton("🔙 Back to Mention Logger", f"mnt_menu_{index}_{page}")]
     ]
-    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
 async def show_mntf_list(c: Client, cb: CallbackQuery, source: str, index: int, page: int):
     """Helper to show mention filter list for a specific source (user/bot)"""
@@ -497,7 +498,7 @@ async def show_mntf_list(c: Client, cb: CallbackQuery, source: str, index: int, 
     if row: buttons.append(row)
     
     buttons.append([InlineKeyboardButton("🔙 Back", f"mntf_menu_{index}_{page}")])
-    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^mntfl_(user|bot)_(\d+)_(\d+)$"))
 @iuser_check

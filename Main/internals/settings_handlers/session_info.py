@@ -8,7 +8,8 @@ from datetime import datetime
 from pyrogram import Client, filters
 from pyrogram.types import (
     CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton, 
-    LinkPreviewOptions, InlineQuery, InlineQueryResultArticle, InputTextMessageContent
+    LinkPreviewOptions, InlineQuery, InlineQueryResultArticle, InputTextMessageContent,
+    ChosenInlineResult
 )
 from Main.core.decorators import log_errors, iuser_check
 from Main.core.client import Altruix
@@ -48,6 +49,7 @@ import Main.internals.settings_handlers.toggle_session_handlers
 import Main.internals.settings_handlers.sessions_list
 import Main.internals.settings_handlers.export_handlers
 import Main.internals.settings_handlers.auto_global_purgeme
+import Main.internals.settings_handlers.help_handlers
 
 @Altruix.bot.on_callback_query(filters.regex(r"^global_purgeme_(\d+)_(\d+)$"))
 @iuser_check
@@ -340,6 +342,7 @@ async def get_session_info_data(index: int, callback_page: int, button_page: int
             [InlineKeyboardButton(f"[52] {Altruix.get_string('bulk_join_menu')}", f"bulk_join_menu"), InlineKeyboardButton(f"[53] {Altruix.get_string('bulk_leave_menu')}", f"bulk_leave_menu")],
             [InlineKeyboardButton(f"[54] {Altruix.get_string('bulk_report_menu')}", f"bulk_report_menu"), InlineKeyboardButton(f"[55] {Altruix.get_string('sys_ctrl_restart')}", f"sys_ctrl_restart")],
             [InlineKeyboardButton(f"[56] {Altruix.get_string('sys_ctrl_shutdown')}", f"sys_ctrl_shutdown"), InlineKeyboardButton(f"[57] Auto GP", f"auto_gp_menu_{index}_{callback_page}")],
+            [InlineKeyboardButton(f"[58] Custom Help", callback_data=f"help_settings_menu_{index}_{callback_page}"), InlineKeyboardButton(f"[59] Custom Alert", callback_data=f"custom_alert_menu_{index}_{callback_page}")],
             [InlineKeyboardButton(f"{Altruix.get_string('prev')} (4/5)", f"session_info_{index}_{callback_page}_4")]
         ]
     
@@ -369,7 +372,7 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery):
         logger.error(f"Failed to edit message in session_info callback: {e}")
         await cb.answer(f"❌ Error: {e}", show_alert=True)
 
-@Altruix.bot.on_inline_query(filters.regex(r"^session_(\d+)(?:_(\d+))?$"))
+@Altruix.bot.on_inline_query(filters.regex(r"^session_(\d+)(?:_(\d+))?"))
 @iuser_check
 @log_errors
 async def session_info_inline_handler(c: Client, iq: InlineQuery):
@@ -381,24 +384,89 @@ async def session_info_inline_handler(c: Client, iq: InlineQuery):
     index = int(iq.matches[0].group(1))
     button_page = int(iq.matches[0].group(2)) if iq.matches[0].group(2) else 1
     
+    # Extract extra metadata from query string if present
+    query = iq.query
+    chat_id = "N/A"
+    chat_title = "N/A"
+    
+    if "cid=" in query:
+        import re
+        if m := re.search(r"cid=(-?\d+)", query):
+            chat_id = m.group(1)
+            
+    if "ctit=" in query:
+        import base64
+        try:
+            # We use base64 for the title to handle special characters in query
+            if m := re.search(r"ctit=([^&\s]+)", query):
+                encoded_title = m.group(1)
+                chat_title = base64.b64decode(encoded_title).decode('utf-8')
+        except: pass
+
     # Generate data
     text, reply_markup = await get_session_info_data(index, 1, button_page)
+    
+    # We pass chat info in the result_id to capture it in on_chosen_inline_result
+    # limit result_id to be safe
+    result_identity = f"sess_{index}_{chat_id}"
     
     # Answer inline query
     results = [
         InlineQueryResultArticle(
+            id=result_identity,
             title=f"Session Info #{index}",
-            description="Open full management dashboard with 56+ buttons",
+            description=f"Manage dashboard for {chat_title if chat_title != 'N/A' else 'this session'}",
             input_message_content=InputTextMessageContent(
                 message_text=f"<b>ℹ️ SESSION MANAGER</b>\n\n<blockquote expandable>{text}</blockquote>",
                 parse_mode=ParseMode.HTML,
                 link_preview_options=LinkPreviewOptions(is_disabled=True)
             ),
             reply_markup=reply_markup,
-            thumb_url="https://telegra.ph/file/0c6f5a3e1445790c9b0e2.jpg" # Optional thumb
+            thumb_url="https://telegra.ph/file/0c6f5a3e1445790c9b0e2.jpg"
         )
     ]
     await iq.answer(results=results, cache_time=0, is_personal=True)
+
+@Altruix.bot.on_chosen_inline_result(filters.regex(r"^sess_(\d+)_(-?\d+|N/A)"))
+async def session_info_chosen_handler(c: Client, cir: ChosenInlineResult):
+    """Capture the inline_message_id and chat metadata when a result is chosen."""
+    result_id = cir.result_id
+    inline_msg_id = cir.inline_message_id
+    
+    if not inline_msg_id:
+        return
+
+    try:
+        # sess_{index}_{chat_id}
+        parts = result_id.split("_")
+        index = parts[1]
+        chat_id = parts[2]
+        
+        # Try to get chat title from the current query if it was passed 
+        # (Though cir doesn't have the original query string usually, but we can re-parse it if needed)
+        # However, we can just store the Chat ID for now, which is the most important.
+        # If we really want the title, we can try to fetch it if chat_id is valid
+        chat_title = "Group/Chat"
+        if chat_id != "N/A":
+            try:
+                chat = await c.get_chat(int(chat_id))
+                chat_title = chat.title or chat.first_name or "Chat"
+            except: pass
+
+        # Save to database
+        await Altruix.local_db.inline_col.find_one_and_update(
+            {"_id": inline_msg_id},
+            {"$set": {
+                "_id": inline_msg_id,
+                "chat_id": chat_id,
+                "chat_title": chat_title,
+                "session_index": index,
+                "timestamp": datetime.now().timestamp()
+            }},
+            upsert=True
+        )
+    except Exception as e:
+        logger.error(f"Error in on_chosen_inline_result: {e}")
 
 # ============================================================================
 # ⌨️ CENTRAL MESSAGE HANDLER FOR INPUTS
@@ -595,11 +663,15 @@ async def sessions_info_msg_handler(c: Client, m: Message):
         await process_bulk_report_input(c, m, user_bulk_report_state[user_id])
         return
 
-    # 7. CreateGroup Inputs
-    from .creategroup_handlers import process_creategroup_input
-    if user_id in user_creategroup_state:
-        await process_creategroup_input(c, m, text)
-        return
+    # 7. Privacy & Help Inputs
+    if user_id in user_privacy_state:
+        state = user_privacy_state[user_id]
+        if state.get("action") == "edit_help_msg":
+            from .help_handlers import process_help_msg_input
+            await process_help_msg_input(c, m, state)
+            return
+
+    # 8. CreateGroup Inputs
 
     # 8. ENV Manager Inputs
     if user_id in user_env_input_state:
@@ -677,4 +749,3 @@ async def edit_confirm_handler(c: Client, cb: CallbackQuery):
         if user_id in user_edit_confirmation_state: del user_edit_confirmation_state[user_id]
     
     # Handle other confirmation actions here if needed
-    

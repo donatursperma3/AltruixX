@@ -36,7 +36,7 @@ async def export_session_cb_handler(c: Client, cb: CallbackQuery):
     
     file_name = Altruix.config.SESSION_NAMES[index] if index < len(Altruix.config.SESSION_NAMES) else None
     if not file_name:
-        await cb.message.edit("❌ Session file name not found.")
+        await cb.edit_message_text("❌ Session file name not found.")
         return
         
     session_path = os.path.join("Main/sessions", f"{file_name}.session")
@@ -47,9 +47,9 @@ async def export_session_cb_handler(c: Client, cb: CallbackQuery):
             caption=f"📄 <b>Session File</b>\n• User: {Altruix.clients[index].me.first_name}\n• Index: {index+1}",
             parse_mode=ParseMode.HTML
         )
-        await cb.message.edit("✅ Session file has been sent to your PM.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]]))
+        await cb.edit_message_text("✅ Session file has been sent to your PM.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]]))
     else:
-        await cb.message.edit(f"❌ Session file not found at: <code>{session_path}</code>", parse_mode=ParseMode.HTML)
+        await cb.edit_message_text(f"❌ Session file not found at: <code>{session_path}</code>", parse_mode=ParseMode.HTML)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^gen_conf_export_phone_(\d+)_(\d+)$"))
 @iuser_check
@@ -61,7 +61,7 @@ async def export_phone_cb_handler(c: Client, cb: CallbackQuery):
     client = Altruix.clients[index]
     me = await client.get_me()
     phone = me.phone_number if me.phone_number else "Hidden/N/A"
-    await cb.message.edit(
+    await cb.edit_message_text(
         f"📱 <b>Phone Number Information</b>\n\n• Session: {index+1}\n• User: {me.first_name}\n• Phone: <code>+{phone}</code>",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]]),
         parse_mode=ParseMode.HTML
@@ -83,7 +83,7 @@ async def track_profile_handler(c: Client, cb: CallbackQuery):
     user_id = cb.from_user.id
     # Altruix.user_track_state[user_id] = {'session_index': index, 'page': page, 'step': 'waiting_target_id'}
     
-    await cb.message.edit(
+    await cb.edit_message_text(
         "🔍 <b>Profile Tracker</b>\n\n"
         "Fitur ini akan mengecek history perubahan nama user melalui @SangMata_beta_bot.\n"
         "Silakan kirim <b>Target ID</b> atau <b>Username</b> user yang ingin dilacak.\n\n"
@@ -102,7 +102,7 @@ async def exec_term_start_handler(c: Client, cb: CallbackQuery):
     index, page = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
     await cb.answer()
     user_exec_state[cb.from_user.id] = {'session_index': index, 'page': page, 'step': 'waiting_command', 'action': 'exec_terminal'}
-    await cb.message.edit(
+    await cb.edit_message_text(
         "🖥️ <b>Terminal Execution</b>\n\n"
         "Silakan kirim perintah terminal yang ingin dijalankan.\n"
         "⚠️ <b>Gunakan dengan hati-hati.</b>\n\n"
@@ -119,7 +119,7 @@ async def eval_exec_start_handler(c: Client, cb: CallbackQuery):
     index, page = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
     await cb.answer()
     user_eval_state[cb.from_user.id] = {'session_index': index, 'page': page, 'step': 'waiting_code', 'action': 'eval_python'}
-    await cb.message.edit(
+    await cb.edit_message_text(
         "🐍 <b>Python Eval</b>\n\n"
         "Silakan kirim kode Python yang ingin dievaluasi.\n\n"
         "❌ <b>Cancel:</b> /cancel",
@@ -143,7 +143,7 @@ async def check_limit_confirm_handler(c: Client, cb: CallbackQuery):
         # Get last message from SpamBot
         async for message in session_client.get_chat_history("SpamBot", limit=1):
             if message.text:
-                await cb.message.edit(
+                await cb.edit_message_text(
                     f"<b>🚫 Limit Information (Session {index+1})</b>\n\n"
                     f"<code>{html.escape(message.text)}</code>",
                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]])
@@ -151,9 +151,9 @@ async def check_limit_confirm_handler(c: Client, cb: CallbackQuery):
                 from .utils import send_log_notification
                 await send_log_notification(c, 'check_limit', index, cb.from_user, True)
                 return
-        await cb.message.edit("❌ No response from @SpamBot.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]]))
+        await cb.edit_message_text("❌ No response from @SpamBot.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]]))
     except Exception as e:
-        await cb.message.edit(f"❌ Error checking limit: {str(e)}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]]))
+        await cb.edit_message_text(f"❌ Error checking limit: {str(e)}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]]))
 
 # Duplicate 2FA check moved to privacy_handlers.py
 
@@ -252,7 +252,7 @@ async def change_email_start_handler(c: Client, cb: CallbackQuery):
         await send_log_notification(c, 'change_email', index, cb.from_user, True, additional_info={'Email': new_email})
         
     except asyncio.TimeoutExpired:
-        await cb.message.edit("⏰ Waktu habis. Silakan ulangi.")
+        await cb.edit_message_text("⏰ Waktu habis. Silakan ulangi.")
     except RPCError as e:
         await edit_cb(cb, f"❌ Error: {e.MESSAGE}")
     except Exception as e:

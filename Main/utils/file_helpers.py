@@ -91,3 +91,24 @@ def migrate_db_files(filenames: list):
                 print(f"[Migration] Moved {old_path} to {new_path}")
             except Exception as e:
                 print(f"[Migration] Failed to move {old_path}: {e}")
+
+# ====================== CUSTOM ALERT HELPERS ======================
+import json
+CUSTOM_ALERT_FILE = get_db_path("custom_alert_settings.json")
+
+def get_custom_alert_data():
+    if not os.path.exists(CUSTOM_ALERT_FILE):
+        return {"global": {"mode": "default", "text": "⛔️ You are not allowed to use this button."}, "sessions": {}, "apply_types": {}}
+    with open(CUSTOM_ALERT_FILE, "r", encoding="utf-8") as f:
+        try: return json.load(f)
+        except: return {"global": {"mode": "default", "text": "⛔️ You are not allowed to use this button."}, "sessions": {}, "apply_types": {}}
+
+def save_custom_alert_data(data):
+    with open(CUSTOM_ALERT_FILE, "w", encoding="utf-8") as f: json.dump(data, f, indent=4)
+
+def get_user_custom_alert(user_id):
+    data = get_custom_alert_data()
+    apply_type = data.get("apply_types", {}).get(str(user_id), "global")
+    if apply_type == "per_account" and str(user_id) in data.get("sessions", {}):
+        return data["sessions"][str(user_id)]
+    return data["global"]

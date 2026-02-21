@@ -325,7 +325,7 @@ class Config(BaseConfig):
             self.loop.create_task(self.sync_env_to_db("SESSIONS", self.SESSIONS, upsert=True))
         return result
 
-    async def get_env(self, env_key, as_list=False):
+    async def get_env(self, env_key, as_list=False, default=None):
         """
         Retrieves an environment variable value, prioritizing database, Then cache, Then .env, Then class attributes.
         Includes BACKWARD COMPATIBILITY for renamed variables.
@@ -370,7 +370,6 @@ class Config(BaseConfig):
                 self._env_cache[env_key] = db_val
         
         if db_val is not None:
-            self._env_cache[env_key] = db_val
             return db_val
             
         # Priority 3: .env file
@@ -379,7 +378,7 @@ class Config(BaseConfig):
             return env_val
             
         # Priority 4: Class attribute (Defaults)
-        return getattr(self, env_key, None)
+        return getattr(self, env_key, default)
 
     def get_env_(self, env_key, as_list):
         env_ = getenv(env_key)
@@ -433,6 +432,10 @@ class Config(BaseConfig):
         # ✅ Force Save for LocalDB immediate consistency
         if hasattr(self.env_col, "db") and hasattr(self.env_col.db, "save_now"):
             await self.env_col.db.save_now()
+
+    async def set_env(self, env_name: str, value: Any) -> None:
+        """Alias for add_env_to_db(..., upsert=True)"""
+        return await self.add_env_to_db(env_name, value, upsert=True)
 
     async def add_element_to_list(self, env_name, value):
         if self.DEBUG:

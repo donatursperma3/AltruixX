@@ -43,8 +43,13 @@ async def gen_confirm_handler(c: Client, cb: CallbackQuery):
     
     confirm_text = gt("confirm_action_template").format(display_action) if Altruix.get_string("confirm_action_template") else f"<b>❓ Confirm Action</b>\n\nAre you sure you want to proceed?\n\nAction: <code>{display_action}</code>"
     
-    await cb.message.edit(
-        text=confirm_text,
-        reply_markup=InlineKeyboardMarkup(confirm_buttons),
-        parse_mode=ParseMode.HTML
-    )
+    args = {
+        "text": confirm_text,
+        "reply_markup": InlineKeyboardMarkup(confirm_buttons),
+        "parse_mode": ParseMode.HTML
+    }
+    
+    if cb.message:
+        await cb.message.edit(**args)
+    else:
+        await cb.edit_message_text(**args)

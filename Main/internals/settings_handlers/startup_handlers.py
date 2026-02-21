@@ -52,7 +52,10 @@ async def startup_menu_handler(c: Client, cb: CallbackQuery):
         [InlineKeyboardButton("📝 Edit Message", f"startup_custom_input_{index}_{page}")],
         [InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}_3")]
     ]
-    await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    if cb.message:
+        await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    else:
+        await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^startup_toggle_status_(\d+)_(\d+)$"))
 @iuser_check
@@ -100,12 +103,20 @@ async def startup_custom_input_handler(c: Client, cb: CallbackQuery):
     user_privacy_state[cb.from_user.id] = {
         'session_index': index, 'page': page, 'step': 'waiting_startup_custom_msg'
     }
-    await cb.message.edit(
-        "⌨️ <b>Input Custom Startup Message</b>\n\n"
-        "Silakan kirim pesan kustom Anda.\n"
-        "Ketik /cancel untuk membatalkan.",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancel", f"startup_custom_menu_{index}_{page}")]])
-    )
+    if cb.message:
+        await cb.message.edit(
+            "⌨️ <b>Input Custom Startup Message</b>\n\n"
+            "Silakan kirim pesan kustom Anda.\n"
+            "Ketik /cancel untuk membatalkan.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancel", f"startup_menu_{index}_{page}")]])
+        )
+    else:
+        await cb.edit_message_text(
+            "⌨️ <b>Input Custom Startup Message</b>\n\n"
+            "Silakan kirim pesan kustom Anda.\n"
+            "Ketik /cancel untuk membatalkan.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancel", f"startup_menu_{index}_{page}")]])
+        )
 
 async def process_startup_msg_input(c: Client, m: Message, state: dict):
     """Save custom startup message text"""

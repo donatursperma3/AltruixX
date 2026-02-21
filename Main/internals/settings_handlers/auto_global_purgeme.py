@@ -818,7 +818,23 @@ async def auto_gp_callback_handler(c: Client, cb: CallbackQuery):
     # ❌ LOGIC: Session Termination
     elif action == "close":
         await cb.answer("Dashboard session closed.")
-        if cb.message: await cb.message.delete()
+        try:
+            if cb.message:
+                await cb.message.delete()
+            else:
+                # Handle Inline Mode (sent via @bot assistant)
+                await cb.edit_message_text(
+                    "<b>❌ Dashboard Closed</b>\n<i>This session has been terminated.</i>", 
+                    parse_mode=enums.ParseMode.HTML
+                )
+        except Exception:
+            # Fallback for permission errors or old messages
+            try:
+                await cb.edit_message_text(
+                    "<b>❌ Dashboard Closed</b>", 
+                    parse_mode=enums.ParseMode.HTML
+                )
+            except: pass
         return
 
     # FINAL: Commit changes to DB and repopulate UI

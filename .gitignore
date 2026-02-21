@@ -168,6 +168,8 @@ pml_filters.json
 topic_cache.json
 *localdb.json
 *.localdb
+verify_logger_fix.py
+test_autogp_mock.py
 
 # Semua file JSON yang berakhiran _cache atau _settings
 *_cache.json

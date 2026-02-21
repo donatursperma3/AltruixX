@@ -7,7 +7,7 @@
 # All rights reserved.
 
 
-PLUGIN_VERSION = "0.0.2"
+PLUGIN_VERSION = "0.0.21"
 import sys
 import asyncio
 from Main import Altruix
@@ -121,10 +121,23 @@ async def help_normal(c: Client, m):
         
         custom_help = None
         parse_mode = None
+        
         if session_index != -1:
-            mode = await Altruix.config.get_env(f"HELP_INFO_{session_index}")
-            if mode == "custom":
-                custom_help = await Altruix.config.get_env(f"HELP_INFO_CUSTOM_MSG_{session_index}")
+            # Check Status
+            status = await Altruix.config.get_env(f"HELP_INFO_STATUS_{session_index}", default="default")
+            if status == "custom":
+                # Check Apply Type
+                apply_type = await Altruix.config.get_env(f"HELP_INFO_APPLY_TYPE_{session_index}", default="global")
+                
+                if apply_type == "global":
+                    # Use index 0 as global source or a dedicated key if we had one, 
+                    # but here we use the first session's custom msg if global
+                    custom_help = await Altruix.config.get_env("HELP_INFO_CUSTOM_MSG_0")
+                    if not custom_help: # Fallback if 0 is empty
+                         custom_help = await Altruix.config.get_env(f"HELP_INFO_CUSTOM_MSG_{session_index}")
+                else:
+                    custom_help = await Altruix.config.get_env(f"HELP_INFO_CUSTOM_MSG_{session_index}")
+                
                 if custom_help:
                     custom_help, parse_mode = await Altruix.resolve_placeholders(custom_help, index=session_index, client=c)
 
