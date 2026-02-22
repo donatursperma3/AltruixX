@@ -115,6 +115,17 @@ It's not necessary until you host the bot. You can get the String Session after 
 
 ## Credits
 
+
+<details>
+<summary><b>Maintainers</b></summary>
+
+> - <a href="https://www.github.com/sukri369">Sukri369</a>
+> - <a href="https://t.me/FakboiPensiun">Fakboi Pensiun</a>
+> - <a href="https://t.me/MinigramDev">Sugar Milk</a>
+> - <a href="https://t.me/coolkid369xr">CoolKid 369</a>
+
+</details>
+
 <details>
 <summary><b>Core Contributors</b></summary>
 

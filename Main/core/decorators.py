@@ -264,6 +264,8 @@ def iuser_check(func):
                 result_coro = func(*args, **kwargs)
                 _asyncio.create_task(_log_and_auth())
                 return await result_coro
+            except (StopPropagation, ContinuePropagation):
+                raise
             except MessageNotModified:
                 if isinstance(update, CallbackQuery):
                     await update.answer("ℹ️ Tidak ada perubahan diperlukan.", show_alert=True)

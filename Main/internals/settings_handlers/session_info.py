@@ -50,6 +50,7 @@ import Main.internals.settings_handlers.sessions_list
 import Main.internals.settings_handlers.export_handlers
 import Main.internals.settings_handlers.auto_global_purgeme
 import Main.internals.settings_handlers.help_handlers
+import Main.internals.settings_handlers.addons_handlers
 
 @Altruix.bot.on_callback_query(filters.regex(r"^global_purgeme_(\d+)_(\d+)$"))
 @iuser_check
@@ -140,8 +141,12 @@ async def get_session_info_data(index: int, callback_page: int, button_page: int
 
     # Menu text with account info and total button count
     try:
-        chat_info = await client.get_chat(me.id)
-        bio = chat_info.bio or "-"
+        if hasattr(client, 'bio_cache'):
+            bio = client.bio_cache
+        else:
+            chat_info = await client.get_chat(me.id)
+            bio = chat_info.bio or "-"
+            client.bio_cache = bio
     except Exception:
         bio = "-"
 
@@ -259,6 +264,10 @@ async def get_session_info_data(index: int, callback_page: int, button_page: int
                          # If it's a dict and explicitly enabled/missing (default true)
                         mention_logger_status = "✅ ON"
     except Exception: pass
+    
+    # Addons Status
+    addons_current = await Altruix.config.get_env("LOAD_ULTROID_ADDONS", default="off")
+    addons_status_icon = "✅ ON" if str(addons_current).lower() in ("on", "true", "1", "yes") else "❌ OFF"
 
     # Auto Delete Command Status
     auto_delete_mode = await Altruix.config.get_env(f"AUTO_DELETE_CMD_TYPE_{index}") or "per_account"
@@ -279,7 +288,8 @@ async def get_session_info_data(index: int, callback_page: int, button_page: int
         f"<b>👑 Sudo Status:</b> {sudo_status_icon}\n\n"
         f"<b>📋 Logger Status:</b>\n"
         f"• <b>PM Logger:</b> {pm_logger_status}\n"
-        f"• <b>Mention Logger:</b> {mention_logger_status}\n\n"
+        f"• <b>Mention Logger:</b> {mention_logger_status}\n"
+        f"• <b>Altruix Addons:</b> {addons_status_icon}\n\n"
         f"<b>📱 {Altruix.get_string('auto_delete_cmd')}:</b> {auto_delete_status_icon} \n • Mode: <code>{auto_delete_mode_display}</code> | • Delay: <code>{auto_delete_delay}s</code>\n\n"
         f"<b>🤖 Bot Assistant:</b> <spoiler>{f'<a href=\"tg://user?id={custom_bot_id}\">{custom_bot_username}</a>' if custom_bot_id else (f'{custom_bot_username}' if custom_bot_username != 'None' else 'None')}</spoiler> (Active Bots: {total_active_bots})\n"
         f"<b>⚙️ Xtra-Features:</b> {xtra_count} Aktif\n"
@@ -343,6 +353,7 @@ async def get_session_info_data(index: int, callback_page: int, button_page: int
             [InlineKeyboardButton(f"[54] {Altruix.get_string('bulk_report_menu')}", f"bulk_report_menu"), InlineKeyboardButton(f"[55] {Altruix.get_string('sys_ctrl_restart')}", f"sys_ctrl_restart")],
             [InlineKeyboardButton(f"[56] {Altruix.get_string('sys_ctrl_shutdown')}", f"sys_ctrl_shutdown"), InlineKeyboardButton(f"[57] Auto GP", f"auto_gp_menu_{index}_{callback_page}")],
             [InlineKeyboardButton(f"[58] Custom Help", callback_data=f"help_settings_menu_{index}_{callback_page}"), InlineKeyboardButton(f"[59] Custom Alert", callback_data=f"custom_alert_menu_{index}_{callback_page}")],
+            [InlineKeyboardButton(f"[60] {Altruix.get_string('load_ultroid_addons')}", callback_data=f"toggle_addons_confirm_{index}_{callback_page}")],
             [InlineKeyboardButton(f"{Altruix.get_string('prev')} (4/5)", f"session_info_{index}_{callback_page}_4")]
         ]
     
@@ -356,7 +367,12 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery):
     """Callback-based session info dashboard."""
     index = int(cb.matches[0].group(1))
     callback_page = int(cb.matches[0].group(2))
-    button_page = int(cb.matches[0].group(3)) if cb.matches[0].group(3) else 1
+    
+    # Robust group access
+    try:
+        button_page = int(cb.matches[0].group(3)) if cb.matches[0].group(3) else 1
+    except (IndexError, ValueError):
+        button_page = 1
     
     await cb.answer()
     text, reply_markup = await get_session_info_data(index, callback_page, button_page)
@@ -606,6 +622,14 @@ async def sessions_info_msg_handler(c: Client, m: Message):
         elif step == 'waiting_prefix_input':
             from .privacy_handlers import process_prefix_input
             await process_prefix_input(c, m, state)
+            return
+        elif step and step.startswith('WAIT_ULTROID_PFX'):
+            from .addons_handlers import process_ultroid_prefix_input
+            await process_ultroid_prefix_input(c, m, state)
+            return
+        elif step == 'WAIT_UPM_INSTALL':
+            from .addons_handlers import process_upm_install_input
+            await process_upm_install_input(c, m, state)
             return
         elif step == 'waiting_gcast_msg':
             from .bulk_handlers import process_gcast_input

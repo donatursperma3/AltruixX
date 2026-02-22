@@ -19,7 +19,7 @@ from pyrogram.types import Message
 from Main import Altruix
 from Main.core.decorators import log_errors
 
-PLUGIN_VERSION = "0.0.31"
+PLUGIN_VERSION = "0.0.36"
 logger = logging.getLogger("altruix.xcmd_logger")
 
 # Settings file
@@ -92,21 +92,70 @@ async def cmd_logger_handler(c: Client, m: Message):
             # Altruix.log(f"DEBUG: CmdLogger - Text '{text[:10]}' doesn't start with prefix '{prefix}'", level=logging.INFO)
             return
 
-        # 4. Filter Specific Noise
+        # 4. Check Command Auto-Delete Status (for informational log)
+        autodel_type = await Altruix.config.get_env(f"AUTO_DELETE_CMD_TYPE_{index}") or "per_account"
+        if autodel_type == "global":
+            autodel_status = await Altruix.config.get_env("AUTO_DELETE_CMD_GLOBAL")
+        else:
+            autodel_status = await Altruix.config.get_env(f"AUTO_DELETE_CMD_STATUS_{index}")
+        
+        autodel_enabled = str(autodel_status).lower() in ("on", "true", "1", "yes")
+
+        # 5. Filter Specific Noise
         cmd_part = text[len(prefix):].split()[0].lower() if len(text) > len(prefix) else ""
         if cmd_part in ["cmdlogger", "cmdlog"]:
             return
             
         Altruix.log(f"⚡ [CMD_LOGGER] Detected command: '{cmd_part}' from user {user_id}", level=logging.INFO)
 
-        # 5. Build and send log
+        # 6. Build and send log
+        chat = m.chat
+        chat_title = chat.title or f"{chat.first_name or ''} {chat.last_name or ''}".strip() or "Private Chat"
+        
+        # Clickable Link Logic
+        chat_link = None
+        msg_link = None
+        if chat.username:
+            chat_link = f"https://t.me/{chat.username}"
+            msg_link = f"https://t.me/{chat.username}/{m.id}"
+        elif chat.type == enums.ChatType.PRIVATE:
+            chat_link = f"tg://user?id={chat.id}"
+            # No universal web link for PMs, using tg:// for deep link if possible,
+            # but usually for self-audit we just use nothing or chat link
+        elif str(chat.id).startswith("-100"):
+            stripped_id = str(chat.id).replace("-100", "")
+            chat_link = f"https://t.me/c/{stripped_id}/{m.id}" # This link works better as a joiner in Pyrogram logs
+            msg_link = f"https://t.me/c/{stripped_id}/{m.id}"
+            
+        chat_display = f"<a href='{chat_link}'>{html.escape(chat_title)}</a>" if chat_link else f"<b>{html.escape(chat_title)}</b>"
+        
+        msg_link_display = f"[ <a href='{msg_link}'>here</a> ]" if msg_link else " N/A"
+
         log_message = (
-            f"⚡ <b>Command Executed</b>\n\n"
-            f"👤 <b>Account:</b> {c.me.mention(style=enums.ParseMode.HTML)}\n"
-            f"💬 <b>Chat:</b> {m.chat.title or 'Private'} (<code>{m.chat.id}</code>)\n"
+            f"⚡️ <b>Command Executed</b>\n\n"
+            f"👤 <b>Account:</b> <b>{c.me.mention(style=enums.ParseMode.HTML)}</b>\n"
+            f"💬 <b>Chat:</b> {chat_display}\n"
+            f"🆔 <b>ChatID:</b> <code>{chat.id}</code>\n"
+            f"♻️ <b>Auto del:</b> <code>{autodel_enabled}</code>\n"
             f"📝 <b>Command:</b> <code>{html.escape(text[:500])}</code>\n"
-            f"🕒 <b>Time:</b> <code>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</code>"
+            f"➡️ <b>Goto Msg:</b> {msg_link_display}\n"
         )
+        
+        # ✅ Add Reply Info if applicable
+        if m.reply_to_message:
+            reply_user = m.reply_to_message.from_user
+            if reply_user:
+                r_mention = reply_user.mention(style=enums.ParseMode.HTML)
+                r_id = reply_user.id
+                r_username = f"@{reply_user.username}" if reply_user.username else "N/A"
+                
+                log_message += (
+                    f"↩️ <b>Reply to user:</b> {r_mention}\n"
+                    f"🆔 <b>UserID :</b> <code>{r_id}</code>\n"
+                    f"*️⃣ <b>Username:</b> {r_username}\n"
+                )
+        
+        log_message += f"🕒 <b>Time:</b> <code>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</code>"
         
         # Consistently use main Bot
         bot = Altruix.bot
@@ -123,7 +172,8 @@ async def cmd_logger_handler(c: Client, m: Message):
             await bot.send_message(
                 Altruix.log_chat,
                 log_message,
-                parse_mode=enums.ParseMode.HTML
+                parse_mode=enums.ParseMode.HTML,
+                disable_web_page_preview=True
             )
             Altruix.log(f"✅ [CMD_LOGGER] Log sent successfully to {Altruix.log_chat}", level=logging.INFO)
         except Exception as send_err:

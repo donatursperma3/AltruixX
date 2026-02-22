@@ -37,8 +37,10 @@ async def autogp_dashboard_cmd(client: Client, message: Message):
     bot_username = Altruix.bot_manager.get_bot_username(user_id)
     
     if not bot_username:
-        await message.edit("❌ <b>Bot assistant not found.</b>")
-        return
+        # Fallback to direct edit if no bot found (still better than nothing)
+        text = await get_auto_gp_status_text(user_id, current_chat_id=message.chat.id)
+        await message.edit(f"❌ <b>Bot assistant not found.</b>\n\n{text}")
+        raise StopPropagation
 
     # Try Inline first
     try:

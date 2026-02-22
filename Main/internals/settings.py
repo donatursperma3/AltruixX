@@ -19,6 +19,7 @@ import os
 import logging
 import asyncio
 import html
+import glob
 from datetime import datetime
 import io
 import re
@@ -107,6 +108,7 @@ import Main.internals.settings_handlers.cmd_settings_handlers
 import Main.internals.settings_handlers.global_purgeme
 import Main.internals.settings_handlers.backup_handlers
 import Main.internals.settings_handlers.custom_alert_handlers
+import Main.internals.session_handlers
 
 # ====================== LOCALIZATION ======================
 SETTINGS_LANG = getattr(Altruix.config, "UB_LANG", "english").lower()
@@ -153,7 +155,9 @@ async def get_settings_home_text():
     ub_mod = len([x for x in Altruix.plugin_categories.values() if x == 'userbot'])
     bot_mod = len([x for x in Altruix.plugin_categories.values() if x == 'bot'])
     xtra_mod = len([x for x in Altruix.plugin_categories.values() if x == 'other'])
-    total_mod = len(Altruix.plugin_categories)
+    # Count Addons Mod (plugins/addons/*.py)
+    addons_mod = len(glob.glob("Main/plugins/addons/**/*.py", recursive=True))
+    total_mod = ub_mod + bot_mod + xtra_mod + addons_mod
     
     # Commands Count
     total_cmds = sum(len(cmds) for cmds in Altruix.cmd_list.values())
@@ -167,21 +171,21 @@ async def get_settings_home_text():
         # Fallback to hardcoded template if string missing
         template = (
             "<b>🛠️ Userbot Settings</b>\n\n"
-            "• Sessions: <code>{}</code>\n"
-            "• Active Bots: <code>{}</code> (Default: 1, Custom: {})\n"
+            "• Total Sessions: <code>{}</code>\n"
+            "• Total Bots: <code>{}</code> (Default: 1, Custom: {})\n"
             "• Xtra-Features: <code>{}</code>\n"
-            "• Module: <code>{}</code> (UB mod {}, Bot mod {}, Xtra mod {})\n"
+            "• Module: <code>{}</code> (UB {}, Bot {}, Xtra {}, Addons {})\n"
             "• Commands: <code>{}</code>\n"
             "• Version: <code>{}</code>"
         )
         return template.format(
             total_sessions, total_bots, custom_bots_count, xtra_features_count,
-            total_mod, ub_mod, bot_mod, xtra_mod, total_cmds, Altruix.__version__
+            total_mod, ub_mod, bot_mod, xtra_mod, addons_mod, total_cmds, Altruix.__version__
         ) + "\n\nSelect a category below to configure your userbot."
 
     return template.format(
-        total_sessions, total_bots, 1, custom_bots_count, xtra_features_count,
-        total_mod, ub_mod, bot_mod, xtra_mod, total_cmds, Altruix.__version__
+        total_sessions, total_bots, custom_bots_count, xtra_features_count,
+        total_mod, ub_mod, bot_mod, xtra_mod, addons_mod, total_cmds, Altruix.__version__
     ) + "\n\nSelect a category below to configure your userbot."
 
 def get_settings_buttons(user_id=None):
@@ -209,7 +213,7 @@ def get_settings_buttons(user_id=None):
 async def settings_command_handler(c: Client, m: Message):
     """Entry point for /settings command with full statistics."""
     text = await get_settings_home_text()
-    await m.reply(text, reply_markup=InlineKeyboardMarkup(get_settings_buttons(m.from_user.id)), quote=True)
+    await m.reply_msg(text, reply_markup=InlineKeyboardMarkup(get_settings_buttons(m.from_user.id)), quote=True)
 
 @Altruix.bot.on_inline_query(filters.regex(r"^settings(?:\s|$)"))
 @iuser_check

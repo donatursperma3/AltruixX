@@ -89,11 +89,23 @@ async def help_normal(c: Client, m):
     
     if user_input and (cmd_lists.get(user_input) or user_input in Altruix.cmd_list):
         help_text = cmd_lists.get(user_input, "")
+        total_cmd_count = 0
+        total_arg_count = 0
         if user_input in Altruix.cmd_list:
             cmds = []
             for item in Altruix.cmd_list[user_input]:
                 cmds.extend(item["commands"])
-            cmd_str = ", ".join([f"<code>{c}</code>" for c in sorted(set(cmds))])
+                
+                # Count arguments
+                u_args = item.get("user_args")
+                if isinstance(u_args, (dict, list)):
+                    total_arg_count += len(u_args)
+            
+            # Count unique commands
+            unique_cmds = sorted(set(cmds))
+            total_cmd_count = len(unique_cmds)
+            
+            cmd_str = ", ".join([f"<code>{c}</code>" for c in unique_cmds])
             help_text += f"\n\n<b>Commands in this plugin:</b>\n{cmd_str}"
         
         # Case-insensitive lookup for version
@@ -105,7 +117,11 @@ async def help_normal(c: Client, m):
                 version = "0.0.1"
 
         header = f"<b>❇️ Help for</b> <code>{user_input.title()}</code>\n"
-        header += f"<b>🏷️ Version:</b> <code>v{version}</code>\n\n"
+        header += f"<b>🏷️ Version:</b> <code>v{version}</code>\n"
+        header += f"<b>ℹ️ Cmd:</b> <code>{total_cmd_count}</code> cmds\n"
+        if total_arg_count > 0:
+            header += f"<b>〽️ Arg:</b> <code>{total_arg_count}</code> args\n"
+        header += "\n"
         
         await m.handle_message(f"{header}{help_text.strip()}")
     elif not user_input:

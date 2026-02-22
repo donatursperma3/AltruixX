@@ -345,12 +345,19 @@ class Message:
             _p = f"{headers.format(service_name)} : <b><a href='{paste_link}'>PREVIEW</a></b>"
             # ✅ GUNAKAN quote=True (bawaan reply)
             try:
+                # 🔄 Force reply ID via ReplyParameters if possible
+                send_kwargs = {}
+                try:
+                    send_kwargs['reply_parameters'] = ReplyParameters(message_id=self.id)
+                except TypeError:
+                    args['reply_to_message_id'] = self.id
+
                 return await self.reply(
                     _p, 
-                    quote=True, 
                     disable_web_page_preview=True, 
                     message_thread_id=message_thread_id, # ✅ Pass thread id
-                    **args
+                    **args,
+                    **send_kwargs
                 )
             except Exception as e:
                 Altruix.log(f"Failed to reply with paste: {e}", level=40)
@@ -374,12 +381,33 @@ class Message:
             except Exception as e:
                 Altruix.log(f"Failed to reply with document: {e}", level=40)
                 return await self.reply(text, quote=True, **args)
+        # ✅ KONVERSI reply_to_message_id KE reply_parameters UNTUK KOMPATIBILITAS PYROGRAM V2+
+        reply_params = None
         try:
+            # Coba gunakan ReplyParameters (Pyrogram v2+)
+            reply_params = ReplyParameters(message_id=self.id)
+        except TypeError:
+            # Fallback ke reply_to_message_id (Pyrogram < v2.0.106)
+            args['reply_to_message_id'] = self.id
+
+        try:
+            # ✅ GUNAKAN reply_params JIKA TERSEDIA, Hapus quote=True eksplisit untuk hindari konflik
+            send_kwargs = {}
+            if reply_params:
+                send_kwargs['reply_parameters'] = reply_params
+            else:
+                send_kwargs['reply_to_message_id'] = self.id
+            
+            # Buat copy args agar tidak memodifikasi original dict
+            reply_args = args.copy()
+            reply_args.pop("quote", None) # Hapus quote dari args jika ada
+            reply_args.pop("reply_to_message_id", None) # Hapus jika ada
+
             msg_ = await self.reply(
                 text, 
-                quote=True, 
                 message_thread_id=message_thread_id, # ✅ Pass thread id
-                **args
+                **reply_args,
+                **send_kwargs
             )
         except MessageTooLong:
             text = Essentials.md_to_text(text)

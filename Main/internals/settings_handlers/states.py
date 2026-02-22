@@ -31,3 +31,7 @@ user_privacy_state = {}
 
 # CreateGroup State
 user_creategroup_state = {}
+
+# Ultroid Addon States
+WAIT_ULTROID_PREFIX = "WAIT_ULTROID_PFX"
+WAIT_UPM_INSTALL = "WAIT_UPM_INSTALL"

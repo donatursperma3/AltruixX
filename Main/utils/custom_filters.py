@@ -14,20 +14,29 @@ from pyrogram.types import Message
 from .file_helpers import run_in_exc
 
 
-async def parse_(client, message: Message, cmd, disable_sudo=False):
+async def parse_(client, message: Message, cmd, is_ultroid=False, disable_sudo=False):
     # ✅ REFACTOR: Use HIGH-PERFORMANCE CACHE from Altruix
     # This prevents event loop clogging from thousands of DB lookups for every message
-    prefix_apply_type = Main.Altruix._prefix_cache["apply_type"]
+    prefix_cache = Main.Altruix._prefix_cache
+    prefix_apply_type = prefix_cache["apply_type"]
+    user_id = client.me.id if client and hasattr(client, 'me') and client.me else None
     
-    if prefix_apply_type == "global":
-        prefix_sudo_users = Main.Altruix._prefix_cache["prefix_sudo_users"]
-        prefix_owner_user = Main.Altruix._prefix_cache["prefix_owner_user"]
+    if is_ultroid:
+        if prefix_apply_type == "global":
+            prefix_owner_user = prefix_cache.get("ultroid_owner", ",")
+            prefix_sudo_users = prefix_cache.get("ultroid_sudo", "?")
+        else:
+            pa = prefix_cache["per_account"].get(user_id, {})
+            prefix_owner_user = pa.get("ult_u", prefix_cache.get("ultroid_owner", ","))
+            prefix_sudo_users = pa.get("ult_s", prefix_cache.get("ultroid_sudo", "?"))
     else:
-        # Per-Account mode
-        user_id = client.me.id if client and hasattr(client, 'me') and client.me else None
-        pa = Main.Altruix._prefix_cache["per_account"].get(user_id, {"u": Main.Altruix.prefix_owner_user, "s": Main.Altruix.prefix_sudo_users})
-        prefix_owner_user = pa["u"]
-        prefix_sudo_users = pa["s"]
+        if prefix_apply_type == "global":
+            prefix_owner_user = prefix_cache["prefix_owner_user"]
+            prefix_sudo_users = prefix_cache["prefix_sudo_users"]
+        else:
+            pa = prefix_cache["per_account"].get(user_id, {})
+            prefix_owner_user = pa.get("u", prefix_cache["prefix_owner_user"])
+            prefix_sudo_users = pa.get("s", prefix_cache["prefix_sudo_users"])
 
     try:
         if not message.text:
@@ -53,7 +62,7 @@ async def parse_(client, message: Message, cmd, disable_sudo=False):
             return False
 
         # 2. SUDO LOGIC (Sudo Prefix Only)
-        if prefix == prefix_sudo_users and command_name in cmd:
+        if not disable_sudo and prefix == prefix_sudo_users and command_name in cmd:
             # Check if current user ID is in authorized sudo list
             if message.from_user and await Main.Altruix.is_sudo(message.from_user.id, client=client):
                 Main.Altruix.log(f"👑 SUDO_FILTER: Authorized sudo user {message.from_user.id} executing command '{command_name}'", level=20)
@@ -64,10 +73,10 @@ async def parse_(client, message: Message, cmd, disable_sudo=False):
         return False
 
 
-def user_filters(cmd, disable_sudo=False):
+def user_filters(cmd, is_ultroid=False, disable_sudo=False):
     async def s_f(f, client, message):
         f_out = await parse_(
-            client=client, message=message, cmd=cmd, disable_sudo=disable_sudo
+            client=client, message=message, cmd=cmd, is_ultroid=is_ultroid, disable_sudo=disable_sudo
         )
         return f_out
 

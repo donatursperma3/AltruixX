@@ -5,7 +5,8 @@ from Main import Altruix
 from pyrogram import Client, filters
 from pyrogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from Main.core.decorators import log_errors, iuser_check
-from Main.internals.settings import edit_cb, send_log_notification, user_profile_edit_state
+from Main.internals.settings_handlers.utils import edit_cb, send_log_notification
+from Main.internals.settings import user_profile_edit_state
 import html
 
 # ====================== INFO & SECURITY HANDLERS ======================

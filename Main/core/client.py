@@ -29,6 +29,7 @@ from pathlib import Path
 from collections import defaultdict
 from functools import wraps
 from Main.core.apm import APM
+from Main.core.ext.upm import UPM
 from datetime import datetime
 from cachetools import TTLCache
 from traceback import format_exc
@@ -45,7 +46,8 @@ from ..utils.startup_helpers import concatenate
 from Main.utils.heroku_ import prepare_heroku_url
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Union, Optional
-from pyrogram.types import User, Message, CallbackQuery
+# --------------------
+
 from ..utils.multi_lang_helpers import get_all_files_in_path
 from pyrogram import (
     Client, StopPropagation, ContinuePropagation, idle, filters,
@@ -53,7 +55,37 @@ from pyrogram import (
 from pyrogram.errors.exceptions.bad_request_400 import (
     MessageEmpty, PeerIdInvalid, MessageTooLong, MessageIdInvalid,
     MessageNotModified, UserNotParticipant)
-from pyrogram.types import LinkPreviewOptions
+
+# --------------------
+from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, User, ChatPrivileges, ChatMember, BotCommand, ChatInviteLink, MenuButton, ChatPhoto, Sticker, MessageReactions, Chat, LinkPreviewOptions
+from pyrogram.errors import (
+    RPCError,
+    FloodWait,
+    ChatSendPhotosForbidden,
+    ChatSendMediaForbidden,
+    # ChatSendRoundVideoForbidden,
+    # ChatSendVideosForbidden,
+    # ChatSendAudiosForbidden,
+    # ChatSendVoicesForbidden,
+    # ChatSendDocumentsForbidden,
+    # ChatSendStickersForbidden,
+    # ChatSendGifsForbidden,
+    # ChatSendGameForbidden,
+    # ChatSendInlineForbidden,
+    # ChatWriteForbidden,
+    # UserIsBlocked,
+    PeerIdInvalid,
+    MessageNotModified
+)
+
+# Monkey-patch Message.edit to ignore MessageNotModified
+_old_edit = Message.edit
+async def _new_edit(self, *args, **kwargs):
+    try:
+        return await _old_edit(self, *args, **kwargs)
+    except MessageNotModified:
+        return self
+Message.edit = _new_edit
 from pyrogram.enums import ParseMode
 from pyrogram.errors import FloodWait
 import psutil
@@ -126,10 +158,12 @@ class AltruixClient:
         self.clients: List[Client] = []
         self.cmd_list = {}
         self.all_lang_strings = {}
-        self.__version__ = "0.0.9.859D" # ✅ Optimized Sudo & Prefix Cache
+        self.__version__ = "0.0.10.030D" # ✅ Ultroid Compatibility Fix
+        self.upm = UPM(self)
         self.selected_lang = "english"
         self.local_lang_file = "./Main/localization"
         self.cmd_list = {} # {plugin_name: [cmd_data, ...]}
+        self._module_helps = {} # {plugin_name: docstring}
         self.plugin_categories = {} # {plugin_name: 'userbot'|'bot'|'other'}
         self.start_time = time.time()
         self.app_url_ = None
@@ -152,7 +186,9 @@ class AltruixClient:
             "apply_type": "global",
             "prefix_owner_user": ".",
             "prefix_sudo_users": "!",
-            "per_account": {} # {user_id: {"u": ".", "s": "!"}}
+            "ultroid_owner": ",", # Default for Ultroid Addons
+            "ultroid_sudo": "?",  # Default for Ultroid Sudo
+            "per_account": {} # {user_id: {"u": ".", "s": "!", "ult_u": ",", "ult_s": "?"}}
         }
         self._sudo_settings_cache = {
             "apply_type": "global",
@@ -368,15 +404,17 @@ class AltruixClient:
 
     @property
     def banner(self):
-        return f"""
-     _    _ _              _
-    / \\  | | |_ _ __ _   _(_)_  __
-   / _ \\ | | __| '__| | | | \\ \\/ /
-  / ___ \\| | |_| |  | |_| | |>  <
- /_/   \\_\\_|\\__|_|   \\__,_|_/_/\\_\\
-
- (C) Project-Altruix Reborn 2021-{datetime.today().year}
- Version: {self.__version__} - [ Altruix Assistant ]
+        return fr"""
+   _____  .__   __                .__    .___        ____  ___
+  /  _  \ |  |_/  |________  ____ |__| __| _/        \   \/  /
+ /  /_\  \|  |\   __\_  __ \/  _ \|  |/ __ |  ______  \     / 
+/    |    \  |_|  |  |  | \(  <_> )  / /_/ | /_____/  /     \ 
+\____|__  /____/__|  |__|   \____/|__\____ |         /___/\  \.
+        \/                                \/               \_/
+                                                    
+                                                    
+ (C) Project Altruix + Ultroid + Alpha-X 2021-{datetime.today().year}
+ Version: {self.__version__} - [ Altroid-X Assistant ]
         """
 
     @property
@@ -390,6 +428,32 @@ class AltruixClient:
         Uses the optimized cache set.
         """
         return list(self._auth_users_cache)
+
+    async def get_prefix(self, user_id: int, message: Message = None, is_ultroid: bool = False) -> str:
+        """Centralized helper to get the prefix for a specific user session."""
+        is_global = self._prefix_cache["apply_type"] == "global"
+        
+        if is_ultroid:
+            if is_global:
+                u_p = self._prefix_cache.get("ultroid_owner", ",")
+                s_p = self._prefix_cache.get("ultroid_sudo", "?")
+            else:
+                pa = self._prefix_cache["per_account"].get(user_id, {})
+                u_p = pa.get("ult_u", self._prefix_cache.get("ultroid_owner", ","))
+                s_p = pa.get("ult_s", self._prefix_cache.get("ultroid_sudo", "?"))
+        else:
+            if is_global:
+                u_p = self._prefix_cache["prefix_owner_user"]
+                s_p = self._prefix_cache["prefix_sudo_users"]
+            else:
+                pa = self._prefix_cache["per_account"].get(user_id, {})
+                u_p = pa.get("u", self._prefix_cache["prefix_owner_user"])
+                s_p = pa.get("s", self._prefix_cache["prefix_sudo_users"])
+        
+        if message and message.text:
+            if message.text.startswith(u_p): return u_p
+            if message.text.startswith(s_p): return s_p
+        return u_p
 
     async def is_sudo(self, user_id: int, client: Client = None) -> bool:
         """
@@ -522,6 +586,8 @@ class AltruixClient:
             self._sudo_settings_cache["enabled_global"] = (enabled_raw != "false") if enabled_raw else True
             self._prefix_cache["prefix_owner_user"] = await self.config.get_env("PREFIX_OWNER_USER") or self.prefix_owner_user
             self._prefix_cache["prefix_sudo_users"] = await self.config.get_env("PREFIX_SUDO_USERS") or self.prefix_sudo_users
+            self._prefix_cache["ultroid_owner"] = await self.config.get_env("ULTROID_PREFIX_OWNER") or ","
+            self._prefix_cache["ultroid_sudo"] = await self.config.get_env("ULTROID_PREFIX_SUDO") or "?"
             
             # ✅ UPDATE OPTIMIZED CACHE
             self._auth_users_cache = new_sudo_set.copy()
@@ -540,7 +606,9 @@ class AltruixClient:
                     # Prefix
                     up = await self.config.get_env(f"PREFIX_OWNER_USER_{tid}") or self.prefix_owner_user
                     sp = await self.config.get_env(f"PREFIX_SUDO_USERS_{tid}") or self.prefix_sudo_users
-                    self._prefix_cache["per_account"][tid] = {"u": up, "s": sp}
+                    ulp = await self.config.get_env(f"ULTROID_PREFIX_OWNER_{tid}") or ","
+                    usp = await self.config.get_env(f"ULTROID_PREFIX_SUDO_{tid}") or "?"
+                    self._prefix_cache["per_account"][tid] = {"u": up, "s": sp, "ult_u": ulp, "ult_s": usp}
                 except: pass
                 
             self.log(f"✅ Sudo & Prefix cache refreshed: {len(self.db_sudo_users)} sudo users.", level=logging.INFO)
@@ -571,9 +639,9 @@ class AltruixClient:
         logging.basicConfig(
             level=logging.INFO,
             datefmt="[%d/%m/%Y %H:%M:%S]",
-            format="%(asctime)s - [Altruix] >> %(levelname)s << %(message)s",
+            format="%(asctime)s - [Altroid-X] >> %(levelname)s << %(message)s",
             handlers=[
-                logging.FileHandler("altruix.log", encoding="utf-8"),
+                logging.FileHandler("altruix.log", encoding="utf-8", mode="w"),
                 logging.StreamHandler()
             ],
         )
@@ -850,35 +918,63 @@ class AltruixClient:
         bot_mode_unsupported: bool = False,
         group=1,
         disallow_if_sender_is_channel=False,
+        is_ultroid: bool = None,
     ):
         if isinstance(cmd, str):
             cmd = [cmd]
         self.cmd_list_s.extend(cmd)
-        previous_stack_frame = inspect.stack()[1]
-        full_path = previous_stack_frame.filename
-        file_name = os.path.basename(full_path.replace(".py", ""))
-        
-        # ✅ Detect Category based on directory
+        # ✅ Detect Category based on stack (robust for bridge layers)
         category = "other"
-        if "plugins/userbot" in full_path.replace("\\", "/"):
-            category = "userbot"
-        elif "plugins/bot" in full_path.replace("\\", "/"):
-            category = "bot"
+        full_path = inspect.stack()[1].filename
         
+        # Search stack for first plugin directory
+        for frame in inspect.stack():
+            fname = frame.filename.replace("\\", "/")
+            if "plugins/userbot" in fname:
+                category = "userbot"
+                full_path = fname
+                frame_to_use = frame.frame
+                break
+            elif "plugins/bot" in fname:
+                category = "bot"
+                full_path = fname
+                frame_to_use = frame.frame
+                break
+            elif "plugins/addons" in fname:
+                category = "ultroid"
+                full_path = fname
+                frame_to_use = frame.frame
+                break
+        
+        file_name = os.path.basename(full_path.replace(".py", ""))
         self.plugin_categories[file_name.lower()] = category
+        if is_ultroid is None:
+            is_ultroid = category == "ultroid"
+
+        # ✅ Detect Module Docstring (for Addon Help)
+        if category == "ultroid" and file_name.lower() not in self._module_helps:
+            try:
+                # Use the module from the frame we found in the loop above
+                if 'frame_to_use' in locals():
+                    module = inspect.getmodule(frame_to_use)
+                    if module and module.__doc__:
+                        self._module_helps[file_name.lower()] = module.__doc__.strip()
+            except Exception:
+                pass
 
         # ✅ Detect Plugin Version
         plugin_version = "0.0.1"
         try:
-            # Check if PLUGIN_VERSION exists in the caller's globals (reliable for decorators)
-            caller_globals = previous_stack_frame.frame.f_globals
-            plugin_version = caller_globals.get("PLUGIN_VERSION", "0.0.1")
-            
-            if plugin_version == "0.0.1":
-                # Fallback: check caller's module if globals didn't work
-                module = inspect.getmodule(previous_stack_frame.frame)
-                if module:
-                    plugin_version = getattr(module, "PLUGIN_VERSION", "0.0.1")
+            # Check frames for PLUGIN_VERSION
+            for frame in inspect.stack():
+                caller_globals = frame.frame.f_globals
+                if "PLUGIN_VERSION" in caller_globals:
+                    plugin_version = caller_globals["PLUGIN_VERSION"]
+                    break
+                module = inspect.getmodule(frame.frame)
+                if module and hasattr(module, "PLUGIN_VERSION"):
+                    plugin_version = getattr(module, "PLUGIN_VERSION")
+                    break
         except Exception:
             pass
 
@@ -911,11 +1007,20 @@ class AltruixClient:
                     is_sudo_user = await self.is_sudo(sender_id, client=client) if not is_self else False
                     
                     if self._prefix_cache["apply_type"] == "global":
-                        u_p = self._prefix_cache["prefix_owner_user"]
-                        s_p = self._prefix_cache["prefix_sudo_users"]
+                        if is_ultroid:
+                            u_p = self._prefix_cache.get("ultroid_owner", ",")
+                            s_p = self._prefix_cache.get("ultroid_sudo", "?")
+                        else:
+                            u_p = self._prefix_cache["prefix_owner_user"]
+                            s_p = self._prefix_cache["prefix_sudo_users"]
                     else:
-                        pa = self._prefix_cache["per_account"].get(current_client_id, {"u": self.prefix_owner_user, "s": self.prefix_sudo_users})
-                        u_p, s_p = pa["u"], pa["s"]
+                        pa = self._prefix_cache["per_account"].get(current_client_id, {})
+                        if is_ultroid:
+                            u_p = pa.get("ult_u", self._prefix_cache.get("ultroid_owner", ","))
+                            s_p = pa.get("ult_s", self._prefix_cache.get("ultroid_sudo", "?"))
+                        else:
+                            u_p = pa.get("u", self._prefix_cache["prefix_owner_user"])
+                            s_p = pa.get("s", self._prefix_cache["prefix_sudo_users"])
 
                     is_user_cmd = message.text and message.text.startswith(u_p)
                     is_sudo_cmd = message.text and message.text.startswith(s_p)
@@ -989,6 +1094,10 @@ class AltruixClient:
                     await func(client, message)
                 else:
                     try:
+                        # Re-verify filters with correct context if needed
+                        from Main.utils.custom_filters import parse_
+                        if not await parse_(client, message, cmd, is_ultroid=is_ultroid, disable_sudo=disabled_sudo):
+                            return
                         await func(client, message)
                     except StopPropagation as e:
                         raise StopPropagation from e
@@ -1037,6 +1146,7 @@ class AltruixClient:
                 cmd,
                 wrapper,
                 disable_sudo=disabled_sudo,
+                is_ultroid=is_ultroid,
                 group=group,
                 bot_mode_unsupported=bot_mode_unsupported,
             )
@@ -1059,6 +1169,9 @@ class AltruixClient:
         help_text = html.escape(
             help_map.get("help", "Sorry, No help available for this command")
         )
+        usage = help_map.get("usage")
+        if usage:
+            usage = html.escape(usage)
         user_args = help_map.get("user_args")
         detail = help_map.get("detail")
         if isinstance(commands, str):
@@ -1068,6 +1181,7 @@ class AltruixClient:
                 {
                     "commands": commands,
                     "help": help_text,
+                    "usage": usage,
                     "example": example,
                     "user_args": user_args,
                     "requires_input": requires_input,
@@ -1086,6 +1200,7 @@ class AltruixClient:
                 {
                     "commands": commands,
                     "help": help_text,
+                    "usage": usage,
                     "example": example,
                     "user_args": user_args,
                     "requires_input": requires_input,
@@ -1104,6 +1219,7 @@ class AltruixClient:
         func_=None,
         filter_s=None,
         disable_sudo=False,
+        is_ultroid=False,
         group=0,
         handler_type=MessageHandler,
         bot_mode_unsupported=False,
@@ -1112,7 +1228,7 @@ class AltruixClient:
             self.config.PREFIX_OWNER_USER
             basic_filters = (
                 filter_s
-                or user_filters(list(cmd) if cmd else [], disable_sudo=disable_sudo)
+                or user_filters(list(cmd) if cmd else [], is_ultroid=is_ultroid, disable_sudo=disable_sudo)
                 & ~filters.via_bot
                 & ~filters.forwarded
             )
@@ -1859,12 +1975,12 @@ class AltruixClient:
                             success_count += 1
                             if client == self.bot:
                                 # Bot logic: [1/1]
-                                log_msg = f"DONE: [1/1] 🤖 Bot: {name} -» send startup msg"
+                                log_msg = f"✔ SL_MSG BY: [1/1] 🤖 Bot: {name}"
                             else:
                                 # Userbot logic: [current/total_userbots]
                                 userbot_index = self.clients.index(client) + 1
                                 total_userbots = len(self.clients)
-                                log_msg = f"DONE: [{userbot_index}/{total_userbots}] 🦸🏼 Ubot: {name} -» send startup msg"
+                                log_msg = f"✔ SL_MSG BY: [{userbot_index}/{total_userbots}] 🦸🏼 Ubot: {name}"
                             
                             self.log(log_msg, level=20)
                         except FloodWait as e:
@@ -1880,9 +1996,9 @@ class AltruixClient:
                             failed_clients.append(f"• <b>{name}{username}</b> → {error_type}")
                             self.log(f"GAGAL: [{client_type}] {name}{username} → {error_type}: {error_msg}", level=30)
                     self.log("=== RINGKASAN PENGIRIMAN STARTUP LOG ===")
-                    self.log(f"Berhasil kirim: {success_count}/{len(all_clients)} client", level=20)
+                    self.log(f"✔ Successfully sent: {success_count}/{len(all_clients)} client", level=20)
                     if failed_clients:
-                        self.log("Client yang gagal:", level=30)
+                        self.log("✖ Failed client:", level=30)
                         for fail in failed_clients:
                             self.log(f" {fail}", level=30)
                     else:
@@ -2187,6 +2303,10 @@ class AltruixClient:
             "index": (index + 1) if index is not None and index >= 0 else "N/A",
             "total_sessions": total_sessions,
             "total_commands": self.total_commands,
+            "prefix": self._prefix_cache["prefix_owner_user"],
+            "sudo_prefix": self._prefix_cache["prefix_sudo_users"],
+            "ultroid_prefix": self._prefix_cache.get("ultroid_owner", ","),
+            "ultroid_sudo_prefix": self._prefix_cache.get("ultroid_sudo", "?"),
 
             
             # Legacy/Requested (userbot version) style
@@ -2201,7 +2321,8 @@ class AltruixClient:
             "(total commands)": self.total_commands,
             "(userbot plugins)": ub_plugins,
             "(bot plugins)": bot_plugins,
-
+            "total_addons": len([p for p, cat in self.plugin_categories.items() if cat == "ultroid"]),
+            "(total addons)": len([p for p, cat in self.plugin_categories.items() if cat == "ultroid"]),
         }
         
         if me:
@@ -2217,7 +2338,25 @@ class AltruixClient:
             mention_full = f'<a href="tg://user?id={me.id}">{m_full}</a>' if parse_mode == ParseMode.HTML else f"[{full}](tg://user?id={me.id})"
             username = f"@{me.username}" if me.username else ""
             
+            # Determine prefixes for this specific session
+            is_global = self._prefix_cache["apply_type"] == "global"
+            if is_global:
+                up = self._prefix_cache["prefix_owner_user"]
+                sp = self._prefix_cache["prefix_sudo_users"]
+                ulp = self._prefix_cache.get("ultroid_owner", ",")
+                usp = self._prefix_cache.get("ultroid_sudo", "?")
+            else:
+                pa = self._prefix_cache["per_account"].get(me.id, {})
+                up = pa.get("u", self._prefix_cache["prefix_owner_user"])
+                sp = pa.get("s", self._prefix_cache["prefix_sudo_users"])
+                ulp = pa.get("ult_u", self._prefix_cache.get("ultroid_owner", ","))
+                usp = pa.get("ult_s", self._prefix_cache.get("ultroid_sudo", "?"))
+
             replacements.update({
+                "prefix": up,
+                "sudo_prefix": sp,
+                "ultroid_prefix": ulp,
+                "ultroid_sudo_prefix": usp,
                 "first_name": first,
                 "last_name": last,
                 "full_name": full,
@@ -2246,6 +2385,10 @@ class AltruixClient:
         # Perform replacement for {} style
         try:
             # We use a safer way than .format() to avoid KeyError on unknown braces
+            # Add Aliases for compatibility
+            replacements["i"] = replacements.get("prefix", ".")
+            replacements["HNDLR"] = replacements.get("ultroid_prefix", ",")
+
             for k, v in replacements.items():
                 if not k.startswith("("):
                     text = text.replace(f"{{{k}}}", str(v))
@@ -2304,6 +2447,7 @@ class AltruixClient:
         cmd: Union[str, List[str]],
         error: str,
         file_name: str,
+        use_bot: bool = False,
         **args,
     ):
         chat_id = self.log_chat
@@ -2316,13 +2460,14 @@ class AltruixClient:
         txt_ = self.get_string(
             "ERROR_REPORT", args=(cmd_handler, cmd, error, cmd_handler, file_name)
         )
+        target_client = self.bot if use_bot else client
         try:
-            m = await client.send_message(chat_id, txt_, **args)
+            m = await target_client.send_message(chat_id, txt_, **args)
         except MessageTooLong:
             text = Essentials.md_to_text(txt_)
             service, paste_link = await Paste(text).paste()
             txt = headers.format(service.title(), paste_link)
-            m = await client.send_message(chat_id, txt, **args)
+            m = await target_client.send_message(chat_id, txt, **args)
         return m
 
     async def reboot(
@@ -2337,12 +2482,15 @@ class AltruixClient:
         if p_msg:
             return await p_msg.edit_msg(msg.strip())
 
-    async def load_from_directory(self, path: str, log=True, msg=None):
-        helper_scripts = glob.glob(path)
+    async def load_from_directory(self, path: str, log=True, msg=None, recursive=False):
+        helper_scripts = glob.glob(path, recursive=recursive)
         if not helper_scripts:
             return await self.custom_log(
                 f"No plugins loaded from {path}", level=logging.INFO, p_msg=msg
             )
+        # Filter out directories if any (though glob *.py usually doesn't return dirs)
+        helper_scripts = [f for f in helper_scripts if os.path.isfile(f)]
+        
         plugin_count = str(len(helper_scripts))
         loaded_pc = 0
         for name in helper_scripts:
@@ -2352,10 +2500,25 @@ class AltruixClient:
                 with open(name, encoding="utf-8") as a:
                     path_ = Path(a.name)
                     plugin_name = path_.stem
-                    plugins_dir = Path(path.replace("*", plugin_name))
-                    import_path = path.replace("/", ".")[:-4] + plugin_name
-                    import_type = import_path.split(".")[-2]
-                    spec = importlib.util.spec_from_file_location(import_path, plugins_dir)
+                    
+                    # Robust import path calculation
+                    # Convert 'Main/plugins/addons/inline/imdb.py' -> 'Main.plugins.addons.inline.imdb'
+                    rel_path = os.path.relpath(name, os.getcwd())
+                    import_path = rel_path.replace(os.sep, ".").replace("/", ".")
+                    if import_path.endswith(".py"):
+                        import_path = import_path[:-3]
+                    
+                    # Identify category based on the directory structure
+                    if "userbot" in import_path:
+                        import_type = "userbot"
+                    elif "addons" in import_path:
+                        import_type = "addons"
+                    elif ".bot" in import_path or "Main.plugins.bot" in import_path:
+                        import_type = "bot"
+                    else:
+                        import_type = "other"
+
+                    spec = importlib.util.spec_from_file_location(import_path, name)
                     load = importlib.util.module_from_spec(spec)
                     load.Altruix = self
                     load.bot = self.bot
@@ -2364,9 +2527,43 @@ class AltruixClient:
                         import_type = "U"
                     elif import_type == "bot":
                         import_type = "A"
+                    elif import_type == "addons":
+                        import_type = "X"
+                        # Check if Ultroid Addons are enabled
+                        is_enabled = await self.config.get_env("LOAD_ULTROID_ADDONS", default="off")
+                        if str(is_enabled).lower() not in ("on", "true", "1", "yes"):
+                            # Skip loading if disabled
+                            continue
+                        
+                        # Inject Ultroid Bridge Symbols
+                        try:
+                            from Main.core.ext.ultroid_bridge import (
+                                ultroid_cmd, UltroidEvent, eor, eod, udB, as_commas, get_string
+                            )
+                            load.ultroid_cmd = ultroid_cmd
+                            load.UltroidEvent = UltroidEvent
+                            load.get_string = get_string
+                            load.eor = eor
+                            load.eod = eod
+                            load.udB = udB
+                            load.as_commas = as_commas
+                            # Also inject common names
+                            load.event = UltroidEvent
+                        except Exception as bridge_err:
+                            self.log(f"Failed to inject Ultroid bridge: {bridge_err}", level=logging.ERROR)
                     else:
                         import_type = "M"
                     try:
+                        # ✅ Trigger Dynamic Altruix Injection for Ultroid Addons
+                        is_ultroid = import_type == "X"
+                        if is_ultroid and hasattr(sys, '_altruix_inject_addon'):
+                            sys._altruix_inject_addon(load)
+                        
+                        # ✅ Recursive injection for sub-packages
+                        # If this module has a __path__ (is a package), we might need to inject symbols 
+                        # into its children as well when they are loaded, but for now injecting into the 
+                        # main module handles the 'from . import ...' cases effectively.
+                            
                         spec.loader.exec_module(load)
                         sys.modules[import_path] = load
                         end_time = round(time.time() - start_time, 2)
@@ -2398,7 +2595,12 @@ class AltruixClient:
                             level=50,
                             p_msg=msg,
                         )
-                        print(f"\n{full_error_log}\n", flush=True)
+                        # ✅ Suppress massive tracebacks for Ultroid Addons missing third-party dependencies
+                        if import_type == "X":
+                            err_msg = full_trace.strip().split("\n")[-1]
+                            print(f"\n[X] CRITICAL << Failed To Load Addon: {plugin_name} | Reason: {err_msg}\n", flush=True)
+                        else:
+                            print(f"\n{full_error_log}\n", flush=True)
                         continue
             except (OSError, UnicodeDecodeError) as e:
                 error_msg = f"Failed to read plugin file '{name}': {e}"
@@ -2419,6 +2621,7 @@ class AltruixClient:
             process.pid,
         )
 
+
     async def load_all_modules(self):
         self.log("Starting to load all modules...", level=logging.INFO)
         try:
@@ -2426,6 +2629,13 @@ class AltruixClient:
             await self.load_from_directory("Main/internals/*.py", log=False)
             self.log("All internal modules have been loaded.")
             self.log("Preparing to load all plugins.\n")
+            # Setup Ultroid Shims before loading any plugins
+            try:
+                from Main.core.ext.ultroid_shims import setup_shims
+                setup_shims(self)
+            except Exception as e:
+                self.log(f"Failed to setup Ultroid shims: {e}", level=logging.ERROR)
+
             await self.load_from_directory("Main/plugins/bot/*.py", log=True)
             if self.training_wheels_protocol:
                 self.log("Userbot Plugins will be disabled due to [TWP]!")
@@ -2439,8 +2649,96 @@ class AltruixClient:
                     self.log("BOT_MODE: ON - Loaded all possible Modules as BOT.")
                     self.loaded_bot_cmds = True
                 await self.install_all_apm_packages()
-                if os.path.lexists("Main/plugins/external"):
-                    await self.load_from_directory("Main/plugins/externals/*.py", log=True)
+                
+                # ✅ NEW: Sync Ultroid Addons before loading
+                is_enabled = await self.config.get_env("LOAD_ULTROID_ADDONS", default="off")
+                if str(is_enabled).lower() in ("on", "true", "1", "yes"):
+                    await self.upm.sync_addons()
+
+                if os.path.lexists("Main/plugins/addons"):
+                    # ✅ Silent Injection: Populate package namespace for relative imports ('from . import ...')
+                    try:
+                        import Main.plugins.addons as addon_pkg
+                        import sys as _sys
+                        # ✅ Alias: some addons do `from addons.xxx import yyy` expecting a top-level package
+                        if 'addons' not in _sys.modules:
+                            _sys.modules['addons'] = addon_pkg
+                        from Main.core.ext.ultroid_bridge import get_string, ultroid_cmd, as_commas
+                        import requests
+                        import asyncio
+                        addon_pkg.get_string = get_string
+                        addon_pkg.ultroid_cmd = ultroid_cmd
+                        addon_pkg.as_commas = as_commas
+                        addon_pkg.HNDLR = await self.get_prefix(self.clients[0].me.id, None, is_ultroid=True)
+                        addon_pkg.requests = requests
+                        addon_pkg.asyncio = asyncio
+                        class UltroidBotShim:
+                            def __init__(self, real_bot):
+                                self._real_bot = real_bot
+                            @property
+                            def uid(self):
+                                # Telethon-style user ID
+                                return getattr(self._real_bot.me, 'id', None) if self._real_bot.me else None
+                            def on(self, *args, **kwargs):
+                                return lambda f: f
+                            def add_handler(self, *args, **kwargs):
+                                pass
+                            def add_event_handler(self, *args, **kwargs):
+                                pass
+                            def remove_event_handler(self, *args, **kwargs):
+                                pass
+                            def __getattr__(self, name):
+                                return getattr(self._real_bot, name, None) or _OptDummy()
+                        
+                        addon_pkg.ultroid_bot = UltroidBotShim(self.bot)
+                        # ULTConfig shim for legacy plugins
+                        addon_pkg.ULTConfig = self.config
+                        
+                        # ✅ Universal __getattr__ Interceptor (PEP 562)
+                        # This silently satisfies ANY missing import like 'bash', 'downloader', 'async_searcher'
+                        # returning a safe dummy object that can be called or accessed without crashing.
+                        if not hasattr(addon_pkg, '__getattr__'):
+                            class UltroidDummy:
+                                def __call__(self, *args, **kwargs):
+                                    # Act as pass-through decorator if first arg is callable
+                                    if args and callable(args[0]): return args[0]
+                                    return self
+                                def __getattr__(self, item): return self
+                                def __bool__(self): return False
+                                def __iter__(self): return iter([self, self])
+                                def __await__(self):
+                                    async def dummy_coro(): return self
+                                    return dummy_coro().__await__()
+                                def __str__(self): return ""
+                                def __repr__(self): return "<UltroidDummy>"
+
+                            def universal_getattr(name):
+                                if name == '__all__': return []
+                                return UltroidDummy()
+                                
+                            addon_pkg.__getattr__ = universal_getattr
+                        addon_pkg.__all__ = []
+                        
+                        # ✅ Broaden injection to subpackages (e.g. 'addons.inline')
+                        # Some addons do `from .. import LOGS` in `addons/inline/imdb.py`
+                        for m_name, m_obj in _sys.modules.items():
+                            if m_name.startswith("Main.plugins.addons.") or m_name.startswith("addons."):
+                                for key in ["LOGS", "get_string", "ultroid_cmd", "as_commas", "HNDLR", "requests", "asyncio", "ultroid_bot", "ULTConfig", "in_pattern", "callback", "asst", "InlinePlugin", "async_searcher", "Button"]:
+                                    if not hasattr(m_obj, key):
+                                        val = getattr(addon_pkg, key, None)
+                                        if val: setattr(m_obj, key, val)
+                    except Exception as e:
+                        self.log(f"Silent injection error: {traceback.format_exc()}")
+
+                    if not hasattr(self.bot, 'on'):
+                        self.bot.on = lambda *args, **kwargs: lambda f: f
+                    for cli in self.clients:
+                        if not hasattr(cli, 'on'):
+                            cli.on = lambda *args, **kwargs: lambda f: f
+                    await self.load_from_directory("Main/plugins/addons/**/*.py", log=True, recursive=True)
+                
+                await self.load_from_directory("User/userbot/*.py", log=True)
+                
                 self.log("All plugins have been loaded.")
                 self.prepare_help()
             
@@ -2472,35 +2770,54 @@ class AltruixClient:
         for plugin_name, commands_data in self.cmd_list.items():
             try:
                 plugin_name = plugin_name.lower()
+                category = self.plugin_categories.get(plugin_name, "other")
+                is_ultroid = category == "ultroid"
+                display_pfx = "{ultroid_prefix}" if is_ultroid else "{prefix}"
+                
                 self._command_help_message_data[plugin_name] = ""
+                
+                # ✅ Add Module Docstring if exists
+                if mod_help := self._module_helps.get(plugin_name):
+                    # Basic cleanup and placeholder preparation
+                    self._command_help_message_data[plugin_name] += f"<i>{mod_help}</i>\n\n"
+
                 for each_command_data in commands_data:
                     commands_: List[str] = each_command_data.get("commands", ["???"])
                     help_text = each_command_data.get("help")
+                    usage_text = each_command_data.get("usage")
                     example_text = each_command_data.get("example")
                     user_args = each_command_data.get("user_args")
-                    self._command_help_message_data[plugin_name] += "\n<b>Command :</b>"
+                    self._command_help_message_data[plugin_name] += "\n<b>➤ Command :</b>"
                     for _cmd_str in commands_:
                         self._command_help_message_data[
                             plugin_name
-                        ] += f"<code>{self.prefix_owner_user}{_cmd_str}</code>/"
+                        ] += f"<code>{display_pfx}{_cmd_str}</code>/"
                     self._command_help_message_data[plugin_name] = (
                         self._command_help_message_data[plugin_name][:-1] + "\n"
                     )
                     self._command_help_message_data[
                         plugin_name
-                    ] += f"<b>Help :</b> <i>{help_text}</i>\n"
+                    ] += f"\n<b>➥ Help :</b> <i>{help_text}</i>\n"
+                    if usage_text:
+                        self._command_help_message_data[
+                            plugin_name
+                        ] += f"\n<b>➥ Usage :</b> <code>{usage_text}</code>\n"
                     if example_text:
                         self._command_help_message_data[
                             plugin_name
-                        ] += f"<b>Example :</b> <code>{self.prefix_owner_user}{example_text}</code>\n"
+                        ] += f"\n<b>➥ Example :</b> <code>{display_pfx}{example_text}</code>\n"
                     
                     # ✅ Support for 'detail' key
                     if detail_text := each_command_data.get("detail"):
+                        # detail might contain pre-formatted HTML, but for safety with user input 
+                        # we should ensure it doesn't break the parent tags. 
+                        # However, since most plugins expect HTML to work here, we'll keep it as-is 
+                        # but ensure 'usage' and 'user_args' are safe.
                         self._command_help_message_data[
                             plugin_name
                         ] += f"\n{detail_text}\n"
                     if user_args:
-                        self._command_help_message_data[plugin_name] += "<b>Arguments:</b>\n"
+                        self._command_help_message_data[plugin_name] += "\n<b>➥ Arguments:</b>\n"
                         if isinstance(user_args, list):
                             for arg_data in user_args:
                                 if isinstance(arg_data, dict):
@@ -2516,9 +2833,12 @@ class AltruixClient:
                                     ] += f" <code>{arg_data}</code>\n"
                         elif isinstance(user_args, dict):
                             for arg_flag, arg_help in user_args.items():
+                                # Escape arg_flag and arg_help for safety
+                                e_flag = html.escape(str(arg_flag))
+                                e_help = html.escape(str(arg_help))
                                 self._command_help_message_data[
                                     plugin_name
-                                ] += f" <code>{arg_flag}</code> - {arg_help}\n"
+                                ] += f" <code>{e_flag}</code> - {e_help}\n"
                         else:
                             self._command_help_message_data[
                                 plugin_name

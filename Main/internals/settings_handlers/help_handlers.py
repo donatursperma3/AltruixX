@@ -28,12 +28,15 @@ async def help_settings_menu_handler(c: Client, cb: CallbackQuery):
     # Resolve apply type icon
     type_icon = "🌍" if apply_type == "global" else "👤"
     status_icon = "✅" if status == "custom" else "❌"
+    # Get current custom message if it exists
+    custom_msg = await Altruix.config.get_env(f"HELP_INFO_CUSTOM_MSG_{idx}", default="Not set")
     
     text = (
         "<b>⚙️ Custom Help Settings</b>\n\n"
         f"Customize the message shown when running <code>.help</code>.\n\n"
         f"• <b>Status:</b> {status_icon} {'Custom' if status == 'custom' else 'Default'}\n"
-        f"• <b>Apply Type:</b> {type_icon} {apply_type.title()}\n\n"
+        f"• <b>Apply Type:</b> {type_icon} {apply_type.title()}\n"
+        f"• <b>Current Custom Message:</b>\n<blockquote>{html.escape(custom_msg)}</blockquote>\n\n"
         "<i>Global mode applies one setting to all accounts. Per-Account allows different settings for each session.</i>"
     )
     
@@ -88,7 +91,7 @@ async def help_vars_info_handler(c: Client, cb: CallbackQuery):
         "• <code>{mention_name}</code>, <code>{mention_full_name}</code>\n"
         "• <code>{mention}</code>, <code>{session_name}</code>, <code>{user_id}</code>\n"
         "• <code>{ub_version}</code>, <code>{kurigram_version}</code>, <code>{python_version}</code>\n"
-        "• <code>{ub_plugins}</code>, <code>{bot_plugins}</code>, <code>{index}</code>\n\n"
+        "• <code>{ub_plugins}</code>, <code>{bot_plugins}</code>, <code>{total_addons}</code>, <code>{index}</code>\n\n"
         "<b>🔹 HTML Mode (Default):</b>\n"
         "• <code>&lt;b&gt;Bold&lt;/b&gt;</code>, <code>&lt;i&gt;Italic&lt;/i&gt;</code>, <code>&lt;u&gt;Under&lt;/u&gt;</code>\n"
         "• <code>&lt;tg-spoiler&gt;Spoiler&lt;/tg-spoiler&gt;</code>, <code>&lt;code&gt;Code&lt;/code&gt;</code>\n"

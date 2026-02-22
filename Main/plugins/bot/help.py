@@ -48,8 +48,11 @@ cache_help_menu = None
 multi_pages = False
 
 
-def split_help_text(text: str, max_chars: int = 1500) -> list:
+def split_help_text(text: str, max_chars: int = None) -> list:
     """Split help text into chunks properly, avoiding tag breakage."""
+    if max_chars is None:
+        max_chars = getattr(Altruix.config, "HELP_MENU_MAX_CHARS", 666)
+
     if len(text) <= max_chars:
         return [text]
 
@@ -146,6 +149,8 @@ async def get_help_menu(return_all: bool = False, user_id: int = None, chat_id: 
             plugins.append(p)
         elif mode == "extra" and p_cat in ["extra", "other"]:
             plugins.append(p)
+        elif mode == "ultroid" and p_cat == "ultroid":
+            plugins.append(p)
 
     # 🔗 Build base callback data string
     si_str = f"?page=0&si={session_index}" if session_index != -1 else f"?page=0&si=-1"
@@ -169,15 +174,22 @@ async def get_help_menu(return_all: bool = False, user_id: int = None, chat_id: 
     ub_label = f"• {Altruix.get_string('userbot_plugins')} •" if mode == "userbot" else Altruix.get_string('userbot_plugins')
     bot_label = f"• {Altruix.get_string('bot_plugins')} •" if mode == "bot" else Altruix.get_string('bot_plugins')
     extra_label = f"• {Altruix.get_string('extra_plugins')} •" if mode == "extra" else Altruix.get_string('extra_plugins')
+    ultroid_label = f"• {Altruix.get_string('ultroid_plugins')} •" if mode == "ultroid" else Altruix.get_string('ultroid_plugins')
     
     ub_data = f"help_tab#userbot?si={session_index}{f'&cid={chat_id}' if chat_id else ''}"
     bot_data = f"help_tab#bot?si={session_index}{f'&cid={chat_id}' if chat_id else ''}"
     extra_data = f"help_tab#extra?si={session_index}{f'&cid={chat_id}' if chat_id else ''}"
+    ultroid_data = f"help_tab#ultroid?si={session_index}{f'&cid={chat_id}' if chat_id else ''}"
     
     tabs = [
-        InlineKeyboardButton(ub_label, callback_data=f"ht#{create_callback_id(ub_data)}"),
-        InlineKeyboardButton(bot_label, callback_data=f"ht#{create_callback_id(bot_data)}"),
-        InlineKeyboardButton(extra_label, callback_data=f"ht#{create_callback_id(extra_data)}")
+        [
+            InlineKeyboardButton(ub_label, callback_data=f"ht#{create_callback_id(ub_data)}"),
+            InlineKeyboardButton(bot_label, callback_data=f"ht#{create_callback_id(bot_data)}")
+        ],
+        [
+            InlineKeyboardButton(extra_label, callback_data=f"ht#{create_callback_id(extra_data)}"),
+            InlineKeyboardButton(ultroid_label, callback_data=f"ht#{create_callback_id(ultroid_data)}")
+        ]
     ]
 
     rows = Altruix.config.HELP_MENU_ROWS
@@ -197,7 +209,8 @@ async def get_help_menu(return_all: bool = False, user_id: int = None, chat_id: 
             # No need to update callback_data since we're using hash IDs
             
             # Insert Tabs at the top of each page
-            page.insert(0, tabs)
+            for row in reversed(tabs):
+                page.insert(0, row)
             
             # Page navigation buttons with compressed data
             page_buttons = []
@@ -210,7 +223,13 @@ async def get_help_menu(return_all: bool = False, user_id: int = None, chat_id: 
             for i in page_buttons:
                 if i.text == str(index + 1):
                     i.text = f"> {i.text} <"
-            page.append(page_buttons)
+            
+            # 🛑 Telegram API limit: Max 8 buttons per row.
+            # We chunk them into rows of 6 for better UI balance.
+            chunked_page_buttons = [page_buttons[i : i + 6] for i in range(0, len(page_buttons), 6)]
+            for chunk in chunked_page_buttons:
+                page.append(chunk)
+
             page.append([
                 InlineKeyboardButton("Settings", "settings_menu"),
                 InlineKeyboardButton("Close", close_data)
@@ -218,7 +237,8 @@ async def get_help_menu(return_all: bool = False, user_id: int = None, chat_id: 
     else:
         # Wrap buttons to ensure it's a list of lists if not already (for non-multipaged)
         # Actually it's already a list of lists from [ikb[i : i + columns] ...]
-        buttons.insert(0, tabs)
+        for row in reversed(tabs):
+            buttons.insert(0, row)
         buttons.append([
             InlineKeyboardButton("Settings", "settings_menu"),
             InlineKeyboardButton("Close", close_data)
@@ -240,19 +260,33 @@ async def get_plugin_data(plugin: str, number: int = 0, sub_page: int = 0, user_
     elif sub_page < 0:
         sub_page = len(pages) - 1
         
-    # Case-insensitive lookup for version
+    # Case-insensitive lookup for version and command count
     version = "0.0.1"
+    total_cmd_count = 0
+    total_arg_count = 0
     plugin_key = next((k for k in Altruix.cmd_list.keys() if k.lower() == plugin.lower()), None)
     if plugin_key:
         version = Altruix.cmd_list[plugin_key][0].get("version")
         if not version or version == "unknown":
             version = "0.0.1"
+            
+        cmds = []
+        for item in Altruix.cmd_list[plugin_key]:
+            cmds.extend(item.get("commands", []))
+            
+            # Count arguments
+            u_args = item.get("user_args")
+            if isinstance(u_args, (dict, list)):
+                total_arg_count += len(u_args)
+        total_cmd_count = len(set(cmds))
 
     text = f"<b>❇️ Help for</b> <code>{plugin.title()}</code>\n"
-    text += f"<b>🏷️ Version:</b> <code>v{version}</code>"
+    text += f"<b>🏷️ Version:</b> <code>v{version}</code>\n"
+    text += f"<b>ℹ️ Cmd:</b> <code>{total_cmd_count}</code> cmds\n"
+    if total_arg_count > 0:
+        text += f"<b>〽️ Arg:</b> <code>{total_arg_count}</code> args\n"
     if len(pages) > 1:
         text += f" [Page {sub_page + 1}/{len(pages)}]"
-    text += f"\n\n{pages[sub_page]}"
     
     session_index = -1
     if user_id:
@@ -261,7 +295,12 @@ async def get_plugin_data(plugin: str, number: int = 0, sub_page: int = 0, user_
             if me and me.id == user_id:
                 session_index = i
                 break
-                
+
+    # ✅ Resolve Placeholders (Dynamic Prefix Support)
+    content = pages[sub_page]
+    resolved_content, _ = await Altruix.resolve_placeholders(content, index=session_index) if user_id else (content, None)
+    text += f"\n\n{resolved_content}"
+    
     si_suffix = f"&si={session_index}" if session_index != -1 else "&si=-1"
     if chat_id:
         si_suffix += f"&cid={chat_id}"
@@ -445,8 +484,8 @@ async def help_tab_compressed(_: Client, cq: CallbackQuery):
     if not original_data:
         return await cq.answer("⚠️ Session expired, please refresh.", show_alert=True)
     
-    # Parse: help_tab#(userbot|bot)?si=X&cid=Y
-    match = re.match(r"help_tab#(userbot|bot|extra)\?si=(-?\d+)(?:&cid=(-?\d+))?", original_data)
+    # Parse: help_tab#(userbot|bot|extra|ultroid)?si=X&cid=Y
+    match = re.match(r"help_tab#(userbot|bot|extra|ultroid)\?si=(-?\d+)(?:&cid=(-?\d+))?", original_data)
     if not match:
         return await cq.answer("⚠️ Invalid data.", show_alert=True)
     
@@ -501,7 +540,9 @@ async def help_compressed(_: Client, cq: CallbackQuery):
             user_id = me.id
 
     if text_type == "_page":
-        help_msg, buttons, parse_mode = await get_help_menu(return_all=True, user_id=user_id, chat_id=cid, mode=mode)
+        res = await get_help_menu(return_all=True, user_id=user_id, chat_id=cid, mode=mode)
+        if not res: return
+        help_msg, buttons, parse_mode = res
         # Handle both multi-page (list of pages) and single-page (single page) structures
         if isinstance(buttons, list) and len(buttons) > 0:
             # Check if it's multi-page structure (list of lists of lists)
@@ -518,11 +559,13 @@ async def help_compressed(_: Client, cq: CallbackQuery):
             help_msg, reply_markup=InlineKeyboardMarkup(button_markup), parse_mode=parse_mode
         )
 
-    text, buttons = await get_plugin_data(text_type, number, sub_page, user_id=user_id, chat_id=cid, mode=mode)
+    res = await get_plugin_data(text_type, number, sub_page, user_id=user_id, chat_id=cid, mode=mode)
+    if not res: return
+    text, buttons = res
     await cq.edit_message_text(text, reply_markup=buttons)
 
 
-@Altruix.bot.on_callback_query(filters.regex(r"^help_tab#(userbot|bot|extra)\?si=(-?\d+)(?:&cid=(-?\d+))?"))
+@Altruix.bot.on_callback_query(filters.regex(r"^help_tab#(userbot|bot|extra|ultroid)\?si=(-?\d+)(?:&cid=(-?\d+))?"))
 @log_errors
 @iuser_check
 async def help_tab_callback(_: Client, cq: CallbackQuery):
@@ -576,7 +619,9 @@ async def help_callback(_: Client, cq: CallbackQuery):
             user_id = me.id
 
     if not get_group(1):
-        help_msg, buttons, parse_mode = await get_help_menu(user_id=user_id, chat_id=cid, mode=mode)
+        res = await get_help_menu(user_id=user_id, chat_id=cid, mode=mode)
+        if not res: return
+        help_msg, buttons, parse_mode = res
         return await cq.edit_message_text(
             help_msg, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=parse_mode
         )
@@ -586,7 +631,9 @@ async def help_callback(_: Client, cq: CallbackQuery):
     sub_page = int(get_group(3)) if get_group(3) else 0
 
     if text_type == "_page":
-        help_msg, buttons, parse_mode = await get_help_menu(return_all=True, user_id=user_id, chat_id=cid, mode=mode)
+        res = await get_help_menu(return_all=True, user_id=user_id, chat_id=cid, mode=mode)
+        if not res: return
+        help_msg, buttons, parse_mode = res
         # Handle both multi-page (list of pages) and single-page (single page) structures
         if isinstance(buttons, list) and len(buttons) > 0:
             # Check if it's multi-page structure (list of lists of lists)
@@ -603,7 +650,9 @@ async def help_callback(_: Client, cq: CallbackQuery):
             help_msg, reply_markup=InlineKeyboardMarkup(button_markup), parse_mode=parse_mode
         )
 
-    text, buttons = await get_plugin_data(text_type, number, sub_page, user_id=user_id, chat_id=cid, mode=mode)
+    res = await get_plugin_data(text_type, number, sub_page, user_id=user_id, chat_id=cid, mode=mode)
+    if not res: return
+    text, buttons = res
     await cq.edit_message_text(text, reply_markup=buttons)
 
 
@@ -734,7 +783,7 @@ async def send_plugin_execute_compressed(c: Client, cb: CallbackQuery):
     
     # Find plugin file
     plugin_file = None
-    for base_path in ["Main/plugins/userbot", "Main/plugins/bot"]:
+    for base_path in ["Main/plugins/userbot", "Main/plugins/bot", "Main/plugins/addons"]:
         potential_path = f"{base_path}/{plugin}.py"
         if os.path.exists(potential_path):
             plugin_file = potential_path

@@ -22,6 +22,7 @@ telegraph
 deep-translator
 httpx>=0.27.0
 tgcrypto; sys_platform != 'win32'
+pycryptodome
 ujson
 natsort
 gitpython
@@ -48,7 +49,39 @@ motor>=3.1.0
 # aiofiles>=0.8.0
 # python-dotenv>=0.19.0
 
-# Note: Install only what is required:
 # - For Redis: pip install redis
 # - For MongoDB: pip install pymongo motor
 # - No external database: no need to install anything (use default JSON)
+
+# ✅ Ultroid Addons Compatibility
+telethon
+# wikipedia
+# htmlwebshot
+# enhancer
+# catbox-uploader
+# cloudscraper
+# cv2
+# opencv-python
+# twikit 
+# speedtest
+# shazamio
+# pytz
+# cryptg
+# jikanpy
+# google_trans_new
+# covid
+# pyfiglet
+# pyjokes
+# pygments
+# PyPDF2
+# pokedex
+# qrcode
+# emoji
+# quotefancy
+# lyrics_extractor
+# speech_recognition
+# textblob
+
+# phlogo
+# fontTools
+# ssl
