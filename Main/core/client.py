@@ -158,7 +158,7 @@ class AltruixClient:
         self.clients: List[Client] = []
         self.cmd_list = {}
         self.all_lang_strings = {}
-        self.__version__ = "0.0.10.030D" # ✅ Ultroid Compatibility Fix
+        self.__version__ = "0.0.10.043D" # ✅ Ultroid Compatibility Fix
         self.upm = UPM(self)
         self.selected_lang = "english"
         self.local_lang_file = "./Main/localization"
@@ -1926,7 +1926,7 @@ class AltruixClient:
                             username = f" @{me.username}" if me.username else ""
                             user_id = me.id
                             client_type = "🤖 Bot" if client == self.bot else "🦸🏼 Ubot"
-                            mention_user = f'<a href="tg://user?id={user_id}">{name}</a>'
+                            mention_user = f'<a href="tg://user?id={user_id}">{html.escape(name)}</a>'
                             total_user_sessions = len(self.clients)
                             final_message = ""
                             parse_mode = ParseMode.HTML

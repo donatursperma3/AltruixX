@@ -16,6 +16,8 @@ from style import ping_format as pf
 from pyrogram import Client, filters
 from pyrogram.raw.functions import Ping
 from Main.utils.essentials import Essentials
+from pyrogram.enums import ParseMode, ButtonStyle
+from pyrogram import enums, types
 from Main.core.decorators import log_errors, iuser_check
 from pyrogram.types import (
     Message, InlineQuery, CallbackQuery, InlineKeyboardButton,
@@ -37,7 +39,12 @@ async def ping_command_handler(c: Client, m: Message):
             pf["ping_emoji1"], ms, pf["ping_emoji2"], uptime
         ),
         reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton(f"{pf['ping_emoji1']} Ping", "ping")]]
+            [[
+                InlineKeyboardButton(
+                    f"{pf['ping_emoji1']} Ping", "ping",
+                    style=enums.ButtonStyle.PRIMARY
+                    )
+                ]]
         ),
     )
 
@@ -65,7 +72,10 @@ async def ping_cb_handler(c: Client, cb: CallbackQuery):
             "PING_TEXT", args=(pf["ping_emoji1"], ms, pf["ping_emoji2"], uptime)
         ),
         reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton(f"{pf['ping_emoji1']} Ping", "ping")]]
+            [[InlineKeyboardButton(
+                f"{pf['ping_emoji1']} Ping", "ping",
+                style=enums.ButtonStyle.PRIMARY
+                )]]
         ),
     )
 
@@ -91,7 +101,10 @@ async def ping_inline_handler(c: Client, iq: InlineQuery):
                     )
                 ),
                 reply_markup=InlineKeyboardMarkup(
-                    [[InlineKeyboardButton(f"{pf['ping_emoji1']} Ping", "ping")]]
+                    [[InlineKeyboardButton(
+                        f"{pf['ping_emoji1']} Ping", "ping",
+                        style=enums.ButtonStyle.PRIMARY
+                        )]]
                 ),
             )
         ],

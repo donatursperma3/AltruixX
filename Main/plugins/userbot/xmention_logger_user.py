@@ -1249,12 +1249,12 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
         group_display = f"{group_hyperlink} ({m.chat.id})"
 
         log_message = (
-            f"🔔 <b>Tag Detected!</b>\n\n"
-            f"👤 <b>Tagged By:</b> {mentioner_hyperlink} (<code>{mentioner_id}</code>)\n"
-            f"ℹ️ <b>Username:</b> {username_display}\n"
-            f"🤖 <b>My Account:</b> {my_name_hyperlink} (<code>{c.me.id}</code>)\n"
-            f"💬 <b>Group:</b> {group_display}\n"
-            f"🕒 <b>Time:</b> {mention_time}\n"
+            f"{Altruix.get_string('LOGGER_TAG_TITLE')}\n\n"
+            f"{Altruix.get_string('LOGGER_TAG_BY').format(mentioner_id, html.escape(full_name), mentioner_id)}\n"
+            f"{Altruix.get_string('LOGGER_TAG_USERNAME').format(username_display)}\n"
+            f"{Altruix.get_string('LOGGER_TAG_ACCOUNT').format(my_name_hyperlink + f' (<code>{c.me.id}</code>)')}\n"
+            f"{Altruix.get_string('LOGGER_TAG_GROUP').format(group_display)}\n"
+            f"{Altruix.get_string('LOGGER_TAG_TIME').format(mention_time)}\n"
         )
         
         if has_media:
@@ -1348,6 +1348,23 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
         
         await save_mention_to_cache(msg_key, cache_data)
         
+        # ✅ NEW: Register in REPLY_AS_MENTIONED_WAITING for ReplyManager support
+        waiting_id = f"mentions_{m.chat.id}_{m.id}"
+        REPLY_AS_MENTIONED_WAITING[waiting_id] = {
+            "log_msg_id": sent_log_msg.id,
+            "user_id": mentioner_id,
+            "chat_id": m.chat.id,
+            "message_id": m.id,
+            "client_id": client_id,
+            "thread_id": topic_id,
+            "timestamp": int(time.time()),
+            "msg_key": msg_key
+        }
+        try:
+            from Main.plugins.userbot.xpm_logger_user import SessionManager
+            SessionManager.save()
+        except: pass
+
         # JUGA SIMPAN KE IN-MEMORY CACHE (backward compatibility)
         MENTION_LOG_CACHE[msg_key] = {
             "text": message_text,
@@ -1489,14 +1506,14 @@ async def send_mention_edit_handler(c: Client, m: RawMessage):
         group_display_edit = f"{group_hyperlink_edit} ({m.chat.id})"
 
         log_content = (
-            f"🔔 <b>Tag Detected! [EDITED]</b>\n\n"
-            f"👤 <b>Tagged By:</b> {mentioner_hyperlink} (<code>{mentioner_id}</code>)\n"
-            f"ℹ️ <b>Username:</b> {username_display_edit}\n"
-            f"🤖 <b>My Account:</b> <a href='tg://user?id={c.me.id}'>{html.escape(my_name_edit)}</a> (<code>{c.me.id}</code>)\n"
-            f"💬 <b>Group:</b> {group_display_edit}\n"
+            f"{Altruix.get_string('LOGGER_TAG_TITLE')} [EDITED]\n\n"
+            f"{Altruix.get_string('LOGGER_TAG_BY').format(mentioner_id, html.escape(full_name_edit), mentioner_id)}\n"
+            f"{Altruix.get_string('LOGGER_TAG_USERNAME').format(username_display_edit)}\n"
+            f"{Altruix.get_string('LOGGER_TAG_ACCOUNT').format(f'<a href=\"tg://user?id={c.me.id}\">{html.escape(my_name_edit)}</a> (<code>{c.me.id}</code>)')}\n"
+            f"{Altruix.get_string('LOGGER_TAG_GROUP').format(group_display_edit)}\n"
             f"🕒 <b>Original:</b> <code>{mention_time}</code>\n"
             f"🕒 <b>Edited:</b> <code>{edit_time}</code>\n"
-            f"📄 <b>New Message:</b>\n<blockquote>{message_text}</blockquote>"
+            f"{Altruix.get_string('LOGGER_TAG_MSG_HEADER')}\n<blockquote>{message_text}</blockquote>"
         )
 
         # Preserve markup by fetching original msg

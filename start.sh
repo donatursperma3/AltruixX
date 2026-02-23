@@ -52,7 +52,7 @@ if [ -f ".env" ]; then
 fi
 
 # Release Database Locks by killing existing Python processes
-echo "Cleaning up existing Python processes to release database locks..."
+echo "⏳ Cleaning up existing Python processes to release database locks..."
 has_killed=false
 if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
     # Windows (Git Bash / MSYS)
@@ -74,11 +74,11 @@ fi
 
 # If we killed processes, wait a bit for OS to release file handles
 if [ "$has_killed" = true ]; then
-    echo "Waiting 3 seconds for file handles to be released..."
+    echo "⏳ Waiting 3 seconds for file handles to be released..."
     sleep 3
 fi
 
 
 # Run the bot using the VENV python executable
-echo "Starting Altruix..."
+echo "⏳ Starting Altruix..."
 $VENV_PYTHON -m Main

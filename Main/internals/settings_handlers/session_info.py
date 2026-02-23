@@ -13,9 +13,9 @@ from pyrogram.types import (
 )
 from Main.core.decorators import log_errors, iuser_check
 from Main.core.client import Altruix
-from pyrogram.enums import ParseMode, ChatType
+from pyrogram.enums import ParseMode, ChatType, ButtonStyle
 from pyrogram.errors import FloodWait
-from pyrogram import enums
+from pyrogram import enums, types
 
 # Logger
 logger = logging.getLogger(__name__)
@@ -292,8 +292,8 @@ async def get_session_info_data(index: int, callback_page: int, button_page: int
         f"• <b>Altruix Addons:</b> {addons_status_icon}\n\n"
         f"<b>📱 {Altruix.get_string('auto_delete_cmd')}:</b> {auto_delete_status_icon} \n • Mode: <code>{auto_delete_mode_display}</code> | • Delay: <code>{auto_delete_delay}s</code>\n\n"
         f"<b>🤖 Bot Assistant:</b> <spoiler>{f'<a href=\"tg://user?id={custom_bot_id}\">{custom_bot_username}</a>' if custom_bot_id else (f'{custom_bot_username}' if custom_bot_username != 'None' else 'None')}</spoiler> (Active Bots: {total_active_bots})\n"
-        f"<b>⚙️ Xtra-Features:</b> {xtra_count} Aktif\n"
-        f"<b>🔘 Total Modul:</b> {total_mod} (UB {ub_mod}, Bot {bot_mod}, Xtra {xtra_mod})\n\n"
+        f"<b>⚙️ Xtra-Modules:</b> {xtra_count}\n"
+        f"<b>🔘 Total Modules:</b> {total_mod} (UB {ub_mod}, Bot {bot_mod}, Xtra {xtra_mod})\n\n"
         f"<b>📊 Total Buttons:</b> 56 | <b>Page:</b> {button_page}/5\n"
         f"<b>Manage this session:</b>"
     )
@@ -311,7 +311,7 @@ async def get_session_info_data(index: int, callback_page: int, button_page: int
             [btn(9, "backup_profile", f"gen_conf_backup_profile_{index}_{callback_page}"), btn(10, "check_limit", f"check_limit_confirm_{index}_{callback_page}")],
             [btn(11, "view_sessions", f"gen_conf_view_all_sessions_{index}_{callback_page}"), btn(12, "join_log_group", f"join_log_group_{index}_{callback_page}")],
             [btn(13, "toggle_session_status", f"toggle_session_confirm_{index}_{callback_page}")],
-            [InlineKeyboardButton(Altruix.get_string("next"), f"session_info_{index}_{callback_page}_2")]
+            [InlineKeyboardButton(Altruix.get_string("next"), f"session_info_{index}_{callback_page}_2", style=enums.ButtonStyle.DANGER)]
         ]
     elif button_page == 2:
         buttons = [
@@ -321,7 +321,7 @@ async def get_session_info_data(index: int, callback_page: int, button_page: int
             [btn(20, "leave_group", f"gen_conf_leave_chat_input_{index}_{callback_page}"), btn(21, "track_profile", f"gen_conf_track_profile_{index}_{callback_page}")],
             [btn(22, "chat_stats", f"gen_conf_chat_stats_scan_{index}_{callback_page}"), btn(23, "creategroup_menu", f"creategroup_menu_{index}_{callback_page}")],
             [btn(24, "recent_messages", f"gen_conf_recent_messages_menu_{index}_{callback_page}"), btn(25, "view_mentions", f"gen_conf_view_mentions_menu_{index}_{callback_page}")],
-            [InlineKeyboardButton(Altruix.get_string("prev"), f"session_info_{index}_{callback_page}_1"), InlineKeyboardButton(Altruix.get_string("next"), f"session_info_{index}_{callback_page}_3")]
+            [InlineKeyboardButton(Altruix.get_string("prev"), f"session_info_{index}_{callback_page}_1", style=enums.ButtonStyle.DANGER), InlineKeyboardButton(Altruix.get_string("next"), f"session_info_{index}_{callback_page}_3", style=enums.ButtonStyle.DANGER)]
         ]
     elif button_page == 3:
         buttons = [
@@ -331,7 +331,7 @@ async def get_session_info_data(index: int, callback_page: int, button_page: int
             [btn(32, "cmd_settings", f"cmd_settings_menu_{index}_{callback_page}"), btn(33, "sudo_settings", f"sudo_menu_{index}_{callback_page}")],
             [btn(34, "prefix_settings", f"prefix_menu_{index}_{callback_page}"), btn(35, "2fa_info", f"gen_conf_2fa_info_{index}_{callback_page}")],
             [btn(36, "prefix_info", f"prefix_info_{index}_{callback_page}"), btn(37, "feature_status", f"feature_status_{index}_{callback_page}")],
-            [InlineKeyboardButton(Altruix.get_string("prev"), f"session_info_{index}_{callback_page}_2"), InlineKeyboardButton(Altruix.get_string("next"), f"session_info_{index}_{callback_page}_4")]
+            [InlineKeyboardButton(Altruix.get_string("prev"), f"session_info_{index}_{callback_page}_2", style=enums.ButtonStyle.DANGER), InlineKeyboardButton(Altruix.get_string("next"), f"session_info_{index}_{callback_page}_4", style=enums.ButtonStyle.DANGER)]
         ]
     elif button_page == 4:
         buttons = [
@@ -345,7 +345,7 @@ async def get_session_info_data(index: int, callback_page: int, button_page: int
                 InlineKeyboardButton(f"[50] {Altruix.get_string('btn_gcast_user')}", callback_data=f"gcast_user_{index}_{callback_page}"),
                 InlineKeyboardButton(f"[51] {Altruix.get_string('global_purgeme')}", callback_data=f"global_purgeme_{index}_{callback_page}")
             ],
-            [InlineKeyboardButton(Altruix.get_string("prev"), f"session_info_{index}_{callback_page}_3"), InlineKeyboardButton(Altruix.get_string("next"), f"session_info_{index}_{callback_page}_5")]
+            [InlineKeyboardButton(Altruix.get_string("prev"), f"session_info_{index}_{callback_page}_3", style=enums.ButtonStyle.DANGER), InlineKeyboardButton(Altruix.get_string("next"), f"session_info_{index}_{callback_page}_5", style=enums.ButtonStyle.DANGER)]
         ]
     elif button_page == 5:
         buttons = [
@@ -546,9 +546,20 @@ async def sessions_info_msg_handler(c: Client, m: Message):
                 photo_path = await m.download()
                 session_client = Altruix.clients[index]
                 await session_client.set_profile_photo(photo=photo_path)
-                await m.reply("✅ <b>Profile photo updated!</b>", 
-                            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]]),
-                            parse_mode=ParseMode.HTML)
+                await m.reply(
+                            "✅ <b>Profile photo updated!</b>", 
+                            reply_markup=InlineKeyboardMarkup(
+                                    [
+                                        [InlineKeyboardButton(
+                                                "🔙 Back", 
+                                                f"session_info_{index}_{page}", 
+                                                style=enums.ButtonStyle.DANGER
+                                            )
+                                        ]
+                                    ], 
+                            parse_mode=ParseMode.HTML
+                        )
+                    )
                 from .utils import send_log_notification
                 await send_log_notification(c, 'change_profile_photo', index, m.from_user, True)
                 if os.path.exists(photo_path): os.remove(photo_path)
@@ -643,19 +654,25 @@ async def sessions_info_msg_handler(c: Client, m: Message):
             from .bulk_handlers import process_gpurgeme_custom
             await process_gpurgeme_custom(c, m, state)
             return
-        elif step == 'waiting_help_custom_msg':
-            # Moved from settings.py
+        elif step == "waiting_help_custom_msg":
+            # Standardized Custom Help Message Input
             index = state['session_index']
             page = state['page']
-            apply_type = await Altruix.config.get_env(f"HELP_INFO_TYPE_{index}") or "per_account"
-            key = "HELP_INFO_CUSTOM_MSG_GLOBAL" if apply_type == "global" else f"HELP_INFO_CUSTOM_MSG_{index}"
-            await Altruix.config.sync_env_to_db(key, text, upsert=True)
-            setattr(Altruix.config, key, text)
+            session_client = Altruix.clients[index]
+            me = getattr(session_client, "myself", None) or await session_client.get_me()
+            
+            apply_type = await Altruix.config.get_env("HELP_INFO_APPLY_TYPE", default="global")
+            if apply_type == "global":
+                key = "HELP_INFO_CUSTOM_MSG_GLOBAL"
+            else:
+                key = f"HELP_INFO_CUSTOM_MSG_{me.id}"
+                
+            await Altruix.config.set_env(key, text)
             del user_privacy_state[user_id]
             from .utils import gt
             await m.reply(
                 f"{gt('help_info_msg_updated')}\n\n<code>{html.escape(text)}</code>",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("back"), callback_data=f"help_info_custom_menu_{index}_{page}")]])
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("back"), callback_data=f"help_settings_menu_{index}_{page}")]])
             )
             return
 

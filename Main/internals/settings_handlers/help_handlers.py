@@ -21,21 +21,30 @@ async def help_settings_menu_handler(c: Client, cb: CallbackQuery):
     idx, pg = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
     user_id = cb.from_user.id
     
-    # Get settings from ENV/Config
-    apply_type = await Altruix.config.get_env(f"HELP_INFO_APPLY_TYPE_{idx}", default="global")
-    status = await Altruix.config.get_env(f"HELP_INFO_STATUS_{idx}", default="default")
+    # Sesi info
+    session_client = Altruix.clients[idx]
+    me = getattr(session_client, "myself", None) or await session_client.get_me()
+    session_client.myself = me
     
-    # Resolve apply type icon
+    # Get settings from ENV/Config (Standardized Keys)
+    apply_type = await Altruix.config.get_env("HELP_INFO_APPLY_TYPE", default="global")
+    
+    if apply_type == "global":
+        status = await Altruix.config.get_env("HELP_INFO_STATUS_GLOBAL", default="default")
+        custom_msg = await Altruix.config.get_env("HELP_INFO_CUSTOM_MSG_GLOBAL", default="Not set")
+    else:
+        status = await Altruix.config.get_env(f"HELP_INFO_STATUS_{me.id}", default="default")
+        custom_msg = await Altruix.config.get_env(f"HELP_INFO_CUSTOM_MSG_{me.id}", default="Not set")
+    
+    # Resolve icons
     type_icon = "🌍" if apply_type == "global" else "👤"
     status_icon = "✅" if status == "custom" else "❌"
-    # Get current custom message if it exists
-    custom_msg = await Altruix.config.get_env(f"HELP_INFO_CUSTOM_MSG_{idx}", default="Not set")
     
     text = (
         "<b>⚙️ Custom Help Settings</b>\n\n"
         f"Customize the message shown when running <code>.help</code>.\n\n"
         f"• <b>Status:</b> {status_icon} {'Custom' if status == 'custom' else 'Default'}\n"
-        f"• <b>Apply Type:</b> {type_icon} {apply_type.title()}\n"
+        f"• <b>Apply Type:</b> {type_icon} {apply_type.replace('_', ' ').title()}\n"
         f"• <b>Current Custom Message:</b>\n<blockquote>{html.escape(custom_msg)}</blockquote>\n\n"
         "<i>Global mode applies one setting to all accounts. Per-Account allows different settings for each session.</i>"
     )
@@ -62,10 +71,20 @@ async def help_settings_menu_handler(c: Client, cb: CallbackQuery):
 @iuser_check
 @log_errors
 async def toggle_help_status_handler(c: Client, cb: CallbackQuery):
-    idx, pg = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
-    current = await Altruix.config.get_env(f"HELP_INFO_STATUS_{idx}", default="default")
+    # Sesi info
+    session_client = Altruix.clients[idx]
+    me = getattr(session_client, "myself", None) or await session_client.get_me()
+    
+    apply_type = await Altruix.config.get_env("HELP_INFO_APPLY_TYPE", default="global")
+    
+    if apply_type == "global":
+        key = "HELP_INFO_STATUS_GLOBAL"
+    else:
+        key = f"HELP_INFO_STATUS_{me.id}"
+        
+    current = await Altruix.config.get_env(key, default="default")
     new_status = "custom" if current == "default" else "default"
-    await Altruix.config.set_env(f"HELP_INFO_STATUS_{idx}", new_status)
+    await Altruix.config.set_env(key, new_status)
     await cb.answer(f"Status set to {new_status.title()}")
     await help_settings_menu_handler(c, cb)
 
@@ -74,9 +93,9 @@ async def toggle_help_status_handler(c: Client, cb: CallbackQuery):
 @log_errors
 async def toggle_help_apply_type_handler(c: Client, cb: CallbackQuery):
     idx, pg = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
-    current = await Altruix.config.get_env(f"HELP_INFO_APPLY_TYPE_{idx}", default="global")
+    current = await Altruix.config.get_env("HELP_INFO_APPLY_TYPE", default="global")
     new_type = "per_account" if current == "global" else "global"
-    await Altruix.config.set_env(f"HELP_INFO_APPLY_TYPE_{idx}", new_type)
+    await Altruix.config.set_env("HELP_INFO_APPLY_TYPE", new_type)
     await cb.answer(f"Apply type set to {new_type.replace('_', ' ').title()}")
     await help_settings_menu_handler(c, cb)
 
@@ -147,7 +166,15 @@ async def process_help_msg_input(c: Client, m: Message, state: dict):
     new_msg = m.text
     
     # Save to ENV/Config
-    await Altruix.config.set_env(f"HELP_INFO_CUSTOM_MSG_{idx}", new_msg)
+    apply_type = await Altruix.config.get_env("HELP_INFO_APPLY_TYPE", default="global")
+    if apply_type == "global":
+        key = "HELP_INFO_CUSTOM_MSG_GLOBAL"
+    else:
+        session_client = Altruix.clients[idx]
+        me = getattr(session_client, "myself", None) or await session_client.get_me()
+        key = f"HELP_INFO_CUSTOM_MSG_{me.id}"
+        
+    await Altruix.config.set_env(key, new_msg)
     
     # Notify success
     confirm_msg = await m.reply("✅ <b>Custom help message updated!</b>", parse_mode=ParseMode.HTML)

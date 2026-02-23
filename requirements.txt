@@ -3,8 +3,11 @@ bs4
 certifi
 dnspython
 # pyrogram
-kurigram>=2.2.18
+# kurigram>=2.2.18
+https://github.com/KurimuzonAkuma/kurigram/archive/dev.zip
+
 httpx
+dotenv
 markdown
 motor
 gtts

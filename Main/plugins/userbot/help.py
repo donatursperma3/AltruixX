@@ -139,23 +139,21 @@ async def help_normal(c: Client, m):
         parse_mode = None
         
         if session_index != -1:
+            me = getattr(c, "myself", None) or await c.get_me()
             # Check Status
-            status = await Altruix.config.get_env(f"HELP_INFO_STATUS_{session_index}", default="default")
-            if status == "custom":
-                # Check Apply Type
-                apply_type = await Altruix.config.get_env(f"HELP_INFO_APPLY_TYPE_{session_index}", default="global")
+            apply_type = await Altruix.config.get_env("HELP_INFO_APPLY_TYPE", default="global")
+            
+            if apply_type == "global":
+                status = await Altruix.config.get_env("HELP_INFO_STATUS_GLOBAL", default="default")
+                if status == "custom":
+                    custom_help = await Altruix.config.get_env("HELP_INFO_CUSTOM_MSG_GLOBAL")
+            else:
+                status = await Altruix.config.get_env(f"HELP_INFO_STATUS_{me.id}", default="default")
+                if status == "custom":
+                    custom_help = await Altruix.config.get_env(f"HELP_INFO_CUSTOM_MSG_{me.id}")
                 
-                if apply_type == "global":
-                    # Use index 0 as global source or a dedicated key if we had one, 
-                    # but here we use the first session's custom msg if global
-                    custom_help = await Altruix.config.get_env("HELP_INFO_CUSTOM_MSG_0")
-                    if not custom_help: # Fallback if 0 is empty
-                         custom_help = await Altruix.config.get_env(f"HELP_INFO_CUSTOM_MSG_{session_index}")
-                else:
-                    custom_help = await Altruix.config.get_env(f"HELP_INFO_CUSTOM_MSG_{session_index}")
-                
-                if custom_help:
-                    custom_help, parse_mode = await Altruix.resolve_placeholders(custom_help, index=session_index, client=c)
+            if custom_help:
+                custom_help, parse_mode = await Altruix.resolve_placeholders(custom_help, index=session_index, client=c)
 
         if custom_help:
             cmd_list = custom_help

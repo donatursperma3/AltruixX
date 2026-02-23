@@ -40,7 +40,8 @@ except ImportError:
 
 from pyrogram.errors import UserIsBlocked as BotBlocked
 from pyromod.exceptions import ListenerTimeout
-from pyrogram.enums import ParseMode, ChatType
+from pyrogram.enums import ParseMode, ButtonStyle
+from pyrogram import enums, types
 
 # Utils & Helpers
 from Main.internals.get_session import add_session_cb_handler
@@ -173,8 +174,8 @@ async def get_settings_home_text():
             "<b>🛠️ Userbot Settings</b>\n\n"
             "• Total Sessions: <code>{}</code>\n"
             "• Total Bots: <code>{}</code> (Default: 1, Custom: {})\n"
-            "• Xtra-Features: <code>{}</code>\n"
-            "• Module: <code>{}</code> (UB {}, Bot {}, Xtra {}, Addons {})\n"
+            "• Xtra-Module: <code>{}</code>\n"
+            "• Modules: <code>{}</code> (UB {}, Bot {}, Xtra {}, Addons {})\n"
             "• Commands: <code>{}</code>\n"
             "• Version: <code>{}</code>"
         )
@@ -192,16 +193,16 @@ def get_settings_buttons(user_id=None):
     custom_data = get_user_custom_link(user_id) if user_id else get_custom_link_data()["global"]
     return [
         [
-            InlineKeyboardButton("📱 Sessions", callback_data="sessions_list_1"),
-            InlineKeyboardButton("🤖 Bot Controls", callback_data="bot_controls_menu"),
+            InlineKeyboardButton("📱 Sessions", callback_data="sessions_list_1", style=enums.ButtonStyle.PRIMARY),
+            InlineKeyboardButton("🤖 Bot Controls", callback_data="bot_controls_menu", style=enums.ButtonStyle.PRIMARY),
         ],
         [
-            InlineKeyboardButton("⚙️ Configs", callback_data="configs_home"),
-            InlineKeyboardButton("⌨️ Cmd Settings", callback_data="cmd_settings_menu"),
+            InlineKeyboardButton("⚙️ Configs", callback_data="configs_home", style=enums.ButtonStyle.PRIMARY),
+            InlineKeyboardButton("⌨️ Cmd Settings", callback_data="cmd_settings_menu", style=enums.ButtonStyle.PRIMARY),
         ],
         [
-            InlineKeyboardButton("❇️ Help Menu", callback_data="re_open"),
-            InlineKeyboardButton(custom_data.get("text", "Repo"), url=custom_data.get("link", "https://t.me/AlphaXProject")),
+            InlineKeyboardButton("❇️ Help Menu", callback_data="re_open", style=enums.ButtonStyle.DANGER),
+            InlineKeyboardButton(custom_data.get("text", "Repo"), url=custom_data.get("link", "https://t.me/AlphaXProject"), style=enums.ButtonStyle.DANGER),
         ],
     ]
 
@@ -241,7 +242,7 @@ async def settings_inline_handler(c: Client, iq: InlineQuery):
         except: pass
 
     text = await get_settings_home_text()
-    result_identity = f"settings_{chat_id}"
+    result_identity = f"settings_{chat_id if chat_id != 'N/A' else 'Inline'}"
     
     await iq.answer(
         results=[
@@ -256,7 +257,7 @@ async def settings_inline_handler(c: Client, iq: InlineQuery):
         cache_time=0, is_personal=True
     )
 
-@Altruix.bot.on_chosen_inline_result(filters.regex(r"^settings_(-?\d+|N/A)"))
+@Altruix.bot.on_chosen_inline_result(filters.regex(r"^settings(?:\s|$)", flags=re.IGNORECASE))
 @iuser_check
 @log_errors
 async def settings_chosen_handler(c: Client, cir: ChosenInlineResult):
@@ -264,26 +265,26 @@ async def settings_chosen_handler(c: Client, cir: ChosenInlineResult):
     inline_msg_id = cir.inline_message_id
     if not inline_msg_id: return
     
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"[SETTINGS CHOSEN] inline_msg_id: {inline_msg_id} | query: {cir.query} | result_id: {cir.result_id}")
+    
     try:
-        chat_id = cir.result_id.split("_")[1]
-        chat_title = "Group/Chat"
-        
-        if chat_id != "N/A":
-            try:
-                chat = await c.get_chat(int(chat_id))
-                chat_title = chat.title or chat.first_name or "Chat"
-            except: pass
+        # Extract chat_id from the result_id we assigned (e.g. settings_-100123)
+        chat_id = "N/A"
+        if cir.result_id and cir.result_id.startswith("settings_"):
+            chat_id = cir.result_id.replace("settings_", "")
 
         await Altruix.local_db.inline_col.find_one_and_update(
             {"_id": inline_msg_id},
             {"$set": {
                 "_id": inline_msg_id,
                 "chat_id": chat_id,
-                "chat_title": chat_title,
                 "timestamp": datetime.now().timestamp()
             }},
             upsert=True
         )
+        logger.info(f"[SETTINGS CACHED] chat_id: {chat_id} mapped to msg_id: {inline_msg_id}")
     except Exception as e:
         logger.error(f"Error in settings_chosen_handler: {e}")
 

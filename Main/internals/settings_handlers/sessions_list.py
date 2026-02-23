@@ -7,7 +7,8 @@ from pyrogram import Client, filters
 from pyrogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from Main.core.decorators import log_errors, iuser_check
 from Main.core.client import Altruix
-from pyrogram.enums import ParseMode
+from pyrogram.enums import ParseMode, ButtonStyle
+from pyrogram import enums, types
 
 # Utils
 from .utils import edit_cb, check_authorization, gt
@@ -52,11 +53,13 @@ def get_sessions_buttons(page=1) -> tuple:
 
             button_text = f"{status_icon} [{session_num}] {first_name[:15]}"
             buttons.append(
-                InlineKeyboardButton(button_text, f"session_info_{index}_{page}")
+                InlineKeyboardButton(button_text, f"session_info_{index}_{page}",
+                    style=enums.ButtonStyle.PRIMARY)
             )
         except Exception:
             buttons.append(
-                InlineKeyboardButton(f"[{index + 1}] Session {index + 1}", f"session_info_{index}_{page}")
+                InlineKeyboardButton(f"[{index + 1}] Session {index + 1}", f"session_info_{index}_{page}",
+                    style=enums.ButtonStyle.PRIMARY)
             )
     
     if not buttons: return [], False, 1

@@ -170,6 +170,8 @@ topic_cache.json
 *.localdb
 verify_logger_fix.py
 test_autogp_mock.py
+verify_logger_fix.py
+test_inline_logic.py
 
 # Semua file JSON yang berakhiran _cache atau _settings
 *_cache.json
@@ -186,3 +188,15 @@ cmd_logger_settings.json
 *.old
 DATABASE/*.bak
 DATABASE/*.migrated
+
+# Altruix Addons (Disabled by default)
+Main/plugins/addons/*
+!Main/plugins/addons/__init__.py
+Main/plugins/addons/inline/*
+!Main/plugins/addons/inline/__init__.py
+
+# Temporary Media / Downloads
+downloads/
+temp/
+*.tmp
+*.temp

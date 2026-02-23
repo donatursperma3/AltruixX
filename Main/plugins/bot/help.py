@@ -17,25 +17,18 @@ from Main import Altruix
 from typing import Optional
 from platform import python_version
 from pyrogram import Client, filters
+from pyrogram.enums import ParseMode, ButtonStyle
+from pyrogram import enums, types
 from Main.core.decorators import log_errors, iuser_check
 from pyrogram.types import (
     InlineQuery, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup,
-    InputTextMessageContent, InlineQueryResultArticle)
+    InputTextMessageContent, InlineQueryResultArticle, ChosenInlineResult)
+from datetime import datetime
 
 
-# 🗂️ Callback data cache to bypass 64-byte limit
-CALLBACK_DATA_CACHE = {}
-
-def create_callback_id(data: str) -> str:
-    """Create a short hash ID for callback data and cache it."""
-    # Use first 12 chars of SHA256 hash for uniqueness
-    hash_id = hashlib.sha256(data.encode()).hexdigest()[:12]
-    CALLBACK_DATA_CACHE[hash_id] = data
-    return hash_id
-
-def get_callback_data(hash_id: str) -> str:
-    """Retrieve original callback data from hash ID."""
-    return CALLBACK_DATA_CACHE.get(hash_id, "")
+from Main.core.ext.callback_helpers import (
+    CALLBACK_DATA_CACHE, create_callback_id, get_callback_data
+)
 
 
 def get_total_plugins():
@@ -166,7 +159,8 @@ async def get_help_menu(return_all: bool = False, user_id: int = None, chat_id: 
         ikb.append(
             InlineKeyboardButton(
                 plugin.replace("_", " ").title(), 
-                callback_data=f"h#{short_id}"
+                callback_data=f"h#{short_id}",
+                style=enums.ButtonStyle.SUCCESS
             )
         )
     
@@ -183,12 +177,12 @@ async def get_help_menu(return_all: bool = False, user_id: int = None, chat_id: 
     
     tabs = [
         [
-            InlineKeyboardButton(ub_label, callback_data=f"ht#{create_callback_id(ub_data)}"),
-            InlineKeyboardButton(bot_label, callback_data=f"ht#{create_callback_id(bot_data)}")
+            InlineKeyboardButton(ub_label, callback_data=f"ht#{create_callback_id(ub_data)}", style=enums.ButtonStyle.PRIMARY),
+            InlineKeyboardButton(bot_label, callback_data=f"ht#{create_callback_id(bot_data)}", style=enums.ButtonStyle.PRIMARY)
         ],
         [
-            InlineKeyboardButton(extra_label, callback_data=f"ht#{create_callback_id(extra_data)}"),
-            InlineKeyboardButton(ultroid_label, callback_data=f"ht#{create_callback_id(ultroid_data)}")
+            InlineKeyboardButton(extra_label, callback_data=f"ht#{create_callback_id(extra_data)}", style=enums.ButtonStyle.PRIMARY),
+            InlineKeyboardButton(ultroid_label, callback_data=f"ht#{create_callback_id(ultroid_data)}", style=enums.ButtonStyle.PRIMARY)
         ]
     ]
 
@@ -223,6 +217,9 @@ async def get_help_menu(return_all: bool = False, user_id: int = None, chat_id: 
             for i in page_buttons:
                 if i.text == str(index + 1):
                     i.text = f"> {i.text} <"
+                    i.style = ButtonStyle.SUCCESS
+                else:
+                    i.style = ButtonStyle.PRIMARY
             
             # 🛑 Telegram API limit: Max 8 buttons per row.
             # We chunk them into rows of 6 for better UI balance.
@@ -231,8 +228,8 @@ async def get_help_menu(return_all: bool = False, user_id: int = None, chat_id: 
                 page.append(chunk)
 
             page.append([
-                InlineKeyboardButton("Settings", "settings_menu"),
-                InlineKeyboardButton("Close", close_data)
+                InlineKeyboardButton("Settings", "settings_menu", style=enums.ButtonStyle.DANGER),
+                InlineKeyboardButton("Close", close_data, style=enums.ButtonStyle.DANGER)
             ])
     else:
         # Wrap buttons to ensure it's a list of lists if not already (for non-multipaged)
@@ -240,8 +237,8 @@ async def get_help_menu(return_all: bool = False, user_id: int = None, chat_id: 
         for row in reversed(tabs):
             buttons.insert(0, row)
         buttons.append([
-            InlineKeyboardButton("Settings", "settings_menu"),
-            InlineKeyboardButton("Close", close_data)
+            InlineKeyboardButton("Settings", "settings_menu", style=enums.ButtonStyle.DANGER),
+            InlineKeyboardButton("Close", close_data, style=enums.ButtonStyle.DANGER)
         ])
         
     if multi_pages and not return_all:
@@ -310,22 +307,22 @@ async def get_plugin_data(plugin: str, number: int = 0, sub_page: int = 0, user_
     
     # 📤 Relocate Send Plugin button to be above navigation/back buttons
     send_data = f"send_plugin#{plugin}?page={number}{si_suffix}"
-    buttons.append([InlineKeyboardButton("📤 Send Plugin", callback_data=f"sp#{create_callback_id(send_data)}")])
+    buttons.append([InlineKeyboardButton("📤 Send Plugin", callback_data=f"sp#{create_callback_id(send_data)}", style=enums.ButtonStyle.SUCCESS)])
 
     nav_buttons = []
     if len(pages) > 1:
         if sub_page > 0:
             prev_data = f"help#{plugin}?page={number}&sub={sub_page-1}{si_suffix}"
-            nav_buttons.append(InlineKeyboardButton(Altruix.get_string("prev"), callback_data=f"h#{create_callback_id(prev_data)}"))
+            nav_buttons.append(InlineKeyboardButton(Altruix.get_string("prev"), callback_data=f"h#{create_callback_id(prev_data)}", style=enums.ButtonStyle.PRIMARY))
         if sub_page < len(pages) - 1:
             next_data = f"help#{plugin}?page={number}&sub={sub_page+1}{si_suffix}"
-            nav_buttons.append(InlineKeyboardButton(Altruix.get_string("next"), callback_data=f"h#{create_callback_id(next_data)}"))
+            nav_buttons.append(InlineKeyboardButton(Altruix.get_string("next"), callback_data=f"h#{create_callback_id(next_data)}", style=enums.ButtonStyle.PRIMARY))
     
     if nav_buttons:
         buttons.append(nav_buttons)
         
     back_data = f"help#_page?page={number}{si_suffix}"
-    buttons.append([InlineKeyboardButton(Altruix.get_string("back"), callback_data=f"h#{create_callback_id(back_data)}")])
+    buttons.append([InlineKeyboardButton(Altruix.get_string("back"), callback_data=f"h#{create_callback_id(back_data)}", style=enums.ButtonStyle.DANGER)])
     
     return text, InlineKeyboardMarkup(buttons)
 
@@ -339,7 +336,7 @@ async def close_help(c: Client, cq: CallbackQuery):
     await cq.edit_message_text(
         "<b>Help Menu Closed 🔐</b>",
         reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton("Re-Open", re_open_data)]]
+            [[InlineKeyboardButton("Re-Open", re_open_data, style=enums.ButtonStyle.PRIMARY)]]
         ),
     )
 
@@ -353,6 +350,7 @@ async def reload_language(c: Client, iq: InlineQuery):
             InlineKeyboardButton(
                 Altruix.all_lang_strings[lang].get("def").title() or lang.title(),
                 f"reload_lang_{lang}",
+                style=enums.ButtonStyle.PRIMARY
             )
         ]
         for lang in Altruix.all_lang_strings.keys()
@@ -386,6 +384,41 @@ async def change_lang(c: Client, cb: CallbackQuery):
     return await cb.answer(Altruix.get_string("LANG_SELECTED"))
 
 
+@Altruix.bot.on_chosen_inline_result(filters.regex(r"^help(_plugin_[^_]+)?(?:_(-?\d+))?", flags=re.IGNORECASE))
+@iuser_check
+@log_errors
+async def help_chosen_handler(c: Client, cir: ChosenInlineResult):
+    """Capture inline metadata for the help menu logger."""
+    inline_msg_id = cir.inline_message_id
+    if not inline_msg_id: return
+    
+    try:
+        # result_id is either "help_{chat_id}" or "help_plugin_{plugin}_{chat_id}"
+        # We explicitly assigned this in the InlineQueryResultArticle
+        parts = cir.result_id.split("_")
+        chat_id = parts[-1] if len(parts) >= 2 and parts[-1].lstrip('-').isdigit() else "N/A"
+        
+        # Fallback: Extraction from query string (e.g. help -100...)
+        if chat_id == "N/A" and cir.query:
+            import re
+            if q_match := re.search(r"(?:^|\s)(-?\d{5,})(?:\s|$)", cir.query):
+                chat_id = q_match.group(1)
+        if chat_id == "None": chat_id = "N/A"
+        
+        await Altruix.local_db.inline_col.find_one_and_update(
+            {"_id": inline_msg_id},
+            {"$set": {
+                "_id": inline_msg_id,
+                "chat_id": chat_id,
+                "timestamp": datetime.now().timestamp()
+            }},
+            upsert=True
+        )
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Error in help_chosen_handler: {e}")
+
+
 @Altruix.bot.on_inline_query(filters.regex(r"^help(?:_(-?\d+))? ?(.+)?", flags=re.IGNORECASE))
 @log_errors
 @iuser_check
@@ -403,9 +436,14 @@ async def help(_: Client, iq: InlineQuery):
 
     if not plugin_or_tab:
         help_msg, buttons, parse_mode = await get_help_menu(user_id=iq.from_user.id, chat_id=cid, mode=default_mode)
+        
+        # Ensure result_id ends with chat_id for precise ChosenInlineResult matching
+        r_id = f"help_tab_{default_mode}_{chat_id}" if chat_id else f"help_tab_{default_mode}_Inline"
+        
         await iq.answer(
             results=[
                 InlineQueryResultArticle(
+                    id=r_id,
                     title=f"Userbot Help - {default_mode.title()}",
                     input_message_content=InputTextMessageContent(help_msg, parse_mode=parse_mode),
                     reply_markup=InlineKeyboardMarkup(buttons),
@@ -431,10 +469,15 @@ async def help(_: Client, iq: InlineQuery):
         await iq.answer(
             results=[
                 InlineQueryResultArticle(
+                    id=f"help_plugin_{plugin}_{chat_id if chat_id else 'Inline'}",
                     title=f"Help Module for {plugin}",
                     input_message_content=InputTextMessageContent(text),
                     reply_markup=markup if markup else InlineKeyboardMarkup(
-                        [[InlineKeyboardButton("Goto help menu", f"help#_page{si_str}{cid_str}")]]
+                        [[InlineKeyboardButton(
+                            "Goto help menu", f"help#_page{si_str}{cid_str}",
+                            style=enums.ButtonStyle.DANGER
+                            )
+                        ]]
                     ),
                 )
             ],
@@ -706,8 +749,10 @@ async def send_plugin_compressed(c: Client, cb: CallbackQuery):
     
     buttons = [
         [
-            InlineKeyboardButton("✅ Ya, Kirim", callback_data=f"csp#{create_callback_id(yes_data)}"),
-            InlineKeyboardButton("❌ Tidak", callback_data=f"csp#{create_callback_id(no_data)}"),
+            InlineKeyboardButton("✅ Ya, Kirim", callback_data=f"csp#{create_callback_id(yes_data)}",
+                style=enums.ButtonStyle.PRIMARY),
+            InlineKeyboardButton("❌ Tidak", callback_data=f"csp#{create_callback_id(no_data)}",
+                style=enums.ButtonStyle.DANGER),
         ]
     ]
     
@@ -740,8 +785,10 @@ async def send_plugin_confirm(c: Client, cb: CallbackQuery):
     
     buttons = [
         [
-            InlineKeyboardButton("✅ Ya, Kirim", callback_data=f"conf_send_pl#{plugin}#yes?page={page}{si_str}{cid_str}{mode_str}"),
-            InlineKeyboardButton("❌ Tidak", callback_data=f"conf_send_pl#{plugin}#no?page={page}{si_str}{cid_str}{mode_str}"),
+            InlineKeyboardButton("✅ Ya, Kirim", callback_data=f"conf_send_pl#{plugin}#yes?page={page}{si_str}{cid_str}{mode_str}",
+                style=enums.ButtonStyle.PRIMARY),
+            InlineKeyboardButton("❌ Tidak", callback_data=f"conf_send_pl#{plugin}#no?page={page}{si_str}{cid_str}{mode_str}",
+                style=enums.ButtonStyle.DANGER),
         ]
     ]
     
@@ -781,43 +828,82 @@ async def send_plugin_execute_compressed(c: Client, cb: CallbackQuery):
     # Continue with existing send logic...
     await cb.answer("🔍 Mencari file plugin...", show_alert=False)
     
-    # Find plugin file
+    # 1) Resolve file path
     plugin_file = None
-    for base_path in ["Main/plugins/userbot", "Main/plugins/bot", "Main/plugins/addons"]:
-        potential_path = f"{base_path}/{plugin}.py"
-        if os.path.exists(potential_path):
-            plugin_file = potential_path
-            break
+    if hasattr(Altruix, 'find_plugin_file'):
+        plugin_file = Altruix.find_plugin_file(plugin)
+        
+    if not plugin_file:
+        for base_path in ["Main/plugins/userbot", "Main/plugins/bot", "Main/plugins/addons", "Main/plugins/addons/inline"]:
+            potential_path = f"{base_path}/{plugin}.py"
+            if os.path.exists(potential_path):
+                plugin_file = potential_path
+                break
     
     if not plugin_file:
-        return await cb.answer("❌ Plugin file not found!", show_alert=True)
+        return await cb.answer(f"❌ Plugin file '{plugin}' not found!", show_alert=True)
     
+    await cb.answer("📤 Mengirim file...", show_alert=False)
     try:
-        # Send to user's PM
-        caption = f"📦 <b>Plugin:</b> <code>{plugin}</code>\n📁 <b>Path:</b> <code>{plugin_file}</code>"
+        # 2) Figure out the target chat
+        # If cid (chat id) is provided in original_data, use it. Otherwise, use callback context chat.
+        # Fallback to current user's PM if it was clicked there.
+        target_chat = None
+        if cid and cid != 'None':
+            target_chat = int(cid)
+        elif cb.message and cb.message.chat:
+            target_chat = cb.message.chat.id
+        else:
+            target_chat = cb.from_user.id
+            
+        # 3) Select the Userbot to send the file
+        user_id = cb.from_user.id
+        sender_client = None
+        
+        # Prefer the userbot session associated with the user clicking the button
+        for cl in Altruix.clients:
+            me = getattr(cl, "me", None) or getattr(cl, "myself", None)
+            if me and me.id == user_id:
+                sender_client = cl
+                break
+        
+        # Fallback to first available userbot
+        if not sender_client and Altruix.clients:
+            sender_client = Altruix.clients[0]
+            
+        # Final fallback: Bot
+        if not sender_client:
+            sender_client = Altruix.bot
+            
+        caption = f"📦 **Plugin:** `{plugin}`\n📁 **Path:** `{plugin_file}`\n\n_Generated by Altruix Assistant_"
         
         try:
-            await c.send_document(
-                cb.from_user.id,
-                plugin_file,
+            # 4) Send document via selected client
+            await sender_client.send_document(
+                chat_id=target_chat,
+                document=plugin_file,
                 caption=caption
             )
-            await cb.answer("✅ Plugin sent to your PM!", show_alert=True)
+            await cb.answer("✅ Plugin berhasil dikirim!", show_alert=True)
         except Exception as send_err:
-            # Fallback: send to current chat if PM fails
-            try:
-                await cb.message.reply_document(
-                    plugin_file,
-                    caption=caption
-                )
-                await cb.answer("✅ Plugin sent!", show_alert=True)
-            except Exception as fallback_err:
+            # 5) Fallback to Bot Assistant if Userbot fails (e.g., PeerIdInvalid)
+            if sender_client != Altruix.bot:
+                try:
+                    await Altruix.bot.send_document(
+                        chat_id=target_chat,
+                        document=plugin_file,
+                        caption=caption + "\n_(Sent via Bot Fallback)_"
+                    )
+                    await cb.answer("✅ Plugin dikirim via Bot!", show_alert=True)
+                except Exception as b_err:
+                    raise send_err
+            else:
                 raise send_err
-        
-        # Return to plugin help with user_id persistence
+                
+        # Return to plugin help page
         text, buttons = await get_plugin_data(plugin, page, user_id=cb.from_user.id, chat_id=cid, mode=mode)
         await cb.edit_message_text(text, reply_markup=buttons)
-        
+
     except Exception as e:
         await cb.answer(f"❌ Error: {str(e)[:100]}", show_alert=True)
 
@@ -843,61 +929,81 @@ async def send_plugin_execute(c: Client, cb: CallbackQuery):
         
     await cb.answer("🔍 Mencari file plugin...", show_alert=False)
     
-    file_path = Altruix.find_plugin_file(plugin)
-    if not file_path:
-        return await cb.answer(f"❌ File plugin '{plugin}' tidak ditemukan!", show_alert=True)
+    # 1) Resolve file path
+    plugin_file = None
+    if hasattr(Altruix, 'find_plugin_file'):
+        plugin_file = Altruix.find_plugin_file(plugin)
         
+    if not plugin_file:
+        for base_path in ["Main/plugins/userbot", "Main/plugins/bot", "Main/plugins/addons", "Main/plugins/addons/inline"]:
+            potential_path = f"{base_path}/{plugin}.py"
+            if os.path.exists(potential_path):
+                plugin_file = potential_path
+                break
+    
+    if not plugin_file:
+        return await cb.answer(f"❌ Plugin file '{plugin}' not found!", show_alert=True)
+    
     await cb.answer("📤 Mengirim file...", show_alert=False)
     try:
-        # Determine target chat (where button was clicked or provided cid)
-        target_chat = int(cid) if cid else (cb.message.chat.id if cb.message else cb.from_user.id)
-        
+        # 2) Figure out the target chat
+        target_chat = None
+        if cid and cid != 'None':
+            target_chat = int(cid)
+        elif cb.message and cb.message.chat:
+            target_chat = cb.message.chat.id
+        else:
+            target_chat = cb.from_user.id
+            
+        # 3) Select the Userbot to send the file
         user_id = cb.from_user.id
         sender_client = None
         
-        # 1. Prefer the userbot session associated with the user clicking the button
+        # Prefer the userbot session associated with the user clicking the button
         for cl in Altruix.clients:
             me = getattr(cl, "me", None) or getattr(cl, "myself", None)
             if me and me.id == user_id:
                 sender_client = cl
                 break
         
-        # 2. Fallback to first available userbot if owner/sudo is clicking
+        # Fallback to first available userbot
         if not sender_client and Altruix.clients:
             sender_client = Altruix.clients[0]
             
-        # 3. Final fallback: The Bot Assistant itself (Most reliable for PMs)
+        # Final fallback: Bot
         if not sender_client:
             sender_client = Altruix.bot
             
         Altruix.log(f"Help: Sending plugin '{plugin}' via {'Bot' if sender_client == Altruix.bot else 'Userbot'}")
             
+        caption = f"📦 **Plugin:** `{plugin}`\n📁 **Path:** `{plugin_file}`\n\n_Generated by Altruix Assistant_"
+        
         try:
-            # Send using the selected client
+            # 4) Send document via selected client
             await sender_client.send_document(
                 chat_id=target_chat,
-                document=file_path,
-                caption=f"📦 <b>Plugin File:</b> <code>{plugin}</code>\n"
-                        f"🌿 <b>Path:</b> <code>{file_path}</code>\n\n"
-                        f"Generated by Altruix Assistant."
+                document=plugin_file,
+                caption=caption
             )
             await cb.answer("✅ Plugin berhasil dikirim!", show_alert=True)
         except Exception as send_err:
             Altruix.log(f"Help: Primary send failed: {send_err}. Falling back to Bot Assistant.")
-            # If userbot failed (likely due to no common chat), try using the Bot itself
+            # 5) Fallback to Bot Assistant if Userbot fails (e.g., PeerIdInvalid)
             if sender_client != Altruix.bot:
-                await Altruix.bot.send_document(
-                    chat_id=target_chat,
-                    document=file_path,
-                    caption=f"📦 <b>Plugin File:</b> <code>{plugin}</code>\n"
-                            f"🌿 <b>Path:</b> <code>{file_path}</code>\n\n"
-                            f"<i>(Sent via Bot Fallback)</i>"
-                )
-                await cb.answer("✅ Plugin berhasil dikirim (via Bot Assistant)!", show_alert=True)
+                try:
+                    await Altruix.bot.send_document(
+                        chat_id=target_chat,
+                        document=plugin_file,
+                        caption=caption + "\n_(Sent via Bot Fallback)_"
+                    )
+                    await cb.answer("✅ Plugin dikirim via Bot!", show_alert=True)
+                except Exception as b_err:
+                    raise send_err
             else:
                 raise send_err
         
         # Return to plugin help with user_id persistence
+
         text, buttons = await get_plugin_data(plugin, page, user_id=cb.from_user.id, chat_id=cid, mode=mode)
         await cb.edit_message_text(text, reply_markup=buttons)
         
