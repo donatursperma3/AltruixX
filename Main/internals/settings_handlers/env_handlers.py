@@ -38,6 +38,9 @@ async def env_manager_list_handler(c: Client, cb: CallbackQuery):
     # Clear any pending input state (user pressed back)
     if cb.from_user.id in user_env_input_state:
         del user_env_input_state[cb.from_user.id]
+
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
     
     # Get all ENV variables and sort them alphabetically
     all_envs = {}
@@ -80,30 +83,30 @@ async def env_manager_list_handler(c: Client, cb: CallbackQuery):
         for key, value in env_items:
             # Truncate long keys for button display
             display_key = key[:25] + "..." if len(key) > 25 else key
-            buttons.append([InlineKeyboardButton(f"📌 {display_key}", f"env_view_{key}")])
+            buttons.append([InlineKeyboardButton(f"📌 {display_key}", f"env_view_{key}", style=user_style)])
     else:
         text += "\n\n<i>No environment variables found.</i>"
     
     # Pagination buttons
     nav_buttons = []
     if page > 1:
-        nav_buttons.append(InlineKeyboardButton("⬅️ Prev", f"env_manager_list_{page-1}"))
+        nav_buttons.append(InlineKeyboardButton("⬅️ Prev", f"env_manager_list_{page-1}", style=user_style))
     if page < total_pages:
-        nav_buttons.append(InlineKeyboardButton("Next ➡️", f"env_manager_list_{page+1}"))
+        nav_buttons.append(InlineKeyboardButton("Next ➡️", f"env_manager_list_{page+1}", style=user_style))
     if nav_buttons:
         buttons.append(nav_buttons)
     
     # Action buttons
     buttons.append([
-        InlineKeyboardButton("➕ Add", "env_add_start"),
-        InlineKeyboardButton("🔍 Search", "env_search_start")
+        InlineKeyboardButton("➕ Add", "env_add_start", style=user_style),
+        InlineKeyboardButton("🔍 Search", "env_search_start", style=user_style)
     ])
     buttons.append([
-        InlineKeyboardButton("📤 Import", "env_import_start"),
-        InlineKeyboardButton("🔄 Refresh", f"env_manager_list_{page}_refresh")
+        InlineKeyboardButton("📤 Import", "env_import_start", style=user_style),
+        InlineKeyboardButton("🔄 Refresh", f"env_manager_list_{page}_refresh", style=user_style)
     ])
     buttons.append([
-        InlineKeyboardButton("🔙 Back", "configs_home")
+        InlineKeyboardButton("🔙 Back", "configs_home", style=user_style)
     ])
     
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
@@ -126,8 +129,11 @@ async def env_add_start_handler(c: Client, cb: CallbackQuery):
         "❌ <b>Cancel:</b> Send /cancel"
     )
     
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
+
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup([[
-        InlineKeyboardButton("🔙 Cancel", "env_manager_list_1")
+        InlineKeyboardButton("🔙 Cancel", "env_manager_list_1", style=user_style)
     ]]), parse_mode=ParseMode.HTML)
     
     # Set state
@@ -150,8 +156,11 @@ async def env_search_start_handler(c: Client, cb: CallbackQuery):
         "❌ <b>Cancel:</b> Send /cancel"
     )
     
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
+
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup([[
-        InlineKeyboardButton("🔙 Cancel", "env_manager_list_1")
+        InlineKeyboardButton("🔙 Cancel", "env_manager_list_1", style=user_style)
     ]]), parse_mode=ParseMode.HTML)
     
     user_env_input_state[cb.from_user.id] = {
@@ -171,6 +180,9 @@ async def env_view_handler(c: Client, cb: CallbackQuery):
     if cb.from_user.id in user_env_input_state:
         del user_env_input_state[cb.from_user.id]
     
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
+
     key = cb.matches[0].group(1)
     current_value = await Altruix.config.get_env(key) or "Not Set"
     
@@ -196,17 +208,17 @@ async def env_view_handler(c: Client, cb: CallbackQuery):
     
     buttons = [
         [
-            InlineKeyboardButton(Altruix.get_string("ENV_EDIT_VALUE_BTN"), f"env_edit_val_{key}"),
-            InlineKeyboardButton(Altruix.get_string("ENV_RENAME_KEY_BTN"), f"env_rename_{key}")
+            InlineKeyboardButton(Altruix.get_string("ENV_EDIT_VALUE_BTN"), f"env_edit_val_{key}", style=user_style),
+            InlineKeyboardButton(Altruix.get_string("ENV_RENAME_KEY_BTN"), f"env_rename_{key}", style=user_style)
         ],
     ]
     
     if is_long:
-        buttons.append([InlineKeyboardButton("📥 Export as File", f"env_export_{key}")])
+        buttons.append([InlineKeyboardButton("📥 Export as File", f"env_export_{key}", style=user_style)])
     
     buttons.append([
-        InlineKeyboardButton("🗑️ Delete", f"env_delete_confirm_{key}"),
-        InlineKeyboardButton(Altruix.get_string("back"), "env_manager_list_1")
+        InlineKeyboardButton("🗑️ Delete", f"env_delete_confirm_{key}", style=user_style),
+        InlineKeyboardButton(Altruix.get_string("back"), "env_manager_list_1", style=user_style)
     ])
     
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
@@ -217,6 +229,8 @@ async def env_view_handler(c: Client, cb: CallbackQuery):
 async def env_edit_handler(c: Client, cb: CallbackQuery):
     """Edit existing ENV variable"""
     if not await check_authorization(cb): return
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
     await cb.answer()
     
     key = cb.matches[0].group(1)
@@ -236,7 +250,7 @@ async def env_edit_handler(c: Client, cb: CallbackQuery):
     )
     
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup([[
-        InlineKeyboardButton("🔙 Cancel", f"env_view_{key}")
+        InlineKeyboardButton("🔙 Cancel", f"env_view_{key}", style=user_style)
     ]]), parse_mode=ParseMode.HTML)
     
     user_env_input_state[cb.from_user.id] = {
@@ -251,6 +265,8 @@ async def env_edit_handler(c: Client, cb: CallbackQuery):
 async def env_rename_handler(c: Client, cb: CallbackQuery):
     """Initiate rename of ENV variable"""
     if not await check_authorization(cb): return
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
     await cb.answer()
     
     key = cb.matches[0].group(1)
@@ -258,7 +274,7 @@ async def env_rename_handler(c: Client, cb: CallbackQuery):
     text = Altruix.get_string("ENV_RENAME_PROMPT").format(key)
     
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup([[
-        InlineKeyboardButton(Altruix.get_string("cancel"), f"env_view_{key}")
+        InlineKeyboardButton(Altruix.get_string("cancel"), f"env_view_{key}", style=user_style)
     ]]), parse_mode=ParseMode.HTML)
     
     user_env_input_state[cb.from_user.id] = {
@@ -273,6 +289,8 @@ async def env_rename_handler(c: Client, cb: CallbackQuery):
 async def env_delete_confirm_handler(c: Client, cb: CallbackQuery):
     """Confirm deletion of ENV variable"""
     if not await check_authorization(cb): return
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
     await cb.answer()
     
     key = cb.matches[0].group(1)
@@ -286,8 +304,8 @@ async def env_delete_confirm_handler(c: Client, cb: CallbackQuery):
     
     buttons = [
         [
-            InlineKeyboardButton("✅ Yes, Delete", f"env_delete_exec_{key}"),
-            InlineKeyboardButton("❌ Cancel", "env_manager_list_1")
+            InlineKeyboardButton("✅ Yes, Delete", f"env_delete_exec_{key}", style=user_style),
+            InlineKeyboardButton("❌ Cancel", "env_manager_list_1", style=user_style)
         ]
     ]
     
@@ -368,8 +386,11 @@ async def env_edit_yes_handler(c: Client, cb: CallbackQuery):
             f"• <b>Status:</b> Successfully updated"
         )
         
+        from Main.utils.file_helpers import get_user_button_style
+        user_style = get_user_button_style(user_id)
+        
         await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("🔙 Back to ENV Manager", "env_manager_list_1")
+            InlineKeyboardButton("🔙 Back to ENV Manager", "env_manager_list_1", style=user_style)
         ]]), parse_mode=ParseMode.HTML)
         
     except Exception as e:
@@ -422,8 +443,11 @@ async def env_edit_file_yes_handler(c: Client, cb: CallbackQuery):
             f"• <b>Status:</b> Successfully updated from file"
         )
         
+        from Main.utils.file_helpers import get_user_button_style
+        user_style = get_user_button_style(user_id)
+        
         await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("🔙 Back to ENV Manager", "env_manager_list_1")
+            InlineKeyboardButton("🔙 Back to ENV Manager", "env_manager_list_1", style=user_style)
         ]]), parse_mode=ParseMode.HTML)
         
     except Exception as e:
@@ -494,6 +518,8 @@ async def env_export_handler(c: Client, cb: CallbackQuery):
 async def env_import_start_handler(c: Client, cb: CallbackQuery):
     """Start ENV import from file"""
     if not await check_authorization(cb): return
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
     await cb.answer()
     
     text = (
@@ -510,7 +536,7 @@ async def env_import_start_handler(c: Client, cb: CallbackQuery):
     )
     
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup([[
-        InlineKeyboardButton("🔙 Cancel", "env_manager_list_1")
+        InlineKeyboardButton("🔙 Cancel", "env_manager_list_1", style=user_style)
     ]]), parse_mode=ParseMode.HTML)
     
     user_env_input_state[cb.from_user.id] = {
@@ -552,14 +578,13 @@ async def process_env_input(c: Client, m: Message, state: dict):
                 Altruix.config._env_cache[key] = value
             
             await m.reply(f"✅ Added: <code>{key}</code>", parse_mode=ParseMode.HTML)
-            
-            # Clear state
             if m.from_user.id in user_env_input_state:
                 del user_env_input_state[m.from_user.id]
-            
+            from Main.utils.file_helpers import get_user_button_style
+            user_style = get_user_button_style(m.from_user.id)
             # Show menu
             await m.reply("🔄 Returning to ENV Manager...", reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("🔙 Back to ENV Manager", "env_manager_list_1")
+                InlineKeyboardButton("🔙 Back to ENV Manager", "env_manager_list_1", style=user_style)
             ]]))
         except Exception as e:
             logger.error(f"Error adding ENV: {e}")
@@ -591,10 +616,13 @@ async def process_env_input(c: Client, m: Message, state: dict):
             f"Are you sure you want to update this variable?"
         )
         
+        from Main.utils.file_helpers import get_user_button_style
+        user_style = get_user_button_style(m.from_user.id)
+
         buttons = InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("✅ Yes", f"env_edit_yes_{key}"),
-                InlineKeyboardButton("❌ No", f"env_view_{key}")
+                InlineKeyboardButton("✅ Yes", f"env_edit_yes_{key}", style=user_style),
+                InlineKeyboardButton("❌ No", f"env_view_{key}", style=user_style)
             ]
         ])
         
@@ -626,10 +654,13 @@ async def process_env_input(c: Client, m: Message, state: dict):
         # Show confirmation dialog
         text = Altruix.get_string("ENV_RENAME_CONFIRM").format(old_key, new_key)
         
+        from Main.utils.file_helpers import get_user_button_style
+        user_style = get_user_button_style(m.from_user.id)
+        
         buttons = InlineKeyboardMarkup([
             [
-                InlineKeyboardButton(Altruix.get_string("yes"), f"env_rename_exec_{old_key}_{new_key}"),
-                InlineKeyboardButton(Altruix.get_string("no"), f"env_view_{old_key}")
+                InlineKeyboardButton(Altruix.get_string("yes"), f"env_rename_exec_{old_key}_{new_key}", style=user_style),
+                InlineKeyboardButton(Altruix.get_string("no"), f"env_view_{old_key}", style=user_style)
             ]
         ])
         
@@ -661,8 +692,10 @@ async def process_env_input(c: Client, m: Message, state: dict):
         else:
             text += "<i>No matches found.</i>"
         
+        from Main.utils.file_helpers import get_user_button_style
+        user_style = get_user_button_style(m.from_user.id)
         await m.reply(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("🔙 Back to ENV Manager", "env_manager_list_1")
+            InlineKeyboardButton("🔙 Back to ENV Manager", "env_manager_list_1", style=user_style)
         ]]))
         
         # Clear state
@@ -812,8 +845,10 @@ async def process_env_document(c: Client, m: Message, state: dict):
                 if len(errors) > 5:
                     result_text += f"\n<i>...and {len(errors) - 5} more errors</i>"
             
+            from Main.utils.file_helpers import get_user_button_style
+            user_style = get_user_button_style(m.from_user.id)
             await m.reply(result_text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("🔙 Back to ENV Manager", "env_manager_list_1")
+                InlineKeyboardButton("🔙 Back to ENV Manager", "env_manager_list_1", style=user_style)
             ]]))
         elif action == 'edit' and step == 'waiting_new_value':
             # Use file content as new value
@@ -843,10 +878,12 @@ async def process_env_document(c: Client, m: Message, state: dict):
                 f"Are you sure you want to update this variable with the file content?"
             )
             
+            from Main.utils.file_helpers import get_user_button_style
+            user_style = get_user_button_style(m.from_user.id)
             buttons = InlineKeyboardMarkup([
                 [
-                    InlineKeyboardButton("✅ Yes", f"env_edit_file_yes_{key}"),
-                    InlineKeyboardButton("❌ No", f"env_view_{key}")
+                    InlineKeyboardButton("✅ Yes", f"env_edit_file_yes_{key}", style=user_style),
+                    InlineKeyboardButton("❌ No", f"env_view_{key}", style=user_style)
                 ]
             ])
             

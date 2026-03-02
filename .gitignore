@@ -113,6 +113,14 @@ ENV/
 env.bak/
 venv.bak/
 
+# Platform-specific virtual environments
+.venv_linux/
+.venv_vps/
+.venv_wsl/
+.venv_termux/
+.venv_macos/
+.venv_*/
+
 # Spyder project settings
 .spyderproject
 .spyproject

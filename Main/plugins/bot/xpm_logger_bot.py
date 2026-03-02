@@ -2,6 +2,7 @@
 # Copyright (C) 2021-present by Altruix@Github, < https://github.com/Altruix >.
 
 from Main import Altruix
+from Main.utils.essentials import Essentials
 from pyrogram import Client, enums, filters
 from pyrogram.types import (
     Message as RawMessage,
@@ -185,17 +186,17 @@ async def pmlb_settings_handler(c: Client, m: AltruixMessage):
         )
         buttons = [
             [
-                InlineKeyboardButton(f"{'✅' if log_mode == 'all' else '⚫️'} {Altruix.get_string('pmlb_mode_all')}", callback_data="pmlb_set_mode_all"),
-                InlineKeyboardButton(f"{'✅' if log_mode == 'sudo' else '⚫️'} {Altruix.get_string('pmlb_mode_sudo')}", callback_data="pmlb_set_mode_sudo"),
+                InlineKeyboardButton(await Essentials.get_user_button_style(m.from_user.id, f"{'✅' if log_mode == 'all' else '⚫️'} {Altruix.get_string('pmlb_mode_all')}"), callback_data="pmlb_set_mode_all"),
+                InlineKeyboardButton(await Essentials.get_user_button_style(m.from_user.id, f"{'✅' if log_mode == 'sudo' else '⚫️'} {Altruix.get_string('pmlb_mode_sudo')}"), callback_data="pmlb_set_mode_sudo"),
             ],
             [
-                InlineKeyboardButton(f"{'✅' if log_mode == 'nonsudo' else '⚫️'} {Altruix.get_string('pmlb_mode_nonsudo')}", callback_data="pmlb_set_mode_nonsudo"),
-                InlineKeyboardButton(f"{'✅' if log_mode == 'off' else '⚫️'} {Altruix.get_string('pmlb_mode_off')}", callback_data="pmlb_set_mode_off"),
+                InlineKeyboardButton(await Essentials.get_user_button_style(m.from_user.id, f"{'✅' if log_mode == 'nonsudo' else '⚫️'} {Altruix.get_string('pmlb_mode_nonsudo')}"), callback_data="pmlb_set_mode_nonsudo"),
+                InlineKeyboardButton(await Essentials.get_user_button_style(m.from_user.id, f"{'✅' if log_mode == 'off' else '⚫️'} {Altruix.get_string('pmlb_mode_off')}"), callback_data="pmlb_set_mode_off"),
             ],
             [
-                InlineKeyboardButton(f"Reply All: {'✅' if REPLY_FROM_ALL_ACCESSIBLE else '❌'}", callback_data="pmlb_toggle_replyall")
+                InlineKeyboardButton(await Essentials.get_user_button_style(m.from_user.id, f"Reply All: {'✅' if REPLY_FROM_ALL_ACCESSIBLE else '❌'}"), callback_data="pmlb_toggle_replyall")
             ],
-            [InlineKeyboardButton(Altruix.get_string('close') or "Close", callback_data="create_close")]
+            [InlineKeyboardButton(await Essentials.get_user_button_style(m.from_user.id, Altruix.get_string('close') or "Close"), callback_data="create_close")]
         ]
         return await m.reply_msg(text, reply_markup=InlineKeyboardMarkup(buttons))
 
@@ -392,17 +393,17 @@ async def pm_logger_bot_handler(c: Client, m: RawMessage):
             row1,
             row2,
             [
-                InlineKeyboardButton("➕ Others", callback_data=f"pmlb_others_{m.chat.id}_{m.id}_{c.me.id}"),
-                InlineKeyboardButton("🗑️ Remove React", callback_data=f"pmlb_unreact_{m.chat.id}_{m.id}_{c.me.id}")
+                InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, "➕ Others"), callback_data=f"pmlb_others_{m.chat.id}_{m.id}_{c.me.id}"),
+                InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, "🗑️ Remove React"), callback_data=f"pmlb_unreact_{m.chat.id}_{m.id}_{c.me.id}")
             ],
             [
-                InlineKeyboardButton(f"🗨️ {get_permission_label(REPLY_ACCESS_MODE)}", callback_data=f"pmlb_reply_menu_{m.chat.id}_{m.id}_{c.me.id}"),
-                InlineKeyboardButton("💾 Save to Log", callback_data=f"pmlb_save_{m.chat.id}_{m.id}_{c.me.id}")
+                InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, f"🗨️ {get_permission_label(REPLY_ACCESS_MODE)}"), callback_data=f"pmlb_reply_menu_{m.chat.id}_{m.id}_{c.me.id}"),
+                InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, "💾 Save to Log"), callback_data=f"pmlb_save_{m.chat.id}_{m.id}_{c.me.id}")
             ],
             [
-                InlineKeyboardButton("🗑️ Unsend", callback_data=f"pmlb_unsend_{m.chat.id}_{m.id}_{c.me.id}")
+                InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, "🗑️ Unsend"), callback_data=f"pmlb_unsend_{m.chat.id}_{m.id}_{c.me.id}")
             ],
-            [InlineKeyboardButton("🔗 Chat with User", url=f"tg://user?id={sender_id}")]
+            [InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, "🔗 Chat with User"), url=f"tg://user?id={sender_id}")]
         ]
 
         # Get topic if any (bot will search, but won't create if no permission)
@@ -573,9 +574,9 @@ async def pmlb_others_callback(c: Client, cb: CallbackQuery):
         keyboard = []
         emojis = list(VALID_REACTION_EMOJIS)
         for i in range(0, len(emojis), 8):
-            row = [InlineKeyboardButton(e, callback_data=f"pmlb_react_{chat_id}_{msg_id}_{client_id}_{e}") for e in emojis[i:i+8]]
+            row = [InlineKeyboardButton(await Essentials.get_user_button_style(cb.from_user.id, e), callback_data=f"pmlb_react_{chat_id}_{msg_id}_{client_id}_{e}") for e in emojis[i:i+8]]
             keyboard.append(row)
-        keyboard.append([InlineKeyboardButton("🔙 Back", callback_data=f"pmlb_back_{chat_id}_{msg_id}_{client_id}")])
+        keyboard.append([InlineKeyboardButton(await Essentials.get_user_button_style(cb.from_user.id, "🔙 Back"), callback_data=f"pmlb_back_{chat_id}_{msg_id}_{client_id}")])
         await cb.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
         await cb.answer("Select a reaction emoji")
     except Exception as e:
@@ -591,13 +592,13 @@ async def pmlb_back_callback(c: Client, cb: CallbackQuery):
             
         data = cb.data.split("_")
         chat_id, msg_id, client_id = int(data[2]), int(data[3]), int(data[4])
-        reaction_btns = [InlineKeyboardButton(e, callback_data=f"pmlb_react_{chat_id}_{msg_id}_{client_id}_{e}") for e in DEFAULT_REACTION_EMOJIS]
+        reaction_btns = [InlineKeyboardButton(await Essentials.get_user_button_style(cb.from_user.id, e), callback_data=f"pmlb_react_{chat_id}_{msg_id}_{client_id}_{e}") for e in DEFAULT_REACTION_EMOJIS]
         keyboard = [
             reaction_btns[:3], reaction_btns[3:6],
-            [InlineKeyboardButton("➕ Others", callback_data=f"pmlb_others_{chat_id}_{msg_id}_{client_id}"), InlineKeyboardButton("🗑️ Remove React", callback_data=f"pmlb_unreact_{chat_id}_{msg_id}_{client_id}")],
-            [InlineKeyboardButton(f"🗨️ {get_permission_label(REPLY_ACCESS_MODE)}", callback_data=f"pmlb_reply_menu_{chat_id}_{msg_id}_{client_id}"), InlineKeyboardButton("💾 Save to Log", callback_data=f"pmlb_save_{chat_id}_{msg_id}_{client_id}")],
-            [InlineKeyboardButton("🗑️ Unsend", callback_data=f"pmlb_unsend_{chat_id}_{msg_id}_{client_id}")],
-            [InlineKeyboardButton("🔗 Chat with User", url=f"tg://user?id={chat_id}")]
+            [InlineKeyboardButton(await Essentials.get_user_button_style(cb.from_user.id, "➕ Others"), callback_data=f"pmlb_others_{chat_id}_{msg_id}_{client_id}"), InlineKeyboardButton(await Essentials.get_user_button_style(cb.from_user.id, "🗑️ Remove React"), callback_data=f"pmlb_unreact_{chat_id}_{msg_id}_{client_id}")],
+            [InlineKeyboardButton(await Essentials.get_user_button_style(cb.from_user.id, f"🗨️ {get_permission_label(REPLY_ACCESS_MODE)}"), callback_data=f"pmlb_reply_menu_{chat_id}_{msg_id}_{client_id}"), InlineKeyboardButton(await Essentials.get_user_button_style(cb.from_user.id, "💾 Save to Log"), callback_data=f"pmlb_save_{chat_id}_{msg_id}_{client_id}")],
+            [InlineKeyboardButton(await Essentials.get_user_button_style(cb.from_user.id, "🗑️ Unsend"), callback_data=f"pmlb_unsend_{chat_id}_{msg_id}_{client_id}")],
+            [InlineKeyboardButton(await Essentials.get_user_button_style(cb.from_user.id, "🔗 Chat with User"), url=f"tg://user?id={chat_id}")]
         ]
         await cb.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
     except Exception as e:
@@ -715,15 +716,15 @@ async def pmlb_reply_menu_callback(c: Client, cb: CallbackQuery):
             return await cb.answer(reason, show_alert=True)
             
         reply_btns = [
-             InlineKeyboardButton("👤 Reply as User", callback_data=f"pmlb_reply_{chat_id}_{msg_id}_{client_id}")
+             InlineKeyboardButton(await Essentials.get_user_button_style(cb.from_user.id, "👤 Reply as User"), callback_data=f"pmlb_reply_{chat_id}_{msg_id}_{client_id}")
         ]
         
         if REPLY_FROM_ALL_ACCESSIBLE:
-             reply_btns.append(InlineKeyboardButton("👥 Reply From All", callback_data=f"pmlb_replyall_{chat_id}_{msg_id}_{client_id}"))
+             reply_btns.append(InlineKeyboardButton(await Essentials.get_user_button_style(cb.from_user.id, "👥 Reply From All"), callback_data=f"pmlb_replyall_{chat_id}_{msg_id}_{client_id}"))
              
         menu_markup = InlineKeyboardMarkup([
             reply_btns,
-            [InlineKeyboardButton("🔙 Back", callback_data=f"pmlb_back_{chat_id}_{msg_id}_{client_id}")]
+            [InlineKeyboardButton(await Essentials.get_user_button_style(cb.from_user.id, "🔙 Back"), callback_data=f"pmlb_back_{chat_id}_{msg_id}_{client_id}")]
         ])
         
         await cb.edit_message_reply_markup(reply_markup=menu_markup)

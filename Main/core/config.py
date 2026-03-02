@@ -25,10 +25,21 @@ from .exceptions import NoDatabaseConnected, EnvVariableTypeError
 dotenv.load_dotenv()
 
 
+def safe_int(digit, default=None):
+    if digit is None:
+        return default
+    if isinstance(digit, int):
+        return digit
+    # Strip quotes and spaces
+    clean_digit = str(digit).strip().strip('"').strip("'")
+    if clean_digit.isdigit() or (clean_digit.startswith('-') and clean_digit[1:].isdigit()):
+        return int(clean_digit)
+    return default
+
+
 def digit_wrap(digit):
-    with contextlib.suppress(Exception):
-        return int(digit)
-    return digit
+    res = safe_int(digit)
+    return res if res is not None else digit
 
 
 class TGLIMITS(object):
@@ -89,13 +100,13 @@ class BaseConfig(object):
     LOAD_ENV_TO_DB = getenv("LOAD_ENV_TO_DB", False)
     CUSTOM_BT_START_MSG = getenv("CUSTOM_BT_START_MSG", "")
     SESSIONS = [i for i in getenv("SESSIONS", "").split(" ") if i != "" or None]
-    API_ID = int(getenv("API_ID"))
+    API_ID = safe_int(getenv("API_ID"))
     DISABLED_SUDO_CMD_LIST = []
     API_HASH = getenv("API_HASH")
     HEROKU_APP_NAME = getenv("HEROKU_APP_NAME")
-    HELP_MENU_ROWS = int(getenv("HELP_MENU_ROWS", 3))
-    HELP_MENU_COLUMNS = int(getenv("HELP_MENU_COLUMNS", 3))
-    HELP_MENU_MAX_CHARS = int(getenv("HELP_MENU_MAX_CHARS", 666))
+    HELP_MENU_ROWS = safe_int(getenv("HELP_MENU_ROWS"), 3)
+    HELP_MENU_COLUMNS = safe_int(getenv("HELP_MENU_COLUMNS"), 3)
+    HELP_MENU_MAX_CHARS = safe_int(getenv("HELP_MENU_MAX_CHARS"), 666)
 
     DEFAULT_REPO = "https://github.com/Altruix/Altruix"
     HEROKU_API_KEY = getenv("HEROKU_API_KEY")
@@ -352,12 +363,11 @@ class Config(BaseConfig):
         if db_val is None and env_key in BC_MAP:
             db_val = await self.get_env_from_db(BC_MAP[env_key])
             if db_val is not None:
-                # Automigrate in cache (don't force DB write here to avoid heavy operations on every read)
+                # Automigrate in cache
                 self._env_cache[env_key] = db_val
 
-        # ✅ DYNAMIC SUFFIX BACKWARD COMPATIBILITY (For per-account prefixes)
+        # ✅ DYNAMIC SUFFIX BACKWARD COMPATIBILITY
         if db_val is None:
-            # Check if key starts with new prefix base
             if env_key.startswith("PREFIX_OWNER_USER_"):
                 suffix = env_key.replace("PREFIX_OWNER_USER_", "")
                 legacy_key = f"CMD_HANDLER_{suffix}"
@@ -370,15 +380,21 @@ class Config(BaseConfig):
             if db_val is not None:
                 self._env_cache[env_key] = db_val
         
+        # Cache the result (even if None) to avoid re-querying DB for misses
         if db_val is not None:
+            self._env_cache[env_key] = db_val
             return db_val
-            
+        
         # Priority 3: .env file
         env_val = self.get_env_(env_key, as_list)
         if env_val is not None:
+            # Optionally cache ENV file hits too
+            self._env_cache[env_key] = env_val
             return env_val
             
-        # Priority 4: Class attribute (Defaults)
+        # If still not found, cache as None (Negative Caching) to prevent N+1 queries
+        self._env_cache[env_key] = None
+        
         return getattr(self, env_key, default)
 
     def get_env_(self, env_key, as_list):

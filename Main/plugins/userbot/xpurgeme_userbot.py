@@ -12,6 +12,7 @@ from pyrogram.errors import FloodWait, MessageNotModified
 from Main import Altruix
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from Main.internals.settings import send_log_notification
+from Main.utils.essentials import Essentials
 
 # Initialize shared state storage if not exists
 if not hasattr(Altruix, "PURGEME_STATE"):
@@ -119,23 +120,23 @@ def get_purgeme_status_text(state):
     return title
 
 # Helper to get control buttons
-def get_purgeme_control_kb(unique_id, status):
+async def get_purgeme_control_kb(unique_id, status, client_id):
     def loc(key): return Altruix.get_string(key)
     if status == "running":
         return InlineKeyboardMarkup([
             [
-                InlineKeyboardButton(loc("purgeme_pause") or "⏸ Pause", callback_data=f"pg_pause_{unique_id}"),
-                InlineKeyboardButton(loc("purgeme_stop") or "⏹ Stop", callback_data=f"pg_stop_{unique_id}"),
+                InlineKeyboardButton(await Essentials.get_user_button_style(client_id, loc("purgeme_pause") or "⏸ Pause"), callback_data=f"pg_pause_{unique_id}"),
+                InlineKeyboardButton(await Essentials.get_user_button_style(client_id, loc("purgeme_stop") or "⏹ Stop"), callback_data=f"pg_stop_{unique_id}"),
             ],
-            [InlineKeyboardButton(loc("status") or loc("purgeme_refresh") or "Status", callback_data=f"pg_refresh_{unique_id}")]
+            [InlineKeyboardButton(await Essentials.get_user_button_style(client_id, loc("status") or loc("purgeme_refresh") or "Status"), callback_data=f"pg_refresh_{unique_id}")]
         ])
     elif status == "paused":
         return InlineKeyboardMarkup([
             [
-                InlineKeyboardButton(loc("purgeme_resume") or "▶️ Resume", callback_data=f"pg_resume_{unique_id}"),
-                InlineKeyboardButton(loc("purgeme_stop") or "⏹ Stop", callback_data=f"pg_stop_{unique_id}"),
+                InlineKeyboardButton(await Essentials.get_user_button_style(client_id, loc("purgeme_resume") or "▶️ Resume"), callback_data=f"pg_resume_{unique_id}"),
+                InlineKeyboardButton(await Essentials.get_user_button_style(client_id, loc("purgeme_stop") or "⏹ Stop"), callback_data=f"pg_stop_{unique_id}"),
             ],
-             [InlineKeyboardButton(loc("status") or loc("purgeme_refresh") or "Status", callback_data=f"pg_refresh_{unique_id}")]
+             [InlineKeyboardButton(await Essentials.get_user_button_style(client_id, loc("status") or loc("purgeme_refresh") or "Status"), callback_data=f"pg_refresh_{unique_id}")]
         ])
     return None
 
@@ -423,7 +424,7 @@ async def purgeme_cmd(client: Client, message: Message):
         if message.chat.type == enums.ChatType.PRIVATE:
             from Main.plugins.bot.xpurgeme_bot import get_purgeme_text, get_purgeme_keyboard
             menu_text = get_purgeme_text(Altruix.PURGEME_STATE[unique_id])
-            kb = get_purgeme_keyboard(chat_id, user_id, unique_id)
+            kb = await get_purgeme_keyboard(chat_id, user_id, unique_id)
             
             bot = Altruix.bot_manager.get_bot(client.me.id)
             sent_invite = await bot.send_message(
@@ -488,7 +489,7 @@ async def purgeme_cmd(client: Client, message: Message):
         from Main.plugins.bot.xpurgeme_bot import get_purgeme_text, get_purgeme_keyboard
         
         menu_text = get_purgeme_text(Altruix.PURGEME_STATE[unique_id])
-        kb = get_purgeme_keyboard(chat_id, client.me.id, unique_id)
+        kb = await get_purgeme_keyboard(chat_id, client.me.id, unique_id)
         
         # 3. Send Direct PM via Bot Assistant
         try:
@@ -576,7 +577,7 @@ async def purgeme_cmd(client: Client, message: Message):
     else:
         try:
             dash_text = get_purgeme_status_text(state)
-            dash_kb = get_purgeme_control_kb(unique_id, "running")
+            dash_kb = await get_purgeme_control_kb(unique_id, "running", client.me.id)
             
             # Try to send via appropriate bot (custom if available, fallback to main Altruix.bot)
             bot = Altruix.bot_manager.get_bot(client.me.id)
@@ -912,8 +913,10 @@ async def update_dashboard(state):
     try:
         if state.get("dashboard_chat_id") and state.get("dashboard_msg_id"):
             text = get_purgeme_status_text(state)
-            uid = f"{state['chat_id']}_{state['client'].me.id}"
-            kb = get_purgeme_control_kb(uid, state["status"])
+            current_client = state["client"]
+            client_id = current_client.me.id if current_client.me else None
+            uid = f"{state['chat_id']}_{client_id}"
+            kb = await get_purgeme_control_kb(uid, state["status"], client_id)
 
             target_bot = Altruix.bot if state["dashboard_chat_id"] == Altruix.log_chat else Altruix.bot_manager.get_bot(state["client"].me.id)
             

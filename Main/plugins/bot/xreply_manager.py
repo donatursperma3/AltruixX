@@ -4,6 +4,7 @@ PLUGIN_VERSION = "0.0.26"
 # Copyright (C) 2021-present by Altruix@Github, < https://github.com/Altruix >.
 
 from Main import Altruix
+from Main.utils.essentials import Essentials
 from pyrogram import Client, enums, filters
 from pyrogram.types import (
     Message as RawMessage,
@@ -43,7 +44,6 @@ async def dynamic_log_chat_filter(_, __, m: RawMessage):
 log_chat_filter = filters.create(dynamic_log_chat_filter)
 
 @Altruix.bot.on_message(log_chat_filter & filters.reply, group=1)
-@iuser_check
 @log_errors
 async def handle_reply_input(c: Client, m: RawMessage):
     """
@@ -57,6 +57,12 @@ async def handle_reply_input(c: Client, m: RawMessage):
     do_log = await should_log()
     if do_log:
         logger.info(f"ReplyManager: Detected reply in log chat {m.chat.id} from {m.from_user.id if m.from_user else 'None'}. Altruix.log_chat={Altruix.log_chat}")
+
+    # ✅ Manual Auth Check: SILENT for unauthorized users to prevent noise in log chat
+    from Main.utils.access_control import is_authorized_user
+    if not is_authorized_user(m.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
+        # Silent return to avoid bot assistant replying "Access Denied" to every chat message
+        return
 
     # Access shared state from Altruix object (PERSISTENT across reloads)
     REPLY_AS_MENTIONED_WAITING = Altruix.REPLY_AS_MENTIONED_WAITING
@@ -205,8 +211,8 @@ async def handle_reply_input(c: Client, m: RawMessage):
     
     buttons = [
         [
-            InlineKeyboardButton("✅ Ya, Kirim", callback_data=f"{btn_prefix}_confirm_{waiting_id}"),
-            InlineKeyboardButton("❌ Batal", callback_data=f"{btn_prefix}_cancel_{waiting_id}")
+            InlineKeyboardButton(await Essentials.get_user_button_style(m.from_user.id, "✅ Ya, Kirim"), callback_data=f"{btn_prefix}_confirm_{waiting_id}"),
+            InlineKeyboardButton(await Essentials.get_user_button_style(m.from_user.id, "❌ Batal"), callback_data=f"{btn_prefix}_cancel_{waiting_id}")
         ]
     ]
     
@@ -535,10 +541,10 @@ async def reply_manager_cmd_handler(c: Client, m: RawMessage):
          )
          
          buttons = [
-            [InlineKeyboardButton(f"{'Disable' if enabled else 'Enable'} Manager", callback_data="toggle_reply_manager_global")],
-            [InlineKeyboardButton(f"{'Disable' if auto_reply else 'Enable'} Auto-Reply", callback_data="toggle_auto_reply_global")],
-            [InlineKeyboardButton(f"{'Disable' if err_notif else 'Enable'} Error Notif", callback_data="toggle_reply_err_notif_global")],
-            [InlineKeyboardButton("🔙 Back", callback_data="bot_controls_menu")]
+            [InlineKeyboardButton(await Essentials.get_user_button_style(m.from_user.id, f"{'Disable' if enabled else 'Enable'} Manager"), callback_data="toggle_reply_manager_global")],
+            [InlineKeyboardButton(await Essentials.get_user_button_style(m.from_user.id, f"{'Disable' if auto_reply else 'Enable'} Auto-Reply"), callback_data="toggle_auto_reply_global")],
+            [InlineKeyboardButton(await Essentials.get_user_button_style(m.from_user.id, f"{'Disable' if err_notif else 'Enable'} Error Notif"), callback_data="toggle_reply_err_notif_global")],
+            [InlineKeyboardButton(await Essentials.get_user_button_style(m.from_user.id, "🔙 Back"), callback_data="bot_controls_menu")]
         ]
          await m.reply_msg(text, reply_markup=InlineKeyboardMarkup(buttons))
          return

@@ -11,6 +11,7 @@ from .utils import edit_cb, check_authorization
 @log_errors
 async def confirm_addons_handler(c: Client, cb: CallbackQuery):
     """Show confirmation for Altruix Addons Toggling"""
+    await cb.answer()
     if not await check_authorization(cb): return
     
     idx = int(cb.matches[0].group("idx"))
@@ -19,6 +20,9 @@ async def confirm_addons_handler(c: Client, cb: CallbackQuery):
     current = await Altruix.config.get_env("LOAD_ULTROID_ADDONS", default="off")
     status_text = "ENABLED" if str(current).lower() in ("on", "true", "1", "yes") else "DISABLED"
     target_action = "DISABLE" if status_text == "ENABLED" else "ENABLE"
+    
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
     
     text = (
         f"<b>⚠️ CONFIRMATION</b>\n\n"
@@ -29,11 +33,11 @@ async def confirm_addons_handler(c: Client, cb: CallbackQuery):
     
     buttons = [
         [
-            InlineKeyboardButton("✅ Yes", callback_data=f"toggle_addons_exec_{idx}_{pg}"),
-            InlineKeyboardButton("❌ No", callback_data=f"session_info_{idx}_{pg}_5")
+            InlineKeyboardButton("✅ Yes", callback_data=f"toggle_addons_exec_{idx}_{pg}", style=user_style),
+            InlineKeyboardButton("❌ No", callback_data=f"session_info_{idx}_{pg}_5", style=user_style)
         ],
         [
-            InlineKeyboardButton("⌨️ Ultroid Prefix Settings", callback_data=f"ultroid_pfx_menu_{idx}_{pg}")
+            InlineKeyboardButton("⌨️ Ultroid Prefix Settings", callback_data=f"ultroid_pfx_menu_{idx}_{pg}", style=user_style)
         ]
     ]
     
@@ -98,6 +102,9 @@ async def ultroid_prefix_menu_handler(c: Client, cb: CallbackQuery):
         s_p = await Altruix.config.get_env(f"ULTROID_PREFIX_SUDO_{tid}") or "?"
         mode_text = f"PER-ACCOUNT ({idx})"
 
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
+
     text = (
         f"<b>⌨️ Ultroid Prefix Settings ({mode_text})</b>\n\n"
         f"Configure triggers for Ultroid Addon commands.\n\n"
@@ -109,15 +116,15 @@ async def ultroid_prefix_menu_handler(c: Client, cb: CallbackQuery):
     
     buttons = [
         [
-            InlineKeyboardButton("Set Owner Prefix", callback_data=f"ultroid_set_pfx_u_{idx}_{pg}"),
-            InlineKeyboardButton("Set Sudo Prefix", callback_data=f"ultroid_set_pfx_s_{idx}_{pg}")
+            InlineKeyboardButton("Set Owner Prefix", callback_data=f"ultroid_set_pfx_u_{idx}_{pg}", style=user_style),
+            InlineKeyboardButton("Set Sudo Prefix", callback_data=f"ultroid_set_pfx_s_{idx}_{pg}", style=user_style)
         ],
         [
-            InlineKeyboardButton("🌿 Branches", callback_data=f"upm_branch_menu_{idx}_{pg}"),
-            InlineKeyboardButton("📂 Manage Files", callback_data=f"upm_files_menu_{idx}_{pg}_0")
+            InlineKeyboardButton("🌿 Branches", callback_data=f"upm_branch_menu_{idx}_{pg}", style=user_style),
+            InlineKeyboardButton("📂 Manage Files", callback_data=f"upm_files_menu_{idx}_{pg}_0", style=user_style)
         ],
-        [InlineKeyboardButton("🔄 Sync All Addons", callback_data=f"update_addons_exec_{idx}_{pg}")],
-        [InlineKeyboardButton("🔙 Back to Addons", callback_data=f"toggle_addons_confirm_{idx}_{pg}")]
+        [InlineKeyboardButton("🔄 Sync All Addons", callback_data=f"update_addons_exec_{idx}_{pg}", style=user_style)],
+        [InlineKeyboardButton("🔙 Back to Addons", callback_data=f"toggle_addons_confirm_{idx}_{pg}", style=user_style)]
     ]
     await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
 
@@ -125,6 +132,7 @@ async def ultroid_prefix_menu_handler(c: Client, cb: CallbackQuery):
 @iuser_check
 @log_errors
 async def ultroid_set_pfx_prompt_handler(c: Client, cb: CallbackQuery):
+    await cb.answer()
     if not await check_authorization(cb): return
     p_type = cb.matches[0].group("type")
     idx = int(cb.matches[0].group("idx"))
@@ -139,7 +147,9 @@ async def ultroid_set_pfx_prompt_handler(c: Client, cb: CallbackQuery):
         f"<i>Send <code>/cancel</code> to abort.</i>"
     )
     
-    await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"ultroid_pfx_menu_{idx}_{pg}")]]))
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
+    await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"ultroid_pfx_menu_{idx}_{pg}", style=user_style)]]))
     
     from Main.internals.settings_handlers.states import WAIT_ULTROID_PREFIX, user_privacy_state
     user_privacy_state[cb.from_user.id] = {
@@ -176,7 +186,9 @@ async def update_addons_exec_handler(c: Client, cb: CallbackQuery):
             "Gagal mengupdate addons. Periksa koneksi internet atau log terminal untuk detail error."
         )
         
-    buttons = [[InlineKeyboardButton("🔙 Back", callback_data=f"ultroid_pfx_menu_{idx}_{pg}")]]
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
+    buttons = [[InlineKeyboardButton("🔙 Back", callback_data=f"ultroid_pfx_menu_{idx}_{pg}", style=user_style)]]
     await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
 
 
@@ -186,7 +198,10 @@ async def update_addons_exec_handler(c: Client, cb: CallbackQuery):
 @iuser_check
 @log_errors
 async def upm_branch_menu_handler(c: Client, cb: CallbackQuery):
+    await cb.answer()
     if not await check_authorization(cb): return
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
     idx = int(cb.matches[0].group("idx"))
     pg = int(cb.matches[0].group("pg"))
     
@@ -202,9 +217,9 @@ async def upm_branch_menu_handler(c: Client, cb: CallbackQuery):
     buttons = []
     for br in branches:
         label = f"✅ {br}" if br == current_branch else br
-        buttons.append([InlineKeyboardButton(label, callback_data=f"upm_set_branch_{br}_{idx}_{pg}")])
+        buttons.append([InlineKeyboardButton(label, callback_data=f"upm_set_branch_{br}_{idx}_{pg}", style=user_style)])
     
-    buttons.append([InlineKeyboardButton("🔙 Back", callback_data=f"ultroid_pfx_menu_{idx}_{pg}")])
+    buttons.append([InlineKeyboardButton("🔙 Back", callback_data=f"ultroid_pfx_menu_{idx}_{pg}", style=user_style)])
     await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
 
 @Altruix.bot.on_callback_query(filters.regex(r"^upm_set_branch_(?P<br>\w+)_(?P<idx>\d+)_(?P<pg>\d+)$"))
@@ -229,7 +244,10 @@ async def upm_set_branch_handler(c: Client, cb: CallbackQuery):
 @iuser_check
 @log_errors
 async def upm_manage_files_handler(c: Client, cb: CallbackQuery):
+    await cb.answer()
     if not await check_authorization(cb): return
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
     idx = int(cb.matches[0].group("idx"))
     pg = int(cb.matches[0].group("pg"))
     spg = int(cb.matches[0].group("spg"))
@@ -246,20 +264,20 @@ async def upm_manage_files_handler(c: Client, cb: CallbackQuery):
     buttons = []
     for addon in current_addons:
         buttons.append([
-            InlineKeyboardButton(f"📄 {addon}", callback_data="none"),
-            InlineKeyboardButton("🗑️", callback_data=f"upm_del_file_{addon}_{idx}_{pg}_{spg}")
+            InlineKeyboardButton(f"📄 {addon}", callback_data="none", style=user_style),
+            InlineKeyboardButton("🗑️", callback_data=f"upm_del_file_{addon}_{idx}_{pg}_{spg}", style=user_style)
         ])
     
     # Nav buttons
     nav = []
     if spg > 0:
-        nav.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"upm_files_menu_{idx}_{pg}_{spg-1}"))
+        nav.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"upm_files_menu_{idx}_{pg}_{spg-1}", style=user_style))
     if end < len(addons):
-        nav.append(InlineKeyboardButton("Next ➡️", callback_data=f"upm_files_menu_{idx}_{pg}_{spg+1}"))
+        nav.append(InlineKeyboardButton("Next ➡️", callback_data=f"upm_files_menu_{idx}_{pg}_{spg+1}", style=user_style))
     if nav: buttons.append(nav)
     
-    buttons.append([InlineKeyboardButton("➕ Install from URL", callback_data=f"upm_inst_prompt_{idx}_{pg}")])
-    buttons.append([InlineKeyboardButton("🔙 Back", callback_data=f"ultroid_pfx_menu_{idx}_{pg}")])
+    buttons.append([InlineKeyboardButton("➕ Install from URL", callback_data=f"upm_inst_prompt_{idx}_{pg}", style=user_style)])
+    buttons.append([InlineKeyboardButton("🔙 Back", callback_data=f"ultroid_pfx_menu_{idx}_{pg}", style=user_style)])
     
     await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
 
@@ -284,6 +302,7 @@ async def upm_delete_file_handler(c: Client, cb: CallbackQuery):
 @iuser_check
 @log_errors
 async def upm_install_prompt_handler(c: Client, cb: CallbackQuery):
+    await cb.answer()
     if not await check_authorization(cb): return
     idx = int(cb.matches[0].group("idx"))
     pg = int(cb.matches[0].group("pg"))
@@ -295,7 +314,9 @@ async def upm_install_prompt_handler(c: Client, cb: CallbackQuery):
         "<i>Send <code>/cancel</code> to abort.</i>"
     )
     
-    await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"upm_files_menu_{idx}_{pg}_0")]]))
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
+    await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"upm_files_menu_{idx}_{pg}_0", style=user_style)]]))
     
     from Main.internals.settings_handlers.states import WAIT_UPM_INSTALL, user_privacy_state
     user_privacy_state[cb.from_user.id] = {
@@ -338,9 +359,11 @@ async def process_ultroid_prefix_input(c: Client, m: Message, state: dict):
     from Main.internals.settings_handlers.states import user_privacy_state
     if user_id in user_privacy_state: del user_privacy_state[user_id]
     
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(user_id)
     await m.reply(
         f"✅ **Berhasil!** Prefix Ultroid {label} sekarang adalah: <code>{text}</code>",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Settings", callback_data=f"ultroid_pfx_menu_{idx}_{pg}")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Settings", callback_data=f"ultroid_pfx_menu_{idx}_{pg}", style=user_style)]])
     )
 
 async def process_upm_install_input(c: Client, m: Message, state: dict):
@@ -369,7 +392,9 @@ async def process_upm_install_input(c: Client, m: Message, state: dict):
     else:
         text = f"❌ **Gagal Menginstal!**\n\n`{res_msg}`"
         
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(user_id)
     await status_msg.edit(
         text,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to UPM", callback_data=f"upm_files_menu_{idx}_{pg}_0")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to UPM", callback_data=f"upm_files_menu_{idx}_{pg}_0", style=user_style)]])
     )

@@ -233,9 +233,6 @@ async def auto_gp_message_trigger(client: Client, message: Message):
     """
     if not message:
         return
-    
-    # TRACE: Log immediately to confirm entry
-    Altruix.log(f"🔍 Auto-GP Handler ENTRY | MsgID: {message.id} | Chat: {message.chat.id}", level=20)
 
     # Check if message has text or caption to look for prefixes
     msg_text = message.text or message.caption or ""
@@ -249,6 +246,9 @@ async def auto_gp_message_trigger(client: Client, message: Message):
     # Check if Auto-GP is ON
     if not settings.get("status", False):
         return
+
+    # TRACE: Log entry after confirming it's enabled
+    Altruix.log(f"🔍 Auto-GP Handler ENTRY | MsgID: {message.id} | Chat: {chat_id}", level=20)
 
     # 🚫 Feature 1: Respect Blacklist for Triggering
     if settings.get("respect_bl", True) and chat_id in settings.get("blacklist", []):

@@ -26,6 +26,9 @@ logger = logging.getLogger(__name__)
 
 # --- Session Exports ---
 
+from Main.utils.file_helpers import get_user_button_style
+from .custom_alert_handlers import _get_session_user_id
+
 @Altruix.bot.on_callback_query(filters.regex(r"^gen_conf_export_session_(\d+)_(\d+)$"))
 @iuser_check
 @log_errors
@@ -33,6 +36,10 @@ async def export_session_cb_handler(c: Client, cb: CallbackQuery):
     """Export the .session file of current session to user's PM"""
     index, page = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
     await cb.answer("📤 Exporting session...", show_alert=False)
+    
+    # Resolve user_style
+    user_id_key = _get_session_user_id(index)
+    user_style = get_user_button_style(user_id_key)
     
     file_name = Altruix.config.SESSION_NAMES[index] if index < len(Altruix.config.SESSION_NAMES) else None
     if not file_name:
@@ -47,7 +54,7 @@ async def export_session_cb_handler(c: Client, cb: CallbackQuery):
             caption=f"📄 <b>Session File</b>\n• User: {Altruix.clients[index].me.first_name}\n• Index: {index+1}",
             parse_mode=ParseMode.HTML
         )
-        await cb.edit_message_text("✅ Session file has been sent to your PM.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]]))
+        await cb.edit_message_text("✅ Session file has been sent to your PM.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}", style=user_style)]]))
     else:
         await cb.edit_message_text(f"❌ Session file not found at: <code>{session_path}</code>", parse_mode=ParseMode.HTML)
 
@@ -61,9 +68,14 @@ async def export_phone_cb_handler(c: Client, cb: CallbackQuery):
     client = Altruix.clients[index]
     me = await client.get_me()
     phone = me.phone_number if me.phone_number else "Hidden/N/A"
+    
+    # Resolve user_style
+    user_id_key = _get_session_user_id(index)
+    user_style = get_user_button_style(user_id_key)
+
     await cb.edit_message_text(
         f"📱 <b>Phone Number Information</b>\n\n• Session: {index+1}\n• User: {me.first_name}\n• Phone: <code>+{phone}</code>",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]]),
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}", style=user_style)]]),
         parse_mode=ParseMode.HTML
     )
 
@@ -83,13 +95,17 @@ async def track_profile_handler(c: Client, cb: CallbackQuery):
     user_id = cb.from_user.id
     # Altruix.user_track_state[user_id] = {'session_index': index, 'page': page, 'step': 'waiting_target_id'}
     
+    # Resolve user_style
+    user_id_key = _get_session_user_id(index)
+    user_style = get_user_button_style(user_id_key)
+    
     await cb.edit_message_text(
         "🔍 <b>Profile Tracker</b>\n\n"
         "Fitur ini akan mengecek history perubahan nama user melalui @SangMata_beta_bot.\n"
         "Silakan kirim <b>Target ID</b> atau <b>Username</b> user yang ingin dilacak.\n\n"
         "❌ <b>Cancel:</b> Kirim /cancel",
         parse_mode=ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}", style=user_style)]])
     )
 
 # --- Advanced Execution (Internal Use Only) ---
@@ -102,13 +118,18 @@ async def exec_term_start_handler(c: Client, cb: CallbackQuery):
     index, page = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
     await cb.answer()
     user_exec_state[cb.from_user.id] = {'session_index': index, 'page': page, 'step': 'waiting_command', 'action': 'exec_terminal'}
+    
+    # Resolve user_style
+    user_id_key = _get_session_user_id(index)
+    user_style = get_user_button_style(user_id_key)
+
     await cb.edit_message_text(
         "🖥️ <b>Terminal Execution</b>\n\n"
         "Silakan kirim perintah terminal yang ingin dijalankan.\n"
         "⚠️ <b>Gunakan dengan hati-hati.</b>\n\n"
         "❌ <b>Cancel:</b> /cancel",
         parse_mode=ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}", style=user_style)]])
     )
 
 @Altruix.bot.on_callback_query(filters.regex(r"^gen_conf_eval_exec_(\d+)_(\d+)$"))
@@ -119,12 +140,17 @@ async def eval_exec_start_handler(c: Client, cb: CallbackQuery):
     index, page = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
     await cb.answer()
     user_eval_state[cb.from_user.id] = {'session_index': index, 'page': page, 'step': 'waiting_code', 'action': 'eval_python'}
+    
+    # Resolve user_style
+    user_id_key = _get_session_user_id(index)
+    user_style = get_user_button_style(user_id_key)
+
     await cb.edit_message_text(
         "🐍 <b>Python Eval</b>\n\n"
         "Silakan kirim kode Python yang ingin dievaluasi.\n\n"
         "❌ <b>Cancel:</b> /cancel",
         parse_mode=ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}", style=user_style)]])
     )
 @Altruix.bot.on_callback_query(filters.regex(r"^check_limit_confirm_(\d+)_(\d+)$"))
 @iuser_check
@@ -135,6 +161,10 @@ async def check_limit_confirm_handler(c: Client, cb: CallbackQuery):
     await cb.answer("⏳ Checking limits...", show_alert=False)
     session_client = Altruix.clients[index]
     
+    # Resolve user_style
+    user_id_key = _get_session_user_id(index)
+    user_style = get_user_button_style(user_id_key)
+
     try:
         # Send message to SpamBot
         await session_client.send_message("SpamBot", "/start")
@@ -146,14 +176,14 @@ async def check_limit_confirm_handler(c: Client, cb: CallbackQuery):
                 await cb.edit_message_text(
                     f"<b>🚫 Limit Information (Session {index+1})</b>\n\n"
                     f"<code>{html.escape(message.text)}</code>",
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]])
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}", style=user_style)]])
                 )
                 from .utils import send_log_notification
                 await send_log_notification(c, 'check_limit', index, cb.from_user, True)
                 return
-        await cb.edit_message_text("❌ No response from @SpamBot.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]]))
+        await cb.edit_message_text("❌ No response from @SpamBot.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}", style=user_style)]]))
     except Exception as e:
-        await cb.edit_message_text(f"❌ Error checking limit: {str(e)}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]]))
+        await cb.edit_message_text(f"❌ Error checking limit: {str(e)}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}", style=user_style)]]))
 
 # Duplicate 2FA check moved to privacy_handlers.py
 
@@ -192,10 +222,14 @@ async def change_login_email_handler(c: Client, cb: CallbackQuery):
             f"Kode verifikasi akan dikirim ke email baru."
         )
         
+        # Resolve user_style
+        user_id_key = _get_session_user_id(index)
+        user_style = get_user_button_style(user_id_key)
+        
         buttons = [
             [
-                InlineKeyboardButton(gt("yes_continue"), f"change_email_start_{index}_{page}_{button_page}"),
-                InlineKeyboardButton(gt("cancel"), f"session_info_{index}_{page}_{button_page}")
+                InlineKeyboardButton(gt("yes_continue"), f"change_email_start_{index}_{page}_{button_page}", style=user_style),
+                InlineKeyboardButton(gt("cancel"), f"session_info_{index}_{page}_{button_page}", style=user_style)
             ]
         ]
         await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)

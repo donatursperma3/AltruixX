@@ -50,13 +50,15 @@ async def start_command_handler(_, m: Message):
                 "Alright, let's get started.", reply_markup=ReplyKeyboardRemove()
             )
             await asyncio.sleep(1)
+            from Main.utils.file_helpers import get_user_button_style
+            user_style = get_user_button_style(m.from_user.id)
             await m.reply(
                 "Do you have the string session already generated?.",
                 reply_markup=InlineKeyboardMarkup(
                     [
                         [
-                            InlineKeyboardButton("Yes", callback_data="session_yes"),
-                            InlineKeyboardButton("No", callback_data="session_no"),
+                            InlineKeyboardButton("Yes", callback_data="session_yes", style=user_style),
+                            InlineKeyboardButton("No", callback_data="session_no", style=user_style),
                         ]
                     ]
                 ),
@@ -64,13 +66,15 @@ async def start_command_handler(_, m: Message):
     elif payload == "add_session":
         await m.reply("Alright, let's get started.", reply_markup=ReplyKeyboardRemove())
         await asyncio.sleep(1)
+        from Main.utils.file_helpers import get_user_button_style
+        user_style = get_user_button_style(m.from_user.id)
         await m.reply(
             "Do you have the string session already generated?.",
             reply_markup=InlineKeyboardMarkup(
                 [
                     [
-                        InlineKeyboardButton("Yes", callback_data="session_yes"),
-                        InlineKeyboardButton("No", callback_data="session_no"),
+                        InlineKeyboardButton("Yes", callback_data="session_yes", style=user_style),
+                        InlineKeyboardButton("No", callback_data="session_no", style=user_style),
                     ]
                 ]
             ),
@@ -88,13 +92,15 @@ async def add_session_menu_cb_handler(_, cb: CallbackQuery):
         "Alright, let's get started.", reply_markup=ReplyKeyboardRemove()
     )
     await asyncio.sleep(1)
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
     await cb.message.reply(
         "Do you have the string session already generated?.",
         reply_markup=InlineKeyboardMarkup(
             [
                 [
-                    InlineKeyboardButton("Yes", callback_data="session_yes"),
-                    InlineKeyboardButton("No", callback_data="session_no"),
+                    InlineKeyboardButton("Yes", callback_data="session_yes", style=user_style),
+                    InlineKeyboardButton("No", callback_data="session_no", style=user_style),
                 ]
             ]
         ),

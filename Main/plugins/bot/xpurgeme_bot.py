@@ -16,6 +16,7 @@ from pyrogram.types import (
 )
 from Main.core.decorators import log_errors, iuser_check
 from Main import Altruix
+from Main.utils.essentials import Essentials
 
 # Ensure shared state exists (redundant if loaded second, but safe)
 if not hasattr(Altruix, "PURGEME_STATE"):
@@ -126,10 +127,10 @@ def get_purgeme_text(state):
         
     return title
 
-def get_purgeme_keyboard(chat_id, user_id, unique_id):
+async def get_purgeme_keyboard(chat_id, user_id, unique_id):
     state = Altruix.PURGEME_STATE.get(unique_id)
     if not state:
-        return InlineKeyboardMarkup([[InlineKeyboardButton("❌ Session Ended", callback_data="purgeme_close")]])
+        return InlineKeyboardMarkup([[InlineKeyboardButton(await Essentials.get_user_button_style(user_id, "❌ Session Ended"), callback_data="purgeme_close")]])
 
     status = state["status"]
     status = state["status"]
@@ -150,20 +151,20 @@ def get_purgeme_keyboard(chat_id, user_id, unique_id):
         # Count Controls
         count_lbl = loc("purgeme_count", "Count: {}").format(count)
         buttons.append([
-            InlineKeyboardButton(count_lbl, callback_data="noop"),
-            InlineKeyboardButton("-10", callback_data=f"pg_cnt_sub_10_{unique_id}"),
-            InlineKeyboardButton("+10", callback_data=f"pg_cnt_add_10_{unique_id}"),
-            InlineKeyboardButton("+100", callback_data=f"pg_cnt_add_100_{unique_id}"),
+            InlineKeyboardButton(await Essentials.get_user_button_style(user_id, count_lbl), callback_data="noop"),
+            InlineKeyboardButton(await Essentials.get_user_button_style(user_id, "-10"), callback_data=f"pg_cnt_sub_10_{unique_id}"),
+            InlineKeyboardButton(await Essentials.get_user_button_style(user_id, "+10"), callback_data=f"pg_cnt_add_10_{unique_id}"),
+            InlineKeyboardButton(await Essentials.get_user_button_style(user_id, "+100"), callback_data=f"pg_cnt_add_100_{unique_id}"),
         ])
         
         # Delay Controls
         delay_lbl = loc("purgeme_delay", "Delay: {}s").format(delay)
         reset_lbl = loc("purgeme_reset", "Reset")
         buttons.append([
-            InlineKeyboardButton(delay_lbl, callback_data="noop"),
-            InlineKeyboardButton("-0.5s", callback_data=f"pg_dly_sub_0.5_{unique_id}"),
-            InlineKeyboardButton("+0.5s", callback_data=f"pg_dly_add_0.5_{unique_id}"),
-            InlineKeyboardButton(reset_lbl, callback_data=f"pg_dly_reset_{unique_id}"),
+            InlineKeyboardButton(await Essentials.get_user_button_style(user_id, delay_lbl), callback_data="noop"),
+            InlineKeyboardButton(await Essentials.get_user_button_style(user_id, "-0.5s"), callback_data=f"pg_dly_sub_0.5_{unique_id}"),
+            InlineKeyboardButton(await Essentials.get_user_button_style(user_id, "+0.5s"), callback_data=f"pg_dly_add_0.5_{unique_id}"),
+            InlineKeyboardButton(await Essentials.get_user_button_style(user_id, reset_lbl), callback_data=f"pg_dly_reset_{unique_id}"),
         ])
         
         # Mode Selection
@@ -175,9 +176,9 @@ def get_purgeme_keyboard(chat_id, user_id, unique_id):
         oldest_btn = f"{'✅' if curr_mode == 'oldest' else '☑️'} {loc('purgeme_mode_oldest', 'Oldest')}"
         
         buttons.append([
-            InlineKeyboardButton(f"Mode: {mode_lbl}", callback_data="noop"),
-            InlineKeyboardButton(latest_btn, callback_data=f"pg_mode_latest_{unique_id}"),
-            InlineKeyboardButton(oldest_btn, callback_data=f"pg_mode_oldest_{unique_id}"),
+            InlineKeyboardButton(await Essentials.get_user_button_style(user_id, f"Mode: {mode_lbl}"), callback_data="noop"),
+            InlineKeyboardButton(await Essentials.get_user_button_style(user_id, latest_btn), callback_data=f"pg_mode_latest_{unique_id}"),
+            InlineKeyboardButton(await Essentials.get_user_button_style(user_id, oldest_btn), callback_data=f"pg_mode_oldest_{unique_id}"),
         ])
         
         # Row 4: Notification Toggle
@@ -185,104 +186,104 @@ def get_purgeme_keyboard(chat_id, user_id, unique_id):
         notify_active = state.get("notify", True)
         notif_lbl = Altruix.get_string("GP_BTN_NOTIF_ON" if notify_active else "GP_BTN_NOTIF_OFF") or (f"🔔 Notif: ON" if notify_active else "🔕 Notif: OFF")
         buttons.append([
-            InlineKeyboardButton(notif_lbl, callback_data=f"pg_notify_{unique_id}"),
+            InlineKeyboardButton(await Essentials.get_user_button_style(user_id, notif_lbl), callback_data=f"pg_notify_{unique_id}"),
         ])
 
         # Batch Controls
         batch_lbl = f"Batch: {batch_size}"
         buttons.append([
-            InlineKeyboardButton(batch_lbl, callback_data="noop"),
-            InlineKeyboardButton("-10", callback_data=f"pg_btc_sub_10_{unique_id}"),
-            InlineKeyboardButton("+10", callback_data=f"pg_btc_add_10_{unique_id}"),
+            InlineKeyboardButton(await Essentials.get_user_button_style(user_id, batch_lbl), callback_data="noop"),
+            InlineKeyboardButton(await Essentials.get_user_button_style(user_id, "-10"), callback_data=f"pg_btc_sub_10_{unique_id}"),
+            InlineKeyboardButton(await Essentials.get_user_button_style(user_id, "+10"), callback_data=f"pg_btc_add_10_{unique_id}"),
         ])
 
         # Batch Delay Controls
         bd_min = int(batch_delay / 60)
         bd_lbl = f"DelayBc: {bd_min}m"
         buttons.append([
-            InlineKeyboardButton(bd_lbl, callback_data="noop"),
-            InlineKeyboardButton("-2m", callback_data=f"pg_dbc_sub_2m_{unique_id}"),
-            InlineKeyboardButton("+2m", callback_data=f"pg_dbc_add_2m_{unique_id}"),
-            InlineKeyboardButton("+10m", callback_data=f"pg_dbc_add_10m_{unique_id}"),
+            InlineKeyboardButton(await Essentials.get_user_button_style(user_id, bd_lbl), callback_data="noop"),
+            InlineKeyboardButton(await Essentials.get_user_button_style(user_id, "-2m"), callback_data=f"pg_dbc_sub_2m_{unique_id}"),
+            InlineKeyboardButton(await Essentials.get_user_button_style(user_id, "+2m"), callback_data=f"pg_dbc_add_2m_{unique_id}"),
+            InlineKeyboardButton(await Essentials.get_user_button_style(user_id, "+10m"), callback_data=f"pg_dbc_add_10m_{unique_id}"),
         ])
 
         # Offset Controls
         off_lbl = f"Offset: {offset}"
         buttons.append([
-            InlineKeyboardButton(off_lbl, callback_data="noop"),
-            InlineKeyboardButton("-5", callback_data=f"pg_off_sub_5_{unique_id}"),
-            InlineKeyboardButton("+5", callback_data=f"pg_off_add_5_{unique_id}"),
-            InlineKeyboardButton("Reset", callback_data=f"pg_off_reset_{unique_id}"),
+            InlineKeyboardButton(await Essentials.get_user_button_style(user_id, off_lbl), callback_data="noop"),
+            InlineKeyboardButton(await Essentials.get_user_button_style(user_id, "-5"), callback_data=f"pg_off_sub_5_{unique_id}"),
+            InlineKeyboardButton(await Essentials.get_user_button_style(user_id, "+5"), callback_data=f"pg_off_add_5_{unique_id}"),
+            InlineKeyboardButton(await Essentials.get_user_button_style(user_id, "Reset"), callback_data=f"pg_off_reset_{unique_id}"),
         ])
         
         # Row 1: Core Media
         type_row_1 = []
         all_active = "✅" if "all" in types else "☑️"
-        type_row_1.append(InlineKeyboardButton(f"{all_active} {loc('GP_BTN_ALL', 'All')}", callback_data=f"pg_typ_all_{unique_id}"))
+        type_row_1.append(InlineKeyboardButton(await Essentials.get_user_button_style(user_id, f"{all_active} {loc('GP_BTN_ALL', 'All')}"), callback_data=f"pg_typ_all_{unique_id}"))
         
         photo_active = "✅" if ("photo" in types or "image" in types) else "☑️"
-        type_row_1.append(InlineKeyboardButton(f"{photo_active} {loc('GP_BTN_IMG', 'Photo')}", callback_data=f"pg_typ_photo_{unique_id}"))
+        type_row_1.append(InlineKeyboardButton(await Essentials.get_user_button_style(user_id, f"{photo_active} {loc('GP_BTN_IMG', 'Photo')}"), callback_data=f"pg_typ_photo_{unique_id}"))
         
         vid_active = "✅" if "video" in types else "☑️"
-        type_row_1.append(InlineKeyboardButton(f"{vid_active} {loc('GP_BTN_VID', 'Video')}", callback_data=f"pg_typ_video_{unique_id}"))
+        type_row_1.append(InlineKeyboardButton(await Essentials.get_user_button_style(user_id, f"{vid_active} {loc('GP_BTN_VID', 'Video')}"), callback_data=f"pg_typ_video_{unique_id}"))
         
         buttons.append(type_row_1)
 
         # Row 2: Engagement
         type_row_2 = []
         txt_active = "✅" if "text" in types else "☑️"
-        type_row_2.append(InlineKeyboardButton(f"{txt_active} {loc('GP_BTN_TXT', 'Text')}", callback_data=f"pg_typ_text_{unique_id}"))
+        type_row_2.append(InlineKeyboardButton(await Essentials.get_user_button_style(user_id, f"{txt_active} {loc('GP_BTN_TXT', 'Text')}"), callback_data=f"pg_typ_text_{unique_id}"))
 
         aud_active = "✅" if "audio" in types else "☑️"
-        type_row_2.append(InlineKeyboardButton(f"{aud_active} {loc('GP_BTN_AUD', 'Audio')}", callback_data=f"pg_typ_audio_{unique_id}"))
+        type_row_2.append(InlineKeyboardButton(await Essentials.get_user_button_style(user_id, f"{aud_active} {loc('GP_BTN_AUD', 'Audio')}"), callback_data=f"pg_typ_audio_{unique_id}"))
 
         stk_active = "✅" if "sticker" in types else "☑️"
-        type_row_2.append(InlineKeyboardButton(f"{stk_active} {loc('GP_BTN_STK', 'Sticker')}", callback_data=f"pg_typ_sticker_{unique_id}"))
+        type_row_2.append(InlineKeyboardButton(await Essentials.get_user_button_style(user_id, f"{stk_active} {loc('GP_BTN_STK', 'Sticker')}"), callback_data=f"pg_typ_sticker_{unique_id}"))
         
         buttons.append(type_row_2)
         
         # Row 3: Rich Media
         type_row_3 = []
         anim_active = "✅" if ("animation" in types or "gif" in types) else "☑️"
-        type_row_3.append(InlineKeyboardButton(f"{anim_active} {loc('GP_BTN_GIF', 'Anim')}", callback_data=f"pg_typ_animation_{unique_id}"))
+        type_row_3.append(InlineKeyboardButton(await Essentials.get_user_button_style(user_id, f"{anim_active} {loc('GP_BTN_GIF', 'Anim')}"), callback_data=f"pg_typ_animation_{unique_id}"))
 
         doc_active = "✅" if ("document" in types or "file" in types) else "☑️"
-        type_row_3.append(InlineKeyboardButton(f"{doc_active} {loc('GP_BTN_DOC', 'Doc')}", callback_data=f"pg_typ_document_{unique_id}"))
+        type_row_3.append(InlineKeyboardButton(await Essentials.get_user_button_style(user_id, f"{doc_active} {loc('GP_BTN_DOC', 'Doc')}"), callback_data=f"pg_typ_document_{unique_id}"))
 
         vnote_active = "✅" if ("video_note" in types or "vnote" in types) else "☑️"
-        type_row_3.append(InlineKeyboardButton(f"{vnote_active} {loc('GP_BTN_VNOTE', 'VNote')}", callback_data=f"pg_typ_video_note_{unique_id}"))
+        type_row_3.append(InlineKeyboardButton(await Essentials.get_user_button_style(user_id, f"{vnote_active} {loc('GP_BTN_VNOTE', 'VNote')}"), callback_data=f"pg_typ_video_note_{unique_id}"))
         
         buttons.append(type_row_3)
 
         # Row 4: Specialized
         type_row_4 = []
         voice_active = "✅" if "voice" in types else "☑️"
-        type_row_4.append(InlineKeyboardButton(f"{voice_active} {loc('GP_BTN_VN', 'Voice')}", callback_data=f"pg_typ_voice_{unique_id}"))
+        type_row_4.append(InlineKeyboardButton(await Essentials.get_user_button_style(user_id, f"{voice_active} {loc('GP_BTN_VN', 'Voice')}"), callback_data=f"pg_typ_voice_{unique_id}"))
 
         contact_active = "✅" if "contact" in types else "☑️"
-        type_row_4.append(InlineKeyboardButton(f"{contact_active} {loc('GP_BTN_CONT', 'Contact')}", callback_data=f"pg_typ_contact_{unique_id}"))
+        type_row_4.append(InlineKeyboardButton(await Essentials.get_user_button_style(user_id, f"{contact_active} {loc('GP_BTN_CONT', 'Contact')}"), callback_data=f"pg_typ_contact_{unique_id}"))
 
         loc_active = "✅" if "location" in types else "☑️"
-        type_row_4.append(InlineKeyboardButton(f"{loc_active} {loc('GP_BTN_LOC', 'Loc')}", callback_data=f"pg_typ_location_{unique_id}"))
+        type_row_4.append(InlineKeyboardButton(await Essentials.get_user_button_style(user_id, f"{loc_active} {loc('GP_BTN_LOC', 'Loc')}"), callback_data=f"pg_typ_location_{unique_id}"))
         
         buttons.append(type_row_4)
 
         # Row 5: Interaction
         type_row_5 = []
         venue_active = "✅" if "venue" in types else "☑️"
-        type_row_5.append(InlineKeyboardButton(f"{venue_active} {loc('GP_BTN_VEN', 'Venue')}", callback_data=f"pg_typ_venue_{unique_id}"))
+        type_row_5.append(InlineKeyboardButton(await Essentials.get_user_button_style(user_id, f"{venue_active} {loc('GP_BTN_VEN', 'Venue')}"), callback_data=f"pg_typ_venue_{unique_id}"))
 
         game_active = "✅" if "game" in types else "☑️"
-        type_row_5.append(InlineKeyboardButton(f"{game_active} {loc('GP_BTN_GAME', 'Game')}", callback_data=f"pg_typ_game_{unique_id}"))
+        type_row_5.append(InlineKeyboardButton(await Essentials.get_user_button_style(user_id, f"{game_active} {loc('GP_BTN_GAME', 'Game')}"), callback_data=f"pg_typ_game_{unique_id}"))
 
         poll_active = "✅" if "poll" in types else "☑️"
-        type_row_5.append(InlineKeyboardButton(f"{poll_active} {loc('GP_BTN_POLL', 'Poll')}", callback_data=f"pg_typ_poll_{unique_id}"))
+        type_row_5.append(InlineKeyboardButton(await Essentials.get_user_button_style(user_id, f"{poll_active} {loc('GP_BTN_POLL', 'Poll')}"), callback_data=f"pg_typ_poll_{unique_id}"))
         
         buttons.append(type_row_5)
 
         # Row 6: Games
         buttons.append([
-            InlineKeyboardButton(f"{'✅' if 'dice' in types else '☑️'} {loc('GP_BTN_DICE', 'Dice')}", callback_data=f"pg_typ_dice_{unique_id}")
+            InlineKeyboardButton(await Essentials.get_user_button_style(user_id, f"{'✅' if 'dice' in types else '☑️'} {loc('GP_BTN_DICE', 'Dice')}"), callback_data=f"pg_typ_dice_{unique_id}")
         ])
         
         # Action Buttons
@@ -291,9 +292,9 @@ def get_purgeme_keyboard(chat_id, user_id, unique_id):
         cancel_lbl = loc("purgeme_cancel_purge", "❌ Cancel")
         info_lbl = loc("purgeme_info_btn", "ℹ️ Info")
         buttons.append([
-            InlineKeyboardButton(start_lbl, callback_data=f"pg_start_{unique_id}"),
-            InlineKeyboardButton(cancel_lbl, callback_data=f"pg_cancel_{unique_id}"),
-            InlineKeyboardButton(info_lbl, callback_data=f"pg_info_{unique_id}"),
+            InlineKeyboardButton(await Essentials.get_user_button_style(user_id, start_lbl), callback_data=f"pg_start_{unique_id}"),
+            InlineKeyboardButton(await Essentials.get_user_button_style(user_id, cancel_lbl), callback_data=f"pg_cancel_{unique_id}"),
+            InlineKeyboardButton(await Essentials.get_user_button_style(user_id, info_lbl), callback_data=f"pg_info_{unique_id}"),
         ])
     
     elif status == "running":
@@ -302,10 +303,10 @@ def get_purgeme_keyboard(chat_id, user_id, unique_id):
         refresh_lbl = loc("purgeme_refresh", "🔄 Refresh")
         
         buttons.append([
-            InlineKeyboardButton(pause_lbl, callback_data=f"pg_pause_{unique_id}"),
-            InlineKeyboardButton(stop_lbl, callback_data=f"pg_stop_{unique_id}"),
+            InlineKeyboardButton(await Essentials.get_user_button_style(user_id, pause_lbl), callback_data=f"pg_pause_{unique_id}"),
+            InlineKeyboardButton(await Essentials.get_user_button_style(user_id, stop_lbl), callback_data=f"pg_stop_{unique_id}"),
         ])
-        buttons.append([InlineKeyboardButton(refresh_lbl, callback_data=f"pg_refresh_{unique_id}")])
+        buttons.append([InlineKeyboardButton(await Essentials.get_user_button_style(user_id, refresh_lbl), callback_data=f"pg_refresh_{unique_id}")])
 
     elif status == "paused":
         resume_lbl = loc("purgeme_resume", "▶️ Resume")
@@ -313,18 +314,18 @@ def get_purgeme_keyboard(chat_id, user_id, unique_id):
         refresh_lbl = loc("purgeme_refresh", "🔄 Refresh")
         
         buttons.append([
-            InlineKeyboardButton(resume_lbl, callback_data=f"pg_resume_{unique_id}"),
-            InlineKeyboardButton(stop_lbl, callback_data=f"pg_stop_{unique_id}"),
+            InlineKeyboardButton(await Essentials.get_user_button_style(user_id, resume_lbl), callback_data=f"pg_resume_{unique_id}"),
+            InlineKeyboardButton(await Essentials.get_user_button_style(user_id, stop_lbl), callback_data=f"pg_stop_{unique_id}"),
         ])
-        buttons.append([InlineKeyboardButton(refresh_lbl, callback_data=f"pg_refresh_{unique_id}")])
+        buttons.append([InlineKeyboardButton(await Essentials.get_user_button_style(user_id, refresh_lbl), callback_data=f"pg_refresh_{unique_id}")])
 
     elif status == "info":
         back_lbl = loc("back", "🔙 Back")
-        buttons.append([InlineKeyboardButton(back_lbl, callback_data=f"pg_back_{unique_id}")])
+        buttons.append([InlineKeyboardButton(await Essentials.get_user_button_style(user_id, back_lbl), callback_data=f"pg_back_{unique_id}")])
 
     elif status == "finished":
         close_lbl = loc("purgeme_close", "Close")
-        buttons.append([InlineKeyboardButton(close_lbl, callback_data=f"purgeme_close_{unique_id}")])
+        buttons.append([InlineKeyboardButton(await Essentials.get_user_button_style(user_id, close_lbl), callback_data=f"purgeme_close_{unique_id}")])
 
     return InlineKeyboardMarkup(buttons)
 
@@ -365,7 +366,7 @@ async def purgeme_inline_handler(client: Client, query: InlineQuery):
                         parse_mode=enums.ParseMode.HTML,
                         disable_web_page_preview=True
                     ),
-                    reply_markup=get_purgeme_keyboard(chat_id, user_id, unique_id)
+                    reply_markup=await get_purgeme_keyboard(chat_id, user_id, unique_id)
                 )
             ],
             cache_time=0
@@ -524,8 +525,8 @@ async def purgeme_callback_handler(client: Client, cb: CallbackQuery):
                     disable_web_page_preview=True,
                     reply_markup=InlineKeyboardMarkup([
                         [
-                            InlineKeyboardButton("🗑 Delete", callback_data=f"purgeme_close_{unique_id}"),
-                            InlineKeyboardButton("❌ Cancel", callback_data=f"pg_abort_{unique_id}")
+                            InlineKeyboardButton(await Essentials.get_user_button_style(user_id, "🗑 Delete"), callback_data=f"purgeme_close_{unique_id}"),
+                            InlineKeyboardButton(await Essentials.get_user_button_style(user_id, "❌ Cancel"), callback_data=f"pg_abort_{unique_id}")
                         ]
                     ])
                 )
@@ -578,7 +579,7 @@ async def purgeme_callback_handler(client: Client, cb: CallbackQuery):
             pass
 
         # General Keyboard Update
-        new_kb = get_purgeme_keyboard(chat_id, user_id, unique_id)
+        new_kb = await get_purgeme_keyboard(chat_id, user_id, unique_id)
         new_text = get_purgeme_text(state)
         
         try:
@@ -688,7 +689,7 @@ async def purgeme_start_handler(client: Client, message):
 
             # Show Menu
             menu_text = get_purgeme_text(state)
-            kb = get_purgeme_keyboard(chat_id, user_id, unique_id)
+            kb = await get_purgeme_keyboard(chat_id, user_id, unique_id)
             
             await message.reply(
                 menu_text,

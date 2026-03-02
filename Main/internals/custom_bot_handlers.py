@@ -46,14 +46,17 @@ async def custom_bot_menu_handler(c: Client, cb: CallbackQuery):
         f"<i>Configure custom assistant bot for this session to avoid flood waits during high concurrency.</i>"
     )
     
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
+    
     buttons = []
     if has_custom_bot:
-        buttons.append([InlineKeyboardButton("🗑️ Remove Bot", f"custom_bot_remove_{index}_{page}_{button_page}")])
-        buttons.append([InlineKeyboardButton(gt("bot_info"), f"custom_bot_info_{index}_{page}_{button_page}")])
+        buttons.append([InlineKeyboardButton("🗑️ Remove Bot", f"custom_bot_remove_{index}_{page}_{button_page}", style=user_style)])
+        buttons.append([InlineKeyboardButton(gt("bot_info"), f"custom_bot_info_{index}_{page}_{button_page}", style=user_style)])
     else:
-        buttons.append([InlineKeyboardButton(gt("set_bot_token"), f"custom_bot_set_{index}_{page}_{button_page}")])
+        buttons.append([InlineKeyboardButton(gt("set_bot_token"), f"custom_bot_set_{index}_{page}_{button_page}", style=user_style)])
     
-    buttons.append([InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}_{button_page}")])
+    buttons.append([InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}_{button_page}", style=user_style)])
     
     await cb.message.edit(
         text=txt,
@@ -83,12 +86,15 @@ async def custom_bot_set_handler(c: Client, cb: CallbackQuery):
     }
     Altruix.log(f"DEBUG: Set custom_bot_token state for {user_id}. Keys in Altruix.state: {list(Altruix.user_env_manager_state.keys())}", level=20)
     
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
+    
     await cb.message.edit(
         f"🔑 <b>Set Bot Token</b>\n\n"
         f"Please send the bot token from @BotFather.\n\n"
         f"<i>Reply to this message with the token.</i>",
         reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton(gt("cancel"), f"custom_bot_menu_{index}_{page}_{button_page}")
+            InlineKeyboardButton(gt("cancel"), f"custom_bot_menu_{index}_{page}_{button_page}", style=user_style)
         ]]),
         parse_mode=ParseMode.HTML
     )
@@ -191,10 +197,13 @@ async def custom_bot_info_handler(c: Client, cb: CallbackQuery):
     else:
         txt = "❌ Bot info not available"
     
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
+    
     await cb.message.edit(
         text=txt,
         reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton(gt("back"), f"custom_bot_menu_{index}_{page}_{button_page}")
+            InlineKeyboardButton(gt("back"), f"custom_bot_menu_{index}_{page}_{button_page}", style=user_style)
         ]]),
         parse_mode=ParseMode.HTML
     )
@@ -223,11 +232,14 @@ async def cache_log_menu_handler(c: Client, cb: CallbackQuery):
         f"<i>Toggle this setting to enable/disable cache cleaning notifications.</i>"
     )
     
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
+    
     toggle_text = "❌ Disable" if cache_log_enabled else "✅ Enable"
     
     buttons = [
-        [InlineKeyboardButton(toggle_text, f"cache_log_toggle_{index}_{page}_{button_page}")],
-        [InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}_{button_page}")]
+        [InlineKeyboardButton(toggle_text, f"cache_log_toggle_{index}_{page}_{button_page}", style=user_style)],
+        [InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}_{button_page}", style=user_style)]
     ]
     
     await cb.message.edit(

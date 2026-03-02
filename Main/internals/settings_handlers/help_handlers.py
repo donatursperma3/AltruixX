@@ -20,6 +20,8 @@ async def help_settings_menu_handler(c: Client, cb: CallbackQuery):
     """Main menu for custom help settings."""
     idx, pg = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
     user_id = cb.from_user.id
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(user_id)
     
     # Sesi info
     session_client = Altruix.clients[idx]
@@ -51,17 +53,17 @@ async def help_settings_menu_handler(c: Client, cb: CallbackQuery):
     
     buttons = [
         [
-            InlineKeyboardButton(f"Status: {'Custom' if status == 'custom' else 'Default'}", callback_data=f"toggle_help_status_{idx}_{pg}"),
-            InlineKeyboardButton(f"Type: {apply_type.title()}", callback_data=f"toggle_help_type_{idx}_{pg}")
+            InlineKeyboardButton(f"Status: {'Custom' if status == 'custom' else 'Default'}", callback_data=f"toggle_help_status_{idx}_{pg}", style=user_style),
+            InlineKeyboardButton(f"Type: {apply_type.title()}", callback_data=f"toggle_help_type_{idx}_{pg}", style=user_style)
         ],
         [
-            InlineKeyboardButton("📝 Edit Custom Message", callback_data=f"edit_help_msg_{idx}_{pg}")
+            InlineKeyboardButton("📝 Edit Custom Message", callback_data=f"edit_help_msg_{idx}_{pg}", style=user_style)
         ],
         [
-            InlineKeyboardButton("ℹ️ Variables Info", callback_data=f"help_vars_info_{idx}_{pg}")
+            InlineKeyboardButton("ℹ️ Variables Info", callback_data=f"help_vars_info_{idx}_{pg}", style=user_style)
         ],
         [
-            InlineKeyboardButton(gt("back"), callback_data=f"session_info_{idx}_{pg}_3")
+            InlineKeyboardButton(gt("back"), callback_data=f"session_info_{idx}_{pg}_3", style=user_style)
         ]
     ]
     
@@ -71,6 +73,7 @@ async def help_settings_menu_handler(c: Client, cb: CallbackQuery):
 @iuser_check
 @log_errors
 async def toggle_help_status_handler(c: Client, cb: CallbackQuery):
+    idx, pg = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
     # Sesi info
     session_client = Altruix.clients[idx]
     me = getattr(session_client, "myself", None) or await session_client.get_me()
@@ -104,6 +107,8 @@ async def toggle_help_apply_type_handler(c: Client, cb: CallbackQuery):
 @log_errors
 async def help_vars_info_handler(c: Client, cb: CallbackQuery):
     idx, pg = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
     text = (
         "<b>ℹ️ Custom Help Documentation</b>\n\n"
         "<b>🔹 Logic Variables:</b>\n"
@@ -125,7 +130,7 @@ async def help_vars_info_handler(c: Client, cb: CallbackQuery):
         "• <code>&#96;&#96;&#96;python\nCode\n&#96;&#96;&#96;</code>\n\n"
         "<i>Note: Reserved characters in MarkdownV2 like . - ! must be escaped with \\ if not part of a tag.</i>"
     )
-    buttons = [[InlineKeyboardButton(gt("back"), callback_data=f"help_settings_menu_{idx}_{pg}")]]
+    buttons = [[InlineKeyboardButton(gt("back"), callback_data=f"help_settings_menu_{idx}_{pg}", style=user_style)]]
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^edit_help_msg_(\d+)_(\d+)$"))
@@ -151,7 +156,10 @@ async def edit_help_msg_start_handler(c: Client, cb: CallbackQuery):
         "<i>Type /cancel to abort.</i>"
     )
     
-    buttons = [[InlineKeyboardButton("🔙 Cancel", callback_data=f"help_settings_menu_{idx}_{pg}")]]
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(user_id)
+    
+    buttons = [[InlineKeyboardButton("🔙 Cancel", callback_data=f"help_settings_menu_{idx}_{pg}", style=user_style)]]
     
     if cb.message:
         await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons))

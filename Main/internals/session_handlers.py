@@ -26,11 +26,13 @@ async def export_session_handler(c: Client, cb: CallbackQuery):
         return
     
     session_client = Altruix.clients[index]
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
     try:
         session_string = await session_client.export_session_string()
         await cb.message.reply(
             f"📤 <b>Session String</b>\n\n<code>{session_string}</code>",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{callback_page}_{button_page}")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{callback_page}_{button_page}", style=user_style)]])
         )
         await cb.answer("✅ Session exported!")
     except Exception as e:
@@ -52,13 +54,15 @@ async def export_phone_handler(c: Client, cb: CallbackQuery):
         return
     
     session_client = Altruix.clients[index]
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
     try:
         me = await session_client.get_me()
         phone = me.phone_number or "N/A"
         await edit_cb(
             cb,
             f"📱 <b>Phone Number</b>\n\n<code>{phone}</code>",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{callback_page}_{button_page}")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{callback_page}_{button_page}", style=user_style)]])
         )
     except Exception as e:
         await cb.answer(f"❌ Error: {str(e)}", show_alert=True)
@@ -80,6 +84,8 @@ async def test_ping_handler(c: Client, cb: CallbackQuery):
     session_client = Altruix.clients[index]
     await cb.answer("🏓 Testing ping...")
     
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
     try:
         import time
         start = time.time()
@@ -89,13 +95,13 @@ async def test_ping_handler(c: Client, cb: CallbackQuery):
         await edit_cb(
             cb,
             f"🏓 <b>Ping Test</b>\n\n<b>Latency:</b> <code>{ping}ms</code>\n<b>Status:</b> ✅ Online",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{callback_page}_{button_page}")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{callback_page}_{button_page}", style=user_style)]])
         )
     except Exception as e:
         await edit_cb(
             cb,
             f"🏓 <b>Ping Test</b>\n\n<b>Status:</b> ❌ Failed\n<b>Error:</b> {str(e)}",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{callback_page}_{button_page}")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{callback_page}_{button_page}", style=user_style)]])
         )
 
 
@@ -118,10 +124,12 @@ async def join_chat_handler(c: Client, cb: CallbackQuery):
         'button_page': button_page
     }
     
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
     await edit_cb(
         cb,
         f"👥 <b>Join Group/Channel</b>\n\nSend the invite link or username:\n\n<i>Example: https://t.me/channel or @username</i>\n\n❌ Type /cancel to cancel",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", f"session_info_{index}_{callback_page}_{button_page}")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", f"session_info_{index}_{callback_page}_{button_page}", style=user_style)]])
     )
 
 
@@ -142,10 +150,12 @@ async def leave_chat_handler(c: Client, cb: CallbackQuery):
         'button_page': button_page
     }
     
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
     await edit_cb(
         cb,
         f"🚪 <b>Leave Group/Channel</b>\n\nSend the chat ID or username:\n\n<i>Example: -1001234567890 or @username</i>\n\n❌ Type /cancel to cancel",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", f"session_info_{index}_{callback_page}_{button_page}")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", f"session_info_{index}_{callback_page}_{button_page}", style=user_style)]])
     )
 
 
@@ -166,10 +176,12 @@ async def send_message_handler(c: Client, cb: CallbackQuery):
         'button_page': button_page
     }
     
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
     await edit_cb(
         cb,
         f"💬 <b>Send Message</b>\n\nStep 1: Send the chat ID or username:\n\n<i>Example: -1001234567890 or @username</i>\n\n❌ Type /cancel to cancel",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", f"session_info_{index}_{callback_page}_{button_page}")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", f"session_info_{index}_{callback_page}_{button_page}", style=user_style)]])
     )
 
 
@@ -192,10 +204,12 @@ async def download_user_photo_handler(c: Client, cb: CallbackQuery):
         'button_page': button_page
     }
     
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
     await edit_cb(
         cb,
         f"📸 <b>Download User Photos</b>\n\nSend username or user ID:\n\n<i>Example: @username or 123456789</i>\n\n❌ Type /cancel to cancel",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", f"session_info_{index}_{callback_page}_{button_page}")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", f"session_info_{index}_{callback_page}_{button_page}", style=user_style)]])
     )
 
 
@@ -237,12 +251,14 @@ async def delete_all_photos_handler(c: Client, cb: CallbackQuery):
     callback_page = int(cb.matches[0].group(2))
     button_page = int(cb.matches[0].group(3))
     
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
     await edit_cb(
         cb,
         f"⚠️ <b>Delete All Profile Photos</b>\n\nAre you sure you want to delete ALL profile photos?\n\n<b>This action cannot be undone!</b>",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ Yes, Delete All", f"delete_photos_confirm_{index}_{callback_page}_{button_page}")],
-            [InlineKeyboardButton("❌ Cancel", f"session_info_{index}_{callback_page}_{button_page}")]
+            [InlineKeyboardButton("✅ Yes, Delete All", f"delete_photos_confirm_{index}_{callback_page}_{button_page}", style=user_style)],
+            [InlineKeyboardButton("❌ Cancel", f"session_info_{index}_{callback_page}_{button_page}", style=user_style)]
         ])
     )
 
@@ -262,6 +278,8 @@ async def delete_photos_confirm_handler(c: Client, cb: CallbackQuery):
         return
     
     session_client = Altruix.clients[index]
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
     try:
         me = await session_client.get_me()
         photos = [p async for p in session_client.get_chat_photos(me.id)]
@@ -277,7 +295,7 @@ async def delete_photos_confirm_handler(c: Client, cb: CallbackQuery):
         await edit_cb(
             cb,
             f"✅ <b>Photos Deleted</b>\n\n<b>Deleted:</b> {deleted} photo(s)",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{callback_page}_{button_page}")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{callback_page}_{button_page}", style=user_style)]])
         )
     except Exception as e:
         await cb.answer(f"❌ Error: {str(e)}", show_alert=True)
@@ -293,17 +311,19 @@ async def recent_messages_menu_handler(c: Client, cb: CallbackQuery):
     index, page = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
     await cb.answer()
     
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
     text = (
         f"<b>📨 Recent Messages (Session {index+1})</b>\n\n"
         "Pilih kategori pesan yang ingin Anda lihat:"
     )
     buttons = [
         [
-            InlineKeyboardButton("👤 All Users", f"recent_msgs_list_{index}_{page}_user"),
-            InlineKeyboardButton("🤖 All Bots", f"recent_msgs_list_{index}_{page}_bot")
+            InlineKeyboardButton("👤 All Users", f"recent_msgs_list_{index}_{page}_user", style=user_style),
+            InlineKeyboardButton("🤖 All Bots", f"recent_msgs_list_{index}_{page}_bot", style=user_style)
         ],
-        [InlineKeyboardButton("🌐 All Messages", f"recent_msgs_list_{index}_{page}_all")],
-        [InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]
+        [InlineKeyboardButton("🌐 All Messages", f"recent_msgs_list_{index}_{page}_all", style=user_style)],
+        [InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}", style=user_style)]
     ]
     await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
@@ -342,11 +362,13 @@ async def recent_messages_list_handler(c: Client, cb: CallbackQuery):
             if len(last_msg) > 35: last_msg = last_msg[:32] + "..."
             txt += f"{i}. <b>{html.escape(name)}</b>: <code>{html.escape(last_msg)}</code>\n"
             
+        from Main.utils.file_helpers import get_user_button_style
+        user_style = get_user_button_style(cb.from_user.id)
         await cb.message.edit(
             txt,
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔙 Back", f"recent_messages_menu_{index}_{page}")],
-                [InlineKeyboardButton("🔙 Dashboard", f"session_info_{index}_{page}")]
+                [InlineKeyboardButton("🔙 Back", f"recent_messages_menu_{index}_{page}", style=user_style)],
+                [InlineKeyboardButton("🔙 Dashboard", f"session_info_{index}_{page}", style=user_style)]
             ]),
             parse_mode=ParseMode.HTML
         )
@@ -384,11 +406,13 @@ async def global_stats_handler(c: Client, cb: CallbackQuery):
         f"• <b>Core Modules:</b> <code>{len(Altruix.plugin_categories)}</code>\n"
     )
     
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
     await cb.message.edit(
         txt,
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔙 Dashboard", f"session_info_{index}_{page}")],
-            [InlineKeyboardButton("🔙 Main Stats", "sessions_stats")]
+            [InlineKeyboardButton("🔙 Dashboard", f"session_info_{index}_{page}", style=user_style)],
+            [InlineKeyboardButton("🔙 Main Stats", "sessions_stats", style=user_style)]
         ]),
         parse_mode=ParseMode.HTML
     )

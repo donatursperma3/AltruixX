@@ -24,19 +24,20 @@ async def privacy_menu_handler(c: Client, cb: CallbackQuery):
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
     button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
-    await cb.answer()
-    
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
+
     buttons = [
         [
-            InlineKeyboardButton("👑 Sudo Users", f"sudo_menu_{index}_{page}_{button_page}"),
-            InlineKeyboardButton("⚙️ Prefix Settings", f"prefix_menu_{index}_{page}_{button_page}")
+            InlineKeyboardButton("👑 Sudo Users", f"sudo_menu_{index}_{page}_{button_page}", style=user_style),
+            InlineKeyboardButton("⚙️ Prefix Settings", f"prefix_menu_{index}_{page}_{button_page}", style=user_style)
         ],
         [
-            InlineKeyboardButton("🛡️ Two-Step Verification", f"gen_conf_2fa_info_{index}_{page}_{button_page}"),
-            InlineKeyboardButton("🔒 Privacy Settings", f"native_privacy_menu_{index}_{page}_{button_page}")
+            InlineKeyboardButton("🛡️ Two-Step Verification", f"gen_conf_2fa_info_{index}_{page}_{button_page}", style=user_style),
+            InlineKeyboardButton("🔒 Privacy Settings", f"native_privacy_menu_{index}_{page}_{button_page}", style=user_style)
         ],
         [
-            InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}_{button_page}")
+            InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}_{button_page}", style=user_style)
         ]
     ]
     await edit_cb(cb, 
@@ -67,8 +68,11 @@ async def native_privacy_menu_handler(c: Client, cb: CallbackQuery):
         "<i>Currently read-only / placeholder.</i>"
     )
     
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
+    
     buttons = [
-        [InlineKeyboardButton("🔙 Back", f"privacy_menu_{index}_{page}_{button_page}")]
+        [InlineKeyboardButton("🔙 Back", f"privacy_menu_{index}_{page}_{button_page}", style=user_style)]
     ]
     
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
@@ -90,6 +94,9 @@ async def custom_bot_manager_handler(c: Client, cb: CallbackQuery):
         f"Select a bot to manage:"
     )
     
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
+    
     buttons = []
     if custom_bots:
         for bot_id, bot_client in custom_bots.items():
@@ -100,11 +107,11 @@ async def custom_bot_manager_handler(c: Client, cb: CallbackQuery):
                     name = f"{me.first_name} (@{me.username})"
             except: pass
             
-            buttons.append([InlineKeyboardButton(name, f"manage_custom_bot_{bot_id}")])
+            buttons.append([InlineKeyboardButton(name, f"manage_custom_bot_{bot_id}", style=user_style)])
     else:
         text += f"\n\n<i>{gt('no_custom_bots') or 'No custom bots found.'}</i>"
 
-    buttons.append([InlineKeyboardButton(gt("back"), "bot_controls_menu")])
+    buttons.append([InlineKeyboardButton(gt("back"), "bot_controls_menu", style=user_style)])
     
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
 
@@ -140,12 +147,15 @@ async def manage_custom_bot_handler(c: Client, cb: CallbackQuery):
         f"• <b>Status:</b> {status_text}\n"
     )
     
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
+
     buttons = [
         [
-            InlineKeyboardButton("🛑 Stop Bot", f"action_custom_bot_stop_{bot_id}"),
-            InlineKeyboardButton("🗑️ Delete", f"action_custom_bot_delete_{bot_id}")
+            InlineKeyboardButton("🛑 Stop Bot", f"action_custom_bot_stop_{bot_id}", style=user_style),
+            InlineKeyboardButton("🗑️ Delete", f"action_custom_bot_delete_{bot_id}", style=user_style)
         ],
-        [InlineKeyboardButton(gt("back"), "custom_bot_manager")]
+        [InlineKeyboardButton(gt("back"), "custom_bot_manager", style=user_style)]
     ]
     
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
@@ -183,14 +193,17 @@ async def sudo_menu_handler(c: Client, cb: CallbackQuery):
         f"<i>Atur apakah status sudo berlaku global atau per akun.</i>"
     )
     
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
+
     buttons = [
         [
-            InlineKeyboardButton("➕ Tambah Sudo", f"sudo_add_start_{index}_{page}_{button_page}"),
-            InlineKeyboardButton("➖ Hapus Sudo", f"sudo_remove_start_{index}_{page}_{button_page}")
+            InlineKeyboardButton("➕ Tambah Sudo", f"sudo_add_start_{index}_{page}_{button_page}", style=user_style),
+            InlineKeyboardButton("➖ Hapus Sudo", f"sudo_remove_start_{index}_{page}_{button_page}", style=user_style)
         ],
-        [InlineKeyboardButton(f"🔄 Toggle Status: {status_icon}", f"sudo_toggle_{index}_{page}_{button_page}")],
-        [InlineKeyboardButton(f"⚙️ Mode: {apply_label}", f"sudo_mode_{index}_{page}_{button_page}")],
-        [InlineKeyboardButton("🔙 Back", f"privacy_menu_{index}_{page}_{button_page}")]
+        [InlineKeyboardButton(f"🔄 Toggle Status: {status_icon}", f"sudo_toggle_{index}_{page}_{button_page}", style=user_style)],
+        [InlineKeyboardButton(f"⚙️ Mode: {apply_label}", f"sudo_mode_{index}_{page}_{button_page}", style=user_style)],
+        [InlineKeyboardButton("🔙 Back", f"privacy_menu_{index}_{page}_{button_page}", style=user_style)]
     ]
     
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
@@ -216,11 +229,13 @@ async def sudo_add_remove_start_handler(c: Client, cb: CallbackQuery):
     }
     
     label = "Tambah" if action_type == "add" else "Hapus"
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
     await cb.edit_message_text(
         text=f"👑 <b>{label} Sudo User</b>\n\n"
              f"Silakan kirim <b>User ID</b> yang ingin di{label.lower()}.\n\n"
              f"❌ <b>Cancel:</b> /cancel",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"sudo_menu_{index}_{page}_{button_page}")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"sudo_menu_{index}_{page}_{button_page}", style=user_style)]])
     )
 
 @Altruix.bot.on_callback_query(filters.regex(r"^sudo_toggle_(\d+)_(\d+)(?:_(\d+))?$"))
@@ -297,13 +312,16 @@ async def prefix_menu_handler(c: Client, cb: CallbackQuery):
         f"<i>Klik tombol di bawah untuk mengubah prefix.</i>"
     )
     
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
+
     buttons = [
         [
-            InlineKeyboardButton("📝 Edit User Prefix", f"prefix_edit_u_{index}_{page}_{button_page}"),
-            InlineKeyboardButton("📝 Edit Sudo Prefix", f"prefix_edit_s_{index}_{page}_{button_page}")
+            InlineKeyboardButton("📝 Edit User Prefix", f"prefix_edit_u_{index}_{page}_{button_page}", style=user_style),
+            InlineKeyboardButton("📝 Edit Sudo Prefix", f"prefix_edit_s_{index}_{page}_{button_page}", style=user_style)
         ],
-        [InlineKeyboardButton(f"🔄 Mode: {apply_type.title()}", f"prefix_toggle_mode_{index}_{page}_{button_page}")],
-        [InlineKeyboardButton("🔙 Back", f"privacy_menu_{index}_{page}_{button_page}")]
+        [InlineKeyboardButton(f"🔄 Mode: {apply_type.title()}", f"prefix_toggle_mode_{index}_{page}_{button_page}", style=user_style)],
+        [InlineKeyboardButton("🔙 Back", f"privacy_menu_{index}_{page}_{button_page}", style=user_style)]
     ]
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
@@ -323,7 +341,9 @@ async def prefix_info_handler(c: Client, cb: CallbackQuery):
         "• <b>Per Account:</b> Setiap sesi bisa memiliki prefix unik.\n\n"
         "Anda dapat mengubahnya melalui menu <b>Privacy > Prefix Settings</b>."
     )
-    await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}_{button_page}")]]), parse_mode=ParseMode.HTML)
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
+    await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}_{button_page}", style=user_style)]]), parse_mode=ParseMode.HTML)
 
 # ====================== FEATURE STATUS HANDLER ======================
 @Altruix.bot.on_callback_query(filters.regex(r"^feature_status_(\d+)_(\d+)(?:_(\d+))?$"))
@@ -359,7 +379,10 @@ async def feature_status_handler(c: Client, cb: CallbackQuery):
         f"<i>Status ini menunjukkan fitur mana yang aktif untuk sesi ini.</i>"
     )
     
-    await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}_{button_page}")]]), parse_mode=ParseMode.HTML)
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
+    
+    await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}_{button_page}", style=user_style)]]), parse_mode=ParseMode.HTML)
 
 # ====================== TWO-STEP VERIFICATION HANDLER ======================
 @Altruix.bot.on_callback_query(filters.regex(r"^gen_conf_2fa_info_(\d+)_(\d+)(?:_(\d+))?$"))
@@ -384,9 +407,14 @@ async def check_2fa_info_handler(c: Client, cb: CallbackQuery):
             f"<i>Jika 2FA belum aktif, sangat disarankan untuk mengaktifkannya di pengaturan Telegram resmi.</i>"
         )
         
-        await edit_cb(cb, txt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"privacy_menu_{index}_{page}")]]) )
+        from Main.utils.file_helpers import get_user_button_style
+        user_style = get_user_button_style(cb.from_user.id)
+        
+        await edit_cb(cb, txt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"privacy_menu_{index}_{page}", style=user_style)]]) )
     except Exception as e:
-        await edit_cb(cb, f"❌ Error checking 2FA: {str(e)}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"privacy_menu_{index}_{page}")]]))
+        from Main.utils.file_helpers import get_user_button_style
+        user_style = get_user_button_style(cb.from_user.id)
+        await edit_cb(cb, f"❌ Error checking 2FA: {str(e)}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"privacy_menu_{index}_{page}", style=user_style)]]))
 
 @Altruix.bot.on_callback_query(filters.regex(r"^prefix_toggle_mode_(\d+)_(\d+)(?:_(\d+))?$"))
 @iuser_check
@@ -421,13 +449,15 @@ async def prefix_edit_start_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
     
     label = "Userbot" if p_type == 'u' else "Sudo"
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
     await cb.edit_message_text(
         f"📝 <b>Edit {label} Prefix</b>\n\n"
         f"Silakan kirim karakter tunggal yang ingin dijadikan prefix baru.\n"
         f"Contoh: <code>.</code> atau <code>!</code> atau <code>,</code>\n\n"
         f"❌ <b>Batal:</b> Kirim /cancel",
         parse_mode=ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Batal", f"prefix_menu_{index}_{page}_{button_page}")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Batal", f"prefix_menu_{index}_{page}_{button_page}", style=user_style)]])
     )
     
     # Use state to wait for input
@@ -513,9 +543,14 @@ async def process_sudo_input(c: Client, m: Message, state: dict):
             await m.reply(f"❌ User {uid} tidak ada di daftar Sudo.")
             
     from .states import user_privacy_state
-    if user_id in user_privacy_state: del user_privacy_state[user_id]
+    if user_id in user_privacy_state:
+        del user_privacy_state[user_id]
+        
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(user_id)
+
     await asyncio.sleep(2)
-    await m.reply("🔄 Kembali ke dashboard...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{state.get('page', 1)}")]]) )
+    await m.reply("🔄 Kembali ke dashboard...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{state.get('page', 1)}", style=user_style)]]) )
 
 # --- Custom Link Settings (Bot Controls) ---
 
@@ -545,13 +580,16 @@ async def custom_link_settings_handler(c: Client, cb: CallbackQuery):
         f"<i>Klik tombol di bawah untuk mengubah teks atau link tombol custom di dashboard utama.</i>"
     )
     
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(user_id)
+    
     buttons = [
         [
-            InlineKeyboardButton("📝 Edit Text", callback_data="edit_cl_text"),
-            InlineKeyboardButton("📝 Edit Link", callback_data="edit_cl_link"),
+            InlineKeyboardButton("📝 Edit Text", callback_data="edit_cl_text", style=user_style),
+            InlineKeyboardButton("📝 Edit Link", callback_data="edit_cl_link", style=user_style),
         ],
-        [InlineKeyboardButton(f"🔄 Per-Account Mode: {'✅' if apply_type == 'per_account' else '❌'}", callback_data="toggle_cl_mode")],
-        [InlineKeyboardButton("🔙 Back", "bot_controls_menu")]
+        [InlineKeyboardButton(f"🔄 Per-Account Mode: {'✅' if apply_type == 'per_account' else '❌'}", callback_data="toggle_cl_mode", style=user_style)],
+        [InlineKeyboardButton("🔙 Back", "bot_controls_menu", style=user_style)]
     ]
     
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
@@ -586,11 +624,13 @@ async def edit_cl_start_handler(c: Client, cb: CallbackQuery):
     # Actually session_info.py uses Altruix.user_track_state for this.
     Altruix.user_track_state[cb.from_user.id] = {"step": f"edit_cl_{target}"}
     
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
     label = "Teks" if target == "text" else "Link"
     await cb.edit_message_text(
         f"📝 <b>Edit Custom {label}</b>\n\n"
         f"Silakan kirim {label.lower()} baru untuk tombol dashboard.\n\n"
         f"❌ <b>Batal:</b> Kirim /cancel",
         parse_mode=ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Batal", "custom_link_settings")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Batal", "custom_link_settings", style=user_style)]])
     )

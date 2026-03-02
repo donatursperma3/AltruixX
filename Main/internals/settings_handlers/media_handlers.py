@@ -27,12 +27,14 @@ async def dlstory_input_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
     user_id = cb.from_user.id
     user_profile_edit_state[user_id] = {'action': 'download_story', 'session_index': index, 'page': page}
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(user_id)
     await cb.edit_message_text(
         "📥 <b>Download Story</b>\n\n"
         "Silakan kirim <b>Username</b> atau <b>ID</b> user yang ingin didownload story-nya.\n\n"
         "❌ <b>Cancel:</b> /cancel",
         parse_mode=ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}", style=user_style)]])
     )
 
 @Altruix.bot.on_callback_query(filters.regex(r"^gen_conf_dl_content_input_(\d+)_(\d+)$"))
@@ -49,12 +51,14 @@ async def dllink_input_handler(c: Client, cb: CallbackQuery):
     
     user_id = cb.from_user.id
     user_profile_edit_state[user_id] = {'action': 'download_content', 'session_index': index, 'page': page}
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(user_id)
     await cb.edit_message_text(
         "💾 <b>Download Content</b>\n\n"
         "Silakan kirim <b>Link Pesan</b> (t.me/...) yang ingin didownload kontennya.\n\n"
         "❌ <b>Cancel:</b> /cancel",
         parse_mode=ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}", style=user_style)]])
     )
 
 async def process_media_input(c: Client, m: Message, state: dict):
@@ -109,6 +113,7 @@ async def process_media_input(c: Client, m: Message, state: dict):
     except Exception as e:
         await m.reply(f"❌ <b>Error:</b> {str(e)}")
         
-    del user_profile_edit_state[user_id]
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(user_id)
     await asyncio.sleep(2)
-    await m.reply("🔄 Memuat ulang menu...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Dashboard", f"session_info_{index}_{page}")]]))
+    await m.reply("🔄 Memuat ulang menu...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Dashboard", f"session_info_{index}_{page}", style=user_style)]]))

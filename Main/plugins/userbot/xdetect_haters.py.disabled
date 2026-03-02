@@ -1,0 +1,830 @@
+# xdetect_haters.py
+# Copyright (C) 2021-present by Altruix@Github, < https://github.com/Altruix >.
+# All rights reserved.
+#
+# Haters Detector — Automatically detect and respond to users who blocked you
+# when they reply/tag/mention you in group chats.
+
+import os
+import json
+import html
+import logging
+import time
+from pathlib import Path
+from pyrogram import Client, filters, enums
+from pyrogram.types import Message as PyroMessage
+from pyrogram.enums import ChatAction
+from pyrogram.errors import UserIsBlocked, PeerIdInvalid, RPCError, FloodWait
+from Main import Altruix
+from Main.core.types.message import Message
+from Main.core.decorators import iuser_check, log_errors
+
+# Plugin Metadata
+plugin_name = f"{os.path.basename(__file__)}"
+__plugin_name__ = plugin_name if plugin_name else "xdetect_haters"
+PLUGIN_VERSION = "1.0.16"
+
+logger = logging.getLogger("altruix.xdetect_haters")
+logger.setLevel(logging.INFO)
+
+# ==================== PERSISTENT STORAGE ====================
+from Main.utils.file_helpers import get_db_path
+STORAGE_FILE = Path(get_db_path("detect_haters_settings.json"))
+
+def _load_all_settings() -> dict:
+    """Load all user settings from JSON file."""
+    try:
+        if STORAGE_FILE.exists():
+            with open(STORAGE_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception as e:
+        logger.error(f"Failed to load settings: {e}")
+    return {}
+
+def _save_all_settings(data: dict):
+    """Save all user settings to JSON file."""
+    try:
+        STORAGE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(STORAGE_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f"Failed to save settings: {e}")
+
+def get_settings(user_id: int) -> dict:
+    """Get settings for a specific user, with defaults."""
+    all_s = _load_all_settings()
+    uid = str(user_id)
+    defaults = {
+        "enabled": False,           # Enable/disable auto-response
+        "responses": [              # List of custom responses
+            {
+                "message": "🚫 <b>{mention_name}</b> blocked me but still mentions me? Interesting...",
+                "parse_mode": "html"
+            }
+        ],
+        "detected_haters": {},      # {user_id: {"username": "...", "first_name": "...", "last_name": "...", "count": N, "last_detected": timestamp}}
+        "response_delay": 0,        # Delay before responding (seconds)
+        "log_detections": True,     # Log detections to LOG_CHAT
+        "random_response": True     # Use random response from list
+    }
+    if uid not in all_s:
+        all_s[uid] = defaults
+        _save_all_settings(all_s)
+    else:
+        # Merge missing keys
+        for k, v in defaults.items():
+            if k not in all_s[uid]:
+                all_s[uid][k] = v
+        _save_all_settings(all_s)
+    return all_s[uid]
+
+def save_settings(user_id: int, settings: dict):
+    """Save settings for a specific user."""
+    all_s = _load_all_settings()
+    all_s[str(user_id)] = settings
+    _save_all_settings(all_s)
+
+# ==================== LOG CHAT ====================
+try:
+    LOG_CHAT_ID = Altruix.config.LOG_CHAT_ID
+    if isinstance(LOG_CHAT_ID, str) and LOG_CHAT_ID.lstrip("-").isdigit():
+        LOG_CHAT_ID = int(LOG_CHAT_ID)
+except Exception:
+    LOG_CHAT_ID = "me"
+
+# ==================== BLOCK STATUS CACHE ====================
+# Cache untuk menyimpan status block user (menghindari API call berulang)
+# Format: {user_id: {"blocked": bool, "timestamp": int}}
+BLOCK_STATUS_CACHE = {}
+BLOCK_CACHE_TTL = 300  # 5 menit cache TTL
+PROCESSED_MSG_CACHE = {}
+PROCESSED_MSG_TTL = 20
+
+def get_cached_block_status(user_id: int) -> tuple[bool, bool]:
+    """
+    Get cached block status for a user.
+    Returns: (has_cache, is_blocked)
+    """
+    import time
+    if user_id in BLOCK_STATUS_CACHE:
+        cache_data = BLOCK_STATUS_CACHE[user_id]
+        timestamp = cache_data.get("timestamp", 0)
+        # Check if cache is still valid
+        if time.time() - timestamp < BLOCK_CACHE_TTL:
+            return (True, cache_data.get("blocked", False))
+    return (False, False)
+
+def set_cached_block_status(user_id: int, is_blocked: bool):
+    """Cache block status for a user."""
+    import time
+    BLOCK_STATUS_CACHE[user_id] = {
+        "blocked": is_blocked,
+        "timestamp": int(time.time())
+    }
+
+# ==================== HELPER FUNCTIONS ====================
+
+async def send_log(text: str, client=None):
+    """Send a log message to the LOG_CHAT_ID."""
+    try:
+        if client:
+            return await client.send_message(LOG_CHAT_ID, text, parse_mode=enums.ParseMode.HTML)
+    except Exception as e:
+        logger.error(f"send_log failed: {e}")
+    return None
+
+async def check_if_blocked(client: Client, user_id: int) -> bool:
+    """
+    Check if a user has blocked us by probing with send_chat_action.
+    Returns True if blocked, False otherwise.
+    """
+    try:
+        # Probe using send_chat_action - safer for userbots to detect blocks
+        # This doesn't send a message, but if blocked/deleted it'll raise an error.
+        await client.send_chat_action(user_id, ChatAction.TYPING)
+        return False
+    except UserIsBlocked:
+        logger.info(f"Hater Alert: User {user_id} has blocked the bot.")
+        return True
+    except PeerIdInvalid:
+        # PeerIdInvalid can occur if we have no history OR if they blocked/deleted us
+        # We'll treat it as a potential hater if they are mentioning us but we can't 'see' them
+        logger.debug(f"PeerIdInvalid for {user_id} - potential hater.")
+        return True
+    except FloodWait as e:
+        # If we hit flood wait, assume not blocked to avoid false positives during delay
+        logger.warning(f"FloodWait in block check for {user_id}: waiting {e.value}s")
+        return False
+    except RPCError as e:
+        # If any other RPC error occurs, they might have blocked us or account is inaccessible
+        logger.debug(f"RPCError checking block status for {user_id}: {e}")
+        return True
+    except Exception as e:
+        logger.error(f"Unexpected error checking block status for {user_id}: {e}")
+        return False
+
+def format_response(template: str, user_info: dict, user_id: int) -> str:
+    """
+    Format response message with placeholders.
+    
+    Available placeholders:
+    - {mention_name}: Mention with first name
+    - {mention_id}: Mention with user ID
+    - {username}: @username or "No username"
+    - {first_name}: User's first name
+    - {last_name}: User's last name
+    - {full_name}: Full name (first + last)
+    """
+    first_name = user_info.get("first_name", "User")
+    last_name = user_info.get("last_name", "")
+    username = user_info.get("username", "")
+    
+    full_name = f"{first_name} {last_name}".strip() if last_name else first_name
+    mention_name = f'<a href="tg://user?id={user_id}">{html.escape(first_name)}</a>'
+    mention_id = f'<a href="tg://user?id={user_id}">{user_id}</a>'
+    username_str = f"@{username}" if username else "No username"
+    
+    return template.format(
+        mention_name=mention_name,
+        mention_id=mention_id,
+        username=username_str,
+        first_name=html.escape(first_name),
+        last_name=html.escape(last_name),
+        full_name=html.escape(full_name)
+    )
+
+# ==================== MAIN DETECTOR ====================
+
+async def _process_hater_message(client: Client, message: PyroMessage, is_mention: bool, is_reply_to_us: bool):
+    if not message or not hasattr(message, 'chat') or not message.chat:
+        logger.debug("[Hater Detector] Message or chat is None, skipping")
+        return
+    from_user = message.from_user
+    if not from_user:
+        logger.debug("[Hater Detector] No from_user, skipping")
+        return
+    user_id = client.me.id
+    hater_id = from_user.id
+    if hater_id == user_id:
+        logger.debug(f"[Hater Detector] Message from self ({user_id}), skipping")
+        return
+    if Altruix.log_chat and message.chat.id == Altruix.log_chat:
+        logger.debug(f"[Hater Detector] Message in log chat, skipping")
+        return
+    if not is_mention and not is_reply_to_us:
+        logger.debug(f"[Hater Detector] Not a mention or reply to us, skipping")
+        return
+    
+    logger.info(f"[Hater Detector] Processing message from {hater_id} in chat {message.chat.id} (mention={is_mention}, reply={is_reply_to_us})")
+    now = time.time()
+    msg_key = f"{message.chat.id}_{message.id}"
+    last_ts = PROCESSED_MSG_CACHE.get(msg_key)
+    if last_ts and now - last_ts < PROCESSED_MSG_TTL:
+        logger.debug(f"[Hater Detector] Message {msg_key} already processed recently, skipping")
+        return
+    PROCESSED_MSG_CACHE[msg_key] = now
+    if len(PROCESSED_MSG_CACHE) > 5000:
+        cutoff = now - PROCESSED_MSG_TTL
+        for k in list(PROCESSED_MSG_CACHE.keys()):
+            if PROCESSED_MSG_CACHE[k] < cutoff:
+                PROCESSED_MSG_CACHE.pop(k, None)
+    logger.info(f"[Hater Detector] Message from {hater_id} is relevant (mention={is_mention}, reply={is_reply_to_us})")
+    s = get_settings(user_id)
+    if not s.get("enabled", False):
+        logger.info(f"[Hater Detector] Feature disabled for user {user_id}, skipping")
+        return
+    if is_mention:
+        logger.info(f"[Hater Detector] Mention detected from {hater_id}")
+    if is_reply_to_us:
+        logger.info(f"[Hater Detector] Reply to us detected from {hater_id}")
+    has_cache, cached_blocked = get_cached_block_status(hater_id)
+    if has_cache:
+        is_blocked = cached_blocked
+        logger.info(f"[Hater Detector] User {hater_id} block status from cache: {is_blocked}")
+    else:
+        logger.info(f"[Hater Detector] Checking if {hater_id} has blocked us (API call)...")
+        is_blocked = await check_if_blocked(client, hater_id)
+        set_cached_block_status(hater_id, is_blocked)
+        logger.info(f"[Hater Detector] User {hater_id} blocked status: {is_blocked} (cached)")
+    if not is_blocked:
+        return
+    first_name = getattr(from_user, "first_name", None) or "User"
+    last_name = getattr(from_user, "last_name", None) or ""
+    username = getattr(from_user, "username", None) or ""
+    hater_info = {
+        "username": username,
+        "first_name": first_name,
+        "last_name": last_name,
+        "count": s["detected_haters"].get(str(hater_id), {}).get("count", 0) + 1,
+        "last_detected": int(time.time())
+    }
+    s["detected_haters"][str(hater_id)] = hater_info
+    save_settings(user_id, s)
+    
+    # Log detection
+    if s.get("log_detections", True):
+        chat_title = message.chat.title or "Unknown"
+        await send_log(
+            f"🚫 <b>Hater Detected!</b>\n\n"
+            f"User: {html.escape(hater_info['first_name'])} "
+            f"(<code>{hater_id}</code>)\n"
+            f"Username: @{hater_info['username'] or 'None'}\n"
+            f"Chat: {html.escape(chat_title)}\n"
+            f"Detection Count: {hater_info['count']}\n"
+            f"Message: {html.escape(message.text[:100] if message.text else '[Media]')}",
+            client=client
+        )
+    
+    # Get response template
+    responses = s.get("responses", [])
+    if not responses:
+        logger.warning(f"[Hater Detector] No responses configured for user {user_id}, skipping")
+        return
+    
+    # Select response (random or first)
+    import random
+    if s.get("random_response", True) and len(responses) > 1:
+        response_data = random.choice(responses)
+    else:
+        response_data = responses[0]
+    
+    response_template = response_data.get("message", "")
+    parse_mode_str = response_data.get("parse_mode", "html")
+    
+    logger.info(f"[Hater Detector] Selected response template: {response_template[:50]}...")
+    
+    # Format response
+    response_text = format_response(response_template, hater_info, hater_id)
+    
+    # Parse mode conversion
+    parse_mode = enums.ParseMode.HTML
+    if parse_mode_str == "markdown":
+        parse_mode = enums.ParseMode.MARKDOWN
+    elif parse_mode_str == "none":
+        parse_mode = None
+    
+    # Delay if configured
+    delay = s.get("response_delay", 0)
+    if delay > 0:
+        logger.info(f"[Hater Detector] Waiting {delay}s before responding...")
+        import asyncio
+        await asyncio.sleep(delay)
+    
+    # Send response
+    try:
+        logger.info(f"[Hater Detector] Sending response to {hater_id} in chat {message.chat.id}...")
+        logger.info(f"[Hater Detector] Response text: {response_text[:100]}...")
+        sent_msg = await message.reply(response_text, parse_mode=parse_mode)
+        logger.info(f"[Hater Detector] ✅ Response sent successfully! Message ID: {sent_msg.id}")
+    except Exception as e:
+        logger.error(f"[Hater Detector] ❌ Failed to respond to hater {hater_id}: {e}")
+        # Try to log the error
+        await send_log(
+            f"❌ <b>Hater Detector Error</b>\n\n"
+            f"Failed to send response to {hater_id}\n"
+            f"Error: {str(e)}",
+            client=client
+        )
+
+@Altruix.on_message(
+    filters.mentioned &
+    filters.group &
+    ~filters.bot &
+    ~filters.service,
+    group=4
+)
+@log_errors
+async def hater_detector(client: Client, message: PyroMessage):
+    """Detect haters who mention us in groups."""
+    logger.info(f"[Hater Detector] 🔔 hater_detector triggered for message {message.id} from {message.from_user.id if message.from_user else 'unknown'} in chat {message.chat.id}")
+    
+    # Check if this is also a reply to us
+    is_reply_to_us = False
+    if message.reply_to_message:
+        if message.reply_to_message.from_user and message.reply_to_message.from_user.id == client.me.id:
+            is_reply_to_us = True
+            logger.info(f"[Hater Detector] Message is both mention AND reply to us")
+    
+    await _process_hater_message(client, message, True, is_reply_to_us)
+
+@Altruix.on_message(
+    filters.reply &
+    filters.group &
+    ~filters.bot &
+    ~filters.service,
+    group=4
+)
+@log_errors
+async def hater_reply_detector(client: Client, message: PyroMessage):
+    """Detect haters who reply to us in groups."""
+    logger.info(f"[Hater Detector] 🔔 hater_reply_detector triggered for message {message.id} from {message.from_user.id if message.from_user else 'unknown'} in chat {message.chat.id}")
+    
+    if not message.reply_to_message or not message.reply_to_message.from_user:
+        logger.debug(f"[Hater Detector] No reply_to_message or from_user, skipping")
+        return
+    
+    if message.reply_to_message.from_user.id != client.me.id:
+        logger.debug(f"[Hater Detector] Reply not to us (to {message.reply_to_message.from_user.id}), skipping")
+        return
+    
+    logger.info(f"[Hater Detector] Message is reply to us from {message.from_user.id}")
+    await _process_hater_message(client, message, bool(getattr(message, "mentioned", False)), True)
+
+# ==================== COMMANDS ====================
+
+@Altruix.register_on_cmd(
+    ["hateron", "dhon"],
+    cmd_help={
+        "help": "Enable Haters Detector to auto-respond to blocked users who mention you.",
+        "example": ".hateron"
+    }
+)
+@iuser_check
+@log_errors
+async def hater_on_cmd(client: Client, message: Message):
+    """Enable haters detector."""
+    user_id = client.me.id
+    s = get_settings(user_id)
+    
+    if s.get("enabled", False):
+        await message.edit("⚠️ <b>Haters Detector is already enabled.</b>")
+        return
+    
+    s["enabled"] = True
+    save_settings(user_id, s)
+    
+    await message.edit(
+        "✅ <b>Haters Detector Enabled!</b>\n\n"
+        "I will now automatically respond when blocked users mention/reply to you.\n\n"
+        "<i>Use <code>.haterstatus</code> to check settings.</i>"
+    )
+    await send_log("✅ <b>Haters Detector Enabled</b>", client=client)
+
+@Altruix.register_on_cmd(
+    ["hateroff", "dhoff"],
+    cmd_help={
+        "help": "Disable Haters Detector.",
+        "example": ".hateroff"
+    }
+)
+@iuser_check
+@log_errors
+async def hater_off_cmd(client: Client, message: Message):
+    """Disable haters detector."""
+    user_id = client.me.id
+    s = get_settings(user_id)
+    
+    if not s.get("enabled", False):
+        await message.edit("⚠️ <b>Haters Detector is already disabled.</b>")
+        return
+    
+    s["enabled"] = False
+    save_settings(user_id, s)
+    
+    await message.edit("🔴 <b>Haters Detector Disabled.</b>")
+    await send_log("🔴 <b>Haters Detector Disabled</b>", client=client)
+
+@Altruix.register_on_cmd(
+    ["haterstatus", "dhstatus"],
+    cmd_help={
+        "help": "Check Haters Detector status and settings.",
+        "example": ".haterstatus"
+    }
+)
+@iuser_check
+@log_errors
+async def hater_status_cmd(client: Client, message: Message):
+    """Show haters detector status."""
+    user_id = client.me.id
+    s = get_settings(user_id)
+    
+    status = "🟢 ENABLED" if s.get("enabled", False) else "🔴 DISABLED"
+    total_responses = len(s.get("responses", []))
+    total_haters = len(s.get("detected_haters", {}))
+    delay = s.get("response_delay", 0)
+    log_enabled = "ON" if s.get("log_detections", True) else "OFF"
+    random_mode = "ON" if s.get("random_response", True) else "OFF"
+    
+    text = (
+        f"🚫 <b>Haters Detector Status</b>\n"
+        f"{'━' * 30}\n"
+        f"Status: {status}\n"
+        f"Response Delay: <b>{delay}s</b>\n"
+        f"Log Detections: <b>{log_enabled}</b>\n"
+        f"Random Response: <b>{random_mode}</b>\n"
+        f"Total Responses: <b>{total_responses}</b>\n"
+        f"Detected Haters: <b>{total_haters}</b>\n\n"
+        f"<i>Use <code>.haterlist</code> to see detected haters.\n"
+        f"Use <code>.haterresponses</code> to manage responses.</i>"
+    )
+    
+    await message.edit(text)
+
+@Altruix.register_on_cmd(
+    ["haterlist", "dhlist"],
+    cmd_help={
+        "help": "List all detected haters (users who blocked you but still mention you).",
+        "example": ".haterlist"
+    }
+)
+@iuser_check
+@log_errors
+async def hater_list_cmd(client: Client, message: Message):
+    """List all detected haters."""
+    user_id = client.me.id
+    s = get_settings(user_id)
+    
+    haters = s.get("detected_haters", {})
+    
+    if not haters:
+        await message.edit(
+            "📋 <b>Detected Haters List</b>\n\n"
+            "<i>No haters detected yet.</i>"
+        )
+        return
+    
+    lines = []
+    for hater_id, info in haters.items():
+        first_name = info.get("first_name", "User")
+        username = info.get("username", "")
+        count = info.get("count", 0)
+        
+        username_str = f"@{username}" if username else "No username"
+        lines.append(
+            f"• {html.escape(first_name)} (<code>{hater_id}</code>)\n"
+            f"  {username_str} | Detections: {count}"
+        )
+    
+    text = (
+        f"📋 <b>Detected Haters List</b>\n"
+        f"Total: <b>{len(haters)}</b> users\n"
+        f"{'━' * 30}\n\n"
+        + "\n\n".join(lines)
+    )
+    
+    await message.edit(text)
+
+@Altruix.register_on_cmd(
+    ["haterclear", "dhclear"],
+    cmd_help={
+        "help": "Clear all detected haters from the list.",
+        "example": ".haterclear"
+    }
+)
+@iuser_check
+@log_errors
+async def hater_clear_cmd(client: Client, message: Message):
+    """Clear all detected haters."""
+    user_id = client.me.id
+    s = get_settings(user_id)
+    
+    count = len(s.get("detected_haters", {}))
+    s["detected_haters"] = {}
+    save_settings(user_id, s)
+    
+    await message.edit(f"🗑 <b>Cleared {count} haters from the list.</b>")
+    await send_log(f"🗑 <b>Haters List Cleared</b> ({count} users)", client=client)
+
+@Altruix.register_on_cmd(
+    ["haterresponses", "dhresponses"],
+    cmd_help={
+        "help": "List all custom response messages.",
+        "example": ".haterresponses"
+    }
+)
+@iuser_check
+@log_errors
+async def hater_responses_cmd(client: Client, message: Message):
+    """List all custom responses."""
+    user_id = client.me.id
+    s = get_settings(user_id)
+    
+    responses = s.get("responses", [])
+    
+    if not responses:
+        await message.edit(
+            "📝 <b>Custom Responses</b>\n\n"
+            "<i>No responses configured.</i>\n\n"
+            "Use <code>.hateraddresponse &lt;message&gt;</code> to add one."
+        )
+        return
+    
+    lines = []
+    for i, resp in enumerate(responses, 1):
+        msg = resp.get("message", "")
+        parse_mode = resp.get("parse_mode", "html")
+        preview = html.escape(msg[:80]) + ("..." if len(msg) > 80 else "")
+        lines.append(f"{i}. [{parse_mode.upper()}] {preview}")
+    
+    text = (
+        f"📝 <b>Custom Responses</b>\n"
+        f"Total: <b>{len(responses)}</b>\n"
+        f"{'━' * 30}\n\n"
+        + "\n\n".join(lines) +
+        "\n\n<b>Available Placeholders:</b>\n"
+        "• <code>{mention_name}</code> - Mention with name\n"
+        "• <code>{mention_id}</code> - Mention with ID\n"
+        "• <code>{username}</code> - @username\n"
+        "• <code>{first_name}</code> - First name\n"
+        "• <code>{last_name}</code> - Last name\n"
+        "• <code>{full_name}</code> - Full name"
+    )
+    
+    await message.edit(text)
+
+@Altruix.register_on_cmd(
+    ["hateraddresponse", "dhaddresp"],
+    cmd_help={
+        "help": "Add a new custom response message.",
+        "example": ".hateraddresponse {mention_name} blocked me but still mentions? 🤔",
+        "user_input": {
+            "required": True,
+            "placeholder": "response message"
+        }
+    }
+)
+@iuser_check
+@log_errors
+async def hater_add_response_cmd(client: Client, message: Message):
+    """Add a new custom response."""
+    user_id = client.me.id
+    
+    if not message.user_input:
+        await message.edit(
+            "❌ <b>Usage:</b> <code>.hateraddresponse &lt;message&gt;</code>\n\n"
+            "<b>Example:</b>\n"
+            "<code>.hateraddresponse {mention_name} blocked me but still mentions? Interesting...</code>\n\n"
+            "<b>Available Placeholders:</b>\n"
+            "• <code>{mention_name}</code> - Mention with name\n"
+            "• <code>{mention_id}</code> - Mention with ID\n"
+            "• <code>{username}</code> - @username\n"
+            "• <code>{first_name}</code> - First name\n"
+            "• <code>{last_name}</code> - Last name\n"
+            "• <code>{full_name}</code> - Full name"
+        )
+        return
+    
+    response_text = message.user_input.strip()
+    
+    # Auto-detect format
+    parse_mode = "html"
+    if response_text.startswith("<"):
+        parse_mode = "html"
+    elif "**" in response_text or "__" in response_text:
+        parse_mode = "markdown"
+    
+    s = get_settings(user_id)
+    s["responses"].append({
+        "message": response_text,
+        "parse_mode": parse_mode
+    })
+    save_settings(user_id, s)
+    
+    await message.edit(
+        f"✅ <b>Response Added!</b>\n\n"
+        f"Format: <b>{parse_mode.upper()}</b>\n"
+        f"Total responses: <b>{len(s['responses'])}</b>\n\n"
+        f"Preview: {html.escape(response_text[:100])}"
+    )
+
+@Altruix.register_on_cmd(
+    ["haterdelresponse", "dhdelresp"],
+    cmd_help={
+        "help": "Delete a custom response by index.",
+        "example": ".haterdelresponse 2",
+        "user_input": {
+            "required": True,
+            "placeholder": "index"
+        }
+    }
+)
+@iuser_check
+@log_errors
+async def hater_del_response_cmd(client: Client, message: Message):
+    """Delete a custom response."""
+    user_id = client.me.id
+    
+    if not message.user_input:
+        await message.edit(
+            "❌ <b>Usage:</b> <code>.haterdelresponse &lt;index&gt;</code>\n\n"
+            "Use <code>.haterresponses</code> to see all responses with their index numbers."
+        )
+        return
+    
+    try:
+        index = int(message.user_input.strip()) - 1
+    except ValueError:
+        await message.edit("❌ Invalid index. Must be a number.")
+        return
+    
+    s = get_settings(user_id)
+    responses = s.get("responses", [])
+    
+    if index < 0 or index >= len(responses):
+        await message.edit(f"❌ Invalid index. Must be between 1 and {len(responses)}.")
+        return
+    
+    removed = responses.pop(index)
+    save_settings(user_id, s)
+    
+    await message.edit(
+        f"🗑 <b>Response Deleted!</b>\n\n"
+        f"Removed: {html.escape(removed['message'][:100])}\n"
+        f"Remaining responses: <b>{len(responses)}</b>"
+    )
+
+@Altruix.register_on_cmd(
+    ["haterdelay", "dhdelay"],
+    cmd_help={
+        "help": "Set response delay in seconds (0 = instant).",
+        "example": ".haterdelay 3",
+        "user_input": {
+            "required": True,
+            "placeholder": "seconds"
+        }
+    }
+)
+@iuser_check
+@log_errors
+async def hater_delay_cmd(client: Client, message: Message):
+    """Set response delay."""
+    user_id = client.me.id
+    
+    if not message.user_input:
+        await message.edit(
+            "❌ <b>Usage:</b> <code>.haterdelay &lt;seconds&gt;</code>\n\n"
+            "<b>Examples:</b>\n"
+            "• <code>.haterdelay 0</code> - Instant response\n"
+            "• <code>.haterdelay 3</code> - 3 seconds delay\n"
+            "• <code>.haterdelay 5</code> - 5 seconds delay"
+        )
+        return
+    
+    try:
+        delay = int(message.user_input.strip())
+        if delay < 0:
+            raise ValueError("Delay must be non-negative")
+    except ValueError:
+        await message.edit("❌ Invalid delay. Must be a non-negative number.")
+        return
+    
+    s = get_settings(user_id)
+    s["response_delay"] = delay
+    save_settings(user_id, s)
+    
+    await message.edit(f"✅ <b>Response delay set to {delay} seconds.</b>")
+
+@Altruix.register_on_cmd(
+    ["haterrandom", "dhrandom"],
+    cmd_help={
+        "help": "Toggle random response mode (ON = random, OFF = sequential).",
+        "example": ".haterrandom"
+    }
+)
+@iuser_check
+@log_errors
+async def hater_random_cmd(client: Client, message: Message):
+    """Toggle random response mode."""
+    user_id = client.me.id
+    s = get_settings(user_id)
+    
+    s["random_response"] = not s.get("random_response", True)
+    save_settings(user_id, s)
+    
+    mode = "RANDOM" if s["random_response"] else "SEQUENTIAL"
+    await message.edit(f"✅ <b>Response mode set to: {mode}</b>")
+
+@Altruix.register_on_cmd(
+    ["haterlog", "dhlog"],
+    cmd_help={
+        "help": "Toggle detection logging to LOG_CHAT.",
+        "example": ".haterlog"
+    }
+)
+@iuser_check
+@log_errors
+async def hater_log_cmd(client: Client, message: Message):
+    """Toggle detection logging."""
+    user_id = client.me.id
+    s = get_settings(user_id)
+    
+    s["log_detections"] = not s.get("log_detections", True)
+    save_settings(user_id, s)
+    
+    status = "ENABLED" if s["log_detections"] else "DISABLED"
+    await message.edit(f"✅ <b>Detection logging: {status}</b>")
+
+@Altruix.register_on_cmd(
+    ["haterhelp", "dhhelp"],
+    cmd_help={
+        "help": "Show detailed help for Haters Detector plugin.",
+        "example": ".haterhelp"
+    }
+)
+@iuser_check
+@log_errors
+async def hater_help_cmd(client: Client, message: Message):
+    """Show detailed help."""
+    text = (
+        "🚫 <b>Haters Detector - Complete Guide</b>\n"
+        f"{'━' * 40}\n\n"
+        
+        "<b>📖 WHAT IS THIS?</b>\n"
+        "Automatically detects when users who blocked you still mention/reply to you in groups, "
+        "and responds with a custom message.\n\n"
+        
+        "<b>🎯 MAIN COMMANDS:</b>\n"
+        "• <code>.hateron</code> - Enable detector\n"
+        "• <code>.hateroff</code> - Disable detector\n"
+        "• <code>.haterstatus</code> - Check status\n"
+        "• <code>.haterlist</code> - List detected haters\n"
+        "• <code>.haterclear</code> - Clear haters list\n\n"
+        
+        "<b>📝 RESPONSE MANAGEMENT:</b>\n"
+        "• <code>.haterresponses</code> - List all responses\n"
+        "• <code>.hateraddresponse &lt;msg&gt;</code> - Add response\n"
+        "• <code>.haterdelresponse &lt;index&gt;</code> - Delete response\n\n"
+        
+        "<b>⚙️ SETTINGS:</b>\n"
+        "• <code>.haterdelay &lt;seconds&gt;</code> - Set delay\n"
+        "• <code>.haterrandom</code> - Toggle random mode\n"
+        "• <code>.haterlog</code> - Toggle logging\n"
+        "• <code>.hatercacheclear</code> - Clear block status cache\n\n"
+        
+        "<b>🔧 PLACEHOLDERS:</b>\n"
+        "Use these in your custom responses:\n"
+        "• <code>{mention_name}</code> - Mention with name\n"
+        "• <code>{mention_id}</code> - Mention with ID\n"
+        "• <code>{username}</code> - @username\n"
+        "• <code>{first_name}</code> - First name\n"
+        "• <code>{last_name}</code> - Last name\n"
+        "• <code>{full_name}</code> - Full name\n\n"
+        
+        "<b>💡 EXAMPLES:</b>\n"
+        "<code>.hateraddresponse {mention_name} blocked me but still mentions? 🤔</code>\n"
+        "<code>.hateraddresponse Hey {username}, if you blocked me, why mention me?</code>\n"
+        "<code>.hateraddresponse &lt;b&gt;{full_name}&lt;/b&gt; seems confused about how blocking works...</code>"
+    )
+    
+    await message.edit(text)
+
+@Altruix.register_on_cmd(
+    ["hatercacheclear", "dhcacheclear"],
+    cmd_help={
+        "help": "Clear block status cache (force re-check all users).",
+        "example": ".hatercacheclear"
+    }
+)
+@iuser_check
+@log_errors
+async def hater_cache_clear_cmd(client: Client, message: Message):
+    """Clear block status cache."""
+    count = len(BLOCK_STATUS_CACHE)
+    BLOCK_STATUS_CACHE.clear()
+    
+    await message.edit(
+        f"🗑 <b>Cache Cleared!</b>\n\n"
+        f"Cleared block status cache for {count} users.\n"
+        f"Next detection will re-check block status via API."
+    )
+    await send_log(f"🗑 <b>Block Status Cache Cleared</b> ({count} entries)", client=client)

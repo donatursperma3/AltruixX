@@ -8,7 +8,7 @@
 
 
 
-PLUGIN_VERSION = "0.0.1"
+PLUGIN_VERSION = "0.0.12"
 import re
 import os
 import pyrogram
@@ -27,7 +27,7 @@ from datetime import datetime
 
 
 from Main.core.ext.callback_helpers import (
-    CALLBACK_DATA_CACHE, create_callback_id, get_callback_data
+    create_callback_id, get_callback_data
 )
 
 
@@ -88,31 +88,43 @@ async def get_help_menu(return_all: bool = False, user_id: int = None, chat_id: 
     global cache_help_menu, multi_pages
     ub_plugins, bot_plugins = get_total_plugins()
     from pyrogram.enums import ParseMode
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(user_id) if user_id else enums.ButtonStyle.SUCCESS
     
     # ✅ Check for Custom Help Message
     custom_help = None
     parse_mode = ParseMode.HTML
     session_index = -1
+    client = None
+
     if user_id:
-        # Find session index
+        # Find session index and client
         for i, cl in enumerate(Altruix.clients):
             me = getattr(cl, "me", None) or getattr(cl, "myself", None) or (await cl.get_me() if cl.is_initialized else None)
             if me and me.id == user_id:
                 session_index = i
+                client = cl
                 break
         
-        if session_index != -1:
-            m = await Altruix.config.get_env(f"HELP_INFO_{session_index}")
-            if m == "custom":
-                custom_msg_type = await Altruix.config.get_env(f"HELP_INFO_TYPE_{session_index}") or "per_account"
-        
-                if custom_msg_type == "global":
+        if session_index != -1 and client:
+            # 1. Resolve Apply Type (Global or Per-Account)
+            apply_type = await Altruix.config.get_env("HELP_INFO_APPLY_TYPE", default="global")
+            
+            # 2. Check Status (Default or Custom)
+            if apply_type == "global":
+                status = await Altruix.config.get_env("HELP_INFO_STATUS_GLOBAL", default="default")
+            else:
+                status = await Altruix.config.get_env(f"HELP_INFO_STATUS_{user_id}", default="default")
+            
+            # 3. Retrieve and Resolve Custom Message
+            if status == "custom":
+                if apply_type == "global":
                     custom_msg = await Altruix.config.get_env("HELP_INFO_CUSTOM_MSG_GLOBAL")
                 else:
-                    custom_msg = await Altruix.config.get_env(f"HELP_INFO_CUSTOM_MSG_{session_index}")
+                    custom_msg = await Altruix.config.get_env(f"HELP_INFO_CUSTOM_MSG_{user_id}")
                 
                 if custom_msg:
-                    custom_help, parse_mode = await Altruix.resolve_placeholders(custom_msg, index=session_index)
+                    custom_help, parse_mode = await Altruix.resolve_placeholders(custom_msg, index=session_index, client=client)
 
     if custom_help:
         help_msg = custom_help
@@ -155,12 +167,12 @@ async def get_help_menu(return_all: bool = False, user_id: int = None, chat_id: 
     ikb = []
     for plugin in plugins:
         full_data = f"help#{plugin}{si_str}"
-        short_id = create_callback_id(full_data)
+        short_id = await create_callback_id(full_data)
         ikb.append(
             InlineKeyboardButton(
                 plugin.replace("_", " ").title(), 
                 callback_data=f"h#{short_id}",
-                style=enums.ButtonStyle.SUCCESS
+                style=user_style
             )
         )
     
@@ -177,12 +189,12 @@ async def get_help_menu(return_all: bool = False, user_id: int = None, chat_id: 
     
     tabs = [
         [
-            InlineKeyboardButton(ub_label, callback_data=f"ht#{create_callback_id(ub_data)}", style=enums.ButtonStyle.PRIMARY),
-            InlineKeyboardButton(bot_label, callback_data=f"ht#{create_callback_id(bot_data)}", style=enums.ButtonStyle.PRIMARY)
+            InlineKeyboardButton(ub_label, callback_data=f"ht#{await create_callback_id(ub_data)}", style=user_style),
+            InlineKeyboardButton(bot_label, callback_data=f"ht#{await create_callback_id(bot_data)}", style=user_style)
         ],
         [
-            InlineKeyboardButton(extra_label, callback_data=f"ht#{create_callback_id(extra_data)}", style=enums.ButtonStyle.PRIMARY),
-            InlineKeyboardButton(ultroid_label, callback_data=f"ht#{create_callback_id(ultroid_data)}", style=enums.ButtonStyle.PRIMARY)
+            InlineKeyboardButton(extra_label, callback_data=f"ht#{await create_callback_id(extra_data)}", style=user_style),
+            InlineKeyboardButton(ultroid_label, callback_data=f"ht#{await create_callback_id(ultroid_data)}", style=user_style)
         ]
     ]
 
@@ -211,15 +223,15 @@ async def get_help_menu(return_all: bool = False, user_id: int = None, chat_id: 
             for i in range(len(buttons)):
                 pg_data = f"help#_page?page={i}&si={session_index}{f'&cid={chat_id}' if chat_id else ''}&mode={mode}"
                 page_buttons.append(
-                    InlineKeyboardButton(str(i + 1), callback_data=f"h#{create_callback_id(pg_data)}")
+                    InlineKeyboardButton(str(i + 1), callback_data=f"h#{await create_callback_id(pg_data)}")
                 )
             
             for i in page_buttons:
                 if i.text == str(index + 1):
                     i.text = f"> {i.text} <"
-                    i.style = ButtonStyle.SUCCESS
+                    i.style = user_style
                 else:
-                    i.style = ButtonStyle.PRIMARY
+                    i.style = user_style
             
             # 🛑 Telegram API limit: Max 8 buttons per row.
             # We chunk them into rows of 6 for better UI balance.
@@ -228,8 +240,8 @@ async def get_help_menu(return_all: bool = False, user_id: int = None, chat_id: 
                 page.append(chunk)
 
             page.append([
-                InlineKeyboardButton("Settings", "settings_menu", style=enums.ButtonStyle.DANGER),
-                InlineKeyboardButton("Close", close_data, style=enums.ButtonStyle.DANGER)
+                InlineKeyboardButton("Settings", "settings_menu", style=user_style),
+                InlineKeyboardButton("Close", close_data, style=user_style)
             ])
     else:
         # Wrap buttons to ensure it's a list of lists if not already (for non-multipaged)
@@ -237,8 +249,8 @@ async def get_help_menu(return_all: bool = False, user_id: int = None, chat_id: 
         for row in reversed(tabs):
             buttons.insert(0, row)
         buttons.append([
-            InlineKeyboardButton("Settings", "settings_menu", style=enums.ButtonStyle.DANGER),
-            InlineKeyboardButton("Close", close_data, style=enums.ButtonStyle.DANGER)
+            InlineKeyboardButton("Settings", "settings_menu", style=user_style),
+            InlineKeyboardButton("Close", close_data, style=user_style)
         ])
         
     if multi_pages and not return_all:
@@ -303,26 +315,30 @@ async def get_plugin_data(plugin: str, number: int = 0, sub_page: int = 0, user_
         si_suffix += f"&cid={chat_id}"
     si_suffix += f"&mode={mode}"
     
+    # Resolve button style
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(user_id) if user_id else enums.ButtonStyle.SUCCESS
+
     buttons = []
     
     # 📤 Relocate Send Plugin button to be above navigation/back buttons
     send_data = f"send_plugin#{plugin}?page={number}{si_suffix}"
-    buttons.append([InlineKeyboardButton("📤 Send Plugin", callback_data=f"sp#{create_callback_id(send_data)}", style=enums.ButtonStyle.SUCCESS)])
+    buttons.append([InlineKeyboardButton("📤 Send Plugin", callback_data=f"sp#{await create_callback_id(send_data)}", style=user_style)])
 
     nav_buttons = []
     if len(pages) > 1:
         if sub_page > 0:
             prev_data = f"help#{plugin}?page={number}&sub={sub_page-1}{si_suffix}"
-            nav_buttons.append(InlineKeyboardButton(Altruix.get_string("prev"), callback_data=f"h#{create_callback_id(prev_data)}", style=enums.ButtonStyle.PRIMARY))
+            nav_buttons.append(InlineKeyboardButton(Altruix.get_string("prev"), callback_data=f"h#{await create_callback_id(prev_data)}", style=user_style))
         if sub_page < len(pages) - 1:
             next_data = f"help#{plugin}?page={number}&sub={sub_page+1}{si_suffix}"
-            nav_buttons.append(InlineKeyboardButton(Altruix.get_string("next"), callback_data=f"h#{create_callback_id(next_data)}", style=enums.ButtonStyle.PRIMARY))
+            nav_buttons.append(InlineKeyboardButton(Altruix.get_string("next"), callback_data=f"h#{await create_callback_id(next_data)}", style=user_style))
     
     if nav_buttons:
         buttons.append(nav_buttons)
         
     back_data = f"help#_page?page={number}{si_suffix}"
-    buttons.append([InlineKeyboardButton(Altruix.get_string("back"), callback_data=f"h#{create_callback_id(back_data)}", style=enums.ButtonStyle.DANGER)])
+    buttons.append([InlineKeyboardButton(Altruix.get_string("back"), callback_data=f"h#{await create_callback_id(back_data)}", style=user_style)])
     
     return text, InlineKeyboardMarkup(buttons)
 
@@ -519,10 +535,8 @@ async def re_help(c: Client, cq: CallbackQuery):
 @iuser_check
 async def help_tab_compressed(_: Client, cq: CallbackQuery):
     """Handle compressed help tab callbacks."""
-    await cq.answer()  # Instant feedback
-    
     hash_id = cq.matches[0].group(1)
-    original_data = get_callback_data(hash_id)
+    original_data = await get_callback_data(hash_id)
     
     if not original_data:
         return await cq.answer("⚠️ Session expired, please refresh.", show_alert=True)
@@ -553,10 +567,8 @@ async def help_tab_compressed(_: Client, cq: CallbackQuery):
 @iuser_check
 async def help_compressed(_: Client, cq: CallbackQuery):
     """Handle compressed help callbacks."""
-    await cq.answer()  # Instant feedback
-    
     hash_id = cq.matches[0].group(1)
-    original_data = get_callback_data(hash_id)
+    original_data = await get_callback_data(hash_id)
     
     if not original_data:
         return await cq.answer("⚠️ Session expired, please refresh.", show_alert=True)
@@ -713,10 +725,8 @@ async def bot_help_handler(c: Client, m: pyrogram.types.Message):
 @iuser_check
 async def send_plugin_compressed(c: Client, cb: CallbackQuery):
     """Handle compressed send plugin callbacks."""
-    await cb.answer()  # Instant feedback
-    
     hash_id = cb.matches[0].group(1)
-    original_data = get_callback_data(hash_id)
+    original_data = await get_callback_data(hash_id)
     
     if not original_data:
         return await cb.answer("⚠️ Session expired, please refresh.", show_alert=True)
@@ -749,9 +759,9 @@ async def send_plugin_compressed(c: Client, cb: CallbackQuery):
     
     buttons = [
         [
-            InlineKeyboardButton("✅ Ya, Kirim", callback_data=f"csp#{create_callback_id(yes_data)}",
+            InlineKeyboardButton("✅ Ya, Kirim", callback_data=f"csp#{await create_callback_id(yes_data)}",
                 style=enums.ButtonStyle.PRIMARY),
-            InlineKeyboardButton("❌ Tidak", callback_data=f"csp#{create_callback_id(no_data)}",
+            InlineKeyboardButton("❌ Tidak", callback_data=f"csp#{await create_callback_id(no_data)}",
                 style=enums.ButtonStyle.DANGER),
         ]
     ]
@@ -803,7 +813,7 @@ async def send_plugin_execute_compressed(c: Client, cb: CallbackQuery):
     await cb.answer()  # Instant feedback
     
     hash_id = cb.matches[0].group(1)
-    original_data = get_callback_data(hash_id)
+    original_data = await get_callback_data(hash_id)  # ✅ Fixed: Added await
     
     if not original_data:
         return await cb.answer("⚠️ Session expired, please refresh.", show_alert=True)
@@ -845,35 +855,53 @@ async def send_plugin_execute_compressed(c: Client, cb: CallbackQuery):
     
     await cb.answer("📤 Mengirim file...", show_alert=False)
     try:
-        # 2) Figure out the target chat
-        # If cid (chat id) is provided in original_data, use it. Otherwise, use callback context chat.
-        # Fallback to current user's PM if it was clicked there.
+        # 2) Figure out the target chat - PRIORITAS: chat tempat tombol ditekan
         target_chat = None
-        if cid and cid != 'None':
-            target_chat = int(cid)
-        elif cb.message and cb.message.chat:
+        
+        # Prioritas 1: Chat tempat message inline berada (group/channel/personal)
+        if cb.message and cb.message.chat:
             target_chat = cb.message.chat.id
+        # Prioritas 2: cid dari callback data (jika ada)
+        elif cid and cid != 'None':
+            target_chat = int(cid)
+        # Fallback: PM user yang menekan tombol
         else:
             target_chat = cb.from_user.id
             
         # 3) Select the Userbot to send the file
-        user_id = cb.from_user.id
+        # PENTING: Gunakan session_index (si) untuk menentukan userbot yang benar
         sender_client = None
         
-        # Prefer the userbot session associated with the user clicking the button
-        for cl in Altruix.clients:
-            me = getattr(cl, "me", None) or getattr(cl, "myself", None)
-            if me and me.id == user_id:
-                sender_client = cl
-                break
+        # Prioritas 1: Gunakan userbot berdasarkan session_index (si) dari callback data
+        if si and si != '-1':
+            try:
+                idx = int(si)
+                if 0 <= idx < len(Altruix.clients):
+                    sender_client = Altruix.clients[idx]
+                    Altruix.log(f"Help: Using userbot session {idx} to send plugin '{plugin}'")
+            except (ValueError, IndexError) as e:
+                Altruix.log(f"Help: Invalid session index {si}: {e}")
         
-        # Fallback to first available userbot
+        # Prioritas 2: Cari userbot yang match dengan user_id (untuk backward compatibility)
+        if not sender_client:
+            user_id = cb.from_user.id
+            for cl in Altruix.clients:
+                me = getattr(cl, "me", None) or getattr(cl, "myself", None)
+                if me and me.id == user_id:
+                    sender_client = cl
+                    Altruix.log(f"Help: Using userbot matched by user_id {user_id}")
+                    break
+        
+        # Prioritas 3: Fallback ke userbot pertama yang tersedia
         if not sender_client and Altruix.clients:
             sender_client = Altruix.clients[0]
+            Altruix.log(f"Help: Using first available userbot as fallback")
             
-        # Final fallback: Bot
+        # HINDARI: Jangan gunakan bot kecuali benar-benar tidak ada userbot
+        # (Tapi tetap ada sebagai last resort untuk error handling)
         if not sender_client:
             sender_client = Altruix.bot
+            Altruix.log(f"Help: WARNING - No userbot available, using Bot Assistant", level=30)
             
         caption = f"📦 **Plugin:** `{plugin}`\n📁 **Path:** `{plugin_file}`\n\n_Generated by Altruix Assistant_"
         
@@ -946,33 +974,53 @@ async def send_plugin_execute(c: Client, cb: CallbackQuery):
     
     await cb.answer("📤 Mengirim file...", show_alert=False)
     try:
-        # 2) Figure out the target chat
+        # 2) Figure out the target chat - PRIORITAS: chat tempat tombol ditekan
         target_chat = None
-        if cid and cid != 'None':
-            target_chat = int(cid)
-        elif cb.message and cb.message.chat:
+        
+        # Prioritas 1: Chat tempat message inline berada (group/channel/personal)
+        if cb.message and cb.message.chat:
             target_chat = cb.message.chat.id
+        # Prioritas 2: cid dari callback data (jika ada)
+        elif cid and cid != 'None':
+            target_chat = int(cid)
+        # Fallback: PM user yang menekan tombol
         else:
             target_chat = cb.from_user.id
             
         # 3) Select the Userbot to send the file
-        user_id = cb.from_user.id
+        # PENTING: Gunakan session_index (si) untuk menentukan userbot yang benar
         sender_client = None
         
-        # Prefer the userbot session associated with the user clicking the button
-        for cl in Altruix.clients:
-            me = getattr(cl, "me", None) or getattr(cl, "myself", None)
-            if me and me.id == user_id:
-                sender_client = cl
-                break
+        # Prioritas 1: Gunakan userbot berdasarkan session_index (si) dari callback data
+        if si and si != '-1':
+            try:
+                idx = int(si)
+                if 0 <= idx < len(Altruix.clients):
+                    sender_client = Altruix.clients[idx]
+                    Altruix.log(f"Help: Using userbot session {idx} to send plugin '{plugin}'")
+            except (ValueError, IndexError) as e:
+                Altruix.log(f"Help: Invalid session index {si}: {e}")
         
-        # Fallback to first available userbot
+        # Prioritas 2: Cari userbot yang match dengan user_id (untuk backward compatibility)
+        if not sender_client:
+            user_id = cb.from_user.id
+            for cl in Altruix.clients:
+                me = getattr(cl, "me", None) or getattr(cl, "myself", None)
+                if me and me.id == user_id:
+                    sender_client = cl
+                    Altruix.log(f"Help: Using userbot matched by user_id {user_id}")
+                    break
+        
+        # Prioritas 3: Fallback ke userbot pertama yang tersedia
         if not sender_client and Altruix.clients:
             sender_client = Altruix.clients[0]
+            Altruix.log(f"Help: Using first available userbot as fallback")
             
-        # Final fallback: Bot
+        # HINDARI: Jangan gunakan bot kecuali benar-benar tidak ada userbot
+        # (Tapi tetap ada sebagai last resort untuk error handling)
         if not sender_client:
             sender_client = Altruix.bot
+            Altruix.log(f"Help: WARNING - No userbot available, using Bot Assistant", level=30)
             
         Altruix.log(f"Help: Sending plugin '{plugin}' via {'Bot' if sender_client == Altruix.bot else 'Userbot'}")
             

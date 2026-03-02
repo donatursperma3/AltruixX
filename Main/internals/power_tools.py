@@ -52,16 +52,18 @@ async def restart_cb_handler(c: Client, cb: CallbackQuery):
 @log_errors
 async def restart_command_handler(_, m: Message):
     reload_only = m.command[0] == "reload"
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(m.from_user.id)
     await m.reply(
         f"<b>Are you sure about {'reloading' if reload_only else 'restarting'} Altruix?</b>\n\n<i>This will stop all the ongoing processes and the {'reload' if reload_only else 'restart'} will take some time.</i>",
         reply_markup=InlineKeyboardMarkup(
             [
                 [
                     InlineKeyboardButton(
-                        "Yes", f"{'reload' if reload_only else 'restart'}_confirm"
+                        "Yes", f"{'reload' if reload_only else 'restart'}_confirm", style=user_style
                     ),
                     InlineKeyboardButton(
-                        "No", f"{'reload' if reload_only else 'restart'}_cancel"
+                        "No", f"{'reload' if reload_only else 'restart'}_cancel", style=user_style
                     ),
                 ]
             ]
@@ -89,10 +91,10 @@ async def ping_inline_handler(_, iq: InlineQuery):
                     [
                         [
                             InlineKeyboardButton(
-                                "Yes", f"{'reload' if soft else 'restart'}_confirm"
+                                "Yes", f"{'reload' if soft else 'restart'}_confirm", style=get_user_button_style(iq.from_user.id)
                             ),
                             InlineKeyboardButton(
-                                "No", f"{'reload' if soft else 'restart'}_cancel"
+                                "No", f"{'reload' if soft else 'restart'}_cancel", style=get_user_button_style(iq.from_user.id)
                             ),
                         ]
                     ]

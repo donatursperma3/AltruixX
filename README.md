@@ -5,7 +5,23 @@
 <br>
 
 # Deploying To Different Platforms
-> - For deploying [Locally](#Deploy-Locally)
+
+> **🚀 Multi-Platform Support:** Altruix now supports automatic platform detection!
+> 
+> Supported Platforms:
+> - 🪟 **Windows** (Native, Git Bash, WSL)
+> - 🐧 **Linux** (Desktop, Server, VPS)
+> - 📱 **Termux** (Android)
+> - 🍎 **macOS**
+> - ☁️ **Cloud** (Heroku, Railway, Render, Sevalla)
+>
+> For detailed deployment instructions, see:
+> - [Quick Start Guide](QUICK_START.md) - Fast setup for all platforms
+> - [Deployment Guide](DEPLOYMENT_GUIDE.md) - Complete documentation
+>
+> Quick Deploy:
+> - For [Local Deployment](#Deploy-Locally) (Windows/Linux/macOS/Termux)
+> - For [Cloud Deployment](#Deploy-on-Cloud) (Heroku/Railway/Render)
 
 <br>
 
@@ -19,16 +35,123 @@
 
 ## Deploy Locally
 
-If you want to Deploy your Altruix UserBot on your PC or in Termux these are the steps -
+Altruix supports automatic platform detection and will create the appropriate virtual environment for your system.
 
-> ```
-> git clone https://github.com/Altruix/Altruix
-> cd Altruix
-> nano .env
-> bash start.sh
-> ```
+### Universal Command (All Platforms):
+
+```bash
+bash start.sh
+```
+
+### Platform-Specific Instructions:
+
+#### 🪟 Windows
+
+**Option 1: Git Bash / MSYS / Cygwin**
+```bash
+git clone https://github.com/Altruix/Altruix
+cd Altruix
+cp .env.sample .env
+nano .env  # Edit configuration
+bash start.sh
+```
+
+**Option 2: CMD / PowerShell (Native)**
+```cmd
+git clone https://github.com/Altruix/Altruix
+cd Altruix
+copy .env.sample .env
+notepad .env  # Edit configuration
+start.bat
+```
+
+#### 🐧 Linux / 🖥️ VPS
+
+```bash
+git clone https://github.com/Altruix/Altruix
+cd Altruix
+cp .env.sample .env
+nano .env  # Edit configuration
+bash start.sh
+```
+
+#### 🪟 WSL (Windows Subsystem for Linux)
+
+```bash
+git clone https://github.com/Altruix/Altruix
+cd Altruix
+cp .env.sample .env
+nano .env  # Edit configuration
+bash start.sh
+```
+
+#### 📱 Termux (Android)
+
+```bash
+pkg update && pkg upgrade -y
+pkg install python git -y
+git clone https://github.com/Altruix/Altruix
+cd Altruix
+cp .env.sample .env
+nano .env  # Edit configuration
+bash start.sh
+```
+
+#### 🍎 macOS
+
+```bash
+brew install python@3.11  # If not installed
+git clone https://github.com/Altruix/Altruix
+cd Altruix
+cp .env.sample .env
+nano .env  # Edit configuration
+bash start.sh
+```
+
+### What the script does:
+- ✅ Automatically detects your platform (Windows/Linux/WSL/VPS/Termux/macOS)
+- ✅ Creates platform-specific virtual environment
+- ✅ Installs all dependencies
+- ✅ Loads environment variables from `.env`
+- ✅ Cleans up existing processes
+- ✅ Launches the bot
 
 Example of [`.env`](#env)
+
+<br>
+
+## Deploy on Cloud
+
+### ☁️ Heroku
+
+```bash
+# Install Heroku CLI first
+heroku login
+heroku create your-app-name
+heroku buildpacks:set heroku/python
+
+# Set environment variables
+heroku config:set API_ID=your_api_id
+heroku config:set API_HASH=your_api_hash
+heroku config:set BOT_TOKEN=your_bot_token
+# ... set all required env vars
+
+# Deploy
+git push heroku main
+heroku ps:scale worker=1
+
+# View logs
+heroku logs --tail
+```
+
+### ☁️ Railway / Render / Sevalla
+
+1. Connect your GitHub repository to the platform
+2. Set environment variables in platform settings
+3. Platform will auto-deploy using `Procfile`
+4. Bot will start automatically
+
+For detailed cloud deployment instructions, see [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md)
 
 <br>
 

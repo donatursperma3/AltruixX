@@ -14,13 +14,15 @@ from datetime import datetime
 from .client import Altruix
 from typing import Union
 from functools import wraps
+from Main.utils.essentials import Essentials
 from pyromod.exceptions import ListenerTimeout
 from Main.internals.set_inline import set_inline_in_botfather
 from pyrogram.types import Message, InlineQuery, CallbackQuery
 from pyrogram import Client, StopPropagation, ContinuePropagation
 from pyrogram.errors import (
     MessageEmpty, MessageIdInvalid, BotInlineDisabled, MessageNotModified,
-    UserNotParticipant, MessageTooLong, QueryIdInvalid # ✅ Added
+    UserNotParticipant, MessageTooLong, QueryIdInvalid, 
+    PeerIdInvalid, ChannelInvalid # ✅ Added to ignore list
 )
 from pyrogram.enums import ParseMode
 from pyrogram.types import LinkPreviewOptions, ReplyParameters
@@ -98,6 +100,7 @@ def iuser_check(func):
         user_id = user.id
         username = f"@{user.username}" if user.username else "No username"
         full_name = f"{user.first_name or ''} {user.last_name or ''}".strip() or "No name"
+        full_name = Essentials.clean_user_name(full_name)
         
         # ✅ CALLBACK LOGGER CONFIGURATION
         # Fetch from centralized config (synced with database)
@@ -218,7 +221,7 @@ def iuser_check(func):
                                 if "#" in cb_data:
                                     parts = cb_data.split("#")
                                     if len(parts) > 1 and len(parts[1]) == 12: # Potential hash
-                                        unhashed = get_callback_data(parts[1])
+                                        unhashed = await get_callback_data(parts[1])
                                         if unhashed:
                                             actual_data = unhashed
                                             Altruix.log(f"[CB LOGGER] Unhashed data: {actual_data}", level=20)
@@ -283,6 +286,25 @@ def iuser_check(func):
                         username_display = html.escape(username_display)
                     
                     try:
+                        # ── TASK ID LOOKUP ──
+                        # Show ALL active task IDs from global registry in log entries.
+                        # This helps user identify and cancel tasks via .canceltask <id>
+                        task_id_line = ""
+                        try:
+                            if hasattr(Altruix, '_TASK_REGISTRY') and Altruix._TASK_REGISTRY:
+                                active_tasks = [
+                                    (tid, t) for tid, t in Altruix._TASK_REGISTRY.items()
+                                    if t.get("task") and not t["task"].done()
+                                ]
+                                if active_tasks:
+                                    parts_list = []
+                                    for tid, t in active_tasks:
+                                        name = t.get("name", "?")[:15]
+                                        parts_list.append(f"<code>{tid}</code> ({name})")
+                                    task_id_line = f"🏷 <b>Active Tasks:</b> {', '.join(parts_list)}\n"
+                        except Exception:
+                            pass
+                        
                         log_message = (
                             f"{Altruix.get_string('LOGGER_CALLBACK_TITLE')}\n"
                             f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -294,6 +316,7 @@ def iuser_check(func):
                             f"{Altruix.get_string('LOGGER_CALLBACK_CHAT_ID').format(chat_id)}\n"
                             f"{Altruix.get_string('LOGGER_CALLBACK_DATA').format(html.escape(cb_data))}\n"
                             f"{Altruix.get_string('LOGGER_CALLBACK_RESULT').format(html.escape(Altruix.get_string('AUTHORIZED')))}\n"
+                            f"{task_id_line}"
                             f"{Altruix.get_string('LOGGER_CALLBACK_MSG_HEADER')}\n"
                             f"<blockquote>{html.escape(str(msg_text)[:1000])}</blockquote>\n"
                             f"{Altruix.get_string('LOGGER_CALLBACK_TIME').format(time_now)}\n\n"
@@ -362,15 +385,22 @@ def iuser_check(func):
                         bot_username = f"Userbot Session ({bot_username})"
                     
                     display_name = full_name.strip()
-                    is_blank = not display_name or all(ord(ch) < 33 or ord(ch) == 8203 or ord(ch) == 12644 for ch in display_name)
-                    final_name = "blank" if is_blank else html.escape(full_name)
+                    display_name = Essentials.clean_user_name(display_name)
+                    is_blank = not display_name or display_name == "No name" or all(ord(ch) < 33 or ord(ch) == 8203 or ord(ch) == 12644 for ch in display_name)
+                    final_name = "blank" if is_blank else html.escape(display_name)
                     username_display = f"@{username.lstrip('@')}" if username and username != "None" else "None"
                     if username_display != "None":
                         username_display = html.escape(username_display)
                     
                     try:
+                        title = Altruix.get_string('LOGGER_CALLBACK_TITLE')
+                        if isinstance(update, Message):
+                            title = "🎯 <b>Message Access Denied</b>"
+                        elif isinstance(update, InlineQuery):
+                            title = "🎯 <b>Inline Access Denied</b>"
+                            
                         log_message = (
-                            f"{Altruix.get_string('LOGGER_CALLBACK_TITLE')}\n"
+                            f"{title}\n"
                             f"━━━━━━━━━━━━━━━━━━━━\n"
                             f"{Altruix.get_string('LOGGER_CALLBACK_BOT').format(html.escape(me.username) if me and me.username else 'bot', html.escape(bot_username))}\n"
                             f"{Altruix.get_string('LOGGER_CALLBACK_USER').format(user_id, final_name)}\n"
@@ -414,7 +444,9 @@ def iuser_check(func):
                 except QueryIdInvalid:
                     pass
             elif isinstance(update, Message):
-                await update.reply_msg(Altruix.get_string("AUTH_FEATURE_DENIED"))
+                # ✅ Only reply if it looks like a command to prevent spamming normal chat
+                if update.text and update.text.startswith((".", "!", "/", "?")):
+                    await update.reply_msg(Altruix.get_string("AUTH_FEATURE_DENIED"))
 
     return wrapper
 
@@ -436,7 +468,9 @@ def log_errors(func):
             MessageEmpty,
             ListenerTimeout,   # ✅ Added: Ignore listener timeout as crash
             asyncio.TimeoutError, # ✅ Added: Also ignore standard timeout
-            QueryIdInvalid      # ✅ Added: Ignore expired queries
+            QueryIdInvalid,      # ✅ Added: Ignore expired queries
+            PeerIdInvalid,       # ✅ Ignore: Handled compactly by resolve_peer/invoke
+            ChannelInvalid       # ✅ Ignore: Handled compactly by resolve_peer/invoke
         ):
             pass  # error yang bisa diabaikan
         except ContinuePropagation as e:
@@ -549,34 +583,43 @@ def log_errors(func):
                 f"<pre>{html.escape(traceback.format_exc())}</pre>"
             )
             
-            sent_log = await send_log_message(error_detail, filename=f"error_{func.__name__}.txt")
-            
+            import asyncio as _asyncio
+
             # ✅ Notify user if possible (Edit "Processing..." message)
             # Check if there is a tracked "wait_msg" (Processing...) attached to the input message
             target_msg = getattr(u, "wait_msg", None)
-            
             # Fallback to editing the command itself if no wait_msg, ONLY if it's self-authored
             if not target_msg and isinstance(u, Message) and u.from_user and u.from_user.is_self:
                 target_msg = u
 
-            if target_msg and isinstance(target_msg, Message):
+            async def _log_and_notify():
                 try:
-                    # Construct Log Link
-                    log_link = "Check Log Group"
-                    if sent_log and sent_log.chat and sent_log.chat.username:
-                        log_link = f"<a href='https://t.me/{sent_log.chat.username}/{sent_log.id}'>Check Log Message</a>"
-                    elif sent_log and sent_log.chat:
-                         # Private/Private Group link format
-                        log_link = f"<a href='https://t.me/c/{str(sent_log.chat.id)[4:]}/{sent_log.id}'>Check Log Message</a>"
+                    # 1. Send Log to Group
+                    sent_log = await send_log_message(error_detail, filename=f"error_{func.__name__}.txt")
+                    
+                    # 2. If we have a message to update, construct specific link and Edit
+                    if target_msg and isinstance(target_msg, Message):
+                        log_link = "Check Log Group"
+                        if sent_log and sent_log.chat:
+                            if sent_log.chat.username:
+                                log_link = f"<a href='https://t.me/{sent_log.chat.username}/{sent_log.id}'>Check Log Message</a>"
+                            else:
+                                # Private/Private Group link format
+                                log_link = f"<a href='https://t.me/c/{str(sent_log.chat.id)[4:]}/{sent_log.id}'>Check Log Message</a>"
 
-                    await target_msg.edit(
-                        f"<b>💥 Error Occurred!</b>\n"
-                        f"Command failed during execution.\n"
-                        f"👉 {log_link}",
-                        disable_web_page_preview=True
-                    )
-                except Exception:
-                    pass
+                        try:
+                            await target_msg.edit(
+                                f"<b>💥 Error Occurred!</b>\n"
+                                f"Command failed during execution.\n"
+                                f"👉 {log_link}",
+                                disable_web_page_preview=True
+                            )
+                        except Exception:
+                            pass
+                except Exception as e:
+                    Altruix.log(f"Error in _log_and_notify background task: {e}", level=40)
+
+            _asyncio.create_task(_log_and_notify())
 
     return wrapper
 

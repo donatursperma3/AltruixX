@@ -11,6 +11,7 @@ from Main.core.client import Altruix
 @log_errors
 async def toggle_session_confirm_handler(c: Client, cb: CallbackQuery):
     """Show confirmation dialog for enabling/disabling a session."""
+    await cb.answer()
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
     
@@ -35,10 +36,13 @@ async def toggle_session_confirm_handler(c: Client, cb: CallbackQuery):
         f"<i>{'⚠️ This will prevent the userbot from responding to any commands (from owner, sudo, or itself).' if not is_disabled else '✅ This will re-enable command responses for this session.'}</i>"
     )
     
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
+    
     buttons = [
         [
-            InlineKeyboardButton("✅ Yes", f"toggle_session_execute_{index}_{page}"),
-            InlineKeyboardButton("❌ No", f"session_info_{index}_{page}_1")
+            InlineKeyboardButton("✅ Yes", f"toggle_session_execute_{index}_{page}", style=user_style),
+            InlineKeyboardButton("❌ No", f"session_info_{index}_{page}_1", style=user_style)
         ]
     ]
     

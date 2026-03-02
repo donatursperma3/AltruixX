@@ -36,10 +36,13 @@ async def export_all_sessions_confirmation_handler(c: Client, cb: CallbackQuery)
         'chat_id': cb.message.chat.id if cb.message else 0
     }
     
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(user_id)
+
     confirmation_buttons = [
         [
-            InlineKeyboardButton("✅ Yes", callback_data="export_all_sessions_confirm_yes"),
-            InlineKeyboardButton("❌ No", callback_data="export_all_sessions_confirm_no")
+            InlineKeyboardButton("✅ Yes", callback_data="export_all_sessions_confirm_yes", style=user_style),
+            InlineKeyboardButton("❌ No", callback_data="export_all_sessions_confirm_no", style=user_style)
         ]
     ]
     
@@ -112,10 +115,13 @@ async def export_all_phones_confirmation_handler(c: Client, cb: CallbackQuery):
         'chat_id': cb.message.chat.id if cb.message else 0
     }
     
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(user_id)
+
     confirmation_buttons = [
         [
-            InlineKeyboardButton("✅ Yes", callback_data="export_all_phones_confirm_yes"),
-            InlineKeyboardButton("❌ No", callback_data="export_all_phones_confirm_no")
+            InlineKeyboardButton("✅ Yes", callback_data="export_all_phones_confirm_yes", style=user_style),
+            InlineKeyboardButton("❌ No", callback_data="export_all_phones_confirm_no", style=user_style)
         ]
     ]
     

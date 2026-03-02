@@ -14,6 +14,7 @@ import shlex
 import ast
 import time
 from Main import Altruix
+from Main.core.decorators import log_errors, iuser_check
 from pyrogram import Client, filters
 from pyrogram.raw.functions import Ping
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
@@ -357,25 +358,25 @@ async def start_relayspam(client: Client, destination: str, start_delay: float, 
         )
         tombol_baris = [
             [InlineKeyboardButton(f"-100{clean_id}", url=f"https://t.me/c/{clean_id}/99999")],
-            [InlineKeyboardButton("Stop", callback_data=f"stop_{chat_id}"),
-             InlineKeyboardButton("Pause", callback_data=f"pause_{chat_id}"),
-             InlineKeyboardButton("Resume", callback_data=f"resume_{chat_id}")],
-            [InlineKeyboardButton("Check Status", callback_data=f"cek_{chat_id}"),
-             InlineKeyboardButton("Recurring", callback_data=f"recurring_{chat_id}")],
-            [InlineKeyboardButton("Stop All", callback_data="stopall"),
-             InlineKeyboardButton("Pause All", callback_data="pauseall"),
-             InlineKeyboardButton("Resume All", callback_data="resumeall")],
-            [InlineKeyboardButton("Check All", callback_data="cekall"),
-             InlineKeyboardButton("Recur All", callback_data="recurringall")],
-            [InlineKeyboardButton("Del Last 30", callback_data=f"delete_latest_{chat_id}"),
-             InlineKeyboardButton("Del Old 30", callback_data=f"delete_oldest_{chat_id}")],
-            [InlineKeyboardButton("Edit Last Msg", callback_data=f"edit_last_{chat_id}"),
-             InlineKeyboardButton("Edit Msg List", callback_data=f"edit_msglist_{chat_id}")],
-            [InlineKeyboardButton(f"{'Purge: ' + str(old_purge) if old_purge > 0 else 'Purge: OFF'}", callback_data=f"toggle_purge_{chat_id}"),
-             InlineKeyboardButton("Adjust Purge", callback_data=f"adjust_purge_{chat_id}")],
-            [InlineKeyboardButton(f"{'React: ON' if react_enabled else 'React: OFF'}", callback_data=f"toggle_react_{chat_id}"),
-             InlineKeyboardButton("Pilih Emoji", callback_data=f"select_emoji_{chat_id}")],
-            [InlineKeyboardButton("👁️ See Msg List", callback_data=f"see_msglist_{chat_id}")]
+            [InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, "Stop"), callback_data=f"stop_{chat_id}"),
+             InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, "Pause"), callback_data=f"pause_{chat_id}"),
+             InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, "Resume"), callback_data=f"resume_{chat_id}")],
+            [InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, "Check Status"), callback_data=f"cek_{chat_id}"),
+             InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, "Recurring"), callback_data=f"recurring_{chat_id}")],
+            [InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, "Stop All"), callback_data="stopall"),
+             InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, "Pause All"), callback_data="pauseall"),
+             InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, "Resume All"), callback_data="resumeall")],
+            [InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, "Check All"), callback_data="cekall"),
+             InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, "Recur All"), callback_data="recurringall")],
+            [InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, "Del Last 30"), callback_data=f"delete_latest_{chat_id}"),
+             InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, "Del Old 30"), callback_data=f"delete_oldest_{chat_id}")],
+            [InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, "Edit Last Msg"), callback_data=f"edit_last_{chat_id}"),
+             InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, "Edit Msg List"), callback_data=f"edit_msglist_{chat_id}")],
+            [InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, f"{'Purge: ' + str(old_purge) if old_purge > 0 else 'Purge: OFF'}"), callback_data=f"toggle_purge_{chat_id}"),
+             InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, "Adjust Purge"), callback_data=f"adjust_purge_{chat_id}")],
+            [InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, f"{'React: ON' if react_enabled else 'React: OFF'}"), callback_data=f"toggle_react_{chat_id}"),
+             InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, "Pilih Emoji"), callback_data=f"select_emoji_{chat_id}")],
+            [InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, "👁️ See Msg List"), callback_data=f"see_msglist_{chat_id}")]
         ]
         x_msg = await send_log_message(
             f"{notif_msg}",
@@ -652,12 +653,8 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
 # ==================== CALLBACK HANDLERS ====================
 @Altruix.bot.on_callback_query(filters.regex(r"see_msglist_(-?\d+)"))
 @log_errors
+@iuser_check
 async def see_msglist_handler(c: Client, cb):
-    from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
-        msg = Altruix.get_string("ACCESS_DENIED")
-        return await cb.answer(msg, show_alert=True)
-        
     chat_id = cb.data.split("_")[-1]
     config = None
     if chat_id in TELAYSPAM_TASKS:
@@ -703,13 +700,9 @@ async def see_msglist_handler(c: Client, cb):
 
 @Altruix.bot.on_callback_query(filters.regex(r"^confirm_start_[^_]+?\|\|[^_]+?_(confirm|cancel)$"))
 @log_errors
+@iuser_check
 async def confirm_start_handler(c: Client, cb):
     try:
-        from Main.utils.access_control import is_authorized_user
-        if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
-            msg = Altruix.get_string("ACCESS_DENIED")
-            return await cb.answer(msg, show_alert=True)
-            
         full_data = cb.data
         Altruix.log(f"[DEBUG] Callback diterima: {full_data}", level=20)
         if not full_data.startswith("confirm_start_"):
@@ -785,12 +778,8 @@ async def confirm_start_handler(c: Client, cb):
 
 @Altruix.bot.on_callback_query(filters.regex(r"^preview_msglist_.+$"))
 @log_errors
+@iuser_check
 async def preview_msglist_from_confirm(c: Client, cb):
-    from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
-        msg = Altruix.get_string("ACCESS_DENIED")
-        return await cb.answer(msg, show_alert=True)
-        
     full_data = cb.data
     Altruix.log(f"[DEBUG] Preview callback: {full_data}", level=20)
     if not full_data.startswith("preview_msglist_"):
@@ -915,9 +904,9 @@ async def telayspammer_cmd(c: Client, m: Message):
         "react_enabled": react_enabled
     }
     confirm_buttons = [
-        [InlineKeyboardButton("✅ Confirm Start", callback_data=f"confirm_start_{temp_id}_confirm")],
-        [InlineKeyboardButton("❌ Cancel", callback_data=f"confirm_start_{temp_id}_cancel")],
-        [InlineKeyboardButton("👁️ See Msg List", callback_data=f"preview_msglist_{temp_id}")]
+        [InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, "✅ Confirm Start"), callback_data=f"confirm_start_{temp_id}_confirm")],
+        [InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, "❌ Cancel"), callback_data=f"confirm_start_{temp_id}_cancel")],
+        [InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, "👁️ See Msg List"), callback_data=f"preview_msglist_{temp_id}")]
     ]
     confirm_msg = (
         f"⚠️ **Konfirmasi Mulai Task**\n"
@@ -1123,11 +1112,8 @@ async def check_all_relayspam_cmd(c: Client, m: Message):
 # ==================== SISA HANDLER CALLBACK ====================
 @Altruix.bot.on_callback_query(filters.regex(r"toggle_purge_(-?\d+)"))
 @log_errors
+@iuser_check
 async def toggle_purge_handler(c: Client, cb):
-    from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
-        return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
-        
     data = cb.data
     chat_id = data.split("_")[-1]
     if chat_id not in TELAYSPAM_TASKS:
@@ -1160,11 +1146,8 @@ async def toggle_purge_handler(c: Client, cb):
 
 @Altruix.bot.on_callback_query(filters.regex(r"toggle_react_(-?\d+)"))
 @log_errors
+@iuser_check
 async def toggle_reaction_handler(c: Client, cb):
-    from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
-        return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
-        
     data = cb.data
     chat_id = data.split("_")[-1]
     if chat_id not in TELAYSPAM_TASKS:
@@ -1194,11 +1177,8 @@ async def toggle_reaction_handler(c: Client, cb):
 
 @Altruix.bot.on_callback_query(filters.regex(r"select_emoji_(-?\d+)"))
 @log_errors
+@iuser_check
 async def select_emoji_handler(c: Client, cb):
-    from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
-        return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
-        
     data = cb.data
     chat_id = data.split("_")[-1]
     if chat_id not in TELAYSPAM_TASKS:
@@ -1207,13 +1187,13 @@ async def select_emoji_handler(c: Client, cb):
     keyboard = []
     row = []
     for i, emoji in enumerate(VALID_EMOJIS):
-        row.append(InlineKeyboardButton(emoji, callback_data=f"set_emoji_{chat_id}_{emoji}"))
+        row.append(InlineKeyboardButton(await Essentials.get_user_button_style(cb.from_user.id, emoji), callback_data=f"set_emoji_{chat_id}_{emoji}"))
         if (i + 1) % 8 == 0:
             keyboard.append(row)
             row = []
     if row:
         keyboard.append(row)
-    keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_emoji_{chat_id}")])
+    keyboard.append([InlineKeyboardButton(await Essentials.get_user_button_style(cb.from_user.id, "❌ Cancel"), callback_data=f"cancel_emoji_{chat_id}")])
     EMOJI_SELECTION_WAITING[chat_id] = True
     userbot_client = TELAYSPAM_TASKS[chat_id]["client"]
     await send_log_message(
@@ -1226,11 +1206,8 @@ async def select_emoji_handler(c: Client, cb):
 
 @Altruix.bot.on_callback_query(filters.regex(r"set_emoji_(-?\d+)_(.+)"))
 @log_errors
+@iuser_check
 async def set_emoji_handler(c: Client, cb):
-    from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
-        return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
-        
     data = cb.data
     parts = data.split("_")
     chat_id = parts[2]
@@ -1266,11 +1243,8 @@ async def set_emoji_handler(c: Client, cb):
 
 @Altruix.bot.on_callback_query(filters.regex(r"cancel_emoji_(-?\d+)"))
 @log_errors
+@iuser_check
 async def cancel_emoji_handler(c: Client, cb):
-    from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
-        return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
-        
     data = cb.data
     chat_id = data.split("_")[-1]
     EMOJI_SELECTION_WAITING.pop(chat_id, None)
@@ -1279,11 +1253,8 @@ async def cancel_emoji_handler(c: Client, cb):
 
 @Altruix.bot.on_callback_query(filters.regex(r"adjust_purge_(-?\d+)"))
 @log_errors
+@iuser_check
 async def adjust_purge_handler(c: Client, cb):
-    from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
-        return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
-        
     data = cb.data
     chat_id = data.split("_")[-1]
     if chat_id not in TELAYSPAM_TASKS:
@@ -1291,22 +1262,22 @@ async def adjust_purge_handler(c: Client, cb):
         return
     keyboard = [
         [
-            InlineKeyboardButton("+5", callback_data=f"inc_purge_{chat_id}_5"),
-            InlineKeyboardButton("+10", callback_data=f"inc_purge_{chat_id}_10"),
-            InlineKeyboardButton("+15", callback_data=f"inc_purge_{chat_id}_15"),
-            InlineKeyboardButton("+20", callback_data=f"inc_purge_{chat_id}_20"),
-            InlineKeyboardButton("+25", callback_data=f"inc_purge_{chat_id}_25")
+            InlineKeyboardButton(await Essentials.get_user_button_style(cb.from_user.id, "+5"), callback_data=f"inc_purge_{chat_id}_5"),
+            InlineKeyboardButton(await Essentials.get_user_button_style(cb.from_user.id, "+10"), callback_data=f"inc_purge_{chat_id}_10"),
+            InlineKeyboardButton(await Essentials.get_user_button_style(cb.from_user.id, "+15"), callback_data=f"inc_purge_{chat_id}_15"),
+            InlineKeyboardButton(await Essentials.get_user_button_style(cb.from_user.id, "+20"), callback_data=f"inc_purge_{chat_id}_20"),
+            InlineKeyboardButton(await Essentials.get_user_button_style(cb.from_user.id, "+25"), callback_data=f"inc_purge_{chat_id}_25")
         ],
         [
-            InlineKeyboardButton("-5", callback_data=f"dec_purge_{chat_id}_5"),
-            InlineKeyboardButton("-10", callback_data=f"dec_purge_{chat_id}_10"),
-            InlineKeyboardButton("-15", callback_data=f"dec_purge_{chat_id}_15"),
-            InlineKeyboardButton("-20", callback_data=f"dec_purge_{chat_id}_20"),
-            InlineKeyboardButton("-25", callback_data=f"dec_purge_{chat_id}_25")
+            InlineKeyboardButton(await Essentials.get_user_button_style(cb.from_user.id, "-5"), callback_data=f"dec_purge_{chat_id}_5"),
+            InlineKeyboardButton(await Essentials.get_user_button_style(cb.from_user.id, "-10"), callback_data=f"dec_purge_{chat_id}_10"),
+            InlineKeyboardButton(await Essentials.get_user_button_style(cb.from_user.id, "-15"), callback_data=f"dec_purge_{chat_id}_15"),
+            InlineKeyboardButton(await Essentials.get_user_button_style(cb.from_user.id, "-20"), callback_data=f"dec_purge_{chat_id}_20"),
+            InlineKeyboardButton(await Essentials.get_user_button_style(cb.from_user.id, "-25"), callback_data=f"dec_purge_{chat_id}_25")
         ],
         [
-            InlineKeyboardButton("⏪ Kembali", callback_data=f"back_purge_{chat_id}"),
-            InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_adjust_purge_{chat_id}")
+            InlineKeyboardButton(await Essentials.get_user_button_style(cb.from_user.id, "⏪ Kembali"), callback_data=f"back_purge_{chat_id}"),
+            InlineKeyboardButton(await Essentials.get_user_button_style(cb.from_user.id, "❌ Cancel"), callback_data=f"cancel_adjust_purge_{chat_id}")
         ]
     ]
     config = TELAYSPAM_TASKS[chat_id]["config"]
@@ -1329,11 +1300,8 @@ async def adjust_purge_handler(c: Client, cb):
 
 @Altruix.bot.on_callback_query(filters.regex(r"inc_purge_(-?\d+)_(\d+)"))
 @log_errors
+@iuser_check
 async def increase_purge_handler(c: Client, cb):
-    from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
-        return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
-        
     data = cb.data
     parts = data.split("_")
     chat_id = parts[2]
@@ -1373,11 +1341,8 @@ async def increase_purge_handler(c: Client, cb):
 
 @Altruix.bot.on_callback_query(filters.regex(r"dec_purge_(-?\d+)_(\d+)"))
 @log_errors
+@iuser_check
 async def decrease_purge_handler(c: Client, cb):
-    from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
-        return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
-        
     data = cb.data
     parts = data.split("_")
     chat_id = parts[2]
@@ -1418,11 +1383,8 @@ async def decrease_purge_handler(c: Client, cb):
 
 @Altruix.bot.on_callback_query(filters.regex(r"back_purge_(-?\d+)"))
 @log_errors
+@iuser_check
 async def back_purge_handler(c: Client, cb):
-    from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
-        return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
-        
     data = cb.data
     chat_id = data.split("_")[-1]
     try:
@@ -1438,11 +1400,8 @@ async def back_purge_handler(c: Client, cb):
 
 @Altruix.bot.on_callback_query(filters.regex(r"cancel_adjust_purge_(-?\d+)"))
 @log_errors
+@iuser_check
 async def cancel_adjust_purge_handler(c: Client, cb):
-    from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
-        return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
-        
     data = cb.data
     chat_id = data.split("_")[-1]
     try:
@@ -1458,11 +1417,8 @@ async def cancel_adjust_purge_handler(c: Client, cb):
 
 @Altruix.bot.on_callback_query(filters.regex(r"(stop|pause|resume|cek|recurring|delete_latest|delete_oldest|edit_last|edit_msglist|cancel_edit|cancel_editlast)_(-?\d+)"))
 @log_errors
+@iuser_check
 async def handle_task_control(c: Client, cb):
-    from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
-        return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
-        
     data = cb.data
     action, chat_id_str = data.rsplit("_", 1)
     chat_id = str(chat_id_str)
@@ -1624,7 +1580,7 @@ async def handle_task_control(c: Client, cb):
                         f"Contoh balasan: Edited message here\n"
                         f"Klik 'Cancel' untuk membatalkan proses edit."
                     )
-                    cancel_button = [[InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_editlast_{chat_id}")]]
+                    cancel_button = [[InlineKeyboardButton(await Essentials.get_user_button_style(cb.from_user.id, "❌ Cancel"), callback_data=f"cancel_editlast_{chat_id}")]]
                     edit_notif_msg = await send_log_message(
                         notif_msg,
                         reply_markup=InlineKeyboardMarkup(cancel_button),
@@ -1676,7 +1632,7 @@ async def handle_task_control(c: Client, cb):
                     f"Contoh balasan: [\"hello world\", \"hello dunia\"]\n"
                     f"Klik 'Cancel' untuk membatalkan proses edit."
                 )
-                cancel_button = [[InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_edit_{chat_id}")]]
+                cancel_button = [[InlineKeyboardButton(await Essentials.get_user_button_style(cb.from_user.id, "❌ Cancel"), callback_data=f"cancel_edit_{chat_id}")]]
                 send_client = task_client or (Altruix.clients[0] if Altruix.clients else None) or Altruix.bot
                 if not send_client:
                     await safe_cb_answer(cb, "❌ Tidak ada client untuk mengirim notifikasi.", show_alert=True)
@@ -1757,12 +1713,8 @@ async def handle_task_control(c: Client, cb):
 
 @Altruix.bot.on_callback_query(filters.regex(r"(cekall|stopall|recurringall|pauseall|resumeall)"))
 @log_errors
+@iuser_check
 async def handle_global_controls(c: Client, cb):
-    from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
-        msg = Altruix.get_string("ACCESS_DENIED")
-        return await cb.answer(msg, show_alert=True)
-        
     data = cb.data
     if data == "cekall":
         if not TELAYSPAM_TASKS:

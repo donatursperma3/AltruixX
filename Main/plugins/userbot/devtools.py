@@ -7,7 +7,7 @@
 # All rights reserved.
 
 
-PLUGIN_VERSION = "0.0.62"
+PLUGIN_VERSION = "0.0.68"
 import os
 import html
 import asyncio
@@ -15,12 +15,15 @@ import aiofiles
 from Main import Altruix
 from logging import info
 from Main.utils.paste import Paste
-from pyrogram import Client, enums
+from pyrogram import Client, enums, filters
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, InlineQuery, InlineQueryResultArticle, InputTextMessageContent
 from time import perf_counter as pc
 from Main.core.config import TGLIMITS
 from Main.core.types.message import Message
 from Main.utils.dev_func import eval_py, exec_terminal
-from Main.core.decorators import log_errors
+from Main.core.decorators import log_errors, iuser_check
+from Main.utils.file_helpers import get_user_button_style
+from Main.utils.essentials import Essentials
 
 
 @Altruix.register_on_cmd(
@@ -391,3 +394,570 @@ async def logs(c: Client, m: Message):
     await MSG.delete()
     await msg.edit_msg(f"Retrieved logs in <code>{time_taken}</code>s.")
 
+
+
+# ==================== EVAL/REVAL DOCUMENTATION ====================
+
+# Documentation pages (~1000 chars per page for better readability)
+EVAL_DOC_PAGES = [
+    # Page 1: Import
+    """<b>📚 Eval & Reval Guide</b>
+<b>Page 1/17: Import Altruix</b>
+
+<b>Import Core:</b>
+<pre language="python">from Main.core.client import Altruix</pre>
+
+Ini memberikan akses ke semua client (userbot & bot).
+
+<i>→ .evaldoc 2</i>""",
+
+    # Page 2: Bot Assistant
+    """<b>📚 Eval & Reval Guide</b>
+<b>Page 2/17: Bot Assistant</b>
+
+<b>Altruix.bot</b> = Bot utama dari .env
+
+<b>Contoh:</b>
+<pre language="python"># Kirim pesan via bot
+await Altruix.bot.send_message(
+    12345678,
+    "Halo!"
+)</pre>
+
+<i>→ .evaldoc 3</i>""",
+
+    # Page 3: Userbot List
+    """<b>📚 Eval & Reval Guide</b>
+<b>Page 3/17: Userbot List</b>
+
+<b>Altruix.clients</b> = List semua userbot
+
+<b>Contoh:</b>
+<pre language="python"># Userbot pertama
+c = Altruix.clients[0]
+await c.send_message(
+    12345678,
+    "Halo!"
+)</pre>
+
+<i>→ .evaldoc 4</i>""",
+
+    # Page 4: Multiple Sessions
+    """<b>📚 Eval & Reval Guide</b>
+<b>Page 4/17: Multiple Sessions</b>
+
+<b>Akses session lain:</b>
+<pre language="python"># Session kedua
+if len(Altruix.clients) > 1:
+    c2 = Altruix.clients[1]
+    await c2.send_message(
+        12345678,
+        "Dari session 2!"
+    )</pre>
+
+<i>→ .evaldoc 5</i>""",
+
+    # Page 5: Client Aktif (PENTING!)
+    """<b>📚 Eval & Reval Guide</b>
+<b>Page 5/17: Client Aktif ⭐</b>
+
+<b>CARA TERMUDAH:</b>
+Gunakan <code>client</code> dari handler!
+
+<b>Contoh di eval:</b>
+<pre language="python"># 'client' = session aktif
+await client.send_message(
+    "me",
+    "Dari session yang aktif!"
+)</pre>
+
+Client otomatis terdeteksi!
+
+<i>→ .evaldoc 6</i>""",
+
+    # Page 6: Contoh Client Aktif Detail
+    """<b>📚 Eval & Reval Guide</b>
+<b>Page 6/17: Contoh Client Aktif</b>
+
+<b>Dalam eval/reval:</b>
+<pre language="python"># Kirim ke diri sendiri
+await client.send_message(
+    "me", "Test"
+)
+
+# Kirim ke chat lain
+await client.send_message(
+    -1001234567890,
+    "Test ke grup"
+)
+
+# Info session
+me = await client.get_me()
+print(f"Nama: {me.first_name}")
+print(f"ID: {me.id}")</pre>
+
+<i>→ .evaldoc 7</i>""",
+
+    # Page 7: Get Index
+    """<b>📚 Eval & Reval Guide</b>
+<b>Page 7/17: Deteksi Index</b>
+
+<b>Cari tahu session ke berapa:</b>
+<pre language="python"># Dapatkan index
+idx = Altruix.clients.index(client)
+
+# Tampilkan (mulai dari 1)
+print(f"Session ke-{idx + 1}")</pre>
+
+<i>→ .evaldoc 8</i>""",
+
+    # Page 8: Find by User ID
+    """<b>📚 Eval & Reval Guide</b>
+<b>Page 8/17: Cari by User ID</b>
+
+<b>Cari client berdasarkan ID:</b>
+<pre language="python">def get_client(uid):
+    for c in Altruix.clients:
+        if c.me.id == uid:
+            return c
+    return None
+
+# Gunakan
+c = get_client(987654321)
+if c:
+    await c.send_message(
+        "me", "Found!"
+    )</pre>
+
+<i>→ .evaldoc 9</i>""",
+
+    # Page 9: Bot Manager
+    """<b>📚 Eval & Reval Guide</b>
+<b>Page 9/17: Bot Manager</b>
+
+<b>Support Custom Bot:</b>
+<pre language="python"># Auto pilih bot
+uid = client.me.id
+bot = Altruix.bot_manager.get_bot(uid)
+
+await bot.send_message(
+    12345678,
+    "Dari bot (custom/default)"
+)</pre>
+
+<i>→ .evaldoc 10</i>""",
+
+    # Page 10: Plugin Example
+    """<b>📚 Eval & Reval Guide</b>
+<b>Page 10/17: Plugin Example</b>
+
+<pre language="python">@Altruix.on_message(
+    filters.command("test", ".")
+)
+async def test(client, message):
+    # Balas via userbot
+    await message.reply("OK!")
+    
+    # Log via bot
+    await Altruix.bot.send_message(
+        Altruix.config.OWNER_ID,
+        f"User {message.from_user.id}"
+    )</pre>
+
+<i>→ .evaldoc 11</i>""",
+
+    # Page 11: Handler Best Practice
+    """<b>📚 Eval & Reval Guide</b>
+<b>Page 11/17: Best Practice</b>
+
+<b>Dalam handler:</b>
+<pre language="python">async def handler(client, message):
+    # ✅ BENAR: Gunakan client
+    await client.send_message(
+        message.chat.id, "OK"
+    )
+    
+    # ✅ ATAU via message
+    await message.reply("OK")
+    
+    # ❌ JANGAN hardcode index
+    # await Altruix.clients[0]...</pre>
+
+<i>→ .evaldoc 12</i>""",
+
+    # Page 12: Prefix Handling
+    """<b>📚 Eval & Reval Guide</b>
+<b>Page 12/17: Prefix</b>
+
+<b>Owner:</b> Hanya respond ke CMD_HANDLER
+<b>Sudo:</b> Hanya respond ke SUDO_CMD_HANDLER
+
+Ini cegah dual response.
+
+<i>→ .evaldoc 13</i>""",
+
+    # Page 13: De-duplication
+    """<b>📚 Eval & Reval Guide</b>
+<b>Page 13/17: De-duplication</b>
+Hanya satu session yang akan memproses pesan jika multiple session aktif di grup yang sama.
+Ini otomatis ditangani oleh <code>xpm_logger_user</code>.
+
+<i>→ .evaldoc 14</i>""",
+
+    # Page 14: Config & LOG_CHAT_ID
+    """<b>📚 Eval & Reval Guide</b>
+<b>Page 14/17: Config & Log ID</b>
+
+<b>Cara akses config & LOG_CHAT_ID:</b>
+<pre language="python">from Main import Altruix
+
+# Akses Config
+conf = Altruix.config
+
+# Dapatkan LOG_CHAT_ID
+log_id = conf.LOG_CHAT_ID
+print(f"Log Chat: {log_id}")</pre>
+
+<b>Akses via ENV (Asynchronous):</b>
+<pre language="python">env = await Altruix.db.env_col.find_one(
+    {"_id": "ENV"}
+)
+token = env.get("BOT_TOKEN")</pre>
+
+<i>→ .evaldoc 15</i>""",
+
+    # Page 15: Database Persistence
+    """<b>📚 Eval & Reval Guide</b>
+<b>Page 15/17: Database Persistence</b>
+
+<b>Simpan data permanen:</b>
+<pre language="python">from Main import Altruix
+
+# Gunakan DATA collection
+await Altruix.db.data_col.find_one_and_update(
+    {"_id": "MY_KEY"},
+    {"$set": {"val": 123}},
+    upsert=True
+)
+
+# Ambil data
+res = await Altruix.db.data_col.find_one(
+    {"_id": "MY_KEY"}
+)
+print(res.get("val"))</pre>
+
+<i>→ .evaldoc 16</i>""",
+
+    # Page 16: Quick Reference
+    """<b>📚 Eval & Reval Guide</b>
+<b>Page 16/17: Quick Reference</b>
+
+<code>Altruix.bot</code>
+→ Bot utama
+
+<code>Altruix.clients</code>
+→ List userbot
+
+<code>Altruix.clients[0]</code>
+→ Userbot pertama
+
+<code>client</code> (dalam handler)
+→ Session aktif ⭐
+
+<code>Altruix.bot_manager.get_bot(uid)</code>
+→ Bot (custom/default)
+
+<i>→ .evaldoc 15</i>""",
+
+    # Page 15: Tips
+    """<b>📚 Eval & Reval Guide</b>
+<b>Page 15/17: Tips Eval/Reval</b>
+
+<b>💡 Tips:</b>
+
+1. Gunakan <code>client</code> dari handler
+   (auto-detect session aktif)
+
+2. Untuk userbot utama:
+   <code>Altruix.clients[0]</code>
+
+3. Untuk bot assistant:
+   <code>Altruix.bot</code>
+
+4. Check jumlah session:
+   <code>len(Altruix.clients)</code>
+
+5. Info session aktif:
+   <code>await client.get_me()</code>
+
+<b>Selesai!</b> Gunakan .evaldoc 1 untuk kembali ke awal."""
+]
+
+
+async def get_evaldoc_keyboard(page: int, user_id: int) -> InlineKeyboardMarkup:
+    """Generate inline keyboard for evaldoc pagination."""
+    total_pages = len(EVAL_DOC_PAGES)
+    btn_style = get_user_button_style(user_id)
+    
+    # Row 1: Prev | Page X/Total | Next
+    row1 = []
+    if page > 1:
+        row1.append(InlineKeyboardButton(await Essentials.get_user_button_style(user_id, "◀️ Prev"), callback_data=f"evaldoc_page_{page-1}", style=btn_style))
+    else:
+        row1.append(InlineKeyboardButton(await Essentials.get_user_button_style(user_id, "◀️"), callback_data="evaldoc_noop", style=btn_style))
+    
+    row1.append(InlineKeyboardButton(await Essentials.get_user_button_style(user_id, f"📄 {page}/{total_pages}"), callback_data="evaldoc_noop", style=btn_style))
+    
+    if page < total_pages:
+        row1.append(InlineKeyboardButton(await Essentials.get_user_button_style(user_id, "Next ▶️"), callback_data=f"evaldoc_page_{page+1}", style=btn_style))
+    else:
+        row1.append(InlineKeyboardButton(await Essentials.get_user_button_style(user_id, "▶️"), callback_data="evaldoc_noop", style=btn_style))
+    
+    # Row 2: First | Client (jump to page 5) | Last
+    row2 = [
+        InlineKeyboardButton(await Essentials.get_user_button_style(user_id, "⏮️ First"), callback_data="evaldoc_page_1", style=btn_style),
+        InlineKeyboardButton(await Essentials.get_user_button_style(user_id, "⭐ Client"), callback_data="evaldoc_page_5", style=btn_style),
+        InlineKeyboardButton(await Essentials.get_user_button_style(user_id, "Last ⏭️"), callback_data=f"evaldoc_page_{total_pages}", style=btn_style)
+    ]
+    
+    # Row 3: Close
+    row3 = [InlineKeyboardButton(await Essentials.get_user_button_style(user_id, "❌ Close"), callback_data="evaldoc_close", style=btn_style)]
+    
+    return InlineKeyboardMarkup([row1, row2, row3])
+
+
+# ==================== HELPER FUNCTIONS FOR SAFE CALLBACK HANDLING ====================
+
+async def safe_evaldoc_answer(cb: CallbackQuery, text: str, show_alert: bool = False):
+    """Answer callback query safely, ignoring expired queries."""
+    try:
+        await cb.answer(text, show_alert=show_alert)
+    except Exception:
+        pass
+
+async def safe_evaldoc_edit(cb: CallbackQuery, text: str, reply_markup=None):
+    """
+    Safely edit callback message, handling both regular and inline mode messages.
+    Uses cb.edit_message_text() which automatically handles inline messages.
+    """
+    try:
+        # Use cb.edit_message_text() - it automatically handles both regular and inline messages
+        await cb.edit_message_text(
+            text=text,
+            reply_markup=reply_markup,
+            parse_mode=enums.ParseMode.HTML
+        )
+        return True
+    except Exception as e:
+        Altruix.log(f"[evaldoc] Error editing message: {e}", level=40)
+        await safe_evaldoc_answer(cb, f"❌ Error: {str(e)[:50]}", show_alert=True)
+        return False
+
+async def safe_evaldoc_delete(cb: CallbackQuery):
+    """
+    Safely delete callback message.
+    For inline messages, uses delete_message() instead of message.delete().
+    """
+    try:
+        # Try to delete using callback query method (works for both inline and regular)
+        await cb.message.delete()
+        return True
+    except AttributeError:
+        # If cb.message is None (inline mode), try alternative method
+        try:
+            # For inline messages, we can't delete, so we edit to show "closed" message
+            await cb.edit_message_text(
+                "❌ <b>Menu Closed</b>",
+                parse_mode=enums.ParseMode.HTML
+            )
+            return True
+        except Exception as e:
+            Altruix.log(f"[evaldoc] Error closing message: {e}", level=40)
+            return False
+    except Exception as e:
+        Altruix.log(f"[evaldoc] Error deleting message: {e}", level=40)
+        return False
+
+
+# ==================== CALLBACK HANDLER ====================
+
+@Altruix.bot.on_callback_query(filters.regex(r"^evaldoc_"))
+@iuser_check
+@log_errors
+async def evaldoc_callback_handler(c: Client, q: CallbackQuery):
+    """Handle evaldoc inline keyboard callbacks.
+    Protected by @iuser_check for auth verification."""
+    data = q.data
+    
+    # Handle close button
+    if data == "evaldoc_close":
+        success = await safe_evaldoc_delete(q)
+        if success:
+            await safe_evaldoc_answer(q, "Menu closed.", show_alert=False)
+        return
+    
+    # Handle noop (disabled buttons)
+    if data == "evaldoc_noop":
+        await safe_evaldoc_answer(q, "⚠️ Already at boundary", show_alert=False)
+        return
+    
+    # Handle page navigation
+    if data.startswith("evaldoc_page_"):
+        try:
+            page_num = int(data.split("_")[-1])
+        except ValueError:
+            await safe_evaldoc_answer(q, "❌ Invalid page", show_alert=True)
+            return
+        
+        # Validate page number
+        if page_num < 1 or page_num > len(EVAL_DOC_PAGES):
+            await safe_evaldoc_answer(q, f"❌ Page must be 1-{len(EVAL_DOC_PAGES)}", show_alert=True)
+            return
+        
+        # Get page content and keyboard
+        page_content = EVAL_DOC_PAGES[page_num - 1]
+        keyboard = await get_evaldoc_keyboard(page_num, q.from_user.id)
+        
+        # Update message
+        success = await safe_evaldoc_edit(q, page_content, reply_markup=keyboard)
+        if success:
+            await safe_evaldoc_answer(q, f"📄 Page {page_num}/{len(EVAL_DOC_PAGES)}", show_alert=False)
+
+
+
+# ==================== INLINE HANDLER (for dashboard mode via @bot) ====================
+
+@Altruix.bot.on_inline_query(filters.regex(r"^evaldoc(?:_page_)?(\d+)?"))
+@iuser_check
+@log_errors
+async def evaldoc_inline_handler(client: Client, query: InlineQuery):
+    """
+    Responds to inline query for evaldoc (triggered by @bot evaldoc).
+    Allows opening the evaldoc dashboard in ANY chat via inline mode.
+    Protected by @iuser_check for auth verification.
+    """
+    try:
+        # Extract page number from query
+        match = query.matches[0]
+        page_str = match.group(1)
+        page_num = int(page_str) if page_str else 1
+        
+        # Validate page number
+        if page_num < 1 or page_num > len(EVAL_DOC_PAGES):
+            page_num = 1
+        
+        # Get page content and keyboard
+        page_content = EVAL_DOC_PAGES[page_num - 1]
+        keyboard = await get_evaldoc_keyboard(page_num, query.from_user.id)
+        
+        await query.answer(
+            results=[
+                InlineQueryResultArticle(
+                    title=f"📚 Eval & Reval Guide - Page {page_num}/15",
+                    description=f"Comprehensive documentation for eval/reval usage",
+                    input_message_content=InputTextMessageContent(
+                        page_content,
+                        parse_mode=enums.ParseMode.HTML,
+                        disable_web_page_preview=True
+                    ),
+                    reply_markup=keyboard
+                )
+            ],
+            cache_time=0
+        )
+    except Exception as e:
+        Altruix.log(f"Evaldoc Inline Handler Error: {e}", level=40)
+
+
+# Update the eval_documentation_handler to support inline mode
+@Altruix.register_on_cmd(
+    ["evaldoc", "evalhelp", "evalguide"],
+    cmd_help={
+        "help": "Show comprehensive documentation for eval/reval usage with client access.",
+        "example": "evaldoc 1",
+        "user_input": {
+            "required": False,
+            "placeholder": "page number (1-15)"
+        }
+    },
+)
+@log_errors
+async def eval_documentation_handler_inline(c: Client, m: Message):
+    """Show eval/reval documentation with inline keyboard pagination via bot assistant."""
+    # Get page number from user input
+    page_input = m.user_input.strip() if m.user_input else "1"
+    
+    try:
+        page_num = int(page_input)
+    except ValueError:
+        return await m.reply_msg(
+            "❌ <b>Invalid page number.</b>\n\n"
+            f"Usage: <code>.evaldoc [1-{len(EVAL_DOC_PAGES)}]</code>\n"
+            f"Example: <code>.evaldoc 1</code>"
+        )
+    
+    # Validate page number
+    if page_num < 1 or page_num > len(EVAL_DOC_PAGES):
+        return await m.reply_msg(
+            f"❌ <b>Page not found.</b>\n\n"
+            f"Available pages: <b>1-{len(EVAL_DOC_PAGES)}</b>\n"
+            f"Usage: <code>.evaldoc [page]</code>"
+        )
+    
+    user_id = c.me.id
+    
+    # Get bot assistant
+    bot = None
+    bot_username = None
+    if hasattr(Altruix, 'bot_manager'):
+        bot = Altruix.bot_manager.get_bot(user_id)
+        bot_username = Altruix.bot_manager.get_bot_username(user_id)
+    if not bot:
+        bot = Altruix.bot
+        if hasattr(Altruix.bot, 'me') and Altruix.bot.me:
+            bot_username = Altruix.bot.me.username
+    
+    if not bot:
+        # No bot assistant found - fallback to direct message
+        page_content = EVAL_DOC_PAGES[page_num - 1]
+        keyboard = await get_evaldoc_keyboard(page_num, m.from_user.id) # Pass user_id
+        await m.edit_msg(page_content, reply_markup=keyboard)
+        return
+    
+    # Try Inline mode first (works in ANY chat, even without bot present)
+    if bot_username:
+        try:
+            results = await c.get_inline_bot_results(bot_username, f"evaldoc_page_{page_num}")
+            if results.results:
+                sent = await c.send_inline_bot_result(
+                    m.chat.id,
+                    results.query_id,
+                    results.results[0].id,
+                    reply_to_message_id=m.id  # ✅ Reply to command message
+                )
+                if sent:
+                    await m.delete_if_self()
+                    Altruix.log(f"[evaldoc] Dashboard opened via inline mode (page {page_num})", level=20)
+                    return
+        except Exception as e:
+            Altruix.log(f"[evaldoc] Inline mode failed: {e}, falling back to direct message", level=30)
+    
+    # Fallback to direct bot message (only works if bot is in the chat)
+    try:
+        page_content = EVAL_DOC_PAGES[page_num - 1]
+        keyboard = await get_evaldoc_keyboard(page_num, m.from_user.id)
+        await bot.send_message(
+            m.chat.id, 
+            page_content, 
+            reply_markup=keyboard, 
+            parse_mode=enums.ParseMode.HTML,
+            reply_to_message_id=m.id  # ✅ Reply to command message
+        )
+        await m.delete_if_self()
+        Altruix.log(f"[evaldoc] Dashboard opened via direct message (page {page_num})", level=20)
+    except Exception as e:
+        Altruix.log(f"[evaldoc] Error sending dashboard: {e}", level=40)
+        # Final fallback - edit original message
+        page_content = EVAL_DOC_PAGES[page_num - 1]
+        keyboard = await get_evaldoc_keyboard(page_num, m.from_user.id)
+        await m.edit_msg(page_content, reply_markup=keyboard)

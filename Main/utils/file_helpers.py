@@ -112,3 +112,36 @@ def get_user_custom_alert(user_id):
     if apply_type == "per_account" and str(user_id) in data.get("sessions", {}):
         return data["sessions"][str(user_id)]
     return data["global"]
+
+# ====================== BUTTON STYLE HELPERS ======================
+BUTTON_STYLE_FILE = get_db_path("button_style_settings.json")
+
+def get_button_style_data():
+    """Returns the full button style config."""
+    default = {"global": {"style": "DEFAULT"}, "sessions": {}, "apply_types": {}}
+    if not os.path.exists(BUTTON_STYLE_FILE):
+        return default
+    with open(BUTTON_STYLE_FILE, "r", encoding="utf-8") as f:
+        try: return json.load(f)
+        except: return default
+
+def save_button_style_data(data):
+    with open(BUTTON_STYLE_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=4)
+
+def get_user_button_style(user_id):
+    """Resolve the ButtonStyle enum for a given session user_id."""
+    from pyrogram.enums import ButtonStyle
+    STYLE_MAP = {
+        "DEFAULT": ButtonStyle.DEFAULT,
+        "PRIMARY": ButtonStyle.PRIMARY,
+        "DANGER": ButtonStyle.DANGER,
+        "SUCCESS": ButtonStyle.SUCCESS,
+    }
+    data = get_button_style_data()
+    apply_type = data.get("apply_types", {}).get(str(user_id), "global")
+    if apply_type == "per_account" and str(user_id) in data.get("sessions", {}):
+        style_key = data["sessions"][str(user_id)].get("style", "DEFAULT")
+    else:
+        style_key = data["global"].get("style", "DEFAULT")
+    return STYLE_MAP.get(style_key, ButtonStyle.DEFAULT)

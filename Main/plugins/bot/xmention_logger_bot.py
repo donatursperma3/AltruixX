@@ -3,6 +3,7 @@
 # Copyright (C) 2021-present by Altruix@Github, <https://github.com/Altruix>.
 
 from Main import Altruix
+from Main.utils.essentials import Essentials
 from pyrogram import Client, filters, enums
 from pyrogram.types import (
     Message as RawMessage, InlineKeyboardButton, InlineKeyboardMarkup, 
@@ -148,11 +149,11 @@ async def mention_logger_bot_handler(c: Client, m: RawMessage):
 
         buttons = [
             [
-                InlineKeyboardButton(f"💬 {reply_label}", callback_data=f"mntlb_reply_{chat.id}_{m.id}_{sender_id}"),
-                InlineKeyboardButton("🔇 Mute Group", callback_data=f"mntlb_mute_{chat.id}"),
+                InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, f"💬 {reply_label}"), callback_data=f"mntlb_reply_{chat.id}_{m.id}_{sender_id}"),
+                InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, "🔇 Mute Group"), callback_data=f"mntlb_mute_{chat.id}"),
             ],
             [
-                InlineKeyboardButton("🔗 Go to Message", url=m.link if m.link else f"https://t.me/c/{str(chat.id)[4:]}/{m.id}")
+                InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, "🔗 Go to Message"), url=m.link if m.link else f"https://t.me/c/{str(chat.id)[4:]}/{m.id}")
             ]
         ]
 
@@ -295,13 +296,13 @@ async def menlb_settings_handler(c: Client, m: RawMessage):
          
          buttons = [
             [
-                InlineKeyboardButton(f"{'Disable' if enabled else 'Enable'} Bot Assist", callback_data="mntlb_toggle_enabled")
+                InlineKeyboardButton(await Essentials.get_user_button_style(m.from_user.id, f"{'Disable' if enabled else 'Enable'} Bot Assist"), callback_data="mntlb_toggle_enabled")
             ],
             [
-                InlineKeyboardButton(f"Mode: {REPLY_ACCESS_MODE.upper()}", callback_data="mntlb_toggle_mode")
+                InlineKeyboardButton(await Essentials.get_user_button_style(m.from_user.id, f"Mode: {REPLY_ACCESS_MODE.upper()}"), callback_data="mntlb_toggle_mode")
             ],
             [
-                InlineKeyboardButton("🔙 Back", callback_data="bot_controls_menu")
+                InlineKeyboardButton(await Essentials.get_user_button_style(m.from_user.id, "🔙 Back"), callback_data="bot_controls_menu")
             ]
         ]
          await m.reply_msg(text, reply_markup=InlineKeyboardMarkup(buttons))
@@ -348,13 +349,13 @@ async def mntlb_menu_handler(c: Client, cb: CallbackQuery):
         
         buttons = [
             [
-                InlineKeyboardButton(f"{'Disable' if enabled else 'Enable'} Bot Assist", callback_data="mntlb_toggle_enabled")
+                InlineKeyboardButton(await Essentials.get_user_button_style(cb.from_user.id, f"{'Disable' if enabled else 'Enable'} Bot Assist"), callback_data="mntlb_toggle_enabled")
             ],
             [
-                InlineKeyboardButton(f"Mode: {REPLY_ACCESS_MODE.upper()}", callback_data="mntlb_toggle_mode")
+                InlineKeyboardButton(await Essentials.get_user_button_style(cb.from_user.id, f"Mode: {REPLY_ACCESS_MODE.upper()}"), callback_data="mntlb_toggle_mode")
             ],
             [
-                InlineKeyboardButton("🔙 Back", callback_data="bot_controls_menu")
+                InlineKeyboardButton(await Essentials.get_user_button_style(cb.from_user.id, "🔙 Back"), callback_data="bot_controls_menu")
             ]
         ]
         await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=enums.ParseMode.HTML)

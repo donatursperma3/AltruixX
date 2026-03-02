@@ -36,6 +36,9 @@ async def startup_menu_handler(c: Client, cb: CallbackQuery):
     status = await Altruix.config.get_env(key) or "default"
     custom_msg = await Altruix.config.get_env(custom_key) or "(Belum diatur)"
     
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
+    
     text = (
         f"<b>🚀 Startup Settings (Session {index+1})</b>\n\n"
         f"• <b>Status:</b> <code>{status.upper()}</code>\n"
@@ -46,11 +49,11 @@ async def startup_menu_handler(c: Client, cb: CallbackQuery):
     
     buttons = [
         [
-            InlineKeyboardButton(f"Status: {status.upper()}", f"startup_toggle_status_{index}_{page}"),
-            InlineKeyboardButton(f"Mode: {apply_type.title()}", f"startup_toggle_mode_{index}_{page}")
+            InlineKeyboardButton(f"Status: {status.upper()}", f"startup_toggle_status_{index}_{page}", style=user_style),
+            InlineKeyboardButton(f"Mode: {apply_type.title()}", f"startup_toggle_mode_{index}_{page}", style=user_style)
         ],
-        [InlineKeyboardButton("📝 Edit Message", f"startup_custom_input_{index}_{page}")],
-        [InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}_3")]
+        [InlineKeyboardButton("📝 Edit Message", f"startup_custom_input_{index}_{page}", style=user_style)],
+        [InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}_3", style=user_style)]
     ]
     if cb.message:
         await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
@@ -103,19 +106,21 @@ async def startup_custom_input_handler(c: Client, cb: CallbackQuery):
     user_privacy_state[cb.from_user.id] = {
         'session_index': index, 'page': page, 'step': 'waiting_startup_custom_msg'
     }
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
     if cb.message:
         await cb.message.edit(
             "⌨️ <b>Input Custom Startup Message</b>\n\n"
             "Silakan kirim pesan kustom Anda.\n"
             "Ketik /cancel untuk membatalkan.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancel", f"startup_menu_{index}_{page}")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancel", f"startup_menu_{index}_{page}", style=user_style)]])
         )
     else:
         await cb.edit_message_text(
             "⌨️ <b>Input Custom Startup Message</b>\n\n"
             "Silakan kirim pesan kustom Anda.\n"
             "Ketik /cancel untuk membatalkan.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancel", f"startup_menu_{index}_{page}")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancel", f"startup_menu_{index}_{page}", style=user_style)]])
         )
 
 async def process_startup_msg_input(c: Client, m: Message, state: dict):

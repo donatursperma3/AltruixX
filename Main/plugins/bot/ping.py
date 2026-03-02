@@ -41,7 +41,7 @@ async def ping_command_handler(c: Client, m: Message):
         reply_markup=InlineKeyboardMarkup(
             [[
                 InlineKeyboardButton(
-                    f"{pf['ping_emoji1']} Ping", "ping",
+                    await Essentials.get_user_button_style(m.from_user.id, f"{pf['ping_emoji1']} Ping"), "ping",
                     style=enums.ButtonStyle.PRIMARY
                     )
                 ]]
@@ -73,7 +73,7 @@ async def ping_cb_handler(c: Client, cb: CallbackQuery):
         ),
         reply_markup=InlineKeyboardMarkup(
             [[InlineKeyboardButton(
-                f"{pf['ping_emoji1']} Ping", "ping",
+                await Essentials.get_user_button_style(cb.from_user.id, f"{pf['ping_emoji1']} Ping"), "ping",
                 style=enums.ButtonStyle.PRIMARY
                 )]]
         ),
@@ -102,7 +102,7 @@ async def ping_inline_handler(c: Client, iq: InlineQuery):
                 ),
                 reply_markup=InlineKeyboardMarkup(
                     [[InlineKeyboardButton(
-                        f"{pf['ping_emoji1']} Ping", "ping",
+                        await Essentials.get_user_button_style(iq.from_user.id, f"{pf['ping_emoji1']} Ping"), "ping",
                         style=enums.ButtonStyle.PRIMARY
                         )]]
                 ),

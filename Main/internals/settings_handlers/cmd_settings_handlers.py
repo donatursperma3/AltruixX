@@ -25,6 +25,9 @@ async def cmd_settings_menu_handler(c: Client, cb: CallbackQuery):
     global_status = await Altruix.config.get_env("AUTO_DELETE_CMD_GLOBAL") or "off"
     global_delay = await Altruix.config.get_env("AUTO_DELETE_CMD_DELAY_GLOBAL") or "2"
     
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
+
     text = (
         "<b>⌨️ Command Settings (Global)</b>\n\n"
         "Configure how the userbot handles command messages after execution.\n\n"
@@ -35,17 +38,17 @@ async def cmd_settings_menu_handler(c: Client, cb: CallbackQuery):
 
     buttons = [
         [
-            InlineKeyboardButton(f"Auto-Delete: {global_status.upper()}", callback_data="toggle_auto_delete_global"),
+            InlineKeyboardButton(f"Auto-Delete: {global_status.upper()}", callback_data="toggle_auto_delete_global", style=user_style),
         ],
         [
-            InlineKeyboardButton("-2s", callback_data="adj_delay_global_m2"),
-            InlineKeyboardButton(f"Delay: {global_delay}s", callback_data="none"),
-            InlineKeyboardButton("+2s", callback_data="adj_delay_global_p2"),
+            InlineKeyboardButton("-2s", callback_data="adj_delay_global_m2", style=user_style),
+            InlineKeyboardButton(f"Delay: {global_delay}s", callback_data="none", style=user_style),
+            InlineKeyboardButton("+2s", callback_data="adj_delay_global_p2", style=user_style),
         ],
         [
-            InlineKeyboardButton("📱 Per-Account Settings", callback_data="cmd_sessions_list_1"),
+            InlineKeyboardButton("📱 Per-Account Settings", callback_data="cmd_sessions_list_1", style=user_style),
         ],
-        [InlineKeyboardButton("🔙 Back to Settings", callback_data="settings_menu")]
+        [InlineKeyboardButton("🔙 Back to Settings", callback_data="settings_menu", style=user_style)]
     ]
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
 
@@ -87,8 +90,8 @@ async def adj_delay_global_handler(c: Client, cb: CallbackQuery):
 async def cmd_sessions_list_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     await cb.answer()
-    page = int(cb.matches[0].group(1))
-    
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
     text = "<b>📱 Per-Account Command Settings</b>\nSelect an account to configure specific settings."
     
     buttons = []
@@ -96,10 +99,10 @@ async def cmd_sessions_list_handler(c: Client, cb: CallbackQuery):
         try:
             me = getattr(client, "myself", None) or client.me
             name = f"{me.first_name} ({i})"
-            buttons.append([InlineKeyboardButton(name, callback_data=f"cmd_account_set_{i}")])
+            buttons.append([InlineKeyboardButton(name, callback_data=f"cmd_account_set_{i}", style=user_style)])
         except: continue
         
-    buttons.append([InlineKeyboardButton("🔙 Back", callback_data="cmd_settings_menu")])
+    buttons.append([InlineKeyboardButton("🔙 Back", callback_data="cmd_settings_menu", style=user_style)])
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
 
 @Altruix.bot.on_callback_query(filters.regex(r"^cmd_account_set_(?P<idx>\d+)(?:_(?P<pg>\d+))?$"))
@@ -114,6 +117,9 @@ async def cmd_account_settings_handler(c: Client, cb: CallbackQuery, index: int 
     if page is None and cb.matches[0].group("pg"):
         page = int(cb.matches[0].group("pg"))
     
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
+
     # Get Per-Account Settings
     apply_type = await Altruix.config.get_env(f"AUTO_DELETE_CMD_TYPE_{index}") or "per_account"
     status = await Altruix.config.get_env(f"AUTO_DELETE_CMD_STATUS_{index}") or "off"
@@ -136,23 +142,23 @@ async def cmd_account_settings_handler(c: Client, cb: CallbackQuery, index: int 
 
     buttons = [
         [
-            InlineKeyboardButton(f"Mode: {apply_type.upper()}", callback_data=f"cmd_toggle_mode_{index}_{page}"),
+            InlineKeyboardButton(f"Mode: {apply_type.upper()}", callback_data=f"cmd_toggle_mode_{index}_{page}", style=user_style),
         ],
         [
-            InlineKeyboardButton(f"Status: {status.upper()}", callback_data=f"cmd_toggle_status_{index}_{page}"),
+            InlineKeyboardButton(f"Status: {status.upper()}", callback_data=f"cmd_toggle_status_{index}_{page}", style=user_style),
         ],
         [
-            InlineKeyboardButton("-2s", callback_data=f"cmd_adj_delay_{index}_{page}_m2"),
-            InlineKeyboardButton(f"Delay: {delay}s", callback_data="none"),
-            InlineKeyboardButton("+2s", callback_data=f"cmd_adj_delay_{index}_{page}_p2"),
+            InlineKeyboardButton("-2s", callback_data=f"cmd_adj_delay_{index}_{page}_m2", style=user_style),
+            InlineKeyboardButton(f"Delay: {delay}s", callback_data="none", style=user_style),
+            InlineKeyboardButton("+2s", callback_data=f"cmd_adj_delay_{index}_{page}_p2", style=user_style),
         ],
     ]
     
     # Back button logic
     if page > 0: # If coming from session_info
-        buttons.append([InlineKeyboardButton("🔙 Back to Session Info", callback_data=f"session_info_{index}_{page}_3")])
+        buttons.append([InlineKeyboardButton("🔙 Back to Session Info", callback_data=f"session_info_{index}_{page}_3", style=user_style)])
     else:
-        buttons.append([InlineKeyboardButton("🔙 Back to List", callback_data="cmd_sessions_list_1")])
+        buttons.append([InlineKeyboardButton("🔙 Back to List", callback_data="cmd_sessions_list_1", style=user_style)])
         
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
 

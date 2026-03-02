@@ -29,12 +29,15 @@ async def purge_msg_start_handler(c: Client, cb: CallbackQuery):
     
     user_purge_state[user_id] = {'session_index': index, 'page': page, 'step': 'waiting_chat'}
     
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(user_id)
+    
     await cb.edit_message_text(
         text="<b>🧹 Purge My Message</b>\n\n"
              "Menghapus pesan Anda sendiri di chat tertentu.\n"
              "Silakan kirim <b>Username</b> atau <b>ID</b> target chat.\n\n"
              "❌ <b>Cancel:</b> /cancel",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}", style=user_style)]])
     )
 
 @Altruix.bot.on_callback_query(filters.regex(r"rpm_conf_(\d+)_(-?\d+)_(\d+)"))
@@ -45,10 +48,13 @@ async def rpm_conf_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
     index, chat_id, msg_id = int(cb.matches[0].group(1)), int(cb.matches[0].group(2)), int(cb.matches[0].group(3))
     
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
+    
     buttons = [
         [
-            InlineKeyboardButton("✅ Yes, Reply", f"rpm_exec_{index}_{chat_id}_{msg_id}"),
-            InlineKeyboardButton("❌ No", f"session_info_{index}_1")
+            InlineKeyboardButton("✅ Yes, Reply", f"rpm_exec_{index}_{chat_id}_{msg_id}", style=user_style),
+            InlineKeyboardButton("❌ No", f"session_info_{index}_1", style=user_style)
         ]
     ]
     await cb.edit_message_text(
@@ -89,12 +95,14 @@ async def join_chat_input_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
     from .states import user_join_state
     user_join_state[cb.from_user.id] = {'session_index': index, 'page': page, 'step': 'waiting_link'}
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
     await cb.edit_message_text(
         "<b>➕ Join Chat</b>\n\n"
         "Silakan kirim <b>Invite Link</b> atau <b>Username</b> grup/channel yang ingin dimasuki.\n\n"
         "❌ <b>Cancel:</b> /cancel",
         parse_mode=ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}", style=user_style)]])
     )
 
 @Altruix.bot.on_callback_query(filters.regex(r"^gen_conf_leave_chat_input_(\d+)_(\d+)$"))
@@ -106,12 +114,14 @@ async def leave_chat_input_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
     from .states import user_leave_state
     user_leave_state[cb.from_user.id] = {'session_index': index, 'page': page, 'step': 'waiting_chat'}
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
     await cb.edit_message_text(
         "<b>➖ Leave Chat</b>\n\n"
         "Silakan kirim <b>Username</b> atau <b>ID</b> grup/channel yang ingin ditinggalkan.\n\n"
         "❌ <b>Cancel:</b> /cancel",
         parse_mode=ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}", style=user_style)]])
     )
 
 @Altruix.bot.on_callback_query(filters.regex(r"^gen_conf_send_message_input_(\d+)_(\d+)$"))
@@ -123,12 +133,14 @@ async def send_message_input_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
     from .states import user_send_msg_state
     user_send_msg_state[cb.from_user.id] = {'session_index': index, 'page': page, 'step': 'waiting_target'}
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
     await cb.edit_message_text(
         "<b>💬 Send Message</b>\n\n"
         "Silakan kirim <b>Target (Username/ID)</b> tujuan pengiriman pesan.\n\n"
         "❌ <b>Cancel:</b> /cancel",
         parse_mode=ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}", style=user_style)]])
     )
 async def process_join_chat(c: Client, m: Message, state: dict):
     """Process join chat input"""
@@ -146,10 +158,11 @@ async def process_join_chat(c: Client, m: Message, state: dict):
         await m.reply(f"❌ <b>Failed:</b> {str(e)}")
         await send_log_notification(c, 'join_chat', index, m.from_user, False, str(e))
     
-    from .states import user_join_state
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(m.from_user.id)
     if user_id in user_join_state: del user_join_state[user_id]
     await asyncio.sleep(2)
-    await m.reply("🔄 Memuat ulang menu...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Dashboard", f"session_info_{index}_{page}")]]))
+    await m.reply("🔄 Memuat ulang menu...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Dashboard", f"session_info_{index}_{page}", style=user_style)]]))
 
 async def process_leave_chat(c: Client, m: Message, state: dict):
     """Process leave chat input"""
@@ -167,10 +180,11 @@ async def process_leave_chat(c: Client, m: Message, state: dict):
         await m.reply(f"❌ <b>Failed:</b> {str(e)}")
         await send_log_notification(c, 'leave_chat', index, m.from_user, False, str(e))
     
-    from .states import user_leave_state
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(m.from_user.id)
     if user_id in user_leave_state: del user_leave_state[user_id]
     await asyncio.sleep(2)
-    await m.reply("🔄 Memuat ulang menu...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Dashboard", f"session_info_{index}_{page}")]]))
+    await m.reply("🔄 Memuat ulang menu...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Dashboard", f"session_info_{index}_{page}", style=user_style)]]))
 
 async def process_send_message(c: Client, m: Message, state: dict):
     """Process send message target input and move to step 2 (message content)"""
@@ -244,9 +258,11 @@ async def process_misc_profile_input(c: Client, m: Message, state: dict):
     except Exception as e:
         await m.reply(f"❌ <b>Error:</b> {str(e)}")
         
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(user_id)
     del user_profile_edit_state[user_id]
     await asyncio.sleep(2)
-    await m.reply("🔄 Memuat ulang menu...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Dashboard", f"session_info_{index}_{page}")]]))
+    await m.reply("🔄 Memuat ulang menu...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Dashboard", f"session_info_{index}_{page}", style=user_style)]]))
 
 # --- Global Reply Manager (Bot Controls) ---
 

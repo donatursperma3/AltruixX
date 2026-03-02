@@ -93,7 +93,7 @@ async def paste_inline_handler(_, iq: InlineQuery):
         buttons = arrange_buttons(
             [
                 InlineKeyboardButton(
-                    service.title(),
+                    await Essentials.get_user_button_style(iq.from_user.id, service.title()),
                     callback_data=f"paste_to_{service}#{iq.matches[0].group(3)}",
                 )
                 for service in Paste().all_bins
@@ -128,7 +128,7 @@ async def paste_inline_handler(_, iq: InlineQuery):
                         Altruix.get_string("PASTE_TEXT").format(url, "bin"),
                     ),
                     reply_markup=InlineKeyboardMarkup(
-                        [[InlineKeyboardButton("URL", url=url)]]
+                        [[InlineKeyboardButton(await Essentials.get_user_button_style(iq.from_user.id, "URL"), url=url)]]
                     ),
                 )
             ],

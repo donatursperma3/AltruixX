@@ -91,6 +91,8 @@ from pyrogram.errors import FloodWait
 import psutil
 import platform
 import threading
+from Main.utils.essentials import Essentials
+from pyrogram import Client, idle, enums
 
 logger = logging.getLogger("Altruix")
 
@@ -151,6 +153,23 @@ def get_current_git_branch() -> str:
     # Format akhir: branch (commit)
     return f"{branch_name} [{commit_hash}]"
 
+class TruncatedFormatter(logging.Formatter):
+    """Custom formatter to truncate extremely long messages/tracebacks unless in DEBUG mode"""
+    def __init__(self, fmt=None, datefmt=None, max_length=222, config=None):
+        super().__init__(fmt, datefmt)
+        self.max_length = max_length
+        self.config = config
+
+    def format(self, record):
+        formatted = super().format(record)
+        # Bypassing truncation if DEBUG is True
+        if self.config and getattr(self.config, "DEBUG", False):
+            return formatted
+            
+        if len(formatted) > self.max_length:
+            return formatted[:self.max_length] + "... [TRUNCATED]"
+        return formatted
+
 class AltruixClient:
     def __init__(self, *args, **kwargs) -> None:
         self.ourselves: List[Dict[Any, Any]] = []
@@ -158,7 +177,7 @@ class AltruixClient:
         self.clients: List[Client] = []
         self.cmd_list = {}
         self.all_lang_strings = {}
-        self.__version__ = "0.0.10.043D" # ✅ Ultroid Compatibility Fix
+        self.__version__ = "0.0.10.0754H" # ✅ Sync Bottleneck Fix
         self.upm = UPM(self)
         self.selected_lang = "english"
         self.local_lang_file = "./Main/localization"
@@ -175,10 +194,15 @@ class AltruixClient:
         Session.notice_displayed = True
         self.cmd_list_s = []
         self.training_wheels_protocol = False
-        self._init_logger()
         self.config = BaseConfig
+        self._init_logger()
         self.db_sudo_users = set() # ✅ Dynamic Cache for Sudo Users from DB
         self.db_sudo_sync_lock = asyncio.Lock()
+        self._sudo_membership_cache = TTLCache(maxsize=2000, ttl=600) # 10 minutes cache
+        self._membership_lock = asyncio.Lock()
+        self._membership_locks = {} # {user_id: Lock} to avoid global lock for network probes
+        self._group_wl_cache = None
+        self._group_wl_cache_exp = 0
         self._auth_users_cache = set() # ✅ Optimized set for fast lookup
         
         # ✅ HIGH-PERFORMANCE SETTINGS CACHE
@@ -216,6 +240,13 @@ class AltruixClient:
             print(f"Migration failed: {e}")
 
         self.local_db = LocalDatabase()
+        
+        # ✅ Install global exception handler for Pyrogram dispatcher
+        try:
+            from Main.core.exception_handler import install_exception_handler
+            install_exception_handler()
+        except Exception as e:
+            logger.warning(f"Failed to install exception handler: {e}")
         
         # ✅ Shared States for Plugins
         self.PURGEME_STATE = {}
@@ -532,8 +563,62 @@ class AltruixClient:
                     self.log(f"✅ is_sudo: User {user_id} found in fallback db_sudo_users cache.", level=logging.DEBUG)
                     return True
         
+        if await self.is_member_of_whitelisted_group(user_id):
+            self.log(f"✅ is_sudo: User {user_id} is a member of a whitelisted group.", level=logging.DEBUG)
+            return True
+        
         self.log(f"❌ is_sudo: User {user_id} NOT AUTHORIZED.", level=logging.DEBUG)
         return False
+
+    async def is_member_of_whitelisted_group(self, user_id: int) -> bool:
+        """Check if a user is a member of any whitelisted group with TTL caching."""
+        if not await self.is_group_wl_enabled():
+            return False
+            
+        # 1. Immediate cache check (Fast Path)
+        if user_id in self._sudo_membership_cache:
+            return self._sudo_membership_cache[user_id]
+            
+        # 2. Get user-specific lock to avoid redundant concurrent probes
+        if user_id not in self._membership_locks:
+            self._membership_locks[user_id] = asyncio.Lock()
+        
+        async with self._membership_locks[user_id]:
+            # Double check cache after acquiring lock
+            if user_id in self._sudo_membership_cache:
+                return self._sudo_membership_cache[user_id]
+                
+            group_list = await self.get_group_wl_list()
+            if not group_list:
+                self._sudo_membership_cache[user_id] = False
+                return False
+                
+            is_member = False
+            # Try checking membership via connected clients
+            # Priority: Bot Assistant -> First 2 userbots (Limit to avoid loop lag)
+            clients_to_try = ([self.bot] if self.bot and self.bot.is_connected else []) + self.clients[:2]
+            
+            for client in clients_to_try:
+                if not client or not client.is_connected:
+                    continue
+                    
+                for group in group_list:
+                    chat_id = group["_id"]
+                    try:
+                        # ✅ Check chat member status
+                        member = await client.get_chat_member(int(chat_id), user_id)
+                        from pyrogram.enums import ChatMemberStatus
+                        if member.status in [ChatMemberStatus.OWNER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.MEMBER]:
+                            is_member = True
+                            break
+                    except Exception:
+                        continue
+                if is_member:
+                    break
+            
+            # ✅ Update TTL cache (Including False results for negative caching)
+            self._sudo_membership_cache[user_id] = is_member
+            return is_member
 
     @property
     def is_sudo_filter(self):
@@ -613,13 +698,84 @@ class AltruixClient:
                 
             self.log(f"✅ Sudo & Prefix cache refreshed: {len(self.db_sudo_users)} sudo users.", level=logging.INFO)
 
+
+    # ✅ GROUP WHITELIST MANAGEMENT
+    _group_wl_enabled = None
+
+    async def is_group_wl_enabled(self) -> bool:
+        """Check if group whitelist feature is enabled globaly."""
+        if self._group_wl_enabled is not None:
+            return self._group_wl_enabled
+        status = await self.config.get_env("GROUP_WL_STATUS")
+        self._group_wl_enabled = (status == "on")
+        return self._group_wl_enabled
+
+    async def toggle_group_wl(self, status: bool = None) -> bool:
+        """Toggle group whitelist feature status."""
+        current = await self.is_group_wl_enabled()
+        new_status = status if status is not None else not current
+        val = "on" if new_status else "off"
+        await self.config.add_env_to_db("GROUP_WL_STATUS", val)
+        self._group_wl_enabled = new_status
+        return new_status
+
+    async def is_group_whitelisted(self, chat_id: Union[int, str]) -> bool:
+        """Check if a group is whitelisted."""
+        if not await self.is_group_wl_enabled():
+            return False
+        res = await self.db.group_wl_col.find_one({"_id": str(chat_id)})
+        return bool(res)
+
+    async def add_group_wl(self, chat_id: Union[int, str], title: str = "Unknown Group") -> bool:
+        """Add a group to the whitelist."""
+        await self.db.group_wl_col.find_one_and_update(
+            {"_id": str(chat_id)},
+            {"$set": {"_id": str(chat_id), "title": title, "added_at": time.time()}},
+            upsert=True
+        )
+        self._group_wl_cache = None # Invalidate cache
+        return True
+
+    async def del_group_wl(self, chat_id: Union[int, str]) -> bool:
+        """Remove a group from the whitelist."""
+        res = await self.db.group_wl_col.find_one_and_delete({"_id": str(chat_id)})
+        self._group_wl_cache = None # Invalidate cache
+        return bool(res)
+
+    async def get_group_wl_list(self) -> List[Dict[str, Any]]:
+        """Get list of all whitelisted groups with 1-minute TTL caching."""
+        now = time.time()
+        if self._group_wl_cache is not None and self._group_wl_cache_exp > now:
+            return self._group_wl_cache
+            
+        groups = []
+        async for group in self.db.group_wl_col.find({}):
+            groups.append(group)
+            
+        self._group_wl_cache = groups
+        self._group_wl_cache_exp = now + 60 # 1 minute cache
+        return groups
+
     def log(
         self,
-        message: Optional[str] = None,
+        message: Optional[Any] = None,
         level=logging.DEBUG,
         logger: logging.Logger = logging.getLogger(__name__),
     ) -> Optional[str]:
-        msg = message or traceback.format_exc()
+        if message is None:
+            msg = traceback.format_exc()
+        elif isinstance(message, Exception):
+            # Compact formatting for RPC errors or standard exceptions
+            error_name = type(message).__name__
+            error_msg = str(message).split("Telegram says:")[0].strip() # Remove repetitive boilerplate
+            if "Telegram says:" in str(message):
+                # Format: [RPCError] MESSAGE (Details)
+                msg = f"[{error_name}] {error_msg}"
+            else:
+                msg = f"{error_name}: {message}"
+        else:
+            msg = str(message)
+
         # Suppress DEBUG: logs unless config.DEBUG is True
         if msg and msg.startswith("DEBUG:") and not getattr(self.config, "DEBUG", False):
             return msg
@@ -636,15 +792,36 @@ class AltruixClient:
                 sys.stderr.reconfigure(encoding="utf-8")
 
         logging.getLogger("pyrogram").setLevel(logging.ERROR)
-        logging.basicConfig(
-            level=logging.INFO,
-            datefmt="[%d/%m/%Y %H:%M:%S]",
-            format="%(asctime)s - [Altroid-X] >> %(levelname)s << %(message)s",
-            handlers=[
-                logging.FileHandler("altruix.log", encoding="utf-8", mode="w"),
-                logging.StreamHandler()
-            ],
+        
+        # Define format
+        log_format = "%(asctime)s - [Altroid-X] >> %(levelname)s << %(message)s"
+        date_format = "[%d/%m/%Y %H:%M:%S]"
+        
+        # Setup handlers
+        file_handler = logging.FileHandler("altruix.log", encoding="utf-8", mode="w")
+        stream_handler = logging.StreamHandler()
+        
+        # Apply Truncated Formatter (aware of DEBUG mode)
+        formatter = TruncatedFormatter(
+            fmt=log_format, 
+            datefmt=date_format, 
+            max_length=1500,
+            config=self.config
         )
+        file_handler.setFormatter(formatter)
+        stream_handler.setFormatter(formatter)
+        
+        # Get root logger
+        root_logger = logging.getLogger()
+        root_logger.setLevel(logging.INFO)
+        
+        # Remove existing handlers if any
+        for h in root_logger.handlers[:]:
+            root_logger.removeHandler(h)
+            
+        root_logger.addHandler(file_handler)
+        root_logger.addHandler(stream_handler)
+        
         self.log("Initialized Logger successfully!")
 
     async def resolve_dns(self):
@@ -1035,11 +1212,25 @@ class AltruixClient:
                         if not is_sudo_cmd:
                             return
 
-                    # ✅ CONSOLIDATED DEDUPLICATION (Requirement 1.B/C Fix)
-                    # If this is a sudo command, only the FIRST active session handles it to avoid duplicates.
+                    # ✅ FIXED: SMART SUDO HANDLING for Multi-Client Setup
                     if is_sudo_cmd and is_sudo_user:
-                        if self.clients and client != self.clients[0]:
-                            return
+                        # Check if sudo is enabled for THIS specific client
+                        sudo_apply_type = self._sudo_settings_cache["apply_type"]
+                        
+                        if sudo_apply_type == "per_account":
+                            # Per-account mode: Each client handles sudo independently based on their own settings
+                            sudo_enabled_for_this_client = self._sudo_settings_cache["per_account_enabled"].get(current_client_id, True)
+                            if not sudo_enabled_for_this_client:
+                                # This client has sudo disabled, skip
+                                return
+                            # ✅ Allow this client to handle sudo command
+                        else:
+                            # Global mode: ALL clients with global sudo enabled will respond
+                            # Check if global sudo is enabled
+                            if not self._sudo_settings_cache["enabled_global"]:
+                                # Global sudo is disabled, skip
+                                return
+                            # ✅ Allow ALL clients to handle sudo command (no deduplication in global mode)
 
                     # ✅ CROSS-EXECUTION PREVENTION for multiple userbot sessions
                     if sender_id != current_client_id and not is_sudo_cmd:
@@ -1120,7 +1311,7 @@ class AltruixClient:
                         
                         # Coba kirim error ke user
                         try:
-                            await message.edit(f"❌ Error: {type(_be).__name__}")
+                            await message.edit(f"❌ Error: {str(_be)[:100]}")
                         except:
                             pass
                         
@@ -1234,11 +1425,12 @@ class AltruixClient:
             )
             for client in self.clients:
                 # ✅ DEDUPLICATION Logic for Sessions
+                img_key_val = None
                 if cmd:
-                    if isinstance(cmd, (list, tuple)): cmd_key = tuple(sorted(list(cmd)))
-                    else: cmd_key = (cmd,)
+                    if isinstance(cmd, (list, tuple)): img_key_val = tuple(sorted(list(cmd)))
+                    else: img_key_val = (cmd,)
                     
-                    registry_key = (f"session_{client.me.id if hasattr(client, 'me') else client.name}", cmd_key, handler_type.__name__)
+                    registry_key = (f"session_{client.me.id if hasattr(client, 'me') else client.name}", img_key_val, handler_type.__name__)
                     if registry_key in self.handler_registry:
                         continue
                     
@@ -1250,11 +1442,12 @@ class AltruixClient:
                 
         if self.bot_mode and not bot_mode_unsupported and not self.loaded_bot_cmds:
             # ✅ DEDUPLICATION Logic for Bot Assistant
+            bot_cmd_key = None
             if cmd:
-                if isinstance(cmd, (list, tuple)): cmd_key = tuple(sorted(list(cmd)))
-                else: cmd_key = (cmd,)
+                if isinstance(cmd, (list, tuple)): bot_cmd_key = tuple(sorted(list(cmd)))
+                else: bot_cmd_key = (cmd,)
                 
-                bot_registry_key = ("bot_assistant", cmd_key, handler_type.__name__)
+                bot_registry_key = ("bot_assistant", bot_cmd_key, handler_type.__name__)
                 if bot_registry_key in self.handler_registry:
                     return # Already registered to bot
                 
@@ -1272,7 +1465,11 @@ class AltruixClient:
                 for custom_bot in self.bot_manager.custom_bots.values():
                     try:
                         # Deduplication for custom bots
-                        cb_reg_key = (f"custom_bot_{custom_bot.me.id if hasattr(custom_bot, 'me') else 'pending'}", cmd_key, handler_type.__name__)
+                        cb_cmd_key = None
+                        if cmd:
+                            if isinstance(cmd, (list, tuple)): cb_cmd_key = tuple(sorted(list(cmd)))
+                            else: cb_cmd_key = (cmd,)
+                        cb_reg_key = (f"custom_bot_{custom_bot.me.id if hasattr(custom_bot, 'me') else 'pending'}", cb_cmd_key, handler_type.__name__)
                         if cb_reg_key not in self.handler_registry:
                             custom_bot.add_handler(handler_type(func_, filters=bot_f), group=group)
                             self.handler_registry.add(cb_reg_key)
@@ -1309,10 +1506,9 @@ class AltruixClient:
                         # Kirim ke log group menggunakan bot client
                         if hasattr(self, 'bot') and self.bot.is_connected and self.log_chat:
                             try:
-                                from pyrogram import enums
                                 await self.bot.send_message(
                                     chat_id=self.log_chat,
-                                    text=alert_msg,
+                                    text=f"<blockquote expandable>{alert_msg}</blockquote>",
                                     parse_mode=enums.ParseMode.HTML
                                 )
                                 alert_sent = True
@@ -1367,7 +1563,8 @@ class AltruixClient:
         try:
             import psutil
             # Gunakan psutil jika tersedia
-            cpu_percent = round(psutil.cpu_percent(interval=0.5), 1)
+            # ✅ PERFORMANCE: interval=0 untuk instant read (non-blocking)
+            cpu_percent = round(psutil.cpu_percent(interval=0), 1)
             cpu_cores = psutil.cpu_count(logical=False) or os.cpu_count() or "N/A"
             cpu_threads = psutil.cpu_count(logical=True) or os.cpu_count() or "N/A"
             
@@ -1434,6 +1631,105 @@ class AltruixClient:
             }
         }
 
+    def format_startup_log_blockquote(
+        self,
+        total_sessions: int,
+        success_count: int,
+        failed_count: int,
+        owner_id: int,
+        branch: str,
+        db_type: str,
+        version: str,
+        startup_time: str,
+        system_stats: dict = None,
+        warnings: dict = None
+    ) -> str:
+        """
+        Format startup log dengan blockquote expandable untuk tampilan yang lebih rapi.
+        
+        Args:
+            total_sessions: Total jumlah session (user + bot)
+            success_count: Jumlah client yang berhasil startup
+            failed_count: Jumlah client yang gagal startup
+            owner_id: ID owner userbot
+            branch: Branch Git dan commit hash
+            db_type: Tipe database (MongoDB/LocalDB)
+            version: Versi Altruix
+            startup_time: Waktu startup
+            system_stats: Dictionary berisi system statistics (optional)
+            warnings: Dictionary berisi resource warnings (optional)
+        
+        Returns:
+            str: Formatted HTML string dengan blockquote expandable
+        """
+        import html as html_module
+        
+        # Header (di luar blockquote)
+        message = "<b>✅ All clients finished sending startup logs!</b>\n\n"
+        
+        # Mulai blockquote expandable
+        message += "<blockquote expandable>\n"
+        
+        # Section 1: Client Statistics
+        message += "<b>📊 Client Statistics</b>\n"
+        message += f"• Total Session: {total_sessions} user + 1 bot\n"
+        message += f"• Success: {success_count} clients\n"
+        message += f"• Failed: {failed_count} clients\n\n"
+        
+        # Section 2: System Information
+        message += "<b>ℹ️ System Information</b>\n"
+        message += f"• Owner ID: <code>{html_module.escape(str(owner_id))}</code>\n"
+        message += f"• Branch: {html_module.escape(branch)}\n"
+        message += f"• Database: {html_module.escape(db_type)}\n"
+        message += f"• Version: {html_module.escape(version)}\n"
+        message += f"• Time: {html_module.escape(startup_time)}\n\n"
+        
+        # Section 3: System Statistics (jika ada)
+        if system_stats:
+            cpu_data = system_stats.get('cpu', {})
+            ram_data = system_stats.get('ram', {})
+            proc_data = system_stats.get('process', {})
+            sys_data = system_stats.get('system', {})
+            
+            cpu_percent = cpu_data.get('percent', 'N/A')
+            cpu_cores = cpu_data.get('cores', 'N/A')
+            cpu_threads = cpu_data.get('threads', 'N/A')
+            ram_used = ram_data.get('used', 'N/A')
+            ram_total = ram_data.get('total', 'N/A')
+            ram_percent = ram_data.get('percent', 'N/A')
+            proc_memory = proc_data.get('memory_mb', 'N/A')
+            proc_threads = proc_data.get('threads', 'N/A')
+            uptime = proc_data.get('uptime', 'N/A')
+            platform_name = sys_data.get('platform', 'Unknown')
+            python_version = sys_data.get('python', 'Unknown')
+            pyrogram_version = sys_data.get('pyrogram', 'Unknown')
+            
+            message += "<b>📊 System Statistics</b>\n"
+            message += f"• CPU: {cpu_percent}% ({cpu_cores} core/{cpu_threads} thread)\n"
+            message += f"• RAM: {ram_used}GB/{ram_total}GB ({ram_percent}%)\n"
+            message += f"• Proses: {proc_memory}MB ({proc_threads} thread)\n"
+            message += f"• Uptime: {uptime}\n"
+            message += f"• Platform: {platform_name} | Python {python_version} | Pyrogram {pyrogram_version}\n\n"
+        
+        # Section 4: Resource Warning (conditional)
+        if warnings:
+            cpu_warning = warnings.get('cpu')
+            ram_warning = warnings.get('ram')
+            
+            if cpu_warning or ram_warning:
+                message += "<b>⚠️ Resource Warning</b>\n"
+                if cpu_warning:
+                    message += f"🖥 CPU Usage: {cpu_warning}%\n"
+                if ram_warning:
+                    message += f"💾 RAM Usage: {ram_warning}%\n"
+                message += "‼️ Tindakan diperlukan:\n"
+                message += "Server Anda hampir mencapai kapasitas maksimal. Mohon periksa proses yang berjalan untuk menghindari crash atau restart tak terduga.\n"
+        
+        # Tutup blockquote
+        message += "</blockquote>"
+        
+        return message
+
     async def _run(self):
         """Main loop dengan state management dan restart terkontrol"""
         restart_count = 0
@@ -1495,8 +1791,9 @@ class AltruixClient:
                     try:
                         await self.bot.send_message(
                             self.log_chat,
-                            system_info,
-                            link_preview_options=LinkPreviewOptions(is_disabled=True)
+                            f"<blockquote expandable>{system_info}</blockquote>",
+                            link_preview_options=LinkPreviewOptions(is_disabled=True),
+                            parse_mode=enums.ParseMode.HTML
                         )
                     except Exception as e:
                         self.log(f"Gagal kirim stats ke log chat: {e}", level=logging.WARNING)
@@ -1647,43 +1944,62 @@ class AltruixClient:
         checks_passed = 0
         total_checks = 0
         
-        # Cek database
-        try:
-            await self.db.ping()
-            self.log("✅ Database connection: OK")
-            checks_passed += 1
-        except Exception as e:
-            self.log(f"❌ Database connection: FAILED - {e}", level=logging.ERROR)
-        total_checks += 1
+        # ✅ PERFORMANCE: Jalankan semua checks secara parallel dengan timeout
+        async def check_database():
+            try:
+                await asyncio.wait_for(self.db.ping(), timeout=3.0)
+                self.log("✅ Database connection: OK")
+                return True
+            except asyncio.TimeoutError:
+                self.log("❌ Database connection: TIMEOUT", level=logging.ERROR)
+                return False
+            except Exception as e:
+                self.log(f"❌ Database connection: FAILED - {e}", level=logging.ERROR)
+                return False
         
-        # Cek bot connection
-        try:
-            if hasattr(self, 'bot') and self.bot.is_connected:
-                await self.bot.get_me()
-                self.log("✅ Bot connection: OK")
-                checks_passed += 1
-        except Exception as e:
-            self.log(f"❌ Bot connection: FAILED - {e}", level=logging.ERROR)
-        total_checks += 1
+        async def check_bot():
+            try:
+                if hasattr(self, 'bot') and self.bot.is_connected:
+                    await asyncio.wait_for(self.bot.get_me(), timeout=3.0)
+                    self.log("✅ Bot connection: OK")
+                    return True
+                return False
+            except asyncio.TimeoutError:
+                self.log("❌ Bot connection: TIMEOUT", level=logging.ERROR)
+                return False
+            except Exception as e:
+                self.log(f"❌ Bot connection: FAILED - {e}", level=logging.ERROR)
+                return False
+        
+        async def check_user_session(idx, client):
+            try:
+                if client.is_connected:
+                    await asyncio.wait_for(client.get_me(), timeout=3.0)
+                    self.log(f"✅ User session {idx}: OK")
+                    return True
+                return False
+            except asyncio.TimeoutError:
+                self.log(f"❌ User session {idx}: TIMEOUT", level=logging.WARNING)
+                return False
+            except Exception as e:
+                self.log(f"❌ User session {idx}: FAILED - {e}", level=logging.WARNING)
+                return False
+        
+        # ✅ PERFORMANCE: Run all checks in parallel
+        tasks = [check_database(), check_bot()]
+        tasks.extend([check_user_session(idx, client) for idx, client in enumerate(self.clients)])
+        
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        checks_passed = sum(1 for r in results if r is True)
+        total_checks = len(results)
 
-        # Di _health_check(), tambahkan:
+        # Memory check (non-blocking)
         try:
             mem_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
             if mem_mb > 7000:  # 7GB dari 8GB
                 self.log("MemoryWarning: Memori hampir penuh! Pertimbangkan restart manual.", level=logging.WARNING)
         except Exception:
             pass
-                
-        # Cek user sessions
-        for idx, client in enumerate(self.clients):
-            try:
-                if client.is_connected:
-                    await client.get_me()
-                    self.log(f"✅ User session {idx}: OK")
-                    checks_passed += 1
-            except Exception as e:
-                self.log(f"❌ User session {idx}: FAILED - {e}", level=logging.WARNING)
-            total_checks += 1
         
         success_rate = (checks_passed / total_checks * 100) if total_checks > 0 else 0
         self.log(f"📊 Health Check: {checks_passed}/{total_checks} passed ({success_rate:.1f}%)")
@@ -2008,21 +2324,59 @@ class AltruixClient:
                             branch = get_current_git_branch()
                             altruix_version = getattr(self, "__version__", "unknown")
                             db_type = "MongoDB" if self.config.DB_URI else "LocalDB"
-                            summary = (
-                                self.get_string("startup_complete_title") +
-                                self.get_string("startup_total_session").format(len(self.clients)) +
-                                self.get_string("startup_success_count").format(success_count) +
-                                self.get_string("startup_failed_count").format(len(failed_clients)) +
-                                self.get_string("startup_owner_id").format(BaseConfig.OWNER_ID) +
-                                self.get_string("startup_branch").format(branch) +
-                                self.get_string("startup_db").format(db_type) +
-                                self.get_string("startup_ver").format(altruix_version) +
-                                self.get_string("startup_time").format(startup_time)
+                            
+                            # Get system stats untuk ditampilkan di startup log
+                            system_stats = self.get_system_stats()
+                            
+                            # Check untuk resource warnings (CPU/RAM > 80%)
+                            warnings = {}
+                            cpu_percent = system_stats.get('cpu', {}).get('percent')
+                            ram_percent = system_stats.get('ram', {}).get('percent')
+                            
+                            if isinstance(cpu_percent, (int, float)) and cpu_percent > 80:
+                                warnings['cpu'] = cpu_percent
+                            if isinstance(ram_percent, (int, float)) and ram_percent > 80:
+                                warnings['ram'] = ram_percent
+                            
+                            # Format pesan dengan blockquote expandable
+                            summary = self.format_startup_log_blockquote(
+                                total_sessions=len(self.clients),
+                                success_count=success_count,
+                                failed_count=len(failed_clients),
+                                owner_id=BaseConfig.OWNER_ID,
+                                branch=branch,
+                                db_type=db_type,
+                                version=altruix_version,
+                                startup_time=startup_time,
+                                system_stats=system_stats,
+                                warnings=warnings if warnings else None
                             )
-                            await self.bot.send_message(log_chat_id, summary)
-                            self.log(f"Ringkasan akhir berhasil dikirim. Branch: {branch}, Versi: {altruix_version}, level=20")
+                            
+                            # Kirim dengan parse_mode HTML
+                            await self.bot.send_message(
+                                log_chat_id, 
+                                summary,
+                                parse_mode=ParseMode.HTML
+                            )
+                            self.log(f"Ringkasan akhir berhasil dikirim. Branch: {branch}, Versi: {altruix_version}", level=20)
                         except Exception as e:
-                            self.log(self.get_string("startup_summary_fail").format(e), level=logging.ERROR)
+                            # Fallback ke format plain text jika HTML error
+                            self.log(f"Error sending HTML format, trying plain text: {e}", level=logging.WARNING)
+                            try:
+                                summary_plain = (
+                                    self.get_string("startup_complete_title") +
+                                    self.get_string("startup_total_session").format(len(self.clients)) +
+                                    self.get_string("startup_success_count").format(success_count) +
+                                    self.get_string("startup_failed_count").format(len(failed_clients)) +
+                                    self.get_string("startup_owner_id").format(BaseConfig.OWNER_ID) +
+                                    self.get_string("startup_branch").format(branch) +
+                                    self.get_string("startup_db").format(db_type) +
+                                    self.get_string("startup_ver").format(altruix_version) +
+                                    self.get_string("startup_time").format(startup_time)
+                                )
+                                await self.bot.send_message(log_chat_id, summary_plain)
+                            except Exception as e2:
+                                self.log(self.get_string("startup_summary_fail").format(e2), level=logging.ERROR)
         except Exception as e:
             self.log(f"CRITICAL: Session initialization failed: {e}", level=50)
             raise
@@ -2277,7 +2631,20 @@ class AltruixClient:
                 
         me = None
         if client:
-            me = client.myself if hasattr(client, "myself") else await client.get_me()
+            # ✅ OPTIMIZATION: Use cached info if available to avoid network call in high-freq tasks
+            if hasattr(client, "myself") and client.myself:
+                me = client.myself
+            elif hasattr(client, "me") and client.me:
+                me = client.me
+            elif index is not None and 0 <= index < len(self.ourselves):
+                me = self.ourselves[index]
+            else:
+                # Fallback only if absolutely necessary, but try to avoid it
+                try:
+                    me = await client.get_me()
+                    client.myself = me
+                except:
+                    pass
             
         ub_plugins = len(glob.glob("Main/plugins/userbot/*.py"))
         bot_plugins = len(glob.glob("Main/plugins/bot/*.py"))
@@ -2329,6 +2696,9 @@ class AltruixClient:
             first = me.first_name or ""
             last = me.last_name or ""
             full = f"{first} {last}".strip()
+            
+            first = Essentials.clean_user_name(first)
+            full = Essentials.clean_user_name(full)
             
             # Escape only for HTML mode
             m_first = html.escape(first) if parse_mode == ParseMode.HTML else first
@@ -2529,9 +2899,8 @@ class AltruixClient:
                         import_type = "A"
                     elif import_type == "addons":
                         import_type = "X"
-                        # Check if Ultroid Addons are enabled
-                        is_enabled = await self.config.get_env("LOAD_ULTROID_ADDONS", default="off")
-                        if str(is_enabled).lower() not in ("on", "true", "1", "yes"):
+                        # ✅ PERFORMANCE FIX: Use cached value instead of querying DB
+                        if not getattr(self, '_ultroid_addons_enabled', False):
                             # Skip loading if disabled
                             continue
                         
@@ -2625,16 +2994,21 @@ class AltruixClient:
     async def load_all_modules(self):
         self.log("Starting to load all modules...", level=logging.INFO)
         try:
+            # ✅ PERFORMANCE FIX: Cache LOAD_ULTROID_ADDONS check once
+            ultroid_addons_enabled = await self.config.get_env("LOAD_ULTROID_ADDONS", default="off")
+            self._ultroid_addons_enabled = str(ultroid_addons_enabled).lower() in ("on", "true", "1", "yes")
+            
             await self.load_from_directory("Main/utils/*.py", log=False)
             await self.load_from_directory("Main/internals/*.py", log=False)
             self.log("All internal modules have been loaded.")
             self.log("Preparing to load all plugins.\n")
-            # Setup Ultroid Shims before loading any plugins
-            try:
-                from Main.core.ext.ultroid_shims import setup_shims
-                setup_shims(self)
-            except Exception as e:
-                self.log(f"Failed to setup Ultroid shims: {e}", level=logging.ERROR)
+            # Setup Ultroid Shims *only if* addons enabled
+            if self._ultroid_addons_enabled:
+                try:
+                    from Main.core.ext.ultroid_shims import setup_shims
+                    setup_shims(self)
+                except Exception as e:
+                    self.log(f"Failed to setup Ultroid shims: {e}", level=logging.ERROR)
 
             await self.load_from_directory("Main/plugins/bot/*.py", log=True)
             if self.training_wheels_protocol:
@@ -2651,8 +3025,7 @@ class AltruixClient:
                 await self.install_all_apm_packages()
                 
                 # ✅ NEW: Sync Ultroid Addons before loading
-                is_enabled = await self.config.get_env("LOAD_ULTROID_ADDONS", default="off")
-                if str(is_enabled).lower() in ("on", "true", "1", "yes"):
+                if self._ultroid_addons_enabled:
                     await self.upm.sync_addons()
 
                 if os.path.lexists("Main/plugins/addons"):
@@ -2787,25 +3160,33 @@ class AltruixClient:
                     usage_text = each_command_data.get("usage")
                     example_text = each_command_data.get("example")
                     user_args = each_command_data.get("user_args")
-                    self._command_help_message_data[plugin_name] += "\n<b>➤ Command :</b>"
+                    if usage_text:
+                        usage_text = usage_text.replace("{i}", display_pfx).replace("{prefix}", display_pfx).replace("{ultroid_prefix}", display_pfx)
+                    if example_text:
+                        example_text = example_text.replace("{i}", display_pfx).replace("{prefix}", display_pfx).replace("{ultroid_prefix}", display_pfx)
+                    self._command_help_message_data[plugin_name] += "\n<b>➤ Command :</b> "
                     for _cmd_str in commands_:
                         self._command_help_message_data[
                             plugin_name
-                        ] += f"<code>{display_pfx}{_cmd_str}</code>/"
+                        ] += f"<code>{display_pfx}{_cmd_str}</code> / "
+                    # Remove trailing " / " and add newline
                     self._command_help_message_data[plugin_name] = (
-                        self._command_help_message_data[plugin_name][:-1] + "\n"
+                        self._command_help_message_data[plugin_name][:-3] + "\n"
                     )
                     self._command_help_message_data[
                         plugin_name
-                    ] += f"\n<b>➥ Help :</b> <i>{help_text}</i>\n"
+                    ] += f"\n<b>➥ Help :</b>  <i>{help_text}</i>\n"
                     if usage_text:
                         self._command_help_message_data[
                             plugin_name
-                        ] += f"\n<b>➥ Usage :</b> <code>{usage_text}</code>\n"
+                        ] += f"\n<b>➥ Usage :</b>  <code>{usage_text}</code>\n"
                     if example_text:
+                        example_render = example_text
+                        if not example_render.startswith(display_pfx):
+                            example_render = f"{display_pfx}{example_render}"
                         self._command_help_message_data[
                             plugin_name
-                        ] += f"\n<b>➥ Example :</b> <code>{display_pfx}{example_text}</code>\n"
+                        ] += f"\n<b>➥ Example :</b>  <code>{example_render}</code>\n"
                     
                     # ✅ Support for 'detail' key
                     if detail_text := each_command_data.get("detail"):
@@ -2821,8 +3202,8 @@ class AltruixClient:
                         if isinstance(user_args, list):
                             for arg_data in user_args:
                                 if isinstance(arg_data, dict):
-                                    arg_name = arg_data.get("arg", "")
-                                    help_txt = arg_data.get("help", "")
+                                    arg_name = html.escape(str(arg_data.get("arg", "")))
+                                    help_txt = html.escape(str(arg_data.get("help", "")))
                                     requires_input = arg_data.get("requires_input", False)
                                     self._command_help_message_data[
                                         plugin_name

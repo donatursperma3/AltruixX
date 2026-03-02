@@ -19,6 +19,8 @@ DEFAULT_CREATEGROUP_CONFIG = {
     "photo_source": "source", "custom_photo_id": None
 }
 
+from Main.utils.file_helpers import get_user_button_style
+
 @Altruix.bot.on_callback_query(filters.regex(r"^creategroup_menu_(\d+)(?:_(\d+))?$"))
 @iuser_check
 @log_errors
@@ -32,6 +34,11 @@ async def creategroup_menu_handler(c: Client, cb: CallbackQuery):
     session_index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2)) if cb.matches[0].group(2) else 1
     
+    # Resolve user_style for the session owner
+    from Main.internals.settings_handlers.custom_alert_handlers import _get_session_user_id
+    session_user_id = _get_session_user_id(session_index)
+    user_style = get_user_button_style(session_user_id)
+    
     text = (
         "<b>🚀 Create Group</b>\n\n"
         "Pilih metode input konfigurasi:\n"
@@ -40,9 +47,9 @@ async def creategroup_menu_handler(c: Client, cb: CallbackQuery):
     )
     
     buttons = [
-        [InlineKeyboardButton("⌨️ Manual Input", callback_data=f"creategroup_manual_{session_index}_{page}")],
-        [InlineKeyboardButton("🎛️ Interactive UI", callback_data=f"creategroup_ui_{session_index}_{page}")],
-        [InlineKeyboardButton("🔙 Back to Session", callback_data=f"session_info_{session_index}_{page}")]
+        [InlineKeyboardButton("⌨️ Manual Input", callback_data=f"creategroup_manual_{session_index}_{page}", style=user_style)],
+        [InlineKeyboardButton("🎛️ Interactive UI", callback_data=f"creategroup_ui_{session_index}_{page}", style=user_style)],
+        [InlineKeyboardButton("🔙 Back to Session", callback_data=f"session_info_{session_index}_{page}", style=user_style)]
     ]
     
     if cb.message:
@@ -57,6 +64,11 @@ async def creategroup_manual_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
     session_index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
+    
+    # Resolve user_style
+    from Main.internals.settings_handlers.custom_alert_handlers import _get_session_user_id
+    session_user_id = _get_session_user_id(session_index)
+    user_style = get_user_button_style(session_user_id)
     
     user_creategroup_state[cb.from_user.id] = {
         "step": "input_manual",
@@ -76,10 +88,10 @@ async def creategroup_manual_handler(c: Client, cb: CallbackQuery):
     )
     if cb.message:
         await cb.message.edit(text, parse_mode=ParseMode.HTML, 
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_menu_{session_index}_{page}")]]))
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_menu_{session_index}_{page}", style=user_style)]]))
     else:
         await cb.edit_message_text(text, parse_mode=ParseMode.HTML, 
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_menu_{session_index}_{page}")]]))
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_menu_{session_index}_{page}", style=user_style)]]))
 
 @Altruix.bot.on_callback_query(filters.regex(r"^creategroup_ui_(\d+)_(\d+)$"))
 @iuser_check
@@ -142,6 +154,11 @@ async def render_creategroup_ui(cb: Optional[CallbackQuery], state: dict, messag
     idx = state["session_index"]
     pg = state["page"]
     
+    # Resolve user_style
+    from Main.internals.settings_handlers.custom_alert_handlers import _get_session_user_id
+    session_user_id = _get_session_user_id(idx)
+    user_style = get_user_button_style(session_user_id)
+    
     session_client = Altruix.clients[idx]
     session_user = getattr(session_client, 'myself', None)
     if not session_user:
@@ -175,10 +192,10 @@ async def render_creategroup_ui(cb: Optional[CallbackQuery], state: dict, messag
     
     def adj_row(label, key, unit):
         return [
-            InlineKeyboardButton(f"➖", callback_data=f"creategroup_adj_{idx}_{pg}_{key}_sub"),
-            InlineKeyboardButton(f"{label}", callback_data="noop"),
-            InlineKeyboardButton(f"➕", callback_data=f"creategroup_adj_{idx}_{pg}_{key}_add"),
-            InlineKeyboardButton(f"✏️", callback_data=f"creategroup_in_{idx}_{pg}_{key}")
+            InlineKeyboardButton(f"➖", callback_data=f"creategroup_adj_{idx}_{pg}_{key}_sub", style=user_style),
+            InlineKeyboardButton(f"{label}", callback_data="noop", style=user_style),
+            InlineKeyboardButton(f"➕", callback_data=f"creategroup_adj_{idx}_{pg}_{key}_add", style=user_style),
+            InlineKeyboardButton(f"✏️", callback_data=f"creategroup_in_{idx}_{pg}_{key}", style=user_style)
         ]
 
     buttons = [
@@ -188,36 +205,36 @@ async def render_creategroup_ui(cb: Optional[CallbackQuery], state: dict, messag
         adj_row(f"Batch ({config['batch_delay']}m)", "batch_delay", "m"),
         adj_row(f"B.Size ({config['batch_size']})", "batch_size", ""),
         [
-            InlineKeyboardButton(f"Name: {config['pattern'][:15]}...", callback_data="noop"),
-            InlineKeyboardButton("✏️ Input", callback_data=f"creategroup_in_{idx}_{pg}_pattern")
+            InlineKeyboardButton(f"Name: {config['pattern'][:15]}...", callback_data="noop", style=user_style),
+            InlineKeyboardButton("✏️ Input", callback_data=f"creategroup_in_{idx}_{pg}_pattern", style=user_style)
         ],
         [
-            InlineKeyboardButton(f"Username: {config['username'] or 'None'}", callback_data="noop"),
-            InlineKeyboardButton("✏️ Input", callback_data=f"creategroup_in_{idx}_{pg}_username")
+            InlineKeyboardButton(f"Username: {config['username'] or 'None'}", callback_data="noop", style=user_style),
+            InlineKeyboardButton("✏️ Input", callback_data=f"creategroup_in_{idx}_{pg}_username", style=user_style)
         ],
         [
-            InlineKeyboardButton(f"Desc: {config['description'][:15]}...", callback_data="noop"),
-            InlineKeyboardButton("✏️ Input", callback_data=f"creategroup_in_{idx}_{pg}_description")
+            InlineKeyboardButton(f"Desc: {config['description'][:15]}...", callback_data="noop", style=user_style),
+            InlineKeyboardButton("✏️ Input", callback_data=f"creategroup_in_{idx}_{pg}_description", style=user_style)
         ],
         [
-            InlineKeyboardButton(f"Photo: {'👤 Source' if config.get('photo_source') == 'source' else '🖼 Custom'}", callback_data=f"creategroup_toggle_{idx}_{pg}_photo_source"),
+            InlineKeyboardButton(f"Photo: {'👤 Source' if config.get('photo_source') == 'source' else '🖼 Custom'}", callback_data=f"creategroup_toggle_{idx}_{pg}_photo_source", style=user_style),
             InlineKeyboardButton("📸 Upload Photo" if config.get('photo_source') == 'custom' else "➖", 
-                                 callback_data=f"creategroup_upload_photo_{idx}_{pg}" if config.get('photo_source') == 'custom' else "noop")
+                                 callback_data=f"creategroup_upload_photo_{idx}_{pg}" if config.get('photo_source') == 'custom' else "noop", style=user_style)
         ],
         [
-            InlineKeyboardButton(f"Anon Admin: {'✅ Yes' if config['anon_mode'] else '❌ No'}", callback_data=f"creategroup_toggle_{idx}_{pg}_anon_mode"),
-            InlineKeyboardButton(f"Copy Msg: {'✅ Yes' if config['copy_messages'] else '❌ No'}", callback_data=f"creategroup_toggle_{idx}_{pg}_copy_messages")
+            InlineKeyboardButton(f"Anon Admin: {'✅ Yes' if config['anon_mode'] else '❌ No'}", callback_data=f"creategroup_toggle_{idx}_{pg}_anon_mode", style=user_style),
+            InlineKeyboardButton(f"Copy Msg: {'✅ Yes' if config['copy_messages'] else '❌ No'}", callback_data=f"creategroup_toggle_{idx}_{pg}_copy_messages", style=user_style)
         ],
         [
-            InlineKeyboardButton(f"Invite Bots: {'✅ Yes' if config['invite_bots'] else '❌ No'}", callback_data=f"creategroup_toggle_{idx}_{pg}_invite_bots")
+            InlineKeyboardButton(f"Invite Bots: {'✅ Yes' if config['invite_bots'] else '❌ No'}", callback_data=f"creategroup_toggle_{idx}_{pg}_invite_bots", style=user_style)
         ],
         [
-            InlineKeyboardButton(f"Bots: {len(config['bots'].split() if config['bots'] else [])} usernames", callback_data="noop"),
-            InlineKeyboardButton("✏️ Bot List", callback_data=f"creategroup_in_{idx}_{pg}_bots")
+            InlineKeyboardButton(f"Bots: {len(config['bots'].split() if config['bots'] else [])} usernames", callback_data="noop", style=user_style),
+            InlineKeyboardButton("✏️ Bot List", callback_data=f"creategroup_in_{idx}_{pg}_bots", style=user_style)
         ],
         [
-            InlineKeyboardButton("✅ RUN TASK", callback_data=f"creategroup_run_{idx}_{pg}"),
-            InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_menu_{idx}_{pg}")
+            InlineKeyboardButton("✅ RUN TASK", callback_data=f"creategroup_run_{idx}_{pg}", style=user_style),
+            InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_menu_{idx}_{pg}", style=user_style)
         ]
     ]
     
@@ -254,13 +271,19 @@ async def creategroup_adjust_handler(c: Client, cb: CallbackQuery):
 @iuser_check
 @log_errors
 async def creategroup_input_request(c: Client, cb: CallbackQuery):
+    await cb.answer()
     idx, pg, field = int(cb.matches[0].group(1)), int(cb.matches[0].group(2)), cb.matches[0].group(3)
     user_id = cb.from_user.id
     if user_id not in user_creategroup_state: return
+    
+    from Main.internals.settings_handlers.custom_alert_handlers import _get_session_user_id
+    session_user_id = _get_session_user_id(idx)
+    user_style = get_user_button_style(session_user_id)
+    
     user_creategroup_state[user_id].update({"input_mode": field, "step": "awaiting_input", "ui_msg_id": cb.message.id if cb.message else None})
     field_name = {"pattern": "Group Name Pattern", "username": "Username Prefix", "bots": "Bot Usernames List", "description": "Group Description"}.get(field, field.replace("_", " ").title())
     text = f"<b>📝 Awaiting Input: {field_name}...</b>\n\nSilakan lihat instruksi pada pesan di bawah."
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancel", callback_data=f"creategroup_ui_{idx}_{pg}")]])
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancel", callback_data=f"creategroup_ui_{idx}_{pg}", style=user_style)]])
     
     if cb.message:
         await cb.message.edit(text, reply_markup=kb)
@@ -303,9 +326,14 @@ async def creategroup_upload_photo_handler(c: Client, cb: CallbackQuery):
     if user_id not in user_creategroup_state:
         await cb.answer("State expired", show_alert=True)
         return
+        
+    from Main.internals.settings_handlers.custom_alert_handlers import _get_session_user_id
+    session_user_id = _get_session_user_id(idx)
+    user_style = get_user_button_style(session_user_id)
+    
     user_creategroup_state[user_id].update({"step": "awaiting_photo", "input_mode": "custom_photo", "ui_msg_id": cb.message.id if cb.message else None})
     text = "<b>📸 Awaiting Photo Upload...</b>\n\nSilakan lihat instruksi pada pesan di bawah."
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancel", callback_data=f"creategroup_ui_{idx}_{pg}")]])
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancel", callback_data=f"creategroup_ui_{idx}_{pg}", style=user_style)]])
     
     if cb.message:
         await cb.message.edit(text, reply_markup=kb)
@@ -328,6 +356,11 @@ async def creategroup_run_handler(c: Client, cb: CallbackQuery):
     if user_id not in user_creategroup_state or "config" not in user_creategroup_state[user_id]:
         await cb.answer("Error: Invalid state", show_alert=True)
         return
+        
+    from Main.internals.settings_handlers.custom_alert_handlers import _get_session_user_id
+    session_user_id = _get_session_user_id(idx)
+    user_style = get_user_button_style(session_user_id)
+    
     conf = user_creategroup_state[user_id]["config"]
     photo_text = ("👤 Source Account" if conf.get('photo_source') == 'source' else "🖼 Custom Photo") + (" ✅" if conf.get('photo_source') == 'custom' and conf.get('custom_photo_id') else "")
     text = (
@@ -340,7 +373,7 @@ async def creategroup_run_handler(c: Client, cb: CallbackQuery):
         f"• <b>Invite Bots:</b> {'Yes' if conf['invite_bots'] else 'No'} ({len(conf['bots'].split() if conf['bots'] else [])})\n\n"
         "Apakah Anda yakin ingin menjalankan task ini?"
     )
-    buttons = [[InlineKeyboardButton("❌ Batal", callback_data=f"creategroup_ui_{idx}_{pg}"), InlineKeyboardButton("✅ Ya, Jalankan", callback_data=f"creategroup_confirm_task_{idx}")]]
+    buttons = [[InlineKeyboardButton("❌ Batal", callback_data=f"creategroup_ui_{idx}_{pg}", style=user_style), InlineKeyboardButton("✅ Ya, Jalankan", callback_data=f"creategroup_confirm_task_{idx}", style=user_style)]]
     if cb.message:
         await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
     else:
@@ -390,6 +423,11 @@ async def render_creategroup_running_ui(cb: CallbackQuery, task: dict, idx: int,
     from Main.plugins.userbot.xcreategroup import generate_group_name
     current_name = generate_group_name(task["params"]["name_pattern"], task["current_index"])
     
+    # Resolve user_style
+    from Main.internals.settings_handlers.custom_alert_handlers import _get_session_user_id
+    session_user_id = _get_session_user_id(idx)
+    user_style = get_user_button_style(session_user_id)
+    
     text = (
         "<b>📊 Progress Create Group</b>\n\n"
         f"• <b>Created:</b> {created_count}/{total_count}\n"
@@ -400,20 +438,20 @@ async def render_creategroup_running_ui(cb: CallbackQuery, task: dict, idx: int,
     
     buttons = [
         [
-            InlineKeyboardButton("🛑 Stop", callback_data=f"creategroup_control_stop_{idx}_{pg}"),
-            InlineKeyboardButton("⏸️ Pause", callback_data=f"creategroup_control_pause_{idx}_{pg}"),
-            InlineKeyboardButton("▶️ Resume", callback_data=f"creategroup_control_resume_{idx}_{pg}")
+            InlineKeyboardButton("🛑 Stop", callback_data=f"creategroup_control_stop_{idx}_{pg}", style=user_style),
+            InlineKeyboardButton("⏸️ Pause", callback_data=f"creategroup_control_pause_{idx}_{pg}", style=user_style),
+            InlineKeyboardButton("▶️ Resume", callback_data=f"creategroup_control_resume_{idx}_{pg}", style=user_style)
         ],
         [
-            InlineKeyboardButton("📋 Status Detail", callback_data=f"creategroup_status_detail_{idx}_{pg}"),
-            InlineKeyboardButton("📑 List Group", callback_data=f"creategroup_list_group_{idx}_{pg}")
+            InlineKeyboardButton("📋 Status Detail", callback_data=f"creategroup_status_detail_{idx}_{pg}", style=user_style),
+            InlineKeyboardButton("📑 List Group", callback_data=f"creategroup_list_group_{idx}_{pg}", style=user_style)
         ],
         [
-            InlineKeyboardButton("🔄 Recurring", callback_data="noop"), # Placeholder
-            InlineKeyboardButton("✏️ Edit Terakhir", callback_data="noop") # Placeholder
+            InlineKeyboardButton("🔄 Recurring", callback_data="noop", style=user_style), # Placeholder
+            InlineKeyboardButton("✏️ Edit Terakhir", callback_data="noop", style=user_style) # Placeholder
         ],
         [
-            InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_menu_{idx}_{pg}")
+            InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_menu_{idx}_{pg}", style=user_style)
         ]
     ]
     
@@ -481,8 +519,13 @@ async def creategroup_status_detail_handler(c: Client, cb: CallbackQuery):
         f"• <b>Bots:</b> {len(p['bot_identifiers'])} bots\n"
         f"• <b>Username:</b> {p['username_prefix'] or 'None'}\n"
     )
+    # Resolve user_style
+    from Main.internals.settings_handlers.custom_alert_handlers import _get_session_user_id
+    session_user_id = _get_session_user_id(idx)
+    user_style = get_user_button_style(session_user_id)
+    
     await cb.answer("Full details shown", show_alert=True)
-    buttons = [[InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_ui_{idx}_{pg}")]]
+    buttons = [[InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_ui_{idx}_{pg}", style=user_style)]]
     if cb.message:
         await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
     else:
@@ -509,7 +552,12 @@ async def creategroup_list_group_handler(c: Client, cb: CallbackQuery):
     
     if len(groups) > 10: text += f"\n...and {len(groups)-10} more."
     
-    buttons = [[InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_ui_{idx}_{pg}")]]
+    # Resolve user_style
+    from Main.internals.settings_handlers.custom_alert_handlers import _get_session_user_id
+    session_user_id = _get_session_user_id(idx)
+    user_style = get_user_button_style(session_user_id)
+    
+    buttons = [[InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_ui_{idx}_{pg}", style=user_style)]]
     if cb.message:
         await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
     else:

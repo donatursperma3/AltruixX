@@ -31,6 +31,34 @@ class _Essentials:
         return re.sub(r"<[^>]*>", "", text)
 
     @staticmethod
+    def clean_user_name(name: str) -> str:
+        """
+        Clean user names by replacing invisible/blank unicode characters
+        and collapsing multiple spaces.
+        """
+        if not name:
+            return "No name"
+        
+        # Common invisible/blank characters
+        # U+3164 (Hangul Filler), U+200B (Zero Width Space), U+00A0 (Non-breaking space)
+        # U+2000-U+200A (Various spaces), U+202F, U+205F, U+3000
+        blanks = [
+            "\u3164", "\u200b", "\u00a0", "\u2000", "\u2001", "\u2002", 
+            "\u2003", "\u2004", "\u2005", "\u2006", "\u2007", "\u2008", 
+            "\u2009", "\u200a", "\u202f", "\u205f", "\u3000", "\u180e",
+            "\u200c", "\u200d", "\u2060", "\ufeff"
+        ]
+        
+        cleaned = str(name)
+        for char in blanks:
+            cleaned = cleaned.replace(char, " ")
+            
+        # Collapse multiple spaces and trim
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        
+        return cleaned or "No name"
+
+    @staticmethod
     def get_readable_time(seconds: int) -> str:
         count = 0
         ping_time = ""
@@ -122,6 +150,30 @@ class _Essentials:
                     message._client.log(f"Sleeping for : {e.value} due to floodwaits!")
                 except MessageNotModified:
                     pass
+
+    async def get_user_button_style(self, user_id, label):
+        """Prepend a style icon to the button label based on user's preference."""
+        try:
+             from Main.utils.file_helpers import get_button_style_data
+             data = get_button_style_data()
+             apply_type = data.get("apply_types", {}).get(str(user_id), "global")
+             
+             if apply_type == "per_account" and str(user_id) in data.get("sessions", {}):
+                 style_key = data["sessions"][str(user_id)].get("style", "DEFAULT")
+             else:
+                 style_key = data["global"].get("style", "DEFAULT")
+                 
+             icons = {
+                 "DEFAULT": "",
+                 "PRIMARY": "",
+                 "DANGER":  "",
+                 "SUCCESS": "",
+             }
+             icon = icons.get(style_key, "")
+             return f"{icon} {label}".strip()
+        except Exception:
+             return label
+
 
 
 Essentials = _Essentials()

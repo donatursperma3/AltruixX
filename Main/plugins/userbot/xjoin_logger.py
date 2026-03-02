@@ -120,12 +120,13 @@ async def join_logger_handler(c: Client, m: Message):
                 
                 # Send to log chat
                 bot = Altruix.bot_manager.get_bot(c.me.id)
+                from Main.utils.essentials import Essentials
                 await bot.send_message(
                     Altruix.log_chat,
                     log_message,
                     parse_mode=enums.ParseMode.HTML,
                     reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("Go to Chat ↗️", url=chat_link)]
+                        [InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, "Go to Chat ↗️"), url=chat_link)]
                     ])
                 )
                 break  # Only log once per join event

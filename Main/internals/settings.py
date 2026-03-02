@@ -191,18 +191,20 @@ async def get_settings_home_text():
 
 def get_settings_buttons(user_id=None):
     custom_data = get_user_custom_link(user_id) if user_id else get_custom_link_data()["global"]
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(user_id) if user_id else enums.ButtonStyle.PRIMARY
     return [
         [
-            InlineKeyboardButton("📱 Sessions", callback_data="sessions_list_1", style=enums.ButtonStyle.PRIMARY),
-            InlineKeyboardButton("🤖 Bot Controls", callback_data="bot_controls_menu", style=enums.ButtonStyle.PRIMARY),
+            InlineKeyboardButton("📱 Sessions", callback_data="sessions_list_1", style=user_style),
+            InlineKeyboardButton("🤖 Bot Controls", callback_data="bot_controls_menu", style=user_style),
         ],
         [
-            InlineKeyboardButton("⚙️ Configs", callback_data="configs_home", style=enums.ButtonStyle.PRIMARY),
-            InlineKeyboardButton("⌨️ Cmd Settings", callback_data="cmd_settings_menu", style=enums.ButtonStyle.PRIMARY),
+            InlineKeyboardButton("⚙️ Configs", callback_data="configs_home", style=user_style),
+            InlineKeyboardButton("⌨️ Cmd Settings", callback_data="cmd_settings_menu", style=user_style),
         ],
         [
-            InlineKeyboardButton("❇️ Help Menu", callback_data="re_open", style=enums.ButtonStyle.DANGER),
-            InlineKeyboardButton(custom_data.get("text", "Repo"), url=custom_data.get("link", "https://t.me/AlphaXProject"), style=enums.ButtonStyle.DANGER),
+            InlineKeyboardButton("❇️ Help Menu", callback_data="re_open", style=user_style),
+            InlineKeyboardButton(custom_data.get("text", "Repo"), url=custom_data.get("link", "https://t.me/AlphaXProject"), style=user_style),
         ],
     ]
 
@@ -302,11 +304,14 @@ async def settings_menu_cb_handler(c: Client, cb: CallbackQuery):
 @log_errors
 async def configs_menu_cb_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
+
     text = "<b>⚙️ Configuration Manager</b>\n\nManage environment variables and bot configs."
     buttons = [
-        [InlineKeyboardButton("🔧 ENV Manager", callback_data="env_manager_list_1")],
-        [InlineKeyboardButton("📦 Database Manager", callback_data="backup_manager")],
-        [InlineKeyboardButton("🔙 Back to Settings", callback_data="settings_menu")]
+        [InlineKeyboardButton("🔧 ENV Manager", callback_data="env_manager_list_1", style=user_style)],
+        [InlineKeyboardButton("📦 Database Manager", callback_data="backup_manager", style=user_style)],
+        [InlineKeyboardButton("🔙 Back to Settings", callback_data="settings_menu", style=user_style)]
     ]
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
 
@@ -315,25 +320,28 @@ async def configs_menu_cb_handler(c: Client, cb: CallbackQuery):
 @log_errors
 async def bot_controls_menu_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
+
     text = "<b>🤖 Bot Controls</b>\n\nManage Bot Assistant behaviors globally."
     buttons = [
         [
-            InlineKeyboardButton("📟 PM Logger Bot", callback_data="pmlb_menu"),
-            InlineKeyboardButton("🔘 Callback Logger", callback_data="cb_logger_settings"),
+            InlineKeyboardButton("📟 PM Logger Bot", callback_data="pmlb_menu", style=user_style),
+            InlineKeyboardButton("🔘 Callback Logger", callback_data="cb_logger_settings", style=user_style),
         ],
         [
-            InlineKeyboardButton("🔔 Mention Logger", callback_data="mntlb_menu"),
-            InlineKeyboardButton("💬 Reply Manager", callback_data="reply_manager_menu"),
+            InlineKeyboardButton("🔔 Mention Logger", callback_data="mntlb_menu", style=user_style),
+            InlineKeyboardButton("💬 Reply Manager", callback_data="reply_manager_menu", style=user_style),
         ],
         [
-            InlineKeyboardButton("🚪 Join Logger Global", callback_data="joinl_menu_global"),
-            InlineKeyboardButton("🔗 Group Log Link", callback_data="get_log_group_link"),
+            InlineKeyboardButton("🚪 Join Logger Global", callback_data="joinl_menu_global", style=user_style),
+            InlineKeyboardButton("🔗 Group Log Link", callback_data="get_log_group_link", style=user_style),
         ],
         [
-            InlineKeyboardButton("👽 Custom Bot Manager", callback_data="custom_bot_manager"),
-            InlineKeyboardButton("🔘 Custom Link/Text", callback_data="custom_link_settings"),
+            InlineKeyboardButton("👤 Custom Bot Manager", callback_data="custom_bot_manager", style=user_style),
+            InlineKeyboardButton("🔘 Custom Link/Text", callback_data="custom_link_settings", style=user_style),
         ],
-        [InlineKeyboardButton("🔙 Back to Settings", callback_data="settings_menu")]
+        [InlineKeyboardButton("🔙 Back to Settings", callback_data="settings_menu", style=user_style)]
     ]
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
 

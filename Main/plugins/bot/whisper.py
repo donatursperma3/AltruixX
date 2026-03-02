@@ -12,6 +12,7 @@ PLUGIN_VERSION = "0.0.1"
 import uuid
 from Main import Altruix
 from Main.core.decorators import log_errors
+from Main.utils.essentials import Essentials
 from pyrogram import Client, enums, filters
 from Main.plugins.userbot.channel_utils import digit_wrap
 from pyrogram.types import (
@@ -67,7 +68,7 @@ async def whisper(c: Client, iq: InlineQuery):
                 [
                     [
                         InlineKeyboardButton(
-                            "Show Message",
+                            await Essentials.get_user_button_style(iq.from_user.id, "Show Message"),
                             callback_data=f"whisper_{_id}",
                         ),
                     ]

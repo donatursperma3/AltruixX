@@ -64,14 +64,19 @@ async def chat_stats_scan_handler(c: Client, cb: CallbackQuery):
             f"<i>💡 Total Managed: {owned_groups + admin_groups + owned_channels + admin_channels}</i>"
         )
         
+        from Main.utils.file_helpers import get_user_button_style
+        user_style = get_user_button_style(cb.from_user.id)
+        
         await cb.edit_message_text(
             txt,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]]),
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}", style=user_style)]]),
             parse_mode=ParseMode.HTML
         )
         await send_log_notification(c, 'chat_stats_scan', index, cb.from_user, True)
     except Exception as e:
-        await cb.edit_message_text(f"❌ Error scanning stats: {str(e)}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")]]))
+        from Main.utils.file_helpers import get_user_button_style
+        user_style = get_user_button_style(cb.from_user.id)
+        await cb.edit_message_text(f"❌ Error scanning stats: {str(e)}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}", style=user_style)]]))
         await send_log_notification(c, 'chat_stats_scan', index, cb.from_user, False, str(e))
 
 @Altruix.bot.on_callback_query(filters.regex("^sessions_stats$"))
@@ -103,9 +108,12 @@ async def sessions_stats_cb_handler(c: Client, cb: CallbackQuery):
         f"<i>💡 This data reflects current in-memory state.</i>"
     )
     
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
+    
     buttons = [
-        [InlineKeyboardButton("🔄 Refresh Data", "sessions_stats")],
-        [InlineKeyboardButton("🔙 Back", "sessions_list_1")]
+        [InlineKeyboardButton("🔄 Refresh Data", "sessions_stats", style=user_style)],
+        [InlineKeyboardButton("🔙 Back", "sessions_list_1", style=user_style)]
     ]
     
     await edit_cb(cb, txt, reply_markup=InlineKeyboardMarkup(buttons))

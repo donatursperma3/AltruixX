@@ -31,11 +31,13 @@ def _get_session_user_id(index: int) -> int:
 @iuser_check
 @log_errors
 async def custom_alert_menu_cb(c: Client, cb: CallbackQuery):
+    await cb.answer()
     if not await Altruix.is_sudo(cb.from_user.id): return
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
     # ✅ Always use the USERBOT session's user ID as the key
     user_id = _get_session_user_id(index)
+    user_style = get_user_button_style(user_id)
     
     data = get_custom_alert_data()
     apply_type = data.get("apply_types", {}).get(str(user_id), "global")
@@ -64,10 +66,10 @@ async def custom_alert_menu_cb(c: Client, cb: CallbackQuery):
     )
     
     buttons = [
-        [InlineKeyboardButton(f"🔁 Mode: {mode}", callback_data=f"toggle_alert_mode_{index}_{page}"),
-         InlineKeyboardButton(f"🌐 Scope: {apply_type.title().replace('_', ' ')}", callback_data=f"toggle_alert_type_{index}_{page}")],
-        [InlineKeyboardButton("✍️ Set Custom Text", callback_data=f"set_alert_text_{index}_{page}")],
-        [InlineKeyboardButton("🔙 Back to Menu", callback_data=f"session_info_{index}_{page}_5")]
+        [InlineKeyboardButton(f"🔁 Mode: {mode}", callback_data=f"toggle_alert_mode_{index}_{page}", style=user_style),
+         InlineKeyboardButton(f"🌐 Scope: {apply_type.title().replace('_', ' ')}", callback_data=f"toggle_alert_type_{index}_{page}", style=user_style)],
+        [InlineKeyboardButton("✍️ Set Custom Text", callback_data=f"set_alert_text_{index}_{page}", style=user_style)],
+        [InlineKeyboardButton("🔙 Back to Menu", callback_data=f"session_info_{index}_{page}_5", style=user_style)]
     ]
     
     await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
@@ -76,6 +78,7 @@ async def custom_alert_menu_cb(c: Client, cb: CallbackQuery):
 @iuser_check
 @log_errors
 async def toggle_alert_type_cb(c: Client, cb: CallbackQuery):
+    await cb.answer()
     if not await Altruix.is_sudo(cb.from_user.id): return
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))

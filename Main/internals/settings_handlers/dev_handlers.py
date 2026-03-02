@@ -70,5 +70,9 @@ async def process_dev_input(c: Client, m: Message, state: dict):
         
     # State deletion is handled by caller (session_info.py) to avoid hardcoded dependency
 
+    from Main.utils.file_helpers import get_user_button_style, _get_session_user_id
+    user_id_key = _get_session_user_id(index)
+    user_style = get_user_button_style(user_id_key)
+
     await asyncio.sleep(2)
-    await m.reply("🔄 Kembali ke menu...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{state.get('page', 1)}")]]) )
+    await m.reply("🔄 Kembali ke menu...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{state.get('page', 1)}", style=user_style)]]) )

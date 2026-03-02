@@ -8,6 +8,7 @@
 
 
 import time
+import asyncio
 import contextlib
 from Main import Altruix
 from pyrogram.client import Client
@@ -347,7 +348,7 @@ async def delete(c: Client, m: Message):
         )
     else:
         await ms.edit_msg("DEL_SUCCESS_FALSE")
-    time.sleep(3)
+    await asyncio.sleep(3)
     await ms.delete()
 
 
@@ -377,5 +378,5 @@ async def purge(c: Client, m: Message):
     end_time = time.time()
     time_taken = round((end_time - start_time) * 1000, 2)
     await ms.edit_msg("PURGED", string_args=(time_taken, no_of_msg_purged))
-    time.sleep(3)
+    await asyncio.sleep(3)
     await ms.delete()

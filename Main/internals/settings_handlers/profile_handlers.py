@@ -31,6 +31,9 @@ from .states import (
 # Logger
 logger = logging.getLogger(__name__)
 
+from Main.utils.file_helpers import get_user_button_style
+from .custom_alert_handlers import _get_session_user_id
+
 @Altruix.bot.on_callback_query(filters.regex(r"change_name_menu_(\d+)_(\d+)"))
 @iuser_check
 @log_errors
@@ -38,12 +41,17 @@ async def change_name_menu_handler(c: Client, cb: CallbackQuery):
     """Handler for name change menu (First/Last)"""
     await cb.answer()
     index, page = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
+    
+    # Resolve user_style
+    user_id_key = _get_session_user_id(index)
+    user_style = get_user_button_style(user_id_key)
+    
     buttons = [
         [
-            InlineKeyboardButton(Altruix.get_string("first_name"), f"change_first_name_{index}_{page}"), 
-            InlineKeyboardButton(Altruix.get_string("last_name"), f"change_last_name_{index}_{page}")
+            InlineKeyboardButton(Altruix.get_string("first_name"), f"change_first_name_{index}_{page}", style=user_style), 
+            InlineKeyboardButton(Altruix.get_string("last_name"), f"change_last_name_{index}_{page}", style=user_style)
         ],
-        [InlineKeyboardButton("🔙 Back", callback_data=f"session_info_{index}_{page}")]
+        [InlineKeyboardButton("🔙 Back", callback_data=f"session_info_{index}_{page}", style=user_style)]
     ]
     args = {
         "text": "<b>✏️ Ganti Nama</b>\n\nPilih bagian nama yang ingin Anda ubah:", 
@@ -200,6 +208,12 @@ async def delete_all_profile_photos_handler(c: Client, cb: CallbackQuery):
         'delay': 2
     }
     
+    # Resolve user_style
+    from Main.utils.file_helpers import get_user_button_style
+    from .custom_alert_handlers import _get_session_user_id
+    user_id_key = _get_session_user_id(index)
+    user_style = get_user_button_style(user_id_key)
+
     args = {
         "text": "🗑️ <b>Konfirmasi Hapus Semua Foto Profil</b>\n\n"
               "Apakah Anda yakin ingin menghapus SEMUA foto profil akun ini?\n\n"
@@ -209,8 +223,8 @@ async def delete_all_profile_photos_handler(c: Client, cb: CallbackQuery):
               "Lanjutkan?",
         "reply_markup": InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("✅ Ya, Hapus Semua", f"edit_confirm_yes_{user_id}"),
-                InlineKeyboardButton("❌ Tidak", f"session_info_{index}_{page}")
+                InlineKeyboardButton("✅ Ya, Hapus Semua", f"edit_confirm_yes_{user_id}", style=user_style),
+                InlineKeyboardButton("❌ Tidak", f"session_info_{index}_{page}", style=user_style)
             ]
         ]),
         "parse_mode": ParseMode.HTML
@@ -325,5 +339,10 @@ async def process_profile_edit_input(c: Client, m: Message):
         await send_log_notification(c, action, index, m.from_user, False, error_msg)
     
     del user_profile_edit_state[user_id]
+    from Main.utils.file_helpers import get_user_button_style
+    from .custom_alert_handlers import _get_session_user_id
+    user_id_key = _get_session_user_id(index)
+    user_style = get_user_button_style(user_id_key)
+
     await asyncio.sleep(2)
-    await m.reply("🔄 Memuat ulang menu...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Dashboard", f"session_info_{index}_{page}")]]))
+    await m.reply("🔄 Memuat ulang menu...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Dashboard", f"session_info_{index}_{page}", style=user_style)]]))

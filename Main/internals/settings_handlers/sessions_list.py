@@ -21,8 +21,10 @@ def arrange_buttons(array: list, no=3) -> list:
     n = int(no)
     return [array[i * n : (i + 1) * n] for i in range((len(array) + n - 1) // n)]
 
-def get_sessions_buttons(page=1) -> tuple:
+def get_sessions_buttons(page=1, user_id=None) -> tuple:
     """Mendapatkan tombol session dengan layout 9 tombol per halaman (3 baris x 3 kolom)"""
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(user_id) if user_id else enums.ButtonStyle.PRIMARY
     sessions_per_page = 9
     
     if not hasattr(Altruix, 'clients') or not Altruix.clients:
@@ -54,12 +56,12 @@ def get_sessions_buttons(page=1) -> tuple:
             button_text = f"{status_icon} [{session_num}] {first_name[:15]}"
             buttons.append(
                 InlineKeyboardButton(button_text, f"session_info_{index}_{page}",
-                    style=enums.ButtonStyle.PRIMARY)
+                    style=user_style)
             )
         except Exception:
             buttons.append(
                 InlineKeyboardButton(f"[{index + 1}] Session {index + 1}", f"session_info_{index}_{page}",
-                    style=enums.ButtonStyle.PRIMARY)
+                    style=user_style)
             )
     
     if not buttons: return [], False, 1
@@ -80,38 +82,42 @@ async def sessions_menu_cb_handler(c: Client, cb: CallbackQuery):
     except (ValueError, IndexError):
         page = 1
 
-    session_buttons, has_next, total_pages = get_sessions_buttons(page)
+    user_id = cb.from_user.id
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(user_id)
+
+    session_buttons, has_next, total_pages = get_sessions_buttons(page, user_id=user_id)
     LOG_CHAT_ID = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_USERS_ID))
 
     action_buttons = [
         [
-            InlineKeyboardButton("👥 Bulk Join", "bulk_join_menu"),
-            InlineKeyboardButton("🏃 Bulk Leave", "bulk_leave_menu"),
-            InlineKeyboardButton("🚩 Bulk Report", "bulk_report_menu")
+            InlineKeyboardButton("👥 Bulk Join", "bulk_join_menu", style=user_style),
+            InlineKeyboardButton("🏃 Bulk Leave", "bulk_leave_menu", style=user_style),
+            InlineKeyboardButton("🚩 Bulk Report", "bulk_report_menu", style=user_style)
         ],
         [
-            InlineKeyboardButton("🏓 Test Ping All", "test_ping_all_confirmation"),
-            InlineKeyboardButton(gt("btn_stats"), "sessions_stats"),
-            InlineKeyboardButton("➕ Add a Session", "add_session")
+            InlineKeyboardButton("🏓 Test Ping All", "test_ping_all_confirmation", style=user_style),
+            InlineKeyboardButton(gt("btn_stats"), "sessions_stats", style=user_style),
+            InlineKeyboardButton("➕ Add a Session", "add_session", style=user_style)
         ]
     ]
     
     export_buttons = [
-        InlineKeyboardButton("📤 Export Sessions", "export_all_sessions_confirmation"),
-        InlineKeyboardButton("📲 Export Phones", "export_all_phones_confirmation")
+        InlineKeyboardButton("📤 Export Sessions", "export_all_sessions_confirmation", style=user_style),
+        InlineKeyboardButton("📲 Export Phones", "export_all_phones_confirmation", style=user_style)
     ]
 
     system_control_buttons = [
-        InlineKeyboardButton("🔄 Force Restart", "sys_ctrl_restart"),
-        InlineKeyboardButton("❌ Force Shutdown", "sys_ctrl_shutdown")
+        InlineKeyboardButton("🔄 Force Restart", "sys_ctrl_restart", style=user_style),
+        InlineKeyboardButton("❌ Force Shutdown", "sys_ctrl_shutdown", style=user_style)
     ]
     
     nav_buttons = []
     if page > 1:
-        nav_buttons.append(InlineKeyboardButton("⬅️ Previous", f"sessions_list_{page - 1}"))
-    nav_buttons.append(InlineKeyboardButton(f"🔙 Back [{page}/{total_pages or 1}]", "settings_menu"))
+        nav_buttons.append(InlineKeyboardButton("⬅️ Previous", f"sessions_list_{page - 1}", style=user_style))
+    nav_buttons.append(InlineKeyboardButton(f"🔙 Back [{page}/{total_pages or 1}]", "settings_menu", style=user_style))
     if has_next:
-        nav_buttons.append(InlineKeyboardButton("Next ➡️", f"sessions_list_{page + 1}"))
+        nav_buttons.append(InlineKeyboardButton("Next ➡️", f"sessions_list_{page + 1}", style=user_style))
     
     # Construct final markup
     final_markup = []

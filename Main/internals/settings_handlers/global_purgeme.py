@@ -108,7 +108,7 @@ def get_gp_status_text(state):
     return f"{header}{status_line}"
 
 # Helper to get control buttons
-def get_gp_control_kb(unique_id, state):
+def get_gp_control_kb(unique_id, state, user_style=None):
     status = state["status"]
     target = state["target"]
     limit = state["limit"]
@@ -130,57 +130,57 @@ def get_gp_control_kb(unique_id, state):
     if status == "idle" or status == "completed":
         # Target Toggle Buttons
         kb.append([
-            InlineKeyboardButton(("✅ " if target == "all" else "") + (loc("GP_BTN_TARGET_ALL") or "All"), f"gp_target_all_{unique_id}"),
-            InlineKeyboardButton(("✅ " if target == "groups" else "") + (loc("GP_BTN_TARGET_GROUPS") or "Groups"), f"gp_target_groups_{unique_id}"),
-            InlineKeyboardButton(("✅ " if target == "personal" else "") + (loc("GP_BTN_TARGET_PERSONAL") or "Personal"), f"gp_target_personal_{unique_id}")
+            InlineKeyboardButton(("✅ " if target == "all" else "") + (loc("GP_BTN_TARGET_ALL") or "All"), f"gp_target_all_{unique_id}", style=user_style),
+            InlineKeyboardButton(("✅ " if target == "groups" else "") + (loc("GP_BTN_TARGET_GROUPS") or "Groups"), f"gp_target_groups_{unique_id}", style=user_style),
+            InlineKeyboardButton(("✅ " if target == "personal" else "") + (loc("GP_BTN_TARGET_PERSONAL") or "Personal"), f"gp_target_personal_{unique_id}", style=user_style)
         ])
         
         # Limit Adjustment
         kb.append([
-            InlineKeyboardButton(f"Limit: {limit}", "gp_noop"),
-            InlineKeyboardButton("-2", f"gp_limit_m2_{unique_id}"),
-            InlineKeyboardButton("+2", f"gp_limit_p2_{unique_id}")
+            InlineKeyboardButton(f"Limit: {limit}", "gp_noop", style=user_style),
+            InlineKeyboardButton("-2", f"gp_limit_m2_{unique_id}", style=user_style),
+            InlineKeyboardButton("+2", f"gp_limit_p2_{unique_id}", style=user_style)
         ])
         
         # Delay Adjustment (Per Chat)
         kb.append([
-            InlineKeyboardButton(f"{loc('GP_BTN_DELAY_CHAT') or 'Delay/Chat'}: {delay}s", "gp_noop"),
-            InlineKeyboardButton("-2s", f"gp_delay_m2_{unique_id}"),
-            InlineKeyboardButton("+2s", f"gp_delay_p2_{unique_id}")
+            InlineKeyboardButton(f"{loc('GP_BTN_DELAY_CHAT') or 'Delay/Chat'}: {delay}s", "gp_noop", style=user_style),
+            InlineKeyboardButton("-2s", f"gp_delay_m2_{unique_id}", style=user_style),
+            InlineKeyboardButton("+2s", f"gp_delay_p2_{unique_id}", style=user_style)
         ])
 
         # Delay Adjustment (Per Msg)
         kb.append([
-            InlineKeyboardButton(f"{loc('GP_BTN_DELAY_MSG') or 'Delay/Msg'}: {delay_msg}s", "gp_noop"),
-            InlineKeyboardButton("-0.5s", f"gp_delaymsg_m05_{unique_id}"),
-            InlineKeyboardButton("+0.5s", f"gp_delaymsg_p05_{unique_id}")
+            InlineKeyboardButton(f"{loc('GP_BTN_DELAY_MSG') or 'Delay/Msg'}: {delay_msg}s", "gp_noop", style=user_style),
+            InlineKeyboardButton("-0.5s", f"gp_delaymsg_m05_{unique_id}", style=user_style),
+            InlineKeyboardButton("+0.5s", f"gp_delaymsg_p05_{unique_id}", style=user_style)
         ])
 
         # Mode Selection
         kb.append([
-            InlineKeyboardButton(f"Mode: {mode.capitalize()}", "gp_noop"),
-            InlineKeyboardButton(("✅ " if mode == "newest" else "") + (loc("GP_BTN_MODE_NEWEST") or "Newest"), f"gp_mode_newest_{unique_id}"),
-            InlineKeyboardButton(("✅ " if mode == "oldest" else "") + (loc("GP_BTN_MODE_OLDEST") or "Oldest"), f"gp_mode_oldest_{unique_id}")
+            InlineKeyboardButton(f"Mode: {mode.capitalize()}", "gp_noop", style=user_style),
+            InlineKeyboardButton(("✅ " if mode == "newest" else "") + (loc("GP_BTN_MODE_NEWEST") or "Newest"), f"gp_mode_newest_{unique_id}", style=user_style),
+            InlineKeyboardButton(("✅ " if mode == "oldest" else "") + (loc("GP_BTN_MODE_OLDEST") or "Oldest"), f"gp_mode_oldest_{unique_id}", style=user_style)
         ])
 
         # Offset Selection
         kb.append([
-            InlineKeyboardButton(f"Offset: {offset}", "gp_noop"),
-            InlineKeyboardButton("-5", f"gp_off_m5_{unique_id}"),
-            InlineKeyboardButton("+5", f"gp_off_p5_{unique_id}"),
-            InlineKeyboardButton(loc("GP_BTN_RESET") or "Reset", f"gp_off_reset_{unique_id}")
+            InlineKeyboardButton(f"Offset: {offset}", "gp_noop", style=user_style),
+            InlineKeyboardButton("-5", f"gp_off_m5_{unique_id}", style=user_style),
+            InlineKeyboardButton("+5", f"gp_off_p5_{unique_id}", style=user_style),
+            InlineKeyboardButton(loc("GP_BTN_RESET") or "Reset", f"gp_off_reset_{unique_id}", style=user_style)
         ])
 
         # Notif Toggle
         kb.append([
-            InlineKeyboardButton(loc("GP_BTN_NOTIF_ON" if notify else "GP_BTN_NOTIF_OFF") or f"Notif: {'ON' if notify else 'OFF'}", f"gp_notif_{unique_id}")
+            InlineKeyboardButton(loc("GP_BTN_NOTIF_ON" if notify else "GP_BTN_NOTIF_OFF") or f"Notif: {'ON' if notify else 'OFF'}", f"gp_notif_{unique_id}", style=user_style)
         ])
 
         # Filters Grid (3-column)
         def get_f_btn(f_type, label_key, def_label):
             label = loc(label_key) or def_label
             active = "✅" if f_type in filters_list else "☑️"
-            return InlineKeyboardButton(f"{active} {label}", f"gp_filter_{f_type}_{unique_id}")
+            return InlineKeyboardButton(f"{active} {label}", f"gp_filter_{f_type}_{unique_id}", style=user_style)
 
         # Row 1: Core Media
         kb.append([
@@ -219,55 +219,55 @@ def get_gp_control_kb(unique_id, state):
         # Advanced Options
         admin_filter_btn_text = loc(f"GP_BTN_ADMIN_FILTER_{admin_filter.upper()}") or admin_filter.replace("_", " ").title()
         kb.append([
-            InlineKeyboardButton(f"👑 {admin_filter_btn_text}", f"gp_toggle_admin_{unique_id}")
+            InlineKeyboardButton(f"👑 {admin_filter_btn_text}", f"gp_toggle_admin_{unique_id}", style=user_style)
         ])
         kb.append([
-            InlineKeyboardButton(loc("GP_BTN_LIST_CHATS") or "📋 List Chats", f"gp_list_groups_{unique_id}")
+            InlineKeyboardButton(loc("GP_BTN_LIST_CHATS") or "📋 List Chats", f"gp_list_groups_{unique_id}", style=user_style)
         ])
         
         # New Layout: Refresh/Info then Start/Close
         kb.append([
-            InlineKeyboardButton("🔄 Refresh", f"gp_refresh_{unique_id}"),
-            InlineKeyboardButton(loc("GP_BTN_INFO") or "ℹ️ Info", f"gp_info_{unique_id}")
+            InlineKeyboardButton("🔄 Refresh", f"gp_refresh_{unique_id}", style=user_style),
+            InlineKeyboardButton(loc("GP_BTN_INFO") or "ℹ️ Info", f"gp_info_{unique_id}", style=user_style)
         ])
         
         if is_settings:
              kb.append([
-                InlineKeyboardButton(loc("GP_BTN_START") or "🚀 Start GPurgeme", f"gp_start_{unique_id}"),
-                InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}")
+                InlineKeyboardButton(loc("GP_BTN_START") or "🚀 Start GPurgeme", f"gp_start_{unique_id}", style=user_style),
+                InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}", style=user_style)
             ])
         else:
             kb.append([
-                InlineKeyboardButton(loc("GP_BTN_START") or "🚀 Start GPurgeme", f"gp_start_{unique_id}"),
-                InlineKeyboardButton("❌ Close", f"gp_close_{unique_id}")
+                InlineKeyboardButton(loc("GP_BTN_START") or "🚀 Start GPurgeme", f"gp_start_{unique_id}", style=user_style),
+                InlineKeyboardButton("❌ Close", f"gp_close_{unique_id}", style=user_style)
             ])
             
     elif status == "confirm_start":
         kb.append([
-            InlineKeyboardButton(loc("GP_BTN_YES") or "✅ Yes, Start", f"gp_confirm_start_{unique_id}"),
-            InlineKeyboardButton(loc("GP_BTN_NO") or "❌ No, Cancel", f"gp_confirm_cancel_{unique_id}")
+            InlineKeyboardButton(loc("GP_BTN_YES") or "✅ Yes, Start", f"gp_confirm_start_{unique_id}", style=user_style),
+            InlineKeyboardButton(loc("GP_BTN_NO") or "❌ No, Cancel", f"gp_confirm_cancel_{unique_id}", style=user_style)
         ])
             
     elif status == "running":
         kb.append([
-            InlineKeyboardButton(loc("GP_BTN_PAUSE") or "⏸ Pause", f"gp_pause_{unique_id}"),
-            InlineKeyboardButton(loc("GP_BTN_STOP") or "🛑 Stop", f"gp_stop_{unique_id}")
+            InlineKeyboardButton(loc("GP_BTN_PAUSE") or "⏸ Pause", f"gp_pause_{unique_id}", style=user_style),
+            InlineKeyboardButton(loc("GP_BTN_STOP") or "🛑 Stop", f"gp_stop_{unique_id}", style=user_style)
         ])
     elif status == "paused":
         kb.append([
-            InlineKeyboardButton(loc("GP_BTN_RESUME") or "▶️ Resume", f"gp_resume_{unique_id}"),
-            InlineKeyboardButton(loc("GP_BTN_STOP") or "🛑 Stop", f"gp_stop_{unique_id}")
+            InlineKeyboardButton(loc("GP_BTN_RESUME") or "▶️ Resume", f"gp_resume_{unique_id}", style=user_style),
+            InlineKeyboardButton(loc("GP_BTN_STOP") or "🛑 Stop", f"gp_stop_{unique_id}", style=user_style)
         ])
     elif status == "info":
-        kb.append([InlineKeyboardButton(loc("GP_BTN_BACK") or "🔙 Back", f"gp_back_{unique_id}")])
+        kb.append([InlineKeyboardButton(loc("GP_BTN_BACK") or "🔙 Back", f"gp_back_{unique_id}", style=user_style)])
     
     # Close/Refresh/Settings Back (Only for running/paused status now, as idle has custom layout)
     if status in ["running", "paused"]:
-        bottom_row = [InlineKeyboardButton("🔄 Refresh", f"gp_refresh_{unique_id}")]
+        bottom_row = [InlineKeyboardButton("🔄 Refresh", f"gp_refresh_{unique_id}", style=user_style)]
         if is_settings:
-            bottom_row.append(InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}"))
+            bottom_row.append(InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}", style=user_style))
         else:
-            bottom_row.append(InlineKeyboardButton("❌ Close", f"gp_close_{unique_id}"))
+            bottom_row.append(InlineKeyboardButton("❌ Close", f"gp_close_{unique_id}", style=user_style))
         kb.append(bottom_row)
     
     return InlineKeyboardMarkup(kb)
@@ -287,7 +287,14 @@ async def _perform_dashboard_update(unique_id, state, custom_text, cb):
         return
     
     text = custom_text or get_gp_status_text(state)
-    kb = get_gp_control_kb(unique_id, state)
+    from Main.utils.file_helpers import get_user_button_style
+    # Always use cb.from_user.id if available, but for background tasks it might be tricky.
+    # We'll use the client's me.id as fallback or better yet, store user_id in state.
+    user_id = cb.from_user.id if cb else state.get("user_id")
+    # If starting from inline, cb.from_user.id is best.
+    user_style = get_user_button_style(user_id)
+    
+    kb = get_gp_control_kb(unique_id, state, user_style=user_style)
     
     try:
         # Case 0: Direct Callback Edit
@@ -558,7 +565,7 @@ async def gpurgeme_inline_handler(client: Client, query: InlineQuery):
                     "mode": "newest", "offset": 0, "notify": True, "filters": ["all"],
                     "deleted_count": 0, "processed_chats": 0, "total_chats": 0,
                     "processed_list": [], "stop_event": asyncio.Event(), "pause_event": asyncio.Event(),
-                    "dashboard_msg_id": None, "dashboard_chat_id": None, "start_time": 0
+                    "dashboard_msg_id": None, "dashboard_chat_id": None, "start_time": 0, "user_id": user_id
                 }
             state = Altruix.GPURGEME_STATE[unique_id]
 
@@ -607,7 +614,7 @@ async def open_global_purgeme_ui(c: Client, cb: CallbackQuery, index: int, page:
             "mode": "newest", "offset": 0, "notify": True, "filters": ["all"],
             "deleted_count": 0, "processed_chats": 0, "total_chats": 0,
             "processed_list": [], "stop_event": asyncio.Event(), "pause_event": asyncio.Event(),
-            "dashboard_msg_id": None, "dashboard_chat_id": None, "start_time": 0
+            "dashboard_msg_id": None, "dashboard_chat_id": None, "start_time": 0, "user_id": cb.from_user.id
         }
     
     state = Altruix.GPURGEME_STATE[unique_id]
@@ -622,8 +629,11 @@ async def open_global_purgeme_ui(c: Client, cb: CallbackQuery, index: int, page:
     state["dashboard_chat_id"] = cb.message.chat.id if cb.message else None
     state["pause_event"].set()
 
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
+
     text = get_gp_status_text(state)
-    kb = get_gp_control_kb(unique_id, state)
+    kb = get_gp_control_kb(unique_id, state, user_style=user_style)
     
     await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML, disable_web_page_preview=True)
 

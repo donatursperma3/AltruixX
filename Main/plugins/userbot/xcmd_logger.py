@@ -19,7 +19,7 @@ from pyrogram.types import Message
 from Main import Altruix
 from Main.core.decorators import log_errors
 
-PLUGIN_VERSION = "0.0.36"
+PLUGIN_VERSION = "0.0.381"
 logger = logging.getLogger("altruix.xcmd_logger")
 
 # Settings file
@@ -29,6 +29,13 @@ SETTINGS_FILE = Path("cmd_logger_settings.json")
 CMD_LOGGER_DATA = {
     "enabled": False
 }
+
+# ✅ CRITICAL FIX: Cache untuk settings agar tidak query DB setiap command
+from cachetools import TTLCache
+import asyncio
+
+CMD_LOGGER_SETTINGS_CACHE = TTLCache(maxsize=100, ttl=60)  # Cache 60 detik
+CMD_CACHE_LOCK = asyncio.Lock()
 
 def load_settings():
     """Load cmd logger settings from file for legacy/initial states."""
@@ -48,12 +55,56 @@ def load_settings():
 # Load settings on startup
 load_settings()
 
+async def get_cmd_logger_settings(user_id, index):
+    """
+    Get cmd logger settings with caching to prevent excessive DB queries.
+    
+    ✅ OPTIMIZED: Uses TTL cache to prevent DB query on every command.
+    """
+    cache_key = f"cmdl_{user_id}_{index}"
+    
+    # Check cache first
+    async with CMD_CACHE_LOCK:
+        if cache_key in CMD_LOGGER_SETTINGS_CACHE:
+            return CMD_LOGGER_SETTINGS_CACHE[cache_key]
+    
+    # Fetch from DB
+    apply_type = await Altruix.config.get_env(f"CMDL_LOGGER_APPLY_TYPE_{index}") or "global"
+    if apply_type == "global":
+        status = await Altruix.config.get_env("CMDL_LOGGER_GLOBAL") or "off"
+    else:
+        status = await Altruix.config.get_env(f"CMDL_LOGGER_{index}") or "off"
+    
+    prefix_apply_type = await Altruix.config.get_env("PREFIX_APPLY_TYPE") or "global"
+    pk = "PREFIX_OWNER_USER" if prefix_apply_type == "global" else f"PREFIX_OWNER_USER_{user_id}"
+    prefix = await Altruix.config.get_env(pk) or "."
+    
+    autodel_type = await Altruix.config.get_env(f"AUTO_DELETE_CMD_TYPE_{index}") or "per_account"
+    if autodel_type == "global":
+        autodel_status = await Altruix.config.get_env("AUTO_DELETE_CMD_GLOBAL")
+    else:
+        autodel_status = await Altruix.config.get_env(f"AUTO_DELETE_CMD_STATUS_{index}")
+    
+    settings = {
+        "status": status,
+        "prefix": prefix,
+        "autodel_status": autodel_status
+    }
+    
+    # Store in cache
+    async with CMD_CACHE_LOCK:
+        CMD_LOGGER_SETTINGS_CACHE[cache_key] = settings
+    
+    return settings
+
 @Altruix.on_message(filters.me, group=0, allow_commands=True)
 @log_errors
 async def cmd_logger_handler(c: Client, m: Message):
     """
     Log all commands executed by userbot.
-    Optimized to use Altruix.config for real-time status check.
+    Optimized to use cached settings for real-time status check.
+    
+    ✅ OPTIMIZED: Uses cached settings to prevent DB queries on every command.
     """
     try:
         # Aggressive DEBUG
@@ -64,7 +115,7 @@ async def cmd_logger_handler(c: Client, m: Message):
         user_id = c.me.id
         index = -1
         for i, client in enumerate(Altruix.clients):
-            if client.me and client.me.id == user_id:
+            if hasattr(client, 'me') and client.me and client.me.id == user_id:
                 index = i
                 break
         
@@ -72,42 +123,28 @@ async def cmd_logger_handler(c: Client, m: Message):
             Altruix.log(f"DEBUG: CmdLogger - Index not found for user {user_id}", level=logging.WARNING)
             return
 
-        # 2. Check enablement
-        apply_type = await Altruix.config.get_env(f"CMDL_LOGGER_APPLY_TYPE_{index}") or "global"
-        if apply_type == "global":
-            status = await Altruix.config.get_env("CMDL_LOGGER_GLOBAL") or "off"
-        else:
-            status = await Altruix.config.get_env(f"CMDL_LOGGER_{index}") or "off"
-
-        if status != "on":
-            # Altruix.log(f"DEBUG: CmdLogger - Feature is {status} for index {index}", level=logging.INFO)
-            return
-            
-        # 3. Detect prefix
-        prefix_apply_type = await Altruix.config.get_env("PREFIX_APPLY_TYPE") or "global"
-        pk = "PREFIX_OWNER_USER" if prefix_apply_type == "global" else f"PREFIX_OWNER_USER_{user_id}"
-        prefix = await Altruix.config.get_env(pk) or "."
+        # 2. Get cached settings (prevents multiple DB queries)
+        settings = await get_cmd_logger_settings(user_id, index)
         
-        if not text.startswith(prefix):
-            # Altruix.log(f"DEBUG: CmdLogger - Text '{text[:10]}' doesn't start with prefix '{prefix}'", level=logging.INFO)
+        if settings["status"] != "on":
+            return
+        
+        # 3. Check prefix
+        if not text.startswith(settings["prefix"]):
             return
 
-        # 4. Check Command Auto-Delete Status (for informational log)
-        autodel_type = await Altruix.config.get_env(f"AUTO_DELETE_CMD_TYPE_{index}") or "per_account"
-        if autodel_type == "global":
-            autodel_status = await Altruix.config.get_env("AUTO_DELETE_CMD_GLOBAL")
-        else:
-            autodel_status = await Altruix.config.get_env(f"AUTO_DELETE_CMD_STATUS_{index}")
+        # 4. Get autodel status from cached settings
+        autodel_status = settings["autodel_status"]
         
         autodel_enabled = str(autodel_status).lower() in ("on", "true", "1", "yes")
 
         # 5. Filter Specific Noise
-        cmd_part = text[len(prefix):].split()[0].lower() if len(text) > len(prefix) else ""
+        cmd_part = text[len(settings["prefix"]):].split()[0].lower() if len(text) > len(settings["prefix"]) else ""
         if cmd_part in ["cmdlogger", "cmdlog"]:
             return
             
         Altruix.log(f"⚡ [CMD_LOGGER] Detected command: '{cmd_part}' from user {user_id}", level=logging.INFO)
-
+            
         # 6. Build and send log
         chat = m.chat
         chat_title = chat.title or f"{chat.first_name or ''} {chat.last_name or ''}".strip() or "Private Chat"
@@ -132,14 +169,30 @@ async def cmd_logger_handler(c: Client, m: Message):
         msg_link_display = f"[ <a href='{msg_link}'>here</a> ]" if msg_link else " N/A"
 
         log_message = (
-            f"⚡️ <b>Command Executed</b>\n\n"
+            f"⚡️ <b>Command Executed</b>\n"
+            f"<blockquote expandable>\n"
             f"👤 <b>Account:</b> <b>{c.me.mention(style=enums.ParseMode.HTML)}</b>\n"
             f"💬 <b>Chat:</b> {chat_display}\n"
             f"🆔 <b>ChatID:</b> <code>{chat.id}</code>\n"
             f"♻️ <b>Auto del:</b> <code>{autodel_enabled}</code>\n"
-            f"📝 <b>Command:</b> <code>{html.escape(text[:500])}</code>\n"
             f"➡️ <b>Goto Msg:</b> {msg_link_display}\n"
         )
+        
+        # ✅ Add Active Task IDs from global registry
+        try:
+            if hasattr(Altruix, '_TASK_REGISTRY') and Altruix._TASK_REGISTRY:
+                active_tasks = [
+                    (tid, t) for tid, t in Altruix._TASK_REGISTRY.items()
+                    if t.get("task") and not t["task"].done()
+                ]
+                if active_tasks:
+                    parts_list = []
+                    for tid, t in active_tasks:
+                        name = t.get("name", "?")[:15]
+                        parts_list.append(f"<code>{tid}</code> ({name})")
+                    log_message += f"🏷 <b>Active Tasks:</b> {', '.join(parts_list)}\n"
+        except Exception:
+            pass
         
         # ✅ Add Reply Info if applicable
         if m.reply_to_message:
@@ -155,7 +208,10 @@ async def cmd_logger_handler(c: Client, m: Message):
                     f"*️⃣ <b>Username:</b> {r_username}\n"
                 )
         
-        log_message += f"🕒 <b>Time:</b> <code>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</code>"
+        log_message += f"🕒 <b>Time:</b> <code>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</code></blockquote>"
+        
+        # 📝 Command at the bottom in a separate blockquote
+        log_message += f"\n\n📝 <b>Command:</b>\n<pre language='python'>{html.escape(text[:2000])}</pre>"
         
         # Consistently use main Bot
         bot = Altruix.bot
@@ -168,16 +224,19 @@ async def cmd_logger_handler(c: Client, m: Message):
             Altruix.log("DEBUG: CmdLogger - Altruix.log_chat is NOT SET!", level=logging.ERROR)
             return
 
-        try:
-            await bot.send_message(
-                Altruix.log_chat,
-                log_message,
-                parse_mode=enums.ParseMode.HTML,
-                disable_web_page_preview=True
-            )
-            Altruix.log(f"✅ [CMD_LOGGER] Log sent successfully to {Altruix.log_chat}", level=logging.INFO)
-        except Exception as send_err:
-            Altruix.log(f"❌ [CMD_LOGGER] Failed to send message: {send_err}", level=logging.ERROR)
+        async def _log_task():
+            try:
+                await bot.send_message(
+                    Altruix.log_chat,
+                    log_message,
+                    parse_mode=enums.ParseMode.HTML,
+                    disable_web_page_preview=True
+                )
+                Altruix.log(f"✅ [CMD_LOGGER] Log sent successfully to {Altruix.log_chat}", level=logging.INFO)
+            except Exception as send_err:
+                Altruix.log(f"❌ [CMD_LOGGER] Failed to send message: {send_err}", level=logging.ERROR)
+        
+        asyncio.create_task(_log_task())
         
     except Exception as e:
         Altruix.log(f"Cmd logger fatal error: {e}", level=40)
@@ -207,7 +266,7 @@ async def cmd_logger_toggle(c: Client, m: Message):
     user_id = c.me.id
     index = -1
     for i, client in enumerate(Altruix.clients):
-        if client.me and client.me.id == user_id:
+        if hasattr(client, 'me') and client.me and client.me.id == user_id:
             index = i
             break
             

@@ -14,10 +14,13 @@ from datetime import datetime
 # Plugin Metadata
 PLUGIN_VERSION = "1.0.0"
 
-async def get_backup_kb():
+async def get_backup_kb(user_style=None):
     """
     Generates the inline keyboard for the backup manager.
     
+    Args:
+        user_style (ButtonStyle): The button style to apply.
+
     Returns:
         InlineKeyboardMarkup: The generated keyboard with current settings highlighted.
     """
@@ -28,19 +31,19 @@ async def get_backup_kb():
     toggle_cb = "backup_toggle_off" if is_enabled else "backup_toggle_on"
     
     kb = [
-        [InlineKeyboardButton(f"Status: {toggle_text}", callback_data=toggle_cb)],
+        [InlineKeyboardButton(f"Status: {toggle_text}", callback_data=toggle_cb, style=user_style)],
         [
-            InlineKeyboardButton(f"{'➡️ ' if interval == '1h' else ''}1h", callback_data="backup_set_1h"),
-            InlineKeyboardButton(f"{'➡️ ' if interval == '3h' else ''}3h", callback_data="backup_set_3h"),
-            InlineKeyboardButton(f"{'➡️ ' if interval == '6h' else ''}6h", callback_data="backup_set_6h"),
+            InlineKeyboardButton(f"{'➡️ ' if interval == '1h' else ''}1h", callback_data="backup_set_1h", style=user_style),
+            InlineKeyboardButton(f"{'➡️ ' if interval == '3h' else ''}3h", callback_data="backup_set_3h", style=user_style),
+            InlineKeyboardButton(f"{'➡️ ' if interval == '6h' else ''}6h", callback_data="backup_set_6h", style=user_style),
         ],
         [
-            InlineKeyboardButton(f"{'➡️ ' if interval == '12h' else ''}12h", callback_data="backup_set_12h"),
-            InlineKeyboardButton(f"{'➡️ ' if interval == '24h' else ''}24h", callback_data="backup_set_24h"),
-            InlineKeyboardButton(f"{'➡️ ' if interval == '1w' else ''}1w", callback_data="backup_set_1w"),
+            InlineKeyboardButton(f"{'➡️ ' if interval == '12h' else ''}12h", callback_data="backup_set_12h", style=user_style),
+            InlineKeyboardButton(f"{'➡️ ' if interval == '24h' else ''}24h", callback_data="backup_set_24h", style=user_style),
+            InlineKeyboardButton(f"{'➡️ ' if interval == '1w' else ''}1w", callback_data="backup_set_1w", style=user_style),
         ],
-        [InlineKeyboardButton("📤 Backup Now", callback_data="backup_now")],
-        [InlineKeyboardButton("🔙 Back to Configs", callback_data="configs_home")]
+        [InlineKeyboardButton("📤 Backup Now", callback_data="backup_now", style=user_style)],
+        [InlineKeyboardButton("🔙 Back to Configs", callback_data="configs_home", style=user_style)]
     ]
     return InlineKeyboardMarkup(kb)
 
@@ -69,7 +72,10 @@ async def backup_manager_handler(c: Client, cb: CallbackQuery):
         last_backup
     )
     
-    await cb.edit_message_text(text, reply_markup=await get_backup_kb())
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
+    
+    await cb.edit_message_text(text, reply_markup=await get_backup_kb(user_style=user_style))
 
 @Altruix.bot.on_callback_query(filters.regex(r"^backup_toggle_(on|off)$"))
 @iuser_check

@@ -40,6 +40,13 @@ def check_reply_access(
     if mode == ACCESS_MODE_OWNER:
         if user_id == owner_id or user_id in getattr(Altruix.config, "OWNER_USERS_ID", []):
             return True, "Access granted (OWNER)"
+            
+        # ✅ Support Custom Alert Settings
+        from Main.utils.file_helpers import get_user_custom_alert
+        alert_data = get_user_custom_alert(owner_id)
+        if alert_data.get("mode") == "custom":
+            return False, alert_data.get("text", Altruix.get_string("AUTH_OWNER_ONLY"))
+            
         return False, Altruix.get_string("AUTH_OWNER_ONLY")
     
     # Mode: SUDO - owner + sudo users
@@ -48,6 +55,13 @@ def check_reply_access(
             return True, f"Access granted (SUDO)"
         if user_id == owner_id or user_id in sudo_users or user_id in getattr(Altruix.config, "OWNER_USERS_ID", []):
             return True, f"Access granted (SUDO - legacy fallback)"
+            
+        # ✅ Support Custom Alert Settings
+        from Main.utils.file_helpers import get_user_custom_alert
+        alert_data = get_user_custom_alert(owner_id)
+        if alert_data.get("mode") == "custom":
+            return False, alert_data.get("text", Altruix.get_string("AUTH_SUDO_ONLY"))
+            
         return False, Altruix.get_string("AUTH_SUDO_ONLY")
     
     # Mode: MENTIONED - only the specific userbot account
@@ -58,6 +72,13 @@ def check_reply_access(
         
         if user_id == mentioned_userbot_id:
             return True, "Access granted (MENTIONED userbot)"
+            
+        # ✅ Support Custom Alert Settings
+        from Main.utils.file_helpers import get_user_custom_alert
+        alert_data = get_user_custom_alert(owner_id)
+        if alert_data.get("mode") == "custom":
+            return False, alert_data.get("text", Altruix.get_string("AUTH_MENTIONED_ONLY"))
+            
         return False, Altruix.get_string("AUTH_MENTIONED_ONLY")
     
     # Unknown mode - deny by default

@@ -38,6 +38,8 @@ from Main.core.types.message import Message as AltruixMessage
 # from Main.utils.helpers import run_shell_cmd
 from Main.utils.helpers import ChatPrivileges
 from pyrogram.types import *
+from Main.internals.settings import send_log_notification
+from Main.core.decorators import log_errors, iuser_check
 
 
 # ─── LOGGER KHUSUS PLUGIN ───────────────────────────────────────────────
@@ -844,12 +846,12 @@ async def creategroup_loop(
                                 # Welcome message dengan inline buttons
                                 welcome_buttons = InlineKeyboardMarkup([
                                     [
-                                        InlineKeyboardButton("Channel 1", url="https://t.me/alphaxproject"),
-                                        InlineKeyboardButton("Channel 2", url="https://t.me/tgreceh")
+                                        InlineKeyboardButton(await Essentials.get_user_button_style(user_client.me.id, "Channel 1"), url="https://t.me/alphaxproject"),
+                                        InlineKeyboardButton(await Essentials.get_user_button_style(user_client.me.id, "Channel 2"), url="https://t.me/tgreceh")
                                     ],
                                     [
-                                        InlineKeyboardButton("Channel 3", url="https://t.me/kutipaninsecure"),
-                                        InlineKeyboardButton("Channel 4", url="https://t.me/caritemanlink")
+                                        InlineKeyboardButton(await Essentials.get_user_button_style(user_client.me.id, "Channel 3"), url="https://t.me/kutipaninsecure"),
+                                        InlineKeyboardButton(await Essentials.get_user_button_style(user_client.me.id, "Channel 4"), url="https://t.me/caritemanlink")
                                     ]
                                 ])
                                 
@@ -1290,6 +1292,8 @@ async def send_completion_report(
              
              # Arrange buttons, 3 per row
              from Main.utils.helpers import arrange_buttons
+             from Main.internals.settings import send_log_notification
+             from Main.core.decorators import log_errors, iuser_check
              group_buttons = arrange_buttons(buttons_list, 3)
              
              # Append control buttons to the group buttons (or vice versa? usually group buttons below)
@@ -1461,8 +1465,8 @@ async def creategroup_command_handler(client: Client, message: AltruixMessage):
 
             confirm_buttons = InlineKeyboardMarkup([
                 [
-                    InlineKeyboardButton("✅ Ya, Mulai", callback_data=f"confirm_creategroup:{confirm_id}"),
-                    InlineKeyboardButton("❌ Batal", callback_data=f"cancel_creategroup:{confirm_id}")
+                    InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, "✅ Ya, Mulai"), callback_data=f"confirm_creategroup:{confirm_id}"),
+                    InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, "❌ Batal"), callback_data=f"cancel_creategroup:{confirm_id}")
                 ]
             ])
             
@@ -1502,15 +1506,11 @@ async def creategroup_command_handler(client: Client, message: AltruixMessage):
 # ==================== CALLBACK QUERY HANDLER ====================
 @Altruix.bot.on_callback_query(filters.regex(r"^confirm_creategroup:"))
 @log_errors
+@iuser_check
 async def confirm_creategroup_handler(client: Client, callback_query: CallbackQuery):
     """Handler untuk konfirmasi mulai task"""
     
     try:
-        from Main.utils.access_control import is_authorized_user
-        if not is_authorized_user(callback_query.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
-            msg = Altruix.get_string("ACCESS_DENIED")
-            return await callback_query.answer(msg, show_alert=True)
-            
         data_parts = callback_query.data.split(":")
         if len(data_parts) < 2:
             await callback_query.answer("Data tidak valid", show_alert=True)
@@ -1544,18 +1544,18 @@ async def confirm_creategroup_handler(client: Client, callback_query: CallbackQu
         # Buat control message dengan tombol lengkap
         control_buttons = InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("🛑 Stop", callback_data="stop_creategroup"),
-                InlineKeyboardButton("⏸️ Pause", callback_data="pause_creategroup"),
-                InlineKeyboardButton("▶️ Resume", callback_data="resume_creategroup")
+                InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, "🛑 Stop"), callback_data="stop_creategroup"),
+                InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, "⏸️ Pause"), callback_data="pause_creategroup"),
+                InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, "▶️ Resume"), callback_data="resume_creategroup")
             ],
             [
-                InlineKeyboardButton("📊 Status", callback_data="status_creategroup"),
-                InlineKeyboardButton("📋 List", callback_data="list_creategroup"),
-                InlineKeyboardButton("🔁 Recurring", callback_data="recurring_creategroup")
+                InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, "📊 Status"), callback_data="status_creategroup"),
+                InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, "📋 List"), callback_data="list_creategroup"),
+                InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, "🔁 Recurring"), callback_data="recurring_creategroup")
             ],
             [
-                 InlineKeyboardButton("✏️ Edit Name", callback_data="edit_last_creategroup"), 
-                 InlineKeyboardButton("✅ Check Created", callback_data="list_groups_creategroup")
+                 InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, "✏️ Edit Name"), callback_data="edit_last_creategroup"), 
+                 InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, "✅ Check Created"), callback_data="list_groups_creategroup")
             ]
         ])
         
@@ -1652,14 +1652,14 @@ async def creategroup_status_cmd(client: Client, message: AltruixMessage):
     
     buttons = [
         [
-             InlineKeyboardButton("⏸️ Pause", callback_data="pause_creategroup"),
-             InlineKeyboardButton("▶️ Resume", callback_data="resume_creategroup")
+             InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, "⏸️ Pause"), callback_data="pause_creategroup"),
+             InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, "▶️ Resume"), callback_data="resume_creategroup")
         ],
         [
-             InlineKeyboardButton("⏹️ Stop (Graceful)", callback_data="stop_creategroup"),
-             InlineKeyboardButton("🛑 Force Stop", callback_data="force_stop_creategroup")
+             InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, "⏹️ Stop (Graceful)"), callback_data="stop_creategroup"),
+             InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, "🛑 Force Stop"), callback_data="force_stop_creategroup")
         ],
-        [InlineKeyboardButton("🔄 Refresh Status", callback_data="status_creategroup")]
+        [InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, "🔄 Refresh Status"), callback_data="status_creategroup")]
     ]
     
     await message.reply(status_text, reply_markup=InlineKeyboardMarkup(buttons))
@@ -1707,14 +1707,10 @@ async def creategroup_stop_cmd(client: Client, message: AltruixMessage):
 
 @Altruix.bot.on_callback_query(filters.regex(r"^(stop|pause|resume|status|list|recurring|edit_last|download_log|list_groups|delete_task|cancel|force_stop)_creategroup"))
 @log_errors
+@iuser_check
 async def creategroup_control_handler(client: Client, callback_query: CallbackQuery):
     """Handler untuk tombol kontrol creategroup"""
     
-    from Main.utils.access_control import is_authorized_user
-    if not is_authorized_user(callback_query.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
-        msg = Altruix.get_string("ACCESS_DENIED")
-        return await callback_query.answer(msg, show_alert=True)
-        
     data_parts = callback_query.data.split(":")
     action = data_parts[0].replace("_creategroup", "")
     task_id = 'creategroup_main'

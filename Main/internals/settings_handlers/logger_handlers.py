@@ -20,6 +20,9 @@ from .utils import edit_cb
 # Logger
 logger = logging.getLogger(__name__)
 
+from Main.utils.file_helpers import get_user_button_style
+from .custom_alert_handlers import _get_session_user_id
+
 @Altruix.bot.on_callback_query(filters.regex(r"^(pml|mnt|joinl|cmdl)_menu_(\d+)_(\d+)$"))
 @iuser_check
 @log_errors
@@ -27,6 +30,10 @@ async def logger_menu_handler(c: Client, cb: CallbackQuery):
     """General logger status menu with filter buttons if applicable."""
     log_type, index, page = cb.matches[0].group(1), int(cb.matches[0].group(2)), int(cb.matches[0].group(3))
     await cb.answer()
+    
+    # Resolve user_style
+    user_id_key = _get_session_user_id(index)
+    user_style = get_user_button_style(user_id_key)
     
     type_map = {"pml": "PM Logger", "mnt": "Mention Logger", "joinl": "Join Logger", "cmdl": "Command Logger"}
     base_key = log_type.upper()
@@ -52,24 +59,29 @@ async def logger_menu_handler(c: Client, cb: CallbackQuery):
             reply_by = await Altruix.config.get_env(f"{base_key}_REPLY_BY_{index}") or "all"
         
         reply_by_txt = f"• 🗣️ <b>Reply By:</b> <code>{reply_by.upper()}</code>\n"
-        reply_buttons = [InlineKeyboardButton(f"🗣️ Reply: {reply_by.upper()}", f"{log_type}_reply_{index}_{page}")]
+        reply_buttons = [InlineKeyboardButton(await Essentials().get_user_button_style(user_id_key, f"🗣️ Reply: {reply_by.upper()}"), f"{log_type}_reply_{index}_{page}")]
 
     buttons = [
-        [InlineKeyboardButton(f"Toggle {type_map[log_type]}: {status_emoji}", f"{log_type}_toggle_{index}_{page}")],
+        [InlineKeyboardButton(await Essentials().get_user_button_style(user_id_key, f"Toggle {type_map[log_type]}: {status_emoji}"), f"{log_type}_toggle_{index}_{page}")],
     ]
     
     # Mode & Reply Buttons
-    config_row = [InlineKeyboardButton(f"⚙️ Type: {apply_label}", f"{log_type}_mode_{index}_{page}")]
+    config_row = [InlineKeyboardButton(await Essentials().get_user_button_style(user_id_key, f"⚙️ Type: {apply_label}"), f"{log_type}_mode_{index}_{page}")]
     if reply_buttons:
         config_row.extend(reply_buttons)
     buttons.append(config_row)
     
     # Add advanced filter buttons for PM Logger and Mention Logger
     if log_type == "pml":
-        buttons.append([InlineKeyboardButton("🔍 PM Logger Filters", f"pmlf_menu_user_{index}_{page}")])
+        buttons.append([InlineKeyboardButton(await Essentials().get_user_button_style(user_id_key, "🔍 PM Logger Filters"), f"pmlf_menu_user_{index}_{page}")])
     elif log_type == "mnt":
-        buttons.append([InlineKeyboardButton("🔍 Mention Filters", f"mntf_menu_{index}_{page}")])
-        buttons.append([InlineKeyboardButton("🔔 View Mentions", f"view_mentions_menu_{index}_{page}")])
+        buttons.append([
+            InlineKeyboardButton(await Essentials().get_user_button_style(user_id_key, "🔍 Mention Filters"), f"mntf_menu_{index}_{page}"),
+            InlineKeyboardButton(await Essentials().get_user_button_style(user_id_key, "🔔 View Mentions"), f"view_mentions_menu_{index}_{page}")
+        ])
+        
+        c_id = index
+        buttons.append([InlineKeyboardButton(await Essentials().get_user_button_style(user_id_key, "🚫 Haters Detector Dashboard"), f"haters_menu_{c_id}")])
     
     # Add Bot Assist toggle for PML and MNT
     if log_type in ["pml", "mnt"]:
@@ -86,9 +98,9 @@ async def logger_menu_handler(c: Client, cb: CallbackQuery):
                 except: pass
         
         bot_assist_btn = "ON" if bot_assist_enabled else "OFF"
-        buttons.append([InlineKeyboardButton(f"🤖 Bot Assist: {bot_assist_btn}", f"{log_type}_botassist_{index}_{page}")])
+        buttons.append([InlineKeyboardButton(await Essentials().get_user_button_style(user_id_key, f"🤖 Bot Assist: {bot_assist_btn}"), f"{log_type}_botassist_{index}_{page}")])
         
-    buttons.append([InlineKeyboardButton("🔙 Back", callback_data=f"session_info_{index}_{page}_3")]) # Fixed page return to 3 (Logs Page)
+    buttons.append([InlineKeyboardButton(await Essentials().get_user_button_style(user_id_key, "🔙 Back"), callback_data=f"session_info_{index}_{page}_3")]) # Fixed page return to 3 (Logs Page)
     
     await edit_cb(
         cb,
@@ -316,6 +328,10 @@ async def pmlf_menu_handler(c: Client, cb: CallbackQuery):
     page = int(cb.matches[0].group(3))
     await cb.answer()
     
+    # Resolve user_style
+    user_id_key = _get_session_user_id(index)
+    user_style = get_user_button_style(user_id_key)
+    
     text = (
         f"<b>🔍 PM Logger Filters ({'Userbot Session'})</b>\n\n"
         "Pilih kategori di bawah untuk mengatur jenis pesan yang akan dicatat:\n\n"
@@ -324,10 +340,10 @@ async def pmlf_menu_handler(c: Client, cb: CallbackQuery):
     )
     buttons = [
         [
-            InlineKeyboardButton("👤 From User", f"pmlfl_user_user_{index}_{page}"),
-            InlineKeyboardButton("🤖 From Bot", f"pmlfl_user_bot_{index}_{page}"),
+            InlineKeyboardButton(await Essentials().get_user_button_style(user_id_key, "👤 From User"), f"pmlfl_user_user_{index}_{page}"),
+            InlineKeyboardButton(await Essentials().get_user_button_style(user_id_key, "🤖 From Bot"), f"pmlfl_user_bot_{index}_{page}"),
         ],
-        [InlineKeyboardButton("🔙 Back to PM Logger", f"pml_menu_{index}_{page}")]
+        [InlineKeyboardButton(await Essentials().get_user_button_style(user_id_key, "🔙 Back to PM Logger"), f"pml_menu_{index}_{page}")]
     ]
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
@@ -365,6 +381,11 @@ async def show_pmlf_list(c: Client, cb: CallbackQuery, logger_type: str, source:
         "game": "GP_BTN_GAME", "poll": "GP_BTN_POLL", "dice": "GP_BTN_DICE"
     }
 
+    # Resolve user_style
+    from Main.utils.file_helpers import get_user_button_style
+    user_id_key = str(Altruix.clients[index].me.id)
+    user_style = get_user_button_style(int(user_id_key))
+
     for m_type in m_types:
         # Defaults: log everything except bot text (to avoid spam)
         default_val = False if (source == "bot" and m_type == "text") else True
@@ -374,7 +395,7 @@ async def show_pmlf_list(c: Client, cb: CallbackQuery, logger_type: str, source:
         lbl_key = type_map.get(m_type)
         lbl = Altruix.get_string(lbl_key) or m_type.capitalize()
         
-        row.append(InlineKeyboardButton(f"{status} {lbl}", f"pmlft_{logger_type}_{source}_{m_type}_{index}_{page}"))
+        row.append(InlineKeyboardButton(f"{status} {lbl}", f"pmlft_{logger_type}_{source}_{m_type}_{index}_{page}", style=user_style))
         if len(row) == 2:
             buttons.append(row)
             row = []
@@ -382,7 +403,7 @@ async def show_pmlf_list(c: Client, cb: CallbackQuery, logger_type: str, source:
     if row: 
         buttons.append(row)
         
-    buttons.append([InlineKeyboardButton("🔙 Back", f"pmlf_menu_{logger_type}_{index}_{page}")])
+    buttons.append([InlineKeyboardButton(await Essentials().get_user_button_style(int(user_id_key), "🔙 Back"), f"pmlf_menu_{logger_type}_{index}_{page}")])
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^pmlfl_(user|bot)_(user|bot)_(\d+)_(\d+)$"))
@@ -440,6 +461,10 @@ async def mntf_menu_handler(c: Client, cb: CallbackQuery):
     page = int(cb.matches[0].group(2))
     await cb.answer()
     
+    # Resolve user_style
+    user_id_key = _get_session_user_id(index)
+    user_style = get_user_button_style(user_id_key)
+    
     text = (
         f"<b>🔍 Mention Logger Filters (Sesi {index+1})</b>\n\n"
         "Pilih kategori di bawah untuk mengatur jenis pesan yang akan dicatat:\n\n"
@@ -448,10 +473,10 @@ async def mntf_menu_handler(c: Client, cb: CallbackQuery):
     )
     buttons = [
         [
-            InlineKeyboardButton("👤 From User", f"mntfl_user_{index}_{page}"),
-            InlineKeyboardButton("🤖 From Bot", f"mntfl_bot_{index}_{page}"),
+            InlineKeyboardButton(await Essentials().get_user_button_style(user_id_key, "👤 From User"), f"mntfl_user_{index}_{page}"),
+            InlineKeyboardButton(await Essentials().get_user_button_style(user_id_key, "🤖 From Bot"), f"mntfl_bot_{index}_{page}"),
         ],
-        [InlineKeyboardButton("🔙 Back to Mention Logger", f"mnt_menu_{index}_{page}")]
+        [InlineKeyboardButton(await Essentials().get_user_button_style(user_id_key, "🔙 Back to Mention Logger"), f"mnt_menu_{index}_{page}")]
     ]
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
@@ -484,6 +509,10 @@ async def show_mntf_list(c: Client, cb: CallbackQuery, source: str, index: int, 
         "game": "GP_BTN_GAME", "poll": "GP_BTN_POLL", "dice": "GP_BTN_DICE"
     }
 
+    # Resolve user_style
+    user_id_key = str(Altruix.clients[index].me.id)
+    user_style = get_user_button_style(int(user_id_key))
+
     for m_type in m_types:
         # Default: log everything
         val = filters_data.get(m_type, True)
@@ -492,12 +521,12 @@ async def show_mntf_list(c: Client, cb: CallbackQuery, source: str, index: int, 
         lbl_key = type_map.get(m_type)
         lbl = Altruix.get_string(lbl_key) or m_type.capitalize()
         
-        row.append(InlineKeyboardButton(f"{status} {lbl}", f"mntft_{source}_{m_type}_{index}_{page}"))
+        row.append(InlineKeyboardButton(f"{status} {lbl}", f"mntft_{source}_{m_type}_{index}_{page}", style=user_style))
         if len(row) == 2:
             buttons.append(row); row = []
     if row: buttons.append(row)
     
-    buttons.append([InlineKeyboardButton("🔙 Back", f"mntf_menu_{index}_{page}")])
+    buttons.append([InlineKeyboardButton("🔙 Back", f"mntf_menu_{index}_{page}", style=user_style)])
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^mntfl_(user|bot)_(\d+)_(\d+)$"))
@@ -582,6 +611,9 @@ async def global_logger_menu_handler(c: Client, cb: CallbackQuery):
     key = f"{base_key}_LOGGER_GLOBAL"
     current = await Altruix.config.get_env(key) or "off"
     
+    # Resolve user_style (Global menu uses OWNER style)
+    user_style = get_user_button_style(Altruix.config.OWNER_ID)
+    
     # Special handling for Callback Logger (cb)
     if log_type == "cb":
         # Map old "on" to "all" for compatibility
@@ -596,14 +628,14 @@ async def global_logger_menu_handler(c: Client, cb: CallbackQuery):
         
         buttons = [
             [
-                InlineKeyboardButton(f"{'✅ ' if current == 'all' else ''}All", "global_cb_filter_all"),
-                InlineKeyboardButton(f"{'✅ ' if current == 'off' else ''}Off", "global_cb_filter_off")
+                InlineKeyboardButton(await Essentials().get_user_button_style(Altruix.config.OWNER_ID, f"{'✅ ' if current == 'all' else ''}All"), "global_cb_filter_all"),
+                InlineKeyboardButton(await Essentials().get_user_button_style(Altruix.config.OWNER_ID, f"{'✅ ' if current == 'off' else ''}Off"), "global_cb_filter_off")
             ],
             [
-                InlineKeyboardButton(f"{'✅ ' if current == 'sudo' else ''}Sudo", "global_cb_filter_sudo"),
-                InlineKeyboardButton(f"{'✅ ' if current == 'nonsudo' else ''}Non-Sudo", "global_cb_filter_nonsudo")
+                InlineKeyboardButton(await Essentials().get_user_button_style(Altruix.config.OWNER_ID, f"{'✅ ' if current == 'sudo' else ''}Sudo"), "global_cb_filter_sudo"),
+                InlineKeyboardButton(await Essentials().get_user_button_style(Altruix.config.OWNER_ID, f"{'✅ ' if current == 'nonsudo' else ''}Non-Sudo"), "global_cb_filter_nonsudo")
             ],
-            [InlineKeyboardButton("🔙 Back", "bot_controls_menu")]
+            [InlineKeyboardButton(await Essentials().get_user_button_style(Altruix.config.OWNER_ID, "🔙 Back"), "bot_controls_menu")]
         ]
         
         await edit_cb(cb, 
@@ -622,8 +654,8 @@ async def global_logger_menu_handler(c: Client, cb: CallbackQuery):
     status_emoji = "✅ ON" if current == "on" else "❌ OFF"
     
     buttons = [
-        [InlineKeyboardButton(f"Toggle Global {type_map[log_type]}: {status_emoji}", f"global_{log_type}_toggle")],
-        [InlineKeyboardButton("🔙 Back", "bot_controls_menu")]
+        [InlineKeyboardButton(await Essentials().get_user_button_style(Altruix.config.OWNER_ID, f"Toggle Global {type_map[log_type]}: {status_emoji}"), f"global_{log_type}_toggle")],
+        [InlineKeyboardButton(await Essentials().get_user_button_style(Altruix.config.OWNER_ID, "🔙 Back"), "bot_controls_menu")]
     ]
     
     await edit_cb(cb, 
@@ -670,10 +702,11 @@ async def get_log_group_link_handler(c: Client, cb: CallbackQuery):
             invite = await Altruix.bot.create_chat_invite_link(log_chat_id)
             link = invite.invite_link
             
+        user_style = get_user_button_style(Altruix.config.OWNER_ID)
         await edit_cb(cb, 
             f"<b>🔗 Log Group Link</b>\n\n<code>{link}</code>\n\n"
             f"<i>Gunakan link ini untuk memasukkan sesi lain ke Log Group secara manual atau bagikan ke Sudo user.</i>",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", "bot_controls_menu")]]),
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(await Essentials().get_user_button_style(Altruix.config.OWNER_ID, "🔙 Back"), "bot_controls_menu")]]),
             parse_mode=ParseMode.HTML
         )
     except Exception as e:

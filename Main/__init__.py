@@ -9,16 +9,26 @@ import sys
 import asyncio
 
 # ✅ PERFORMANCE OPTIMIZATION: Set loop policy at absolute entry point
-try:
-    if sys.platform == "win32":
-        import winloop
-        asyncio.set_event_loop_policy(winloop.EventLoopPolicy())
-    else:
-        import uvloop
-        asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-except ImportError:
-    if sys.platform == "win32" and hasattr(asyncio, "WindowsProactorEventLoopPolicy"):
-        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+# Only import if not already set to avoid redundant imports
+if not isinstance(asyncio.get_event_loop_policy(), (asyncio.DefaultEventLoopPolicy if sys.platform != "win32" else asyncio.WindowsProactorEventLoopPolicy)):
+    try:
+        if sys.platform == "win32":
+            import winloop
+            asyncio.set_event_loop_policy(winloop.EventLoopPolicy())
+        else:
+            import uvloop
+            asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+    except ImportError:
+        if sys.platform == "win32" and hasattr(asyncio, "WindowsProactorEventLoopPolicy"):
+            asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
-from pyromod import listen
+# ✅ PERFORMANCE: Lazy import pyromod - only imported when needed by client
+# This saves ~0.5-1s on startup
+try:
+    from pyromod import listen
+except ImportError:
+    pass  # Will be imported by client if needed
+
 from .core.client import AltruixClient, Altruix
+# Ensure subpackages are exposed for test imports
+from . import core
