@@ -595,10 +595,11 @@ def log_errors(func):
             if not target_msg and isinstance(u, Message) and u.from_user and u.from_user.is_self:
                 target_msg = u
 
-            async def _log_and_notify():
+            # Capture `_be` in closure scope explicitly
+            async def _log_and_notify(captured_err=_be):
                 try:
                     # ✅ 0. Terminal Log (with account context)
-                    Altruix.log(f"💥 [log_errors] Error in {module_name}.{func.__name__}: {_be}", level=40, client=c)
+                    Altruix.log(f"💥 [log_errors] Error in {module_name}.{func.__name__}: {captured_err}", level=40, client=c)
                     
                     # 1. Send Log to Group
                     sent_log = await send_log_message(error_detail, filename=f"error_{func.__name__}.txt")
