@@ -377,10 +377,11 @@ def get_autogp_submenu_kb(user_id, settings, menu_type, current_chat_id=None):
         ])
     elif menu_type == "cycle":
         cycle = settings.get("cycle", "global")
-        cycle_row = [InlineKeyboardButton(("✅ " if cycle == "global" else "") + "Global", f"autogp_cycle_global_{user_id}", style=user_style)]
-        if current_chat_id:
-            cycle_row.append(InlineKeyboardButton(("✅ " if cycle == "current_smart" else "") + "C-Smart", f"autogp_cycle_current_smart_{user_id}", style=user_style))
-            cycle_row.append(InlineKeyboardButton(("✅ " if cycle == "current_force" else "") + "C-Force", f"autogp_cycle_current_force_{user_id}", style=user_style))
+        cycle_row = [
+            InlineKeyboardButton(("✅ " if cycle == "global" else "") + "Global", f"autogp_cycle_global_{user_id}", style=user_style),
+            InlineKeyboardButton(("✅ " if cycle == "current_smart" else "") + "C-Smart", f"autogp_cycle_current_smart_{user_id}", style=user_style),
+            InlineKeyboardButton(("✅ " if cycle == "current_force" else "") + "C-Force", f"autogp_cycle_current_force_{user_id}", style=user_style)
+        ]
         kb.append(cycle_row)
     elif menu_type == "trigger":
         trigger_mode = settings.get("trigger_mode", "outgoing")
