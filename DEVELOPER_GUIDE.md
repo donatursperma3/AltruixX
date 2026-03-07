@@ -145,6 +145,94 @@ async def ping_handler(client, message):
 2. **Dynamic:** Tidak peduli session ini ada di index 0, 1, atau 10, kode Anda akan tetap bekerja.
 3. **Scope:** Menjamin balasan dikirim dari akun yang sama dengan akun yang menerima perintah.
 
+## 7. Referensi Ekosistem (Delay, Hapus, & Markdown)
+
+### Delay dan Jeda Waktu
+**Penting:** Selalu gunakan `asyncio.sleep` (bukan `time.sleep`) agar tidak memblokir event loop.
+```python
+import asyncio
+
+# Contoh delay 3 detik
+await message.reply("Memproses...")
+await asyncio.sleep(3)
+await message.reply("Selesai!")
+```
+
+### Menghapus Pesan
+Gunakan metode object jika tersedia, atau panggil fungsi client.
+```python
+# Hapus pesan 
+try:
+    await message.delete()
+except Exception: 
+    pass
+
+# Hapus banyak pesan sekaligus
+await client.delete_messages(
+    chat_id=message.chat.id,
+    message_ids=[msg1.id, msg2.id]
+)
+```
+
+### Format Text (HTML vs Markdown)
+Altruix sangat menyarankan penggunaan **HTML** ketimbang MarkdownV2 karena lebih minim error *escape character*.
+
+```python
+# Format HTML (Disarankan)
+text = (
+    "<b>Tebal</b>\n"
+    "<i>Miring</i>\n"
+    "<code>Monospace</code>\n"
+    "<a href='t.me/AltruiX_Chat'>Link</a>"
+)
+await message.reply(text, parse_mode=enums.ParseMode.HTML)
+
+# Format Markdown V2 (Harus escape karakter spesial)
+text_md = "*Tebal* _Miring_ ||Spoiler||"
+await message.reply(text_md, parse_mode=enums.ParseMode.MARKDOWN)
+```
+
+## 8. Mengirim Pesan Inline (Tombol)
+
+**Hanya Bot Assistant** yang diizinkan oleh Telegram untuk mengirim *Inline Keyboard*. Userbot biasa tidak bisa mengirim tombol.
+
+### Contoh Tombol Biasa (Via Bot Async)
+```python
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+kb = InlineKeyboardMarkup([
+    [InlineKeyboardButton("Pilihan 1", callback_data="cb_1")],
+    [InlineKeyboardButton("Link", url="t.me/AltruiX_Chat")]
+])
+
+await Altruix.bot.send_message(
+    chat_id=message.chat.id,
+    text="Silakan klik:",
+    reply_markup=kb
+)
+```
+
+### Contoh Builder Inline (Tag `via @bot`)
+Untuk membuat userbot merender pesan dengan tombol seolah-olah mengetik `@bot_username`, gunakan metode pengiriman hasil sebaris (*Inline Bot Results*).
+
+```python
+# 1. Dapatkan username dari bot asisten
+bot_usr = Altruix.bot_manager.get_bot_username(client.me.id)
+
+# 2. Panggil data inline milik bot (Pastikan bot punya @on_inline_query handler)
+query_str = f"my_menu_{client.me.id}"
+res = await client.get_inline_bot_results(bot_usr, query_str)
+
+# 3. Minta userbot untuk 'memilih' hasil pertama dan mengirimnya
+if res.results:
+    await client.send_inline_bot_result(
+        chat_id=message.chat.id,
+        query_id=res.query_id,
+        result_id=res.results[0].id,
+        reply_to_message_id=message.id
+    )
+```
+
 ## Ringkasan Cepat
 
 | Kebutuhan | Kode |

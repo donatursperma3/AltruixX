@@ -1,22 +1,41 @@
-# xreplyfrom.py
-# New plugin to fetch content from another message and reply to the target message
-
-import os
-import re
-from pyrogram import Client, filters, enums
+from pyrogram import Client, filters
 from Main import Altruix
 from Main.core.decorators import iuser_check, log_errors
 from Main.core.types.message import Message as RawMessage
 
 # Plugin Metadata
-plugin_name = f"{os.path.basename(__file__)}"
+def _get_plugin_name():
+    import os
+    return os.path.basename(__file__)
+
+plugin_name = _get_plugin_name()
 __plugin_name__ = "xreplyfrom"
-PLUGIN_VERSION = "0.0.16"
+PLUGIN_VERSION = "0.0.191"
+
+# Database Helpers
+async def get_rf_logging_setting(user_id: int):
+    """Get RF auto-logging setting for user (default: True)."""
+    try:
+        col = Altruix.db.make_collection("rf_settings")
+        doc = await col.find_one({"_id": user_id})
+        return doc.get("logging", True) if doc else True
+    except Exception:
+        return True
+
+async def set_rf_logging_setting(user_id: int, value: bool):
+    """Set RF auto-logging setting for user."""
+    try:
+        col = Altruix.db.make_collection("rf_settings")
+        await col.update_one({"_id": user_id}, {"$set": {"logging": value}}, upsert=True)
+        return True
+    except Exception:
+        return False
 
 def clean_premium_caption(caption, entities, is_premium_session):
     """Remove premium emojis from entities if session is not premium."""
     if is_premium_session or not entities:
         return caption, entities
+    from pyrogram import enums
     new_entities = [e for e in entities if e.type != enums.MessageEntityType.CUSTOM_EMOJI]
     return caption, new_entities
 
@@ -26,7 +45,8 @@ def clean_premium_caption(caption, entities, is_premium_session):
         "categories": ["Utility"],
         "description": "Balas pesan target menggunakan konten (Text/Media) dari chat atau ID pesan lain (Mendukung link).",
         "usage": ".replyfrom <chat_id/username/link> <message_id>",
-        "example": ".replyfrom @username 5397852\n.replyfrom username 5397852\n.replyfrom https://t.me/username/5397852\n.replyfrom t.me/username/5397852"
+        "example": ".replyfrom @username 5397852\n.replyfrom username 5397852\n.replyfrom https://t.me/username/5397852\n.replyfrom t.me/username/5397852",
+        "note": "✨ Auto-logs to Log Group. If target send fails, it automatically backups to Log Group."
     },
     requires_input=True
 )
@@ -37,7 +57,12 @@ async def reply_from_handler(client: Client, message: RawMessage):
     Fetch content from another message and reply to the target message.
     Usage: .replyfrom <chat_id> <message_id>
     """
+    import re
+    import asyncio
+    from pyrogram import enums
     args = message.command or []
+    source_msg = None # Initialize to avoid UnboundLocalError
+    
     if not args and message.text:
         # Fallback if .command is None for some reason
         args = message.text.split()
@@ -104,6 +129,22 @@ async def reply_from_handler(client: Client, message: RawMessage):
             await status_msg.edit("❌ <b>Error:</b> Source message not found or is empty.")
             return
 
+        # Auto Forward to Log Group (if enabled)
+        uid = message.from_user.id
+        logging_on = await get_rf_logging_setting(uid)
+        
+        if logging_on:
+            await asyncio.sleep(3) # Delay to prevent FloodWait
+            if Altruix.log_chat:
+                try:
+                    # ✅ ROBUST LOGGING: Try copy first (hides sender if possible), fallback to forward
+                    try:
+                        await source_msg.copy(Altruix.log_chat)
+                    except Exception:
+                        await source_msg.forward(Altruix.log_chat)
+                except Exception as e:
+                    Altruix.log(f"RF Auto-forward failed: {e}")
+
         # Attempt Method 1: standard Copy (Bypass Forward Restriction)
         try:
             await source_msg.copy(
@@ -114,7 +155,10 @@ async def reply_from_handler(client: Client, message: RawMessage):
             return
         except Exception:
             # Method 1 failed, likely strict Protected Content
-            await status_msg.edit("🧨 <b>Copy restricted.</b> Attempting robust bypass (Download & Upload)...")
+            try:
+                await status_msg.edit("🧨 <b>Copy restricted.</b> Attempting robust bypass (Download & Upload)...")
+            except Exception:
+                pass
 
         # Attempt Method 2: Download & Upload Bypass
         if source_msg.media:
@@ -141,11 +185,29 @@ async def reply_from_handler(client: Client, message: RawMessage):
             elif source_msg.animation:
                 await client.send_animation(message.chat.id, temp_path, caption=caption, reply_to_message_id=reply_id)
             elif source_msg.video_note:
-                await client.send_video_note(message.chat.id, temp_path, reply_to_message_id=reply_id)
+                sent_msg = await client.send_video_note(message.chat.id, temp_path, reply_to_message_id=reply_id)
             elif source_msg.sticker:
-                await client.send_sticker(message.chat.id, temp_path, reply_to_message_id=reply_id)
+                sent_msg = await client.send_sticker(message.chat.id, temp_path, reply_to_message_id=reply_id)
+            elif source_msg.media == enums.MessageMediaType.PHOTO: # Fallback for edge cases
+                 sent_msg = await client.send_photo(message.chat.id, temp_path, caption=caption, reply_to_message_id=reply_id)
+            
+            # ✅ ROBUST BACKUP: If bypass succeeded, we have the file. Use it for logging too.
+            if logging_on and Altruix.log_chat:
+                try:
+                    # Reuse temp_path to send to log group
+                    caption_log = f"📥 <b>Restricted Content Log</b>\nSource: <code>{target_chat}</code>\nTask ID: <code>{message.id}</code>"
+                    if source_msg.photo:
+                        await client.send_photo(Altruix.log_chat, temp_path, caption=caption_log)
+                    elif source_msg.video:
+                        await client.send_video(Altruix.log_chat, temp_path, caption=caption_log)
+                    elif source_msg.document:
+                        await client.send_document(Altruix.log_chat, temp_path, caption=caption_log)
+                    # Add other types if needed
+                except Exception as log_err:
+                     Altruix.log(f"RF Bypass Log failed: {log_err}")
             
             # Clean up
+            import os
             if os.path.exists(temp_path):
                 os.remove(temp_path)
         
@@ -160,7 +222,24 @@ async def reply_from_handler(client: Client, message: RawMessage):
         await status_msg.delete()
 
     except Exception as e:
-        await status_msg.edit(f"❌ <b>Bypass Critical Error:</b> {str(e)}")
+        # FAIL-SAFE BACKUP to Log Group
+        if Altruix.log_chat and (source_msg and not source_msg.empty):
+             try:
+                 # Try copy first, then forward
+                 try:
+                     await source_msg.copy(Altruix.log_chat)
+                 except:
+                     await source_msg.forward(Altruix.log_chat)
+                 backup_info = f" (Backup sent to Log Group)"
+             except Exception:
+                 backup_info = ""
+        else:
+             backup_info = ""
+
+        try:
+            await status_msg.edit(f"❌ <b>Bypass Critical Error:</b> {str(e)}{backup_info}")
+        except Exception:
+            await message.reply(f"❌ <b>Bypass Critical Error:</b> {str(e)}{backup_info}")
 
 @Altruix.register_on_cmd(
     cmd="replyfromcap",
@@ -168,7 +247,8 @@ async def reply_from_handler(client: Client, message: RawMessage):
         "categories": ["Utility"],
         "description": "Mirip .replyfrom, namun memastikan caption media tetap terlampir (Mendukung link).",
         "usage": ".replyfromcap <chat_id/username/link> <message_id>",
-        "example": ".replyfromcap @username 123"
+        "example": ".replyfromcap @username 123",
+        "note": "✨ Auto-logs to Log Group. If target send fails, it automatically backups to Log Group."
     },
     requires_input=True
 )
@@ -189,7 +269,8 @@ async def reply_from_cap_handler(client: Client, message: RawMessage):
         "categories": ["Utility"],
         "description": "Balas pesan target menggunakan konten dari Story Telegram (Mendukung link story).",
         "usage": ".replyfroms [noc] <story_link>",
-        "example": ".replyfroms https://t.me/username/s/123\n.replyfroms noc https://t.me/username/s/123"
+        "example": ".replyfroms https://t.me/username/s/123\n.replyfroms noc https://t.me/username/s/123",
+        "note": "✨ Auto-logs to Log Group. If target send fails, it automatically backups to Log Group."
     },
     requires_input=True
 )
@@ -197,6 +278,9 @@ async def reply_from_cap_handler(client: Client, message: RawMessage):
 @log_errors
 async def reply_from_story_handler(client: Client, message: RawMessage):
     """Fetch content from a story link and reply to the target msg."""
+    import asyncio
+    story = None # Initialize to avoid UnboundLocalError
+    
     args = message.command or []
     if not args and message.text:
         args = message.text.split()
@@ -249,6 +333,30 @@ async def reply_from_story_handler(client: Client, message: RawMessage):
         if not file_path:
             await status_msg.edit("❌ <b>Download failed.</b>")
             return
+
+        # Auto Logging to Log Group
+        uid = message.from_user.id
+        logging_on = await get_rf_logging_setting(uid)
+        if logging_on:
+            await asyncio.sleep(3) # Delay to prevent FloodWait
+            if Altruix.log_chat:
+                try:
+                    # Forward story directly if supported or send downloaded file
+                    await client.forward_messages(Altruix.log_chat, target, story_id)
+                except Exception:
+                    # Fallback to sending file to log chat
+                    try:
+                        caption_log = f"📥 <b>Story Backup</b> from @{target_raw}"
+                        if story.video:
+                            await client.send_video(Altruix.log_chat, file_path, caption=caption_log)
+                        else:
+                            await client.send_photo(Altruix.log_chat, file_path, caption=caption_log)
+                    except Exception as e:
+                        # Final Attempt: Direct copy/forward of ID
+                        try:
+                            await client.copy_media_group(Altruix.log_chat, target, [story_id])
+                        except:
+                            Altruix.log(f"RF Story auto-forward failed: {e}")
         
         caption, entities = clean_premium_caption(story.caption or "", story.caption_entities, is_premium)
         
@@ -261,10 +369,85 @@ async def reply_from_story_handler(client: Client, message: RawMessage):
                 await client.send_video(message.chat.id, file_path, caption=caption, caption_entities=entities, reply_to_message_id=reply_id)
             else:
                 await client.send_photo(message.chat.id, file_path, caption=caption, caption_entities=entities, reply_to_message_id=reply_id)
+        except Exception as e:
+             # FAIL-SAFE BACKUP on send failure
+             if Altruix.log_chat:
+                 try:
+                     caption_err = f"⚠️ <b>RF Error Backup</b> from @{target_raw}\nError: {e}"
+                     if story.video:
+                         await client.send_video(Altruix.log_chat, file_path, caption=caption_err)
+                     else:
+                         await client.send_photo(Altruix.log_chat, file_path, caption=caption_err)
+                     backup_info = " (Backup sent to Log Group)"
+                 except Exception:
+                     backup_info = ""
+             else:
+                 backup_info = ""
+             await status_msg.edit(f"❌ <b>Send Failed:</b> {e}{backup_info}")
+             return
         finally:
+            import os
             if os.path.exists(file_path): os.remove(file_path)
 
         await status_msg.delete()
 
     except Exception as e:
-        await status_msg.edit(f"❌ <b>Error:</b> {e}")
+        try:
+            await status_msg.edit(f"❌ <b>Error:</b> {e}")
+        except Exception:
+            await message.reply(f"❌ <b>Error:</b> {e}")
+
+# ============================================================================
+# 🔥 RF LOGGING COMMANDS
+# ============================================================================
+@Altruix.register_on_cmd(
+    cmd="rflogging",
+    cmd_help={
+        "categories": ["Utility"],
+        "description": "Aktifkan/Matikan auto-logging ke Group Log untuk XReplyFrom.",
+        "usage": ".rflogging <on/off>",
+        "example": ".rflogging on\n.rflogging off"
+    },
+    requires_input=True
+)
+@iuser_check
+@log_errors
+async def rf_logging_toggle_handler(client: Client, message: RawMessage):
+    """Toggle RF auto-logging."""
+    uid = message.from_user.id
+    input_val = message.user_input.lower().strip()
+    
+    if input_val in ["on", "true", "yes", "1"]:
+        await set_rf_logging_setting(uid, True)
+        await message.edit("✅ <b>RF Logging:</b> <code>ENABLED</code>")
+    elif input_val in ["off", "false", "no", "0"]:
+        await set_rf_logging_setting(uid, False)
+        await message.edit("❌ <b>RF Logging:</b> <code>DISABLED</code>")
+    else:
+        await message.edit("❓ <b>Usage:</b> <code>.rflogging &lt;on/off&gt;</code>")
+
+@Altruix.register_on_cmd(
+    cmd="rfstatus",
+    cmd_help={
+        "categories": ["Utility"],
+        "description": "Cek status pengaturan XReplyFrom.",
+        "usage": ".rfstatus",
+        "example": ".rfstatus"
+    }
+)
+@iuser_check
+@log_errors
+async def rf_status_handler(client: Client, message: RawMessage):
+    """Show RF settings status."""
+    uid = message.from_user.id
+    logging_on = await get_rf_logging_setting(uid)
+    
+    text = (
+        "⚙️ <b>XReplyFrom Settings</b>\n"
+        f"{'━' * 20}\n"
+        f"• Auto Logging: {'✅ ENABLED' if logging_on else '❌ DISABLED'}\n"
+        "• Fail-safe Backup: ✅ ALWAYS ACTIVE\n"
+        f"{'━' * 20}\n"
+        "<i>Gunakan .rflogging <on/off> untuk mengubah.</i>"
+    )
+    await message.edit(text)

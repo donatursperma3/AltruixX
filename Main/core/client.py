@@ -177,7 +177,7 @@ class AltruixClient:
         self.clients: List[Client] = []
         self.cmd_list = {}
         self.all_lang_strings = {}
-        self.__version__ = "0.0.10.0754H" # ✅ Sync Bottleneck Fix
+        self.__version__ = "0.0.10.0788H" # ✅ Sync Bottleneck Fix
         self.upm = UPM(self)
         self.selected_lang = "english"
         self.local_lang_file = "./Main/localization"
@@ -241,10 +241,29 @@ class AltruixClient:
 
         self.local_db = LocalDatabase()
         
+        # ✅ Loop setup: Get or create the optimized loop
+        try:
+            self.loop = asyncio.get_event_loop()
+        except RuntimeError:
+            self.loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self.loop)
+
         # ✅ Install global exception handler for Pyrogram dispatcher
         try:
             from Main.core.exception_handler import install_exception_handler
-            install_exception_handler()
+            install_exception_handler(self)
+            
+            # ✅ INSTALL GLOBAL LOOP EXCEPTION HANDLER
+            # This catches "Task exception was never retrieved" errors and logs them with context.
+            def _loop_exception_handler(loop, context):
+                msg = context.get("exception", context.get("message"))
+                try:
+                    self.log(f"💥 [GlobalLoopError] {msg}", level=30)
+                except:
+                    logger.warning(f"💥 [GlobalLoopError] {msg}")
+            
+            self.loop.set_exception_handler(_loop_exception_handler)
+            
         except Exception as e:
             logger.warning(f"Failed to install exception handler: {e}")
         
@@ -254,13 +273,6 @@ class AltruixClient:
         self.user_privacy_state = {}
         self.user_track_state = {}
         self.SANGMATA_WAITING = {}
-        
-        # ✅ Loop setup: Get or create the optimized loop
-        try:
-            self.loop = asyncio.get_event_loop()
-        except RuntimeError:
-            self.loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self.loop)
         
         if hasattr(asyncio, 'get_event_loop_policy'):
             policy = asyncio.get_event_loop_policy()
@@ -761,23 +773,55 @@ class AltruixClient:
         message: Optional[Any] = None,
         level=logging.DEBUG,
         logger: logging.Logger = logging.getLogger(__name__),
+        client: Client = None,
+        user_id: Union[int, str] = None
     ) -> Optional[str]:
         if message is None:
             msg = traceback.format_exc()
         elif isinstance(message, Exception):
             # Compact formatting for RPC errors or standard exceptions
             error_name = type(message).__name__
-            error_msg = str(message).split("Telegram says:")[0].strip() # Remove repetitive boilerplate
-            if "Telegram says:" in str(message):
-                # Format: [RPCError] MESSAGE (Details)
-                msg = f"[{error_name}] {error_msg}"
+            full_str = str(message)
+            
+            # ✅ IMPROVED: Aggressively remove "Telegram says:" and any leading/trailing boilerplate
+            if "Telegram says:" in full_str:
+                try:
+                    # Capture everything AFTER "Telegram says:"
+                    error_msg = full_str.split("Telegram says:")[1].strip()
+                except IndexError:
+                    error_msg = full_str
             else:
-                msg = f"{error_name}: {message}"
+                error_msg = full_str
+                
+            msg = f"[{error_name}] {error_msg}"
         else:
             msg = str(message)
 
+        # ✅ ENHANCEMENT: Add Session/Account Information to terminal logs
+        session_info = ""
+        target_client = client
+        target_uid = user_id
+        
+        if not target_client and target_uid:
+            # Try to find client by ID
+            for c in self.clients:
+                if hasattr(c, "me") and c.me and c.me.id == int(target_uid):
+                    target_client = c; break
+        
+        if target_client:
+            try:
+                from Main.core.exception_handler import get_session_info
+                session_info = f"{get_session_info(target_client)} | "
+            except: pass
+        elif target_uid:
+            session_info = f"[ID: {target_uid}] | "
+
+        if session_info:
+            # Ensure the prefix is at the VERY start of the line
+            msg = f"{session_info}{msg}"
+
         # Suppress DEBUG: logs unless config.DEBUG is True
-        if msg and msg.startswith("DEBUG:") and not getattr(self.config, "DEBUG", False):
+        if msg and "DEBUG:" in msg and not getattr(self.config, "DEBUG", False):
             return msg
             
         logger.log(level, msg)
@@ -1171,6 +1215,10 @@ class AltruixClient:
                 # ✅ Check if session is disabled
                 if client.me and client.me.id in self.disabled_sessions:
                     return
+
+                # ✅ Initialize defaults at scope start to avoid UnboundLocalError
+                is_user_cmd = False
+                is_sudo_cmd = False
                 
                 # ✅ MULTI-CLIENT CROSS-EXECUTION PREVENTION
                 # Prevent Client B from executing commands sent by Client A
@@ -1606,6 +1654,20 @@ class AltruixClient:
             process_memory_mb = "N/A"
             process_threads = "N/A"
 
+        # Component Statistics
+        plugin_paths = [
+            "Main/plugins/bot/*.py",
+            "Main/plugins/userbot/*.py",
+            "Main/plugins/addons/**/*.py"
+        ]
+        total_plugins = 0
+        for p in plugin_paths:
+            total_plugins += len([f for f in glob.glob(p, recursive=True) if os.path.isfile(f)])
+
+        total_sessions = len(self.clients)
+        assistant_bot = 1 if hasattr(self, 'bot') and self.bot.is_connected else 0
+        custom_bots = len(self.bot_manager.custom_bots) if hasattr(self, 'bot_manager') else 0
+
         return {
             "cpu": {
                 "percent": cpu_percent,
@@ -1628,6 +1690,12 @@ class AltruixClient:
                 "platform": platform.system(),
                 "python": platform.python_version(),
                 "pyrogram": pyrogram_version
+            },
+            "components": {
+                "plugins": total_plugins,
+                "sessions": total_sessions,
+                "bot": assistant_bot,
+                "custom_bots": custom_bots
             }
         }
 
@@ -1646,21 +1714,6 @@ class AltruixClient:
     ) -> str:
         """
         Format startup log dengan blockquote expandable untuk tampilan yang lebih rapi.
-        
-        Args:
-            total_sessions: Total jumlah session (user + bot)
-            success_count: Jumlah client yang berhasil startup
-            failed_count: Jumlah client yang gagal startup
-            owner_id: ID owner userbot
-            branch: Branch Git dan commit hash
-            db_type: Tipe database (MongoDB/LocalDB)
-            version: Versi Altruix
-            startup_time: Waktu startup
-            system_stats: Dictionary berisi system statistics (optional)
-            warnings: Dictionary berisi resource warnings (optional)
-        
-        Returns:
-            str: Formatted HTML string dengan blockquote expandable
         """
         import html as html_module
         
@@ -1674,7 +1727,8 @@ class AltruixClient:
         message += "<b>📊 Client Statistics</b>\n"
         message += f"• Total Session: {total_sessions} user + 1 bot\n"
         message += f"• Success: {success_count} clients\n"
-        message += f"• Failed: {failed_count} clients\n\n"
+        message += f"• Failed: {failed_count} clients\n"
+        message += f"{'━' * 20}\n"
         
         # Section 2: System Information
         message += "<b>ℹ️ System Information</b>\n"
@@ -1682,7 +1736,8 @@ class AltruixClient:
         message += f"• Branch: {html_module.escape(branch)}\n"
         message += f"• Database: {html_module.escape(db_type)}\n"
         message += f"• Version: {html_module.escape(version)}\n"
-        message += f"• Time: {html_module.escape(startup_time)}\n\n"
+        message += f"• Time: {html_module.escape(startup_time)}\n"
+        message += f"{'━' * 20}\n"
         
         # Section 3: System Statistics (jika ada)
         if system_stats:
@@ -1702,14 +1757,14 @@ class AltruixClient:
             uptime = proc_data.get('uptime', 'N/A')
             platform_name = sys_data.get('platform', 'Unknown')
             python_version = sys_data.get('python', 'Unknown')
-            pyrogram_version = sys_data.get('pyrogram', 'Unknown')
+            pyrogram_version_val = sys_data.get('pyrogram', 'Unknown')
             
             message += "<b>📊 System Statistics</b>\n"
             message += f"• CPU: {cpu_percent}% ({cpu_cores} core/{cpu_threads} thread)\n"
             message += f"• RAM: {ram_used}GB/{ram_total}GB ({ram_percent}%)\n"
             message += f"• Proses: {proc_memory}MB ({proc_threads} thread)\n"
             message += f"• Uptime: {uptime}\n"
-            message += f"• Platform: {platform_name} | Python {python_version} | Pyrogram {pyrogram_version}\n\n"
+            message += f"• Platform: {platform_name} | Python {python_version} | Pyrogram {pyrogram_version_val}\n"
         
         # Section 4: Resource Warning (conditional)
         if warnings:
@@ -1717,11 +1772,12 @@ class AltruixClient:
             ram_warning = warnings.get('ram')
             
             if cpu_warning or ram_warning:
+                message += f"{'━' * 20}\n"
                 message += "<b>⚠️ Resource Warning</b>\n"
                 if cpu_warning:
-                    message += f"🖥 CPU Usage: {cpu_warning}%\n"
+                    message += f"• CPU Usage: {cpu_warning}%\n"
                 if ram_warning:
-                    message += f"💾 RAM Usage: {ram_warning}%\n"
+                    message += f"• RAM Usage: {ram_warning}%\n"
                 message += "‼️ Tindakan diperlukan:\n"
                 message += "Server Anda hampir mencapai kapasitas maksimal. Mohon periksa proses yang berjalan untuk menghindari crash atau restart tak terduga.\n"
         
@@ -1773,16 +1829,29 @@ class AltruixClient:
                 python_version = system_stats.get('system', {}).get('python', 'Unknown')
                 pyrogram_version_safe = system_stats.get('system', {}).get('pyrogram', pyrogram_version)  # fallback ke global
 
+                comp_data = system_stats.get('components', {})
+                total_plugins = comp_data.get('plugins', 0)
+                total_sessions = comp_data.get('sessions', 0)
+                total_bots = comp_data.get('bot', 0)
+                custom_bots = comp_data.get('custom_bots', 0)
+
                 system_info = (
                     f"📊 <b>SISTEM STATISTIK</b>\n"
-                    f"• <b>CPU:</b> {cpu_percent}% "
-                    f"({cpu_cores} core/{cpu_threads} thread)\n"
-                    f"• <b>RAM:</b> {ram_used}GB/{ram_total}GB "
+                    f"{'━' * 20}\n"
+                    f"<b>🖥 RESOURCES</b>\n"
+                    f"• CPU: <code>{cpu_percent}%</code> "
+                    f"({cpu_cores}C/{cpu_threads}T)\n"
+                    f"• RAM: <code>{ram_used}GB/{ram_total}GB</code> "
                     f"({ram_percent}%)\n"
-                    f"• <b>Proses:</b> {proc_memory}MB "
+                    f"• Proses: <code>{proc_memory}MB</code> "
                     f"({proc_threads} thread)\n"
-                    f"• <b>Uptime:</b> {uptime}\n"
-                    f"• <b>Platform:</b> {platform_name} | "
+                    f"• Uptime: <code>{uptime}</code>\n\n"
+                    f"<b>⚙️ COMPONENTS</b>\n"
+                    f"• Plugins: <code>{total_plugins}</code>\n"
+                    f"• Sessions: <code>{total_sessions}</code>\n"
+                    f"• Bots: <code>{total_bots} bot + {custom_bots} custom</code>\n\n"
+                    f"<b>🌐 PLATFORM</b>\n"
+                    f"• {platform_name} | "
                     f"Python {python_version} | Pyrogram {pyrogram_version_safe}"
                 )
                
@@ -1799,16 +1868,22 @@ class AltruixClient:
                         self.log(f"Gagal kirim stats ke log chat: {e}", level=logging.WARNING)
 
                 # Tampilkan di console
-                print("\n" + "="*60)
-                print("📊 SISTEM STATISTIK".center(60))
-                print("="*60)
-                print(f"CPU     : {cpu_percent}% ({cpu_cores} core / {cpu_threads} thread)")
-                print(f"RAM     : {ram_used}GB / {ram_total}GB ({ram_percent}%)")
-                print(f"Proses  : {proc_memory}MB | {proc_threads} thread")
-                print(f"Uptime  : {uptime}")
-                print(f"System  : {platform_name} | Python {python_version}")
-                print(f"Pyrogram: {pyrogram_version_safe}")
-                print("="*60 + "\n")
+                border = "═" * 50
+                print(f"\n{border}")
+                print("📊 SISTEM STATISTIK".center(50))
+                print(border)
+                print(f" [🖥] CPU     : {cpu_percent}% ({cpu_cores}C/{cpu_threads}T)")
+                print(f" [💾] RAM     : {ram_used}GB / {ram_total}GB ({ram_percent}%)")
+                print(f" [🚀] Proses  : {proc_memory}MB | {proc_threads} thread")
+                print(f" [⏱] Uptime  : {uptime}")
+                print("-" * 50)
+                print(f" [⚙️] Plugins : {total_plugins}")
+                print(f" [👤] Sessions: {total_sessions}")
+                print(f" [🤖] Bots    : {total_bots} assistant + {custom_bots} custom")
+                print("-" * 50)
+                print(f" [🌐] System  : {platform_name} | Python {python_version}")
+                print(f" [📦] Pyrogram: {pyrogram_version_safe}")
+                print(f"{border}\n")
 
                 print(self.banner)
                 branch_info = get_current_git_branch()
@@ -2248,7 +2323,7 @@ class AltruixClient:
                             parse_mode = ParseMode.HTML
                             
                             if client == self.bot:
-                                base_text = f"<b>✅ Altruix Bot Assistant is alive!</b>"
+                                base_text = f"<b>✅ Altroid-X Bot Assistant is alive!</b>"
                                 final_message = (
                                     f"{base_text}\n"
                                     f"<b>{client_type}: {mention_user}</b> [ <code>{user_id}</code> ]\n"
@@ -2274,7 +2349,7 @@ class AltruixClient:
                                         state = "default" # Fallback
                                 
                                 if state == "default":
-                                    base_text = f"<b>✅ Altruix Userbot [{user_display_index}/{total_user_sessions}] is alive!</b>"
+                                    base_text = f"<b>✅ Altroid-X Userbot [{user_display_index}/{total_user_sessions}] is alive!</b>"
                                     final_message = (
                                         f"{base_text}\n"
                                         f"<b>{client_type}: {mention_user}</b> [ <code>{user_id}</code> ]\n"
@@ -2343,7 +2418,7 @@ class AltruixClient:
                                 total_sessions=len(self.clients),
                                 success_count=success_count,
                                 failed_count=len(failed_clients),
-                                owner_id=BaseConfig.OWNER_ID,
+                                owner_id=self.config.OWNER_ID,
                                 branch=branch,
                                 db_type=db_type,
                                 version=altruix_version,

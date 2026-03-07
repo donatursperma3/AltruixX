@@ -186,7 +186,7 @@ class Message:
                 )
 
             service_name = service.title() if service else "Paste"
-            _p = f"{headers.format(service_name)} : <b><a href='{paste_link}'>PREVIEW</a></b>"
+            _p = f"<blockquote>{headers.format(service_name)} : <b><a href='{paste_link}'>PREVIEW</a> ({paste_link})</b></blockquote>"
             # ✅ FIX: Pyrogram's edit_text does NOT support reply_parameters or reply_to_message_id.
             # We ONLY use those for send_message/send_document (replying).
             # For editing, we just edit the message content.
@@ -239,7 +239,7 @@ class Message:
             text = Essentials.md_to_text(text)
             service, paste_link = await Paste(text).paste()
             service_name = service.title() if service else "Paste"
-            _p = f"{headers.format(service_name)} : <b><a href='{paste_link}'>PREVIEW</a></b>"
+            _p = f"<blockquote>{headers.format(service_name)} : <b><a href='{paste_link}'>PREVIEW</a> ({paste_link})</b></blockquote>"
 
             # ✅ UPLOAD SEBAGAI FILE JIKA OPSI AKTIF
             if too_long_as_file:
@@ -286,7 +286,7 @@ class Message:
 
 
                 service_name = service.title() if service else "Paste"
-                _p = f"{headers.format(service_name)} : <b><a href='{paste_link}'>PREVIEW</a></b>"
+                _p = f"<blockquote>{headers.format(service_name)} : <b><a href='{paste_link}'>PREVIEW</a> ({paste_link})</b></blockquote>"
                 
                 if too_long_as_file:
                     force_file = too_long_as_file if isinstance(too_long_as_file, str) else "message.txt"
@@ -342,7 +342,7 @@ class Message:
                 )
 
             service_name = service.title() if service else "Paste"
-            _p = f"{headers.format(service_name)} : <b><a href='{paste_link}'>PREVIEW</a></b>"
+            _p = f"<blockquote>{headers.format(service_name)} : <b><a href='{paste_link}'>PREVIEW</a> ({paste_link})</b></blockquote>"
             # ✅ GUNAKAN quote=True (bawaan reply)
             try:
                 # 🔄 Force reply ID via ReplyParameters if possible
@@ -413,7 +413,7 @@ class Message:
             text = Essentials.md_to_text(text)
             service, paste_link = await Paste(text).paste()
             service_name = service.title() if service else "Paste"
-            _p = f"{headers.format(service_name)} : <b><a href='{paste_link}'>PREVIEW</a></b>"
+            _p = f"<blockquote>{headers.format(service_name)} : <b><a href='{paste_link}'>PREVIEW</a> ({paste_link})</b></blockquote>"
             try:
                 msg_ = await self.reply(
                     _p, 

@@ -1,4 +1,4 @@
-PLUGIN_VERSION = "0.0.32"
+PLUGIN_VERSION = "0.0.41"
 
 """
 Purgeme Interactive Plugin for Altruix Userbot
@@ -13,6 +13,8 @@ from Main import Altruix
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from Main.internals.settings import send_log_notification
 from Main.utils.essentials import Essentials
+from Main.utils.file_helpers import get_user_button_style
+from Main.core.decorators import log_errors
 
 # Initialize shared state storage if not exists
 if not hasattr(Altruix, "PURGEME_STATE"):
@@ -30,41 +32,34 @@ def get_purgeme_status_text(state):
     types = state["types"]
     start_time = state.get("start_time", 0)
     mode = state.get("mode", "latest")
-    
-    title = Altruix.get_string("purgeme_title") or "🗑 <b>Userbot Purgeme</b>"
-    
-    def loc(key): return Altruix.get_string(key)
-    
-    # Dynamic Phase Indicator
-    if status == "config":
-        menu_title = loc("purgeme_menu_title") or "<b>⚙️ Purgeme Configuration</b>"
-        chat_name = state.get("chat_name", "Unknown")
-        chat_id = state.get("chat_id", "Unknown")
-        chat_link = state.get("chat_link")
-        
-        display_name = f"<a href='{chat_link}'>{chat_name}</a>" if chat_link else f"<b>{chat_name}</b>"
-        
-        select_options = loc("purgeme_select_options") or "Please select options:"
-        return (
-            f"{title}\n\n"
-            f"<b>Chat:</b> {display_name}\n"
-            f"<b>Chat_ID:</b> <code>{chat_id}</code>\n\n"
-            f"{menu_title}\n"
-            f"{select_options}"
-        )
-
     chat_name = state.get("chat_name", "Unknown")
     account_name = state.get("account_name", "Unknown")
-
-    # Mapping for special types to YML keys
+    chat_id = state.get("chat_id", "Unknown")
+    chat_link = state.get("chat_link")
+    
+    title = Altruix.get_string("purgeme_title") or "<b>Userbot Purgeme</b>"
+    def loc(key): return Altruix.get_string(key)
+    
+    # Mapping for special types
     TYPE_MAP = {
-        "video_note": "VNOTE",
-        "animation": "GIF",
-        "document": "DOC",
-        "location": "LOC",
-        "contact": "CONT",
-        "venue": "VEN"
+        "video_note": "VNOTE", "animation": "GIF", "document": "DOC",
+        "location": "LOC", "contact": "CONT", "venue": "VEN"
     }
+
+    if status == "config":
+        menu_title = loc("purgeme_menu_title") or "<b>Purgeme Configuration</b>"
+        display_name = f"<a href='{chat_link}'>{chat_name}</a>" if chat_link else f"<b>{chat_name}</b>"
+        select_options = loc("purgeme_select_options") or "Please select options:"
+        return (
+            f"{title}\n"
+            f"<blockquote expandable>━━━━━━━━━━━━━━━━━━━━\n"
+            f"<b>Account:</b> <code>{account_name}</code>\n"
+            f"<b>Chat:</b> {display_name}\n"
+            f"<b>ID:</b> <code>{chat_id}</code>\n"
+            f"━━━━━━━━━━━━━━━━━━━━</blockquote>\n"
+            f"{menu_title}\n"
+            f"<i>{select_options}</i>"
+        )
 
     # Common Header for active states
     if not types or "all" in types:
@@ -76,67 +71,75 @@ def get_purgeme_status_text(state):
         suffix = TYPE_MAP.get(raw_type, raw_type.upper())
         type_display = loc(f"GP_BTN_{suffix}") or suffix
 
-    header = f"{title}\n" \
-             f"<b>Mode:</b> {mode.capitalize()} | <b>Type:</b> {type_display}\n" \
-             f"<b>Target:</b> {count} messages\n" \
-             f"<b>Chat:</b> {chat_name}\n" \
-             f"<b>Account:</b> {account_name}"
+    header = (
+        f"{title}\n"
+        f"<blockquote expandable>━━━━━━━━━━━━━━━━━━━━\n"
+        f"<b>Account:</b> <code>{account_name}</code>\n"
+        f"<b>Chat:</b> <b>{chat_name}</b>\n"
+        f"<b>Mode:</b> <code>{mode.capitalize()}</code> | <b>Type:</b> <code>{type_display}</code>\n"
+        f"<b>Target:</b> <code>{count}</code> messages\n"
+        f"━━━━━━━━━━━━━━━━━━━━</blockquote>"
+    )
 
     if status == "collecting":
-        status_line = (loc("purgeme_collecting_detailed") or "🔎 <b>Collecting...</b>\nFound: {processed}/{count}\nScanned: {scanned}").format(
+        status_line = (loc("purgeme_collecting_detailed") or "<b>Collecting...</b>\nFound: <code>{processed}/{count}</code>\nScanned: <code>{scanned}</code>").format(
             processed=processed, count=count, scanned=scanned
         )
-        return f"{header}\n\n{status_line}"
+        return f"{header}\n{status_line}"
 
     elif status == "running":
-        status_line = (loc("purgeme_deleting_detailed") or "🗑 <b>Deleting...</b>\nDeleted: {processed}/{count}").format(
+        status_line = (loc("purgeme_deleting_detailed") or "<b>Deleting...</b>\nDeleted: <code>{processed}/{count}</code>").format(
             processed=processed, count=count
         )
-        if delay > 0: status_line += f"\nDelay: {delay}s"
-        return f"{header}\n\n{status_line}"
+        if delay > 0: status_line += f"\nDelay: <code>{delay}s</code>"
+        return f"{header}\n{status_line}"
 
     elif status == "paused":
-        status_line = (loc("purgeme_paused_detailed") or "⏸ <b>PAUSED</b>\nDeleted: {processed}/{count}").format(
+        status_line = (loc("purgeme_paused_detailed") or "<b>PAUSED</b>\nDeleted: <code>{processed}/{count}</code>").format(
             processed=processed, count=count
         )
-        return f"{header}\n\n{status_line}"
+        return f"{header}\n{status_line}"
 
     elif status == "finished":
-        start_time = state.get("start_time", 0)
         duration = round(time.time() - start_time, 2) if start_time > 0 else 0
-        
-        chat_link = state.get("chat_link")
-        chat_display = f"<a href='{chat_link}'>{chat_name}</a>" if chat_link else f"<b>{chat_name}</b>"
-        
-        fin_text = (loc("purgeme_finished_detailed") or "✅ <b>Finished!</b>\nDeleted: {processed} messages\nTime: {duration}s\nChat: {chat}\nAccount: {account}").format(
-            processed=processed, duration=duration, chat=chat_display, account=account_name
+        display_name = f"<a href='{chat_link}'>{chat_name}</a>" if chat_link else f"<b>{chat_name}</b>"
+        fin_text = (loc("purgeme_finished_detailed") or "<b>Finished!</b>\nDeleted: <code>{processed}</code> messages\nTime: <code>{duration}s</code>\nChat: {chat}\nAccount: <code>{account}</code>").format(
+            processed=processed, duration=duration, chat=display_name, account=account_name
         )
         return f"{title}\n\n{fin_text}"
 
     elif status == "cancelled":
-        lbl = loc("purgeme_cancelled_short") or "❌ <b>Cancelled</b>"
-        return f"{title}\n\n{lbl}"
+        lbl = loc("purgeme_cancelled_short") or "<b>Cancelled</b>"
+        return f"{title}\n" \
+               f"━━━━━━━━━━━━━━━━━━━━\n" \
+               f"{lbl}"
         
     return title
 
 # Helper to get control buttons
-async def get_purgeme_control_kb(unique_id, status, client_id):
+def get_purgeme_control_kb(unique_id, status, client_id):
     def loc(key): return Altruix.get_string(key)
+    btn_style = get_user_button_style(client_id)
+    
     if status == "running":
         return InlineKeyboardMarkup([
             [
-                InlineKeyboardButton(await Essentials.get_user_button_style(client_id, loc("purgeme_pause") or "⏸ Pause"), callback_data=f"pg_pause_{unique_id}"),
-                InlineKeyboardButton(await Essentials.get_user_button_style(client_id, loc("purgeme_stop") or "⏹ Stop"), callback_data=f"pg_stop_{unique_id}"),
+                InlineKeyboardButton(loc("purgeme_pause") or "⏸ Pause", callback_data=f"pg_pause_{unique_id}", style=btn_style),
+                InlineKeyboardButton(loc("purgeme_stop") or "⏹ Stop", callback_data=f"pg_stop_{unique_id}", style=btn_style),
             ],
-            [InlineKeyboardButton(await Essentials.get_user_button_style(client_id, loc("status") or loc("purgeme_refresh") or "Status"), callback_data=f"pg_refresh_{unique_id}")]
+            [InlineKeyboardButton(loc("status") or loc("purgeme_refresh") or "Status", callback_data=f"pg_refresh_{unique_id}", style=btn_style)]
         ])
     elif status == "paused":
         return InlineKeyboardMarkup([
             [
-                InlineKeyboardButton(await Essentials.get_user_button_style(client_id, loc("purgeme_resume") or "▶️ Resume"), callback_data=f"pg_resume_{unique_id}"),
-                InlineKeyboardButton(await Essentials.get_user_button_style(client_id, loc("purgeme_stop") or "⏹ Stop"), callback_data=f"pg_stop_{unique_id}"),
+                InlineKeyboardButton(loc("purgeme_resume") or "▶️ Resume", callback_data=f"pg_resume_{unique_id}", style=btn_style),
+                InlineKeyboardButton(loc("purgeme_stop") or "⏹ Stop", callback_data=f"pg_stop_{unique_id}", style=btn_style),
             ],
-             [InlineKeyboardButton(await Essentials.get_user_button_style(client_id, loc("status") or loc("purgeme_refresh") or "Status"), callback_data=f"pg_refresh_{unique_id}")]
+             [InlineKeyboardButton(loc("status") or loc("purgeme_refresh") or "Status", callback_data=f"pg_refresh_{unique_id}", style=btn_style)]
+        ])
+    elif status == "collecting":
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton(loc("purgeme_stop") or "⏹ Stop", callback_data=f"pg_stop_{unique_id}", style=btn_style)]
         ])
     return None
 
@@ -411,6 +414,8 @@ async def purgeme_cmd(client: Client, message: Message):
             "start_time": 0,
             "dashboard_msg_id": None, 
             "dashboard_chat_id": None,
+            "log_msg_id": None,
+            "inline_message_id": None,
             "notify": True
         }
         # Pause event is set to True initially (not paused)
@@ -570,22 +575,23 @@ async def purgeme_cmd(client: Client, message: Message):
     
     dashboard_chat = chat_id # ALWAYS TARGET CHAT
     
-    # Check if we already have a dashboard message in the target chat (e.g. from Inline menu)
-    if state.get("dashboard_msg_id") and state.get("dashboard_chat_id") == dashboard_chat:
-        Altruix.log(f"Purgeme: Reusing existing dashboard message {state['dashboard_msg_id']} in {dashboard_chat}")
+    # Check if we already have a dashboard message (Chat/Msg ID or Inline ID)
+    if (state.get("dashboard_msg_id") and state.get("dashboard_chat_id") == dashboard_chat) or state.get("inline_message_id"):
+        Altruix.log(f"Purgeme: Reusing existing dashboard message (Inline: {bool(state.get('inline_message_id'))})")
         # Message already exists and is tracked, just proceed to updates
     else:
-        try:
-            dash_text = get_purgeme_status_text(state)
-            dash_kb = await get_purgeme_control_kb(unique_id, "running", client.me.id)
+        Altruix.PURGEME_STATE[unique_id]["dashboard_msg"] = None
+        initial_text = get_purgeme_status_text(state)
+        initial_kb = get_purgeme_control_kb(unique_id, "collecting", client.me.id)
             
+        try:
             # Try to send via appropriate bot (custom if available, fallback to main Altruix.bot)
             bot = Altruix.bot_manager.get_bot(client.me.id)
             try:
                 dash_msg = await bot.send_message(
                     dashboard_chat,
-                    dash_text,
-                    reply_markup=dash_kb,
+                    initial_text,
+                    reply_markup=initial_kb,
                     disable_web_page_preview=True
                 )
             except Exception as bot_err:
@@ -594,8 +600,8 @@ async def purgeme_cmd(client: Client, message: Message):
                     # Fallback to main Altruix.bot if custom bot failed
                     dash_msg = await Altruix.bot.send_message(
                         dashboard_chat,
-                        dash_text,
-                        reply_markup=dash_kb,
+                        initial_text,
+                        reply_markup=initial_kb,
                         disable_web_page_preview=True
                     )
                 except Exception as main_err:
@@ -604,8 +610,8 @@ async def purgeme_cmd(client: Client, message: Message):
                     dashboard_chat = client.me.id
                     dash_msg = await bot.send_message(
                         dashboard_chat,
-                        dash_text,
-                        reply_markup=dash_kb,
+                        initial_text,
+                        reply_markup=initial_kb,
                         disable_web_page_preview=True
                     )
                 
@@ -619,8 +625,8 @@ async def purgeme_cmd(client: Client, message: Message):
                 try:
                     dash_msg = await Altruix.bot.send_message(
                         dashboard_chat,
-                        dash_text,
-                        reply_markup=dash_kb,
+                        initial_text,
+                        reply_markup=initial_kb,
                         disable_web_page_preview=True
                     )
                     state["dashboard_msg_id"] = dash_msg.id
@@ -630,6 +636,8 @@ async def purgeme_cmd(client: Client, message: Message):
 
     # Execution Loop
     deleted_count = 0
+    failed_count = 0
+    fail_reason = "None"
     state["scanned"] = 0
     
     Altruix.log(f"Purgeme {mode.capitalize()}: Starting OPTIMIZED deletion process for {count} messages")
@@ -709,8 +717,18 @@ async def purgeme_cmd(client: Client, message: Message):
 
                     while not delete_success and retry_count < max_retries:
                         try:
-                            await client.delete_messages(chat_id, chunk)
-                            deleted_count += len(chunk)
+                            result = await client.delete_messages(chat_id, chunk)
+                            
+                            # Pyrogram returns int (number of deleted messages) if successful
+                            actual_deleted = int(result) if isinstance(result, int) else len(chunk)
+                            actual_failed = len(chunk) - actual_deleted
+                            
+                            deleted_count += actual_deleted
+                            failed_count += actual_failed
+                            
+                            if actual_failed > 0 and fail_reason == "None":
+                                fail_reason = "Telegram restriction (message age/rights)"
+                                
                             state["processed"] = deleted_count
                             delete_success = True
                             
@@ -728,6 +746,10 @@ async def purgeme_cmd(client: Client, message: Message):
                         except Exception as e:
                             retry_count += 1
                             Altruix.log(f"Purgeme Delete Error: {e}")
+                            if retry_count >= max_retries:
+                                failed_count += len(chunk)
+                                if fail_reason == "None":
+                                    fail_reason = str(e).split()[0] if str(e) else "Unknown Error"
                             await asyncio.sleep(1)
                 
                 # End of Batch Delay
@@ -816,34 +838,48 @@ async def purgeme_cmd(client: Client, message: Message):
                 final_status = "Stopped"
             elif deleted_count == 0:
                 status_emoji = "⚠️"
-                final_status = "No matches found"
-            elif deleted_count < count:
-                final_status = "Partially Deleted"
+                final_status = "No matches found or all failed"
+            elif failed_count > 0:
+                status_emoji = "⚠️"
+                final_status = "Partially Completed"
 
-            # requested format:
-            # 🗑 Userbot Purgeme
-            # Mode: Oldest | Type: TEXT
-            # Target: 60 messages | Offset: 0
-            # Batch: 30 | DelayBc: 4m
-            # Chat: Sharing Bot Telegram
-            # Account: CoolKid 369
+            # Mapping for special types to YML keys
+            TYPE_MAP = {
+                "video_note": "VNOTE", "animation": "GIF", "document": "DOC",
+                "location": "LOC", "contact": "CONT", "venue": "VEN"
+            }
+            if not target_types or "all" in target_types:
+                type_display = Altruix.get_string("GP_BTN_ALL") or "ALL"
+            elif len(target_types) > 1:
+                type_display = (Altruix.get_string("purgeme_multiple") or "Multiple ({})").format(len(target_types))
+            else:
+                raw_type = target_types[0].lower()
+                suffix = TYPE_MAP.get(raw_type, raw_type.upper())
+                type_display = Altruix.get_string(f"GP_BTN_{suffix}") or suffix
 
-            # 🗑 Deleting... (or Finished!)
-            # Deleted: 30/60
-            # Delay: 1.0s
-            
-            # Use current status text directly for the bottom part or reconstruct
+            # Reconstruct log_msg as requested
             log_msg = (
-                f"🗑 <b>Userbot Purgeme</b>\n"
-                f"• <b>Mode:</b> {mode.capitalize()} | <b>Type:</b> <code>{type_display}</code>\n"
-                f"• <b>Target:</b> <code>{count}</code> messages | <b>Offset:</b> <code>{offset}</code>\n"
-                f"• <b>Batch:</b> <code>{batch_size}</code> | <b>DelayBc:</b> <code>{int(batch_delay/60)}m</code>\n"
+                f"🗑 <b>Userbot Purgeme</b>\n\n"
+                f"{status_emoji} <b>{final_status}</b>\n"
+                f"• <b>Deleted:</b> <code>{deleted_count}</code> messages\n"
+            )
+            
+            if failed_count > 0:
+                log_msg += f"• <b>Failed:</b> <code>{failed_count}</code> messages\n"
+
+            delay_str = f"{delay}s" if delay > 0 else f"{int(batch_delay/60)}m" if batch_delay > 0 else "0s"
+
+            log_msg += (
+                f"• <b>Time:</b> <code>{duration_str}</code>\n"
                 f"• <b>Chat:</b> {chat_link}\n"
                 f"• <b>Account:</b> <code>{account_name}</code>\n\n"
-                f"{status_emoji} <b>{final_status}</b>\n"
-                f"• <b>Deleted:</b> <code>{deleted_count}/{count}</code>\n"
-                f"• <b>Delay:</b> <code>{delay}s</code>"
+                f"• <b>Mode:</b> {mode.capitalize()} | <b>Type:</b> <code>{type_display}</code>\n"
+                f"• <b>Target:</b> <code>{count}</code> | <b>Offset:</b> <code>{offset}</code>\n"
+                f"• <b>Batch:</b> <code>{batch_size}</code> | <b>Delay:</b> <code>{delay_str}</code>"
             )
+            
+            if fail_reason != "None":
+                log_msg += f"\n• <b>Error/Reason:</b> <code>{fail_reason}</code>"
 
             # Always use main bot for log chat to ensure member access
             await Altruix.bot.send_message(
@@ -904,6 +940,11 @@ async def purgeme_cmd(client: Client, message: Message):
     
     # Wait a bit then clean up
     # EXTENDED CLEANUP DELAY to allow user to see result/click Close (300s = 5 mins)
+    try:
+        if state.get("log_msg_id"):
+            await Altruix.bot.delete_messages(Altruix.log_chat, state["log_msg_id"])
+    except: pass
+    
     await asyncio.sleep(300)
     if unique_id in Altruix.PURGEME_STATE:
         del Altruix.PURGEME_STATE[unique_id]
@@ -911,23 +952,40 @@ async def purgeme_cmd(client: Client, message: Message):
 async def update_dashboard(state):
     """Updates the dashboard message with current state"""
     try:
+        text = get_purgeme_status_text(state)
+        current_client = state["client"]
+        client_id = current_client.me.id if current_client.me else None
+        uid = f"{state['chat_id']}_{client_id}"
+        kb = get_purgeme_control_kb(
+            uid, 
+            state["status"], 
+            client_id
+        )
+        # 1. Primary UI Update (Dashboard in Chat/PM)
         if state.get("dashboard_chat_id") and state.get("dashboard_msg_id"):
-            text = get_purgeme_status_text(state)
-            current_client = state["client"]
-            client_id = current_client.me.id if current_client.me else None
-            uid = f"{state['chat_id']}_{client_id}"
-            kb = await get_purgeme_control_kb(uid, state["status"], client_id)
-
             target_bot = Altruix.bot if state["dashboard_chat_id"] == Altruix.log_chat else Altruix.bot_manager.get_bot(state["client"].me.id)
             
+            # Inline Message Support
+            inl_id = state.get("inline_message_id")
+            
             try:
-                await target_bot.edit_message_text(
-                    chat_id=state["dashboard_chat_id"],
-                    message_id=state["dashboard_msg_id"],
-                    text=text,
-                    reply_markup=kb,
-                    disable_web_page_preview=True
-                )
+                if inl_id:
+                    # Update via Inline Message ID (Group Mode)
+                    await target_bot.edit_message_text(
+                        inline_message_id=inl_id,
+                        text=text,
+                        reply_markup=kb,
+                        disable_web_page_preview=True
+                    )
+                else:
+                    # Update via Chat/Message ID (PM/Log Mode)
+                    await target_bot.edit_message_text(
+                        chat_id=state["dashboard_chat_id"],
+                        message_id=state["dashboard_msg_id"],
+                        text=text,
+                        reply_markup=kb,
+                        disable_web_page_preview=True
+                    )
             except MessageNotModified:
                 pass
             except Exception as e:
@@ -941,10 +999,55 @@ async def update_dashboard(state):
                             reply_markup=kb,
                             disable_web_page_preview=True
                         )
-                    except Exception as e2:
-                        Altruix.log(f"Purgeme Dashboard Update Fail (Both Bots): {e2}")
-                else:
-                    Altruix.log(f"Purgeme Dashboard Update Fail: {e}")
+                    except: pass
+        
+        # 2. Live Log Update (Safety Mirror in LOG Group)
+        if Altruix.log_chat and state.get("status") in ["collecting", "running", "paused"]:
+            log_title = f"🛡 <b>PurgeMe Live Log</b> (Safety Mirror)\n━━━━━━━━━━━━━━━━━━━━\n"
+            log_text = f"{log_title}{text}"
+            
+            # Use main bot for log chat consistently
+            try:
+                current_log_id = state.get("log_msg_id")
+                
+                if current_log_id and current_log_id != "pending":
+                    # Try to edit existing log message
+                    try:
+                        await Altruix.bot.edit_message_text(
+                            chat_id=Altruix.log_chat,
+                            message_id=current_log_id,
+                            text=log_text,
+                            reply_markup=kb,
+                            disable_web_page_preview=True
+                        )
+                    except MessageNotModified:
+                        pass
+                    except Exception as mod_err:
+                        # Only reset if message is truly gone (deleted/not found)
+                        err_str = str(mod_err).lower()
+                        if "message to edit not found" in err_str or "message_id_invalid" in err_str:
+                            state["log_msg_id"] = None
+                        else:
+                            # For other errors (network, flood, etc.), just log and skip
+                            Altruix.log(f"PurgeMe Live Log Edit Fail (non-fatal): {mod_err}")
+                
+                elif current_log_id != "pending":
+                    # No log message yet, send a new one (with pending lock)
+                    state["log_msg_id"] = "pending"  # Lock to prevent race condition
+                    try:
+                        log_msg = await Altruix.bot.send_message(
+                            Altruix.log_chat,
+                            log_text,
+                            reply_markup=kb,
+                            disable_web_page_preview=True
+                        )
+                        state["log_msg_id"] = log_msg.id
+                    except Exception as send_err:
+                        state["log_msg_id"] = None  # Release lock on failure
+                        Altruix.log(f"PurgeMe Live Log Send Fail: {send_err}")
+            except Exception as log_err:
+                Altruix.log(f"PurgeMe Live Log Fail: {log_err}")
+
     except Exception as e:
         Altruix.log(f"Purgeme Dashboard Critical: {e}")
 

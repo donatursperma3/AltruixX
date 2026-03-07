@@ -20,11 +20,9 @@ REM ============================================================================
 REM Display Banner
 REM =============================================================================
 echo.
-echo %CYAN%╔═════════════════════════════════════════════════════════╗%NC%
-echo %CYAN%║                                                         ║%NC%
-echo %CYAN%║        🚀 ALTROID-X USERBOT - WINDOWS LAUNCHER          ║%NC%
-echo %CYAN%║                                                         ║%NC%
-echo %CYAN%╔═════════════════════════════════════════════════════════╝%NC%
+echo %CYAN%╔═══════════════════════════════════════════╗%NC%
+echo %CYAN%║       🚀 ALTROID-X - WINDOWS LAUNCHER     ║%NC%
+echo %CYAN%╚═══════════════════════════════════════════╝%NC%
 echo.
 echo %BLUE%💻 Platform Detected: WINDOWS (Native - CMD/PowerShell)%NC%
 echo %WHITE%   Environment: Windows%NC%
@@ -49,7 +47,7 @@ if %errorlevel% neq 0 (
     )
 )
 
-echo %CYAN%🐍 Python Command: %PYTHON_CMD%%NC%
+echo %WHITE%[%TIME%]%NC% %CYAN%🐍 Python Command: %PYTHON_CMD%%NC%
 echo.
 
 REM =============================================================================
@@ -69,23 +67,23 @@ if not exist "venv\" (
 )
 
 set "VENV_PYTHON=venv\Scripts\python.exe"
-echo %CYAN%🐍 Using Python: %VENV_PYTHON%%NC%
+echo %WHITE%[%TIME%]%NC% %CYAN%🐍 Using Python: %VENV_PYTHON%%NC%
 echo.
 
 REM =============================================================================
 REM Install Dependencies
 REM =============================================================================
-echo %YELLOW%📦 Installing/Updating dependencies...%NC%
+echo %WHITE%[%TIME%]%NC% %YELLOW%📦 Installing/Updating dependencies...%NC%
 %VENV_PYTHON% -m pip install --upgrade pip --quiet
 %VENV_PYTHON% -m pip install -r requirements.txt --quiet
-echo %GREEN%✅ Dependencies installed!%NC%
+echo %WHITE%[%TIME%]%NC% %GREEN%✅ Dependencies installed!%NC%
 echo.
 
 REM =============================================================================
 REM Load Environment Variables from .env
 REM =============================================================================
 if exist ".env" (
-    echo %YELLOW%⏳ Loading environment variables from .env...%NC%
+    echo %WHITE%[%TIME%]%NC% %YELLOW%⏳ Loading environment variables from .env...%NC%
     for /f "usebackq tokens=1,* delims==" %%a in (".env") do (
         set "line=%%a"
         if not "!line:~0,1!"=="#" (
@@ -94,9 +92,9 @@ if exist ".env" (
             )
         )
     )
-    echo %GREEN%✅ Environment variables loaded!%NC%
+    echo %WHITE%[%TIME%]%NC% %GREEN%✅ Environment variables loaded!%NC%
 ) else (
-    echo %YELLOW%⚠️  Warning: .env file not found!%NC%
+    echo %WHITE%[%TIME%]%NC% %YELLOW%⚠️  Warning: .env file not found!%NC%
     echo %YELLOW%   Copy .env.sample to .env and configure it.%NC%
 )
 echo.
@@ -104,31 +102,28 @@ echo.
 REM =============================================================================
 REM Clean Up Existing Processes
 REM =============================================================================
-echo %YELLOW%🧹 Cleaning up existing Python processes...%NC%
+echo %WHITE%[%TIME%]%NC% %YELLOW%🧹 Cleaning up existing Python processes...%NC%
 taskkill /F /IM python.exe /T >nul 2>&1
 if %errorlevel% equ 0 (
-    echo %GREEN%✅ Cleanup complete!%NC%
-    echo %YELLOW%⏳ Waiting 3 seconds for file handles to be released...%NC%
+    echo %WHITE%[%TIME%]%NC% %GREEN%✅ Cleanup complete!%NC%
+    echo %WHITE%[%TIME%]%NC% %YELLOW%⏳ Waiting 3 seconds for release...%NC%
     timeout /t 3 /nobreak >nul
 ) else (
-    echo %CYAN%ℹ️  No existing processes found.%NC%
+    echo %WHITE%[%TIME%]%NC% %CYAN%ℹ️  No existing processes found.%NC%
 )
 echo.
 
 REM =============================================================================
 REM Launch the Bot
 REM =============================================================================
-echo %GREEN%╔══════════════════════════════════════════════════════════╗%NC%
-echo %GREEN%║                                                          ║%NC%
-echo %GREEN%║               🚀 STARTING ALTROID-X USERBOT              ║%NC%
-echo %GREEN%║                                                          ║%NC%
-echo %GREEN%╚══════════════════════════════════════════════════════════╝%NC%
+echo %GREEN%╔═══════════════════════════════════════════╗%NC%
+echo %GREEN%║        🚀 STARTING ALTROID-X BOT          ║%NC%
+echo %GREEN%╚═══════════════════════════════════════════╝%NC%
 echo.
-echo %CYAN%Platform: Windows (Native)%NC%
-echo %CYAN%Python: %VENV_PYTHON%%NC%
-echo %CYAN%Working Directory: %CD%%NC%
+echo %WHITE%[%TIME%]%NC% %CYAN%Platform: Windows (Native)%NC%
+echo %WHITE%[%TIME%]%NC% %CYAN%Python: %VENV_PYTHON%%NC%
 echo.
-echo %YELLOW%⏳ Launching bot...%NC%
+echo %WHITE%[%TIME%]%NC% %YELLOW%⏳ Launching Altroid-X engine...%NC%
 echo.
 
 REM Run the bot

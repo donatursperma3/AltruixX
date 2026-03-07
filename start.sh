@@ -19,6 +19,15 @@ WHITE='\033[1;37m'
 NC='\033[0m' # No Color
 
 # =============================================================================
+# Helper: Timestamped Logging
+# =============================================================================
+log_msg() {
+    local color=$1
+    local msg=$2
+    echo -e "${WHITE}[$(date +%H:%M:%S)]${NC} ${color}${msg}${NC}"
+}
+
+# =============================================================================
 # Platform Detection
 # =============================================================================
 detect_platform() {
@@ -101,58 +110,47 @@ display_banner() {
     local venv_name=$2
     
     echo -e "${CYAN}"
-    echo "╔═══════════════════════════════════════════════════════════╗"
-    echo "║                                                           ║"
-    echo "║      🚀 ALTROID-X USERBOT - MULTI-PLATFORM LAUNCHER       ║"
-    echo "║                                                           ║"
-    echo "╚═══════════════════════════════════════════════════════════╝"
+    echo "╔═══════════════════════════════════════════╗"
+    echo "║       🚀 ALTROID-X - MULTI-LAUNCHER       ║"
+    echo "╚═══════════════════════════════════════════╝"
     echo -e "${NC}"
     
     case $platform in
         heroku)
-            echo -e "${MAGENTA}📦 Platform Detected: HEROKU${NC}"
-            echo -e "${WHITE}   Environment: Cloud Platform (Dyno)${NC}"
-            echo -e "${WHITE}   Python: System Python (No venv needed)${NC}"
+            log_msg "${MAGENTA}" "Platform: HEROKU"
+            echo -e "${WHITE}   Env: Cloud (Dyno)${NC}"
             ;;
         sevalla)
-            echo -e "${MAGENTA}📦 Platform Detected: SEVALLA / RAILWAY / RENDER${NC}"
-            echo -e "${WHITE}   Environment: Cloud Platform${NC}"
-            echo -e "${WHITE}   Python: System Python (No venv needed)${NC}"
+            log_msg "${MAGENTA}" "Platform: SEVALLA / RAILWAY / RENDER"
+            echo -e "${WHITE}   Env: Cloud Platform${NC}"
             ;;
         termux)
-            echo -e "${GREEN}📱 Platform Detected: TERMUX (Android)${NC}"
-            echo -e "${WHITE}   Environment: Mobile Linux${NC}"
-            echo -e "${WHITE}   Virtual Env: $venv_name${NC}"
+            log_msg "${GREEN}" "Platform: TERMUX (Android/iOS)"
+            echo -e "${WHITE}   Env: Mobile Linux | Venv: $venv_name${NC}"
             ;;
         wsl)
-            echo -e "${BLUE}🪟 Platform Detected: WSL (Windows Subsystem for Linux)${NC}"
-            echo -e "${WHITE}   Environment: Linux on Windows${NC}"
-            echo -e "${WHITE}   Virtual Env: $venv_name${NC}"
+            log_msg "${BLUE}" "Platform: WSL (Windows Linux Subsystem)"
+            echo -e "${WHITE}   Env: Linux on Windows | Venv: $venv_name${NC}"
             ;;
         windows)
-            echo -e "${CYAN}💻 Platform Detected: WINDOWS (Native)${NC}"
-            echo -e "${WHITE}   Environment: Windows (Git Bash/MSYS/Cygwin)${NC}"
-            echo -e "${WHITE}   Virtual Env: $venv_name${NC}"
+            log_msg "${CYAN}" "Platform: WINDOWS (Native)"
+            echo -e "${WHITE}   Env: Windows Native | Venv: $venv_name${NC}"
             ;;
         vps)
-            echo -e "${YELLOW}🖥️  Platform Detected: VPS (Virtual Private Server)${NC}"
-            echo -e "${WHITE}   Environment: Linux VPS (KVM/Xen/VMware/etc)${NC}"
-            echo -e "${WHITE}   Virtual Env: $venv_name${NC}"
+            log_msg "${YELLOW}" "Platform: VPS (Private Server)"
+            echo -e "${WHITE}   Env: Linux VPS | Venv: $venv_name${NC}"
             ;;
         linux)
-            echo -e "${GREEN}🐧 Platform Detected: LINUX (Native)${NC}"
-            echo -e "${WHITE}   Environment: Linux Desktop/Server${NC}"
-            echo -e "${WHITE}   Virtual Env: $venv_name${NC}"
+            log_msg "${GREEN}" "Platform: LINUX (Native)"
+            echo -e "${WHITE}   Env: Linux Desktop | Venv: $venv_name${NC}"
             ;;
         macos)
-            echo -e "${WHITE}🍎 Platform Detected: macOS${NC}"
-            echo -e "${WHITE}   Environment: Apple macOS${NC}"
-            echo -e "${WHITE}   Virtual Env: $venv_name${NC}"
+            log_msg "${WHITE}" "Platform: macOS"
+            echo -e "${WHITE}   Env: Apple macOS | Venv: $venv_name${NC}"
             ;;
         *)
-            echo -e "${RED}❓ Platform Detected: UNKNOWN${NC}"
-            echo -e "${WHITE}   Environment: Unknown${NC}"
-            echo -e "${WHITE}   Virtual Env: $venv_name (fallback)${NC}"
+            log_msg "${RED}" "Platform: UNKNOWN"
+            echo -e "${WHITE}   Env: Unknown | Venv: $venv_name${NC}"
             ;;
     esac
     echo ""
@@ -211,10 +209,10 @@ fi
 # Install Dependencies
 # =============================================================================
 echo ""
-echo -e "${YELLOW}📦 Installing/Updating dependencies...${NC}"
+log_msg "${YELLOW}" "📦 Pip: Updating core and dependencies..."
 $VENV_PYTHON -m pip install --upgrade pip --quiet
 $VENV_PYTHON -m pip install -r requirements.txt --quiet
-echo -e "${GREEN}✅ Dependencies installed!${NC}"
+log_msg "${GREEN}" "✅ Pip: Dependencies processed successfully."
 
 # =============================================================================
 # Load Environment Variables from .env
@@ -240,7 +238,7 @@ fi
 # Clean Up Existing Processes (Release Database Locks)
 # =============================================================================
 echo ""
-echo -e "${YELLOW}🧹 Cleaning up existing Python processes...${NC}"
+log_msg "${YELLOW}" "🧹 Process: Cleaning up existing instances..."
 has_killed=false
 
 if [[ "$PLATFORM" == "windows" ]]; then
@@ -278,18 +276,15 @@ fi
 # Launch the Bot
 # =============================================================================
 echo ""
-echo -e "${GREEN}╔═══════════════════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║                                                           ║${NC}"
-echo -e "${GREEN}║              🚀 STARTING ALTROID-X USERBOT                ║${NC}"
-echo -e "${GREEN}║                                                           ║${NC}"
-echo -e "${GREEN}╚═══════════════════════════════════════════════════════════╝${NC}"
+echo -e "${GREEN}╔═══════════════════════════════════════════╗"
+echo -e "║        🚀 STARTING ALTROID-X BOT          ║"
+echo -e "╚═══════════════════════════════════════════╝${NC}"
 echo ""
-echo -e "${CYAN}Platform: $PLATFORM${NC}"
-echo -e "${CYAN}Python: $VENV_PYTHON${NC}"
-echo -e "${CYAN}Working Directory: $(pwd)${NC}"
-echo ""
-echo -e "${YELLOW}⏳ Launching Altroid-X...${NC}"
+log_msg "${CYAN}" "Info: Platform -> $PLATFORM"
+log_msg "${CYAN}" "Info: Python   -> $VENV_PYTHON"
+log_msg "${YELLOW}" "⏳ Launching Altroid-X engine..."
 echo ""
 
 # Run the bot
 $VENV_PYTHON -m Main
+

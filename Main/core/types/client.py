@@ -62,18 +62,7 @@ class CustomClientMethods:
         
         # 1. Gather client/session context for logging and tracking
         client_id = getattr(self, "me", None).id if getattr(self, "me", None) else None
-        
-        try:
-            if hasattr(self, '_index'):
-                current_index = self._index + 1
-                total_sessions = len(Altruix.clients)
-                session_index = f"{current_index}/{total_sessions}"
-            else:
-                session_index = "N/A"
-            client_info = f"{self.me.first_name} (ID: {client_id})" if client_id else "Unbound"
-        except:
-            client_info = "Unknown Client"
-            session_index = "?/?"
+        client_info = f"{self.me.first_name} (ID: {client_id})" if client_id else "Unbound"
         
         # 2. CIRCUIT BREAKER: If this operation is in a cooldown period for this client, skip it
         # This prevents the bot from repeatedly failing and logging known issues during turbulence.
@@ -87,7 +76,7 @@ class CustomClientMethods:
             now = time.time()
             if exp and exp > now:
                 remain = int(exp - now)
-                Altruix.log(f"[Timeout-Cooldown] Session: [{session_index}] {client_info} | {op_name} skipped ({remain}s remaining)", level=30)
+                Altruix.log(f"[Timeout-Cooldown] {op_name} skipped ({remain}s remaining)", level=30, client=self)
                 return self._get_dummy_result(op_name)
 
         # 3. DEFINE NON-CRITICAL OPERATIONS: These can safely return dummy/empty objects if they fail.
@@ -142,7 +131,7 @@ class CustomClientMethods:
                 # Sometimes Telegram returns a notification instead of requested data.
                 # Accessing .users or .messages on such objects crashes the Pyrogram dispatcher.
                 if is_update_sync and isinstance(result, (raw.types.BadMsgNotification, raw.types.BadServerSalt)):
-                    Altruix.log(f"[Sync-BadResult] Session: [{session_index}] {client_info} | {op_name} returned {type(result).__name__}. Forcing retry...", level=30)
+                    Altruix.log(f"[Sync-BadResult] {op_name} returned {type(result).__name__}. Forcing retry...", level=30, client=self)
                     raise asyncio.TimeoutError(f"Bad MTProto sync result: {type(result).__name__}")
                 
                 return result
@@ -152,7 +141,7 @@ class CustomClientMethods:
                 if max_count > mmax_:
                     raise e
                 wait_time = e.value + 3 # Add a 3s safety buffer
-                Altruix.log(f"[{e.__class__.__name__}] Session: [{session_index}] {client_info} | sleeping for - {wait_time}s.")
+                Altruix.log(f"[{e.__class__.__name__}] {client_info} | sleeping for - {wait_time}s.", client=self)
                 await asyncio.sleep(wait_time)
                 max_count += 1
             except Exception as e:
@@ -173,7 +162,7 @@ class CustomClientMethods:
                 # These often happen when a peer is deleted or unreachable.
                 if "CHANNEL_INVALID" in error_str or "PEER_ID_INVALID" in error_str:
                     if is_non_critical:
-                        Altruix.log(f"[NonCritical-Skipped] Session: [{session_index}] {client_info} | {error_type}: {error_str[:150]}", level=30)
+                        Altruix.log(f"[NonCritical-Skipped] {error_type}: {error_str[:150]}", level=30, client=self)
                         return self._get_dummy_result(op_name)
                     # For critical ops, we still raise it as it might be a legitimate fatal error for that task
                     raise e
@@ -188,7 +177,7 @@ class CustomClientMethods:
                             # Gradual exponential backoff with jitter for standard operations
                             wait_time = min(backoff * 1.5, 10) + random.uniform(0.1, 1.0)
                             
-                        Altruix.log(f"[Timeout-Retry] Session: [{session_index}] {client_info} | {op_name} ({max_count+1}/{mmax_}) | {error_str[:100]}", level=30)
+                        Altruix.log(f"[Timeout-Retry] {op_name} ({max_count+1}/{mmax_}) | {error_str[:100]}", level=30, client=self)
                         await asyncio.sleep(wait_time)
                         max_count += 1
                         backoff = min(backoff * 2, 8)
@@ -196,11 +185,11 @@ class CustomClientMethods:
                     else:
                         # RETRIES EXHAUSTED: Protect stability by skipping instead of crashing
                         if is_update_sync:
-                            Altruix.log(f"[Critical-Timeout-Failed] Session: [{session_index}] {client_info} | {op_name} aborted after {mmax_} retries. Providing dummy.", level=40)
+                            Altruix.log(f"[Critical-Timeout-Failed] {op_name} aborted after {mmax_} retries. Providing dummy.", level=40, client=self)
                             return self._get_dummy_result(op_name)
                         
                         if is_non_critical:
-                            Altruix.log(f"[NonCritical-Timeout-Skipped] Session: [{session_index}] {client_info} | {op_name} skipped. Providing dummy.", level=30)
+                            Altruix.log(f"[NonCritical-Timeout-Skipped] {op_name} skipped. Providing dummy.", level=30, client=self)
                             # Enable circuit breaker cooldown for this specific operation
                             if client_id:
                                 if not hasattr(Altruix, "_TIMEOUT_COOLDOWNS"): Altruix._TIMEOUT_COOLDOWNS = {}
@@ -220,20 +209,20 @@ class CustomClientMethods:
                 
                 if is_permanent:
                     if is_non_critical:
-                        Altruix.log(f"[NonCritical-Permanent-Skipped] Session: [{session_index}] {client_info} | {error_type}: {error_str[:150]}", level=30)
+                        Altruix.log(f"[NonCritical-Permanent-Skipped] {error_type}: {error_str[:150]}", level=30, client=self)
                         return self._get_dummy_result(op_name)
                     raise e
                 
                 # ✅ FINAL FALLBACK: General retry for unexpected errors
                 if max_count < mmax_:
-                    Altruix.log(f"[Error-Retry] Session: [{session_index}] {client_info} | {error_type} ({max_count+1}/{mmax_}) | {error_str[:100]}", level=30)
+                    Altruix.log(f"[Error-Retry] {error_type} ({max_count+1}/{mmax_}) | {error_str[:100]}", level=30, client=self)
                     await asyncio.sleep(1.5 + random.uniform(0.1, 0.5))
                     max_count += 1
                     continue
                     
                 # If everything failed but it's non-critical, stay graceful
                 if is_non_critical:
-                    Altruix.log(f"[NonCritical-RetryExhausted-Skipped] Session: [{session_index}] {client_info} | {op_name} skipped after {mmax_} retries.", level=30)
+                    Altruix.log(f"[NonCritical-RetryExhausted-Skipped] {op_name} skipped after {mmax_} retries.", level=30, client=self)
                     return self._get_dummy_result(op_name)
                 raise e
 
@@ -271,6 +260,12 @@ class CustomClientMethods:
             # final=True indicates there's no more data to fetch, finishing the sync process.
             return raw.types.updates.ChannelDifferenceEmpty(final=True, pts=0, timeout=0)
             
+        # E. MESSAGE OPERATIONS: Returns empty Updates object to satisfy Pyrogram's internal iteration
+        # Fixes: AttributeError: 'NoneType' object has no attribute 'updates'
+        msg_ops = ["EditMessage", "SendMessage", "SendMedia", "ForwardMessages", "EditInlineBotMessage"]
+        if any(x in op_name for x in msg_ops):
+             return raw.types.Updates(updates=[], users=[], chats=[], date=int(time.time()), seq=0)
+
         return None
 
     async def send_file(

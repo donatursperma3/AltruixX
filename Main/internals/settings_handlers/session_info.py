@@ -20,6 +20,29 @@ from pyrogram import enums, types
 # Logger
 logger = logging.getLogger(__name__)
 
+# --- STATUS CACHE (Optimized for performance) ---
+class StatusCache:
+    """TTL-based cache to avoid heavy I/O during menu navigation."""
+    def __init__(self, ttl=60):
+        self.ttl = ttl
+        self._cache = {}
+        self._last_update = {}
+
+    def get(self, key):
+        if key in self._cache and (time.time() - self._last_update.get(key, 0)) < self.ttl:
+            return self._cache[key]
+        return None
+
+    def set(self, key, value):
+        self._cache[key] = value
+        self._last_update[key] = time.time()
+
+    def clear(self):
+        self._cache.clear()
+        self._last_update.clear()
+
+status_cache = StatusCache(ttl=60) # Cache for 1 minute
+
 # State Dictionaries (Centralized)
 from .states import (
     user_text_confirmation_state, user_profile_edit_state, user_edit_confirmation_state,
@@ -230,18 +253,27 @@ async def get_session_info_data(index: int, callback_page: int, button_page: int
         # Fallback check for JSON-only sessions if DB key is missing but JSON says enabled
         # This covers cases where JSON was modified manually or by legacy code
         if pm_logger_status == "❌ OFF":
-            from Main.utils.file_helpers import get_db_path as _get_db_path
-            import json as _json
-            _pm_settings_path = _get_db_path("pm_logger_user_settings.json")
-            if os.path.exists(_pm_settings_path):
-                with open(_pm_settings_path, "r", encoding="utf-8") as _f:
-                    _pm_data = _json.load(_f)
-                    _pm_sessions = _pm_data.get("settings", {}) or _pm_data.get("sessions", {})
-                    _settings_data = _pm_sessions.get(str(me.id))
-                    if isinstance(_settings_data, dict) and _settings_data.get("enabled"):
-                        pm_logger_status = "✅ ON"
-                    elif isinstance(_settings_data, bool) and _settings_data:
-                        pm_logger_status = "✅ ON"
+            # 🏎 Optimization: Use TTL Cache to avoid reading disk every click
+            cached_status = status_cache.get(f"pml_{me.id}")
+            if cached_status is not None:
+                pm_logger_status = cached_status
+            else:
+                from Main.utils.file_helpers import get_db_path as _get_db_path
+                import json as _json
+                _pm_settings_path = _get_db_path("pm_logger_user_settings.json")
+                if os.path.exists(_pm_settings_path):
+                    with open(_pm_settings_path, "r", encoding="utf-8") as _f:
+                        _pm_data = _json.load(_f)
+                        _pm_sessions = _pm_data.get("settings", {}) or _pm_data.get("sessions", {})
+                        _settings_data = _pm_sessions.get(str(me.id))
+                        _is_on = False
+                        if isinstance(_settings_data, dict) and _settings_data.get("enabled"):
+                            _is_on = True
+                        elif isinstance(_settings_data, bool) and _settings_data:
+                            _is_on = True
+                        
+                        pm_logger_status = "✅ ON" if _is_on else "❌ OFF"
+                        status_cache.set(f"pml_{me.id}", pm_logger_status)
     except Exception: pass
     
     mention_logger_status = "❌ OFF"
@@ -258,15 +290,25 @@ async def get_session_info_data(index: int, callback_page: int, button_page: int
             
         # Fallback to JSON
         if mention_logger_status == "❌ OFF":
-            _mention_settings_path = _get_db_path("mentions_settings.json")
-            if os.path.exists(_mention_settings_path):
-                with open(_mention_settings_path, "r", encoding="utf-8") as _f:
-                    _m_data = _json.load(_f)
-                    _m_sessions = _m_data.get("settings", {})
-                    _m_per_account = _m_sessions.get(str(me.id), {})
-                    if isinstance(_m_per_account, dict) and _m_per_account.get("mention", True):
-                         # If it's a dict and explicitly enabled/missing (default true)
-                        mention_logger_status = "✅ ON"
+            # 🏎 Optimization: Use TTL Cache
+            cached_status = status_cache.get(f"mnt_{me.id}")
+            if cached_status is not None:
+                mention_logger_status = cached_status
+            else:
+                from Main.utils.file_helpers import get_db_path as _get_db_path
+                import json as _json
+                _mention_settings_path = _get_db_path("mentions_settings.json")
+                if os.path.exists(_mention_settings_path):
+                    with open(_mention_settings_path, "r", encoding="utf-8") as _f:
+                        _m_data = _json.load(_f)
+                        _m_sessions = _m_data.get("settings", {})
+                        _m_per_account = _m_sessions.get(str(me.id), {})
+                        _is_on = False
+                        if isinstance(_m_per_account, dict) and _m_per_account.get("mention", True):
+                            _is_on = True
+                        
+                        mention_logger_status = "✅ ON" if _is_on else "❌ OFF"
+                        status_cache.set(f"mnt_{me.id}", mention_logger_status)
     except Exception: pass
     
     # Addons Status
@@ -298,7 +340,7 @@ async def get_session_info_data(index: int, callback_page: int, button_page: int
         f"<b>🤖 Bot Assistant:</b> <spoiler>{f'<a href=\"tg://user?id={custom_bot_id}\">{custom_bot_username}</a>' if custom_bot_id else (f'{custom_bot_username}' if custom_bot_username != 'None' else 'None')}</spoiler> (Active Bots: {total_active_bots})\n"
         f"<b>⚙️ Xtra-Modules:</b> {xtra_count}\n"
         f"<b>🔘 Total Modules:</b> {total_mod} (UB {ub_mod}, Bot {bot_mod}, Xtra {xtra_mod})\n\n"
-        f"<b>📊 Total Buttons:</b> 61 | <b>Page:</b> {button_page}/5\n"
+        f"<b>📊 Total Buttons:</b> 62 | <b>Page:</b> {button_page}/5\n"
         f"<b>Manage this session:</b>"
     )
 
@@ -353,7 +395,7 @@ async def get_session_info_data(index: int, callback_page: int, button_page: int
                 InlineKeyboardButton(f"[50] {Altruix.get_string('btn_gcast_user')}", callback_data=f"gcast_user_{index}_{callback_page}", style=user_style),
                 InlineKeyboardButton(f"[51] {Altruix.get_string('global_purgeme')}", callback_data=f"global_purgeme_{index}_{callback_page}", style=user_style)
             ],
-            [InlineKeyboardButton(Altruix.get_string("prev"), f"session_info_{index}_{callback_page}_4", style=user_style), InlineKeyboardButton(Altruix.get_string("next"), f"session_info_{index}_{callback_page}_5", style=user_style)]
+            [InlineKeyboardButton(Altruix.get_string("prev"), f"session_info_{index}_{callback_page}_3", style=user_style), InlineKeyboardButton(Altruix.get_string("next"), f"session_info_{index}_{callback_page}_5", style=user_style)]
         ]
     elif button_page == 5:
         buttons = [
@@ -362,6 +404,7 @@ async def get_session_info_data(index: int, callback_page: int, button_page: int
             [InlineKeyboardButton(f"[56] {Altruix.get_string('sys_ctrl_shutdown')}", f"sys_ctrl_shutdown", style=user_style), InlineKeyboardButton(f"[57] Auto GP", f"auto_gp_menu_{index}_{callback_page}", style=user_style)],
             [InlineKeyboardButton(f"[58] Custom Help", callback_data=f"help_settings_menu_{index}_{callback_page}", style=user_style), InlineKeyboardButton(f"[59] Custom Alert", callback_data=f"custom_alert_menu_{index}_{callback_page}", style=user_style)],
             [InlineKeyboardButton(f"[60] {Altruix.get_string('load_ultroid_addons')}", callback_data=f"toggle_addons_confirm_{index}_{callback_page}", style=user_style), InlineKeyboardButton(f"[61] 🎨 Button Style", callback_data=f"btn_style_menu_{index}_{callback_page}", style=user_style)],
+            [InlineKeyboardButton(f"[62] 🎤 Rap Manager", callback_data=f"rapmgr_dashboard_{index}_{callback_page}", style=user_style)],
             [InlineKeyboardButton(f"{Altruix.get_string('prev')} (4/5)", f"session_info_{index}_{callback_page}_4", style=user_style)]
         ]
     
@@ -403,6 +446,8 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
             parse_mode=ParseMode.HTML,
             link_preview_options=LinkPreviewOptions(is_disabled=True)
         )
+    except MessageNotModified:
+        pass
     except Exception as e:
         logger.error(f"Failed to edit message in session_info callback: {e}")
         await cb.answer(f"❌ Error: {e}", show_alert=True)

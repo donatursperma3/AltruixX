@@ -12,6 +12,7 @@ from Main import Altruix
 from style import ping_format as pf
 from pyrogram import Client, filters
 from Main.core.types.message import Message
+from Main.utils.file_helpers import get_user_button_style
 from Main.core.decorators import log_errors, iuser_check, inline_check
 from pyrogram.types import (
     InlineQuery, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup,
@@ -52,7 +53,6 @@ async def restart_cb_handler(c: Client, cb: CallbackQuery):
 @log_errors
 async def restart_command_handler(_, m: Message):
     reload_only = m.command[0] == "reload"
-    from Main.utils.file_helpers import get_user_button_style
     user_style = get_user_button_style(m.from_user.id)
     await m.reply(
         f"<b>Are you sure about {'reloading' if reload_only else 'restarting'} Altruix?</b>\n\n<i>This will stop all the ongoing processes and the {'reload' if reload_only else 'restart'} will take some time.</i>",

@@ -340,6 +340,9 @@ def iuser_check(func):
                 if isinstance(update, CallbackQuery):
                     await update.answer("ℹ️ Tidak ada perubahan diperlukan.", show_alert=True)
             except Exception as e:
+                # ✅ Terminal Log (with account context)
+                Altruix.log(f"💥 [iuser_check] Error in callback {func.__name__}: {e}", level=40, client=client)
+                
                 error_text = (
                     f"💥 <b>ERROR SAAT MENANGANI CALLBACK</b>\n"
                     f"• User: {full_name} ({user_id})\n"
@@ -594,6 +597,9 @@ def log_errors(func):
 
             async def _log_and_notify():
                 try:
+                    # ✅ 0. Terminal Log (with account context)
+                    Altruix.log(f"💥 [log_errors] Error in {module_name}.{func.__name__}: {_be}", level=40, client=c)
+                    
                     # 1. Send Log to Group
                     sent_log = await send_log_message(error_detail, filename=f"error_{func.__name__}.txt")
                     

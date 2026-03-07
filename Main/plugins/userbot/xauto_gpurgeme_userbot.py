@@ -3,6 +3,7 @@
 # All rights reserved.
 
 import os
+import asyncio
 from pyrogram import Client, filters, StopPropagation
 from Main import Altruix
 from Main.core.types.message import Message
@@ -15,7 +16,7 @@ from Main.internals.settings_handlers.auto_global_purgeme import (
 # Plugin Metadata
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xautogp"
-PLUGIN_VERSION = "0.0.41"
+PLUGIN_VERSION = "0.0.43"
 
 # Cooldown/Task tracking is now handled by GLOBAL_PURGE_LOCK in auto_global_purgeme.py
 
@@ -41,6 +42,38 @@ async def autogp_dashboard_cmd(client: Client, message: Message):
         text = await get_auto_gp_status_text(user_id, current_chat_id=message.chat.id)
         await message.edit(f"❌ <b>Bot assistant not found.</b>\n\n{text}")
         raise StopPropagation
+
+    # 🚀 SHORTCUT: Quick run command (.autogp run)
+    if message.user_input:
+        inp = message.user_input.lower()
+        from Main.internals.settings_handlers.auto_global_purgeme import ACTIVE_PURGE_TASKS, auto_gp_global_cycle
+
+        if inp == "run":
+            if user_id in ACTIVE_PURGE_TASKS and not ACTIVE_PURGE_TASKS[user_id].done():
+                await message.edit("⚠️ <b>Auto-GP:</b> A purge cycle is already running.")
+                return
+            await message.edit("🚀 <b>Auto-GP:</b> Initiating quick global purge cycle...")
+            Altruix.log(f"🚀 Auto-GP | Quick Run Triggered by command from {user_id}", level=20)
+            task = asyncio.create_task(auto_gp_global_cycle(client, force=True))
+            ACTIVE_PURGE_TASKS[user_id] = task
+            return
+        
+        elif inp == "stop":
+            task = ACTIVE_PURGE_TASKS.get(user_id)
+            if task and not task.done():
+                task.cancel()
+                ACTIVE_PURGE_TASKS.pop(user_id, None)
+                await message.edit("🛑 <b>Auto-GP:</b> Purge cycle cancelled successfully.")
+                Altruix.log(f"🛑 Auto-GP | Purge cycle STOPPED by command from {user_id}", level=20)
+            else:
+                await message.edit("ℹ️ <b>Auto-GP:</b> No active purge cycle found to stop.")
+            return
+
+        elif inp == "status":
+            task = ACTIVE_PURGE_TASKS.get(user_id)
+            is_running = "🏃 <b>RUNNING</b>" if (task and not task.done()) else "💤 <b>IDLE</b>"
+            await message.edit(f"📊 <b>Auto-GP Status:</b> {is_running}")
+            return
 
     # Try Inline first
     try:
@@ -245,6 +278,10 @@ async def auto_gp_message_trigger(client: Client, message: Message):
     
     # Check if Auto-GP is ON
     if not settings.get("status", False):
+        return
+
+    # Check Trigger Mode: if "manual", skip outgoing message trigger entirely
+    if settings.get("trigger_mode", "outgoing") == "manual":
         return
 
     # TRACE: Log entry after confirming it's enabled

@@ -24,7 +24,7 @@ async def send_log_notification(
 ):
     """Mengirim notifikasi ke log group untuk semua aksi"""
     try:
-        log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_USERS_ID))
+        log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID or 0))
         
         if session_index >= len(Altruix.clients):
             return

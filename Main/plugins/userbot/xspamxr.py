@@ -132,13 +132,13 @@ async def get_chat_safe(client: Client, identifier, timeout: int = 10) -> object
                 
         return await asyncio.wait_for(client.get_chat(identifier), timeout=timeout)
     except FloodWait as fwe:
-        Altruix.log(f"[CHAT_ERROR] FloodWait saat resolve chat {identifier}: {fwe}", level=40)
+        Altruix.log(f"[CHAT_ERROR] FloodWait saat resolve chat {identifier}: {fwe}", level=40, client=client)
         return None
     except (errors.ChannelInvalid, errors.ChannelPrivate, errors.PeerIdInvalid, errors.UsernameInvalid, ValueError, TypeError) as e:
-        Altruix.log(f"[CHAT_ERROR] Gagal resolve chat {identifier}: {e}", level=40)
+        Altruix.log(f"[CHAT_ERROR] Gagal resolve chat {identifier}: {e}", level=40, client=client)
         return None
     except Exception as e:
-        Altruix.log(f"[CHAT_ERROR] Error tak terduga saat resolve {identifier}: {e}", level=40)
+        Altruix.log(f"[CHAT_ERROR] Error tak terduga saat resolve {identifier}: {e}", level=40, client=client)
         return None
 
 # ==================== VALIDATE CHAT DENGAN TIMEOUT ====================
@@ -186,9 +186,9 @@ async def safe_cb_answer(cb: CallbackQuery, text: str, show_alert: bool = True):
     try:
         await cb.answer(text, show_alert=show_alert)
     except (errors.QueryIdInvalid, ValueError):
-        Altruix.log(f"[IGNORED] QueryIdInvalid: {text[:50]}...", level=30)
+        Altruix.log(f"[IGNORED] QueryIdInvalid: {text[:50]}...", level=30, client=getattr(cb, "client", None))
     except Exception as e:
-        Altruix.log(f"[ERROR] Gagal jawab callback: {e}", level=40)
+        Altruix.log(f"[ERROR] Gagal jawab callback: {e}", level=40, client=getattr(cb, "client", None))
 
 # ==================== HELPER: SEND LOG MESSAGE ====================
 async def send_log_message(text, reply_to_message_id=None, reply_markup=None, client=None):
@@ -297,7 +297,7 @@ async def show_msg_list_preview(c: Client, m: Message, msg_list: list, is_batch:
         )
         await m.reply(preview_text)
     except Exception as e:
-        Altruix.log(f"Error showing msg list preview: {e}", level=40)
+        Altruix.log(f"Error showing msg list preview: {e}", level=40, client=c)
         await m.reply("❌ Gagal menampilkan preview list pesan.")
 
 # ==================== START RELAYSPAM ====================
@@ -388,9 +388,9 @@ async def start_relayspam(client: Client, destination: str, start_delay: float, 
             try:
                 await x_msg.pin()
             except Exception as erpin:
-                Altruix.log(f"#ERROR_PIN : {erpin}", level=30)
+                Altruix.log(f"#ERROR_PIN : {erpin}", level=30, client=client)
         else:
-            Altruix.log("Gagal mengirim notifikasi task", level=30)
+            Altruix.log("Gagal mengirim notifikasi task", level=30, client=client)
 
         delays_possible = []
         current = start_delay
@@ -405,7 +405,7 @@ async def start_relayspam(client: Client, destination: str, start_delay: float, 
         TELAYSPAM_TASKS[chat_id]["task"] = task
         return True
     except Exception as u:
-        Altruix.log(f"[CRITICAL] Error in start_relayspam: {u}", level=50)
+        Altruix.log(f"[CRITICAL] Error in start_relayspam: {u}", level=50, client=client)
         await send_log_message(f"__Error in start_relayspam: {u}__", client=client)
         if chat_id in TELAYSPAM_TASKS:
             TELAYSPAM_TASKS.pop(chat_id, None)
@@ -433,14 +433,14 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
         
         # Ensure target_chat has id if it was lost (sanity check)
         if not hasattr(target_chat, 'id'):
-             Altruix.log("[CRITICAL] target_chat object lost attributes", level=40)
+             Altruix.log("[CRITICAL] target_chat object lost attributes", level=40, client=client)
              return
 
         if is_batch:
             for msg, b_count in msg_list:
                 for _ in range(b_count):
                     if not TELAYSPAM_TASKS.get(chat_id, {}).get("running", False):
-                        Altruix.log(f"Task dihentikan untuk chat {chat_id}", level=30)
+                        Altruix.log(f"Task dihentikan untuk chat {chat_id}", level=30, client=client)
                         await send_log_message(f"__Task dihentikan untuk chat {chat_id}__", client=client)
                         break
                     await TELAYSPAM_TASKS[chat_id]["pause_event"].wait()
@@ -472,13 +472,13 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
                         except Exception as del_err:
                             if "CHANNEL_INVALID" in str(del_err) or "CHANNEL_PRIVATE" in str(del_err):
                                 error_msg = Altruix.get_string("SPAM_CANCELLED_ACCESS").format(chat=target_chat.title)
-                                Altruix.log(f"[SPAM_LOOP_ERROR] {error_msg} - Detail: {str(del_err)}", level=40)
+                                Altruix.log(f"[SPAM_LOOP_ERROR] {error_msg} - Detail: {str(del_err)}", level=40, client=client)
                                 await send_log_message(error_msg, client=client)
                                 if chat_id in TELAYSPAM_TASKS:
                                     TELAYSPAM_TASKS.pop(chat_id, None)
                                 return
                             else:
-                                Altruix.log(f"Error saat menghapus pesan: {del_err}", level=40)
+                                Altruix.log(f"Error saat menghapus pesan: {del_err}", level=40, client=client)
                                 await send_log_message(f"Error hapus pesan: {del_err}", reply_to_message_id=x_msg.id if x_msg else None, client=client)
                     random_delay = random.choice(delays_possible)
                     while True:
@@ -496,7 +496,7 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
                                     await spam_client.send_reaction(target_chat.id, sent_msg.id, current_emot_react)
                                     react_status = f"{current_emot_react} berhasil"
                                 except Exception as react_err:
-                                    Altruix.log(f"Error saat menambahkan reaksi: {react_err}", level=40)
+                                    Altruix.log(f"Error saat menambahkan reaksi: {react_err}", level=40, client=spam_client)
                                     react_status = f"{current_emot_react} gagal"
                             remaining = count - sent_count
                             percentage = (sent_count / count) * 100 if count > 0 else 0
@@ -513,33 +513,33 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
                             await asyncio.sleep(random_delay)
                             break
                         except SlowmodeWait as swe:
-                            Altruix.log(f"SlowModeWaitError: Waiting for {swe.value} seconds", level=30)
+                            Altruix.log(f"SlowModeWaitError: Waiting for {swe.value} seconds", level=30, client=spam_client)
                             await send_log_message(f"** [ #ERROR ]** __SlowModeWaitError: Waiting for {swe.value} seconds__", reply_to_message_id=x_msg.id if x_msg else None, client=client)
                             await asyncio.sleep(swe.value)
                         except FloodWait as fwe:
-                            Altruix.log(f"FloodWaitError: Waiting for {fwe.value} seconds", level=30)
+                            Altruix.log(f"FloodWaitError: Waiting for {fwe.value} seconds", level=30, client=spam_client)
                             await send_log_message(f"** [ #ERROR ]** __FloodWaitError: Waiting for {fwe.value} seconds__", reply_to_message_id=x_msg.id if x_msg else None, client=client)
                             await asyncio.sleep(fwe.value)
                         except ChatWriteForbidden as cwe:
-                            Altruix.log(f"UserBot muted in chat {chat_id}: Pausing task automatically.", level=30)
+                            Altruix.log(f"UserBot muted in chat {chat_id}: Pausing task automatically.", level=30, client=spam_client)
                             await send_log_message(f"** [ #ERROR ]** __UserBot muted in chat {target_chat.title}: Task paused automatically.__", reply_to_message_id=x_msg.id if x_msg else None, client=client)
                             TELAYSPAM_TASKS[chat_id]["pause_event"].clear()
                             break
                         except (errors.ChannelInvalid, errors.ChannelPrivate) as e:
                             error_msg = Altruix.get_string("SPAM_CANCELLED_ACCESS").format(chat=target_chat.title)
-                            Altruix.log(f"[SPAM_LOOP_ERROR] {error_msg} - Detail: {str(e)}", level=40)
+                            Altruix.log(f"[SPAM_LOOP_ERROR] {error_msg} - Detail: {str(e)}", level=40, client=spam_client)
                             await send_log_message(error_msg, client=client)
                             if chat_id in TELAYSPAM_TASKS:
                                 TELAYSPAM_TASKS.pop(chat_id, None)
                             return
                         except Exception as send_err:
-                            Altruix.log(f"Error saat mengirim pesan: {send_err}", level=40)
+                            Altruix.log(f"Error saat mengirim pesan: {send_err}", level=40, client=spam_client)
                             await send_log_message(f"** [ #ERROR ]** __Error saat mengirim pesan: {send_err}__", reply_to_message_id=x_msg.id if x_msg else None, client=client)
                             await asyncio.sleep(5)
         else:
             for _ in range(count):
                 if not TELAYSPAM_TASKS.get(chat_id, {}).get("running", False):
-                    Altruix.log(f"Task dihentikan untuk chat {chat_id}", level=30)
+                    Altruix.log(f"Task dihentikan untuk chat {chat_id}", level=30, client=client)
                     await send_log_message(f"__Task dihentikan untuk chat {chat_id}__", client=client)
                     break
                 await TELAYSPAM_TASKS[chat_id]["pause_event"].wait()
@@ -611,27 +611,27 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
                         await asyncio.sleep(random_delay)
                         break
                     except SlowmodeWait as swe:
-                        Altruix.log(f"SlowModeWaitError: Waiting for {swe.value} seconds", level=30)
+                        Altruix.log(f"SlowModeWaitError: Waiting for {swe.value} seconds", level=30, client=spam_client)
                         await send_log_message(f"** [ #ERROR ]** __SlowModeWaitError: Waiting for {swe.value} seconds__", reply_to_message_id=x_msg.id if x_msg else None, client=client)
                         await asyncio.sleep(swe.value)
                     except FloodWait as fwe:
-                        Altruix.log(f"FloodWaitError: Waiting for {fwe.value} seconds", level=30)
+                        Altruix.log(f"FloodWaitError: Waiting for {fwe.value} seconds", level=30, client=spam_client)
                         await send_log_message(f"** [ #ERROR ]** __FloodWaitError: Waiting for {fwe.value} seconds__", reply_to_message_id=x_msg.id if x_msg else None, client=client)
                         await asyncio.sleep(fwe.value)
                     except ChatWriteForbidden as cwe:
-                        Altruix.log(f"UserBot muted in chat {chat_id}: Pausing task automatically.", level=30)
+                        Altruix.log(f"UserBot muted in chat {chat_id}: Pausing task automatically.", level=30, client=spam_client)
                         await send_log_message(f"** [ #ERROR ]** __UserBot muted in chat {target_chat.title}: Task paused automatically.__", reply_to_message_id=x_msg.id if x_msg else None, client=client)
                         TELAYSPAM_TASKS[chat_id]["pause_event"].clear()
                         break
                     except (errors.ChannelInvalid, errors.ChannelPrivate) as e:
                         error_msg = Altruix.get_string("SPAM_CANCELLED_ACCESS").format(chat=target_chat.title)
-                        Altruix.log(f"[SPAM_LOOP_ERROR] {error_msg} - Detail: {str(e)}", level=40)
+                        Altruix.log(f"[SPAM_LOOP_ERROR] {error_msg} - Detail: {str(e)}", level=40, client=spam_client)
                         await send_log_message(error_msg, client=client)
                         if chat_id in TELAYSPAM_TASKS:
                             TELAYSPAM_TASKS.pop(chat_id, None)
                         return
                     except Exception as send_err:
-                        Altruix.log(f"Error saat mengirim pesan: {send_err}", level=40)
+                        Altruix.log(f"Error saat mengirim pesan: {send_err}", level=40, client=spam_client)
                         await send_log_message(f"** [ #ERROR ]** __Error saat mengirim pesan: {send_err}__", reply_to_message_id=x_msg.id if x_msg else None, client=client)
                         await asyncio.sleep(5)
         if TELAYSPAM_TASKS.get(chat_id, {}).get("running", False):
@@ -641,7 +641,7 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
                 client=client
             )
     except Exception as u:
-        Altruix.log(f"[CRITICAL] Error in spam_loop: {u}", level=50)
+        Altruix.log(f"[CRITICAL] Error in spam_loop: {u}", level=50, client=client)
         await send_log_message(f"__Error in spam_loop: {u}__", client=client)
     finally:
         if chat_id in TELAYSPAM_TASKS:
@@ -694,7 +694,7 @@ async def see_msglist_handler(c: Client, cb):
         else:
             await safe_cb_answer(cb, preview_text, show_alert=True)
     except Exception as e:
-        Altruix.log(f"Error in see_msglist_handler: {e}", level=40)
+        Altruix.log(f"Error in see_msglist_handler: {e}", level=40, client=c)
         await safe_cb_answer(cb, Altruix.get_string("SPAM_PREVIEW_FAIL"), show_alert=True)
 
 
@@ -712,7 +712,7 @@ async def confirm_start_handler(c: Client, cb):
         last_underscore = suffix.rfind("_")
         if last_underscore == -1:
             await safe_cb_answer(cb, "Format callback tidak valid.", show_alert=True)
-            Altruix.log(f"[ERROR] Format callback tidak valid: {full_data}", level=40)
+            Altruix.log(f"[ERROR] Format callback tidak valid: {full_data}", level=40, client=c)
             return
         temp_id = suffix[:last_underscore]
         action = suffix[last_underscore + 1:]
@@ -757,10 +757,10 @@ async def confirm_start_handler(c: Client, cb):
             )
             if success:
                 await safe_cb_answer(cb, Altruix.get_string("SPAM_TASK_STARTED"), show_alert=True)
-                Altruix.log(f"[SUCCESS] Task dimulai dari konfirmasi: {temp_id}", level=20)
+                Altruix.log(f"[SUCCESS] Task dimulai dari konfirmasi: {temp_id}", level=20, client=c)
             else:
                 await safe_cb_answer(cb, Altruix.get_string("SPAM_START_FAIL"), show_alert=True)
-                Altruix.log(f"[ERROR] Gagal memulai task dari konfirmasi: {temp_id}", level=40)
+                Altruix.log(f"[ERROR] Gagal memulai task dari konfirmasi: {temp_id}", level=40, client=c)
         elif action == "cancel":
             if temp_id in PENDING_CONFIRMATIONS:
                 PENDING_CONFIRMATIONS.pop(temp_id)
@@ -773,7 +773,7 @@ async def confirm_start_handler(c: Client, cb):
             await safe_cb_answer(cb, Altruix.get_string("SPAM_UNKNOWN_ACTION"), show_alert=True)
             Altruix.log(f"[WARN] Aksi tidak dikenali: {action}", level=30)
     except Exception as e:
-        Altruix.log(f"[CRITICAL] Error di confirm_start_handler: {e}", level=50)
+        Altruix.log(f"[CRITICAL] Error di confirm_start_handler: {e}", level=50, client=c)
         await safe_cb_answer(cb, "❌ Terjadi kesalahan internal. Silakan coba lagi.", show_alert=True)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^preview_msglist_.+$"))
@@ -789,7 +789,7 @@ async def preview_msglist_from_confirm(c: Client, cb):
     Altruix.log(f"[DEBUG] Preview untuk temp_id: {temp_id}", level=20)
     if temp_id not in PENDING_CONFIRMATIONS:
         await safe_cb_answer(cb, "❌ Data tidak ditemukan.", show_alert=True)
-        Altruix.log(f"[WARN] Data tidak ditemukan untuk preview: {temp_id}", level=30)
+        Altruix.log(f"[WARN] Data tidak ditemukan untuk preview: {temp_id}", level=30, client=c)
         return
     data = PENDING_CONFIRMATIONS[temp_id]
     await show_msg_list_preview(c, cb.message, data["msg_list"], data["is_batch"])

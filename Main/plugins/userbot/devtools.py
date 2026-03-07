@@ -7,7 +7,7 @@
 # All rights reserved.
 
 
-PLUGIN_VERSION = "0.0.68"
+PLUGIN_VERSION = "0.0.71"
 import os
 import html
 import asyncio
@@ -82,22 +82,25 @@ async def get_json_message_handler(c: Client, m: Message):
 @Altruix.register_on_cmd(
     ["ex", "exec", "eval"],
     cmd_help={
-        "help": "Executes the python snippet inside telegram.",
-        "example": "eval print('Hello World!')",
+        "help": (
+            "Executes Python snippets. <b>Premium Feature:</b> Automatically handles Telegram's 4096 character limit "
+            "by uploading results to 11.bin or sending as a .txt file. 'Processing' messages are auto-deleted."
+        ),
+        "example": ".eval print('Hello')\n.eval -p [code] (Force paste)\n.eval -s [code] (Send to logs)",
         "user_args": [
             {
                 "arg": "p",
-                "help": "Pastes the output to paste bin.",
+                "help": "Pastes the output to paste bin (11.bin) and provides a preview link.",
                 "requires_input": False,
             },
             {
                 "arg": "f",
-                "help": "Force sends the output as a file.",
+                "help": "Force sends the output as a downloadable .txt file.",
                 "requires_input": False,
             },
             {
                 "arg": "s",
-                "help": "Sends the output to log chat and deletes the command.",
+                "help": "Silent mode: Sends output to Log Chat and provides a VIEW link. Command is deleted.",
                 "requires_input": False,
             },
         ],
@@ -107,7 +110,7 @@ async def get_json_message_handler(c: Client, m: Message):
 @log_errors
 async def evaluate_command_handler(c: Client, m: Message):
     msg_id = m.id
-    m_ = await m.handle_message("PROCESSING")
+    m_ = await m.reply_msg("PROCESSING")
     user_args = m.user_args
     arg_keys = [a.key.lower() for a in user_args]
     cmd = m.raw_user_input
@@ -148,9 +151,13 @@ async def evaluate_command_handler(c: Client, m: Message):
                 os.remove(file_path)
         else:
             msg = await c.send_message(Altruix.log_chat, final_output)
-        return await m_.edit_msg(f"<b>OUTPUT :</b> <a href='{msg.link}'>VIEW</a>")
+        await m.reply_msg(f"<b>OUTPUT :</b> <blockquote><a href='{msg.link}'>VIEW</a></blockquote>")
+        await asyncio.sleep(3)
+        await m_.delete()
+        return
     
-    await m_.edit_msg(
+    await m_.delete()
+    await m.reply_msg(
         final_output,
         force_paste="p" in arg_keys,
         force_file=f"eval_output.txt;{cmd_}" if "f" in arg_keys else None,
@@ -162,17 +169,20 @@ async def evaluate_command_handler(c: Client, m: Message):
 @Altruix.register_on_cmd(
     ["reval"],
     cmd_help={
-        "help": "Executes the python snippet from a replied message.",
-        "example": ".reval (reply to message)",
+        "help": (
+            "Executes Python snippet from a replied message. Handles Telegram's character limits "
+            "via auto-paste/file fallback. Processing messages are auto-deleted."
+        ),
+        "example": ".reval (replying to code)\n.reval -p (force paste result)\n.reval -s (send result to logs)",
         "user_args": [
             {
                 "arg": "p",
-                "help": "Pastes the output to paste bin.",
+                "help": "Pastes the output to paste bin (11.bin).",
                 "requires_input": False,
             },
             {
                 "arg": "s",
-                "help": "Sends the output to log chat.",
+                "help": "Sends the output to Log Chat silently.",
                 "requires_input": False,
             },
         ],
@@ -189,7 +199,7 @@ async def re_evaluate_command_handler(c: Client, m: Message):
         return await m.reply_msg("NO_CODE_FOUND")
 
     # Start processing
-    m_ = await m.handle_message("PROCESSING")
+    m_ = await m.reply_msg("PROCESSING")
     arg_keys = [a.key.lower() for a in m.user_args]
     
     start_time = pc()
@@ -219,7 +229,7 @@ async def re_evaluate_command_handler(c: Client, m: Message):
     
     # Logic for sending to log chat if 's' flag is present
     if "s" in arg_keys and Altruix.log_chat:
-        log_text = f"🎯 <b>Re-Eval Log</b>\nUser: {m.from_user.id}\n\n{final_output}"
+        log_text = f"🎯 <b>R-Eval Log</b>\nUser: {m.from_user.id}\n\n{final_output}"
         try:
             if "p" in arg_keys:
                 url = await Paste(log_text).paste()
@@ -237,7 +247,8 @@ async def re_evaluate_command_handler(c: Client, m: Message):
             Altruix.log(f"Failed to send reval log: {le}", level=30)
 
     # Final response to user
-    await m_.edit_msg(
+    await m_.delete()
+    await m.reply_msg(
         final_output,
         force_paste="p" in arg_keys,
         force_file=f"reval_output.txt;{cmd_label}" if len(final_output) > TGLIMITS.MESSAGE_TEXT else None,
@@ -250,22 +261,25 @@ async def re_evaluate_command_handler(c: Client, m: Message):
     ["term", "terminal", "run", "bash"],
     just_exc=True,
     cmd_help={
-        "help": "Executes command in terminal.",
-        "example": "term echo Hello World!",
+        "help": (
+            "Executes commands in terminal/bash. Automatically handles large outputs by "
+            "pasting to bin or uploading file if 4096 char limit is exceeded."
+        ),
+        "example": "bash ls -la\nbash -p echo 'long text' (Paste result)",
         "user_args": [
             {
                 "arg": "p",
-                "help": "Pastes the output to paste bin.",
+                "help": "Pastes the terminal output to paste bin.",
                 "requires_input": False,
             },
             {
                 "arg": "f",
-                "help": "Force sends the output as a file.",
+                "help": "Force sends the terminal output as a file.",
                 "requires_input": False,
             },
             {
                 "arg": "s",
-                "help": "Sends the output to log chat and deletes the command.",
+                "help": "Sends the terminal output to log chat silently.",
                 "requires_input": False,
             },
         ],
@@ -276,9 +290,9 @@ async def terminal(c: Client, m: Message):
     user_args = m.user_args
     bash_code = m.raw_user_input
     if not bash_code:
-        return await m.handle_message("TERM_INPUT_REQUIRED")
+        return await m.reply_msg("TERM_INPUT_REQUIRED")
     ms_id = m.id
-    msg_ = await m.handle_message("CMD_RUNNING")
+    msg_ = await m.reply_msg("CMD_RUNNING")
     if "p" in user_args or "f" in user_args:
         bash_code = (bash_code.replace("-p", "").replace("-f", "")).strip()
     success, output, return_code = await exec_terminal(bash_code)
@@ -306,10 +320,12 @@ async def terminal(c: Client, m: Message):
                 os.remove(file_path)
         else:
             msg = await c.send_message(Altruix.log_chat, _out_text)
-        await msg_.edit_msg(f"<b>OUTPUT :</b> <a href='{msg.link}'>VIEW</a>")
+        await m.reply_msg(f"<b>OUTPUT :</b> <blockquote><a href='{msg.link}'>VIEW</a></blockquote>")
         await m.delete_if_self()
+        await msg_.delete()
         return
-    await msg_.edit_msg(
+    await msg_.delete()
+    await m.reply_msg(
         _out_text,
         force_paste="-paste" in user_args,
         force_file=f"bash_output.txt;{caption_}" if "-file" in user_args else None,
@@ -399,10 +415,11 @@ async def logs(c: Client, m: Message):
 # ==================== EVAL/REVAL DOCUMENTATION ====================
 
 # Documentation pages (~1000 chars per page for better readability)
+# Documentation pages (~1000 chars per page for better readability)
 EVAL_DOC_PAGES = [
     # Page 1: Import
     """<b>📚 Eval & Reval Guide</b>
-<b>Page 1/17: Import Altruix</b>
+<b>Page 1/22: Import Altruix</b>
 
 <b>Import Core:</b>
 <pre language="python">from Main.core.client import Altruix</pre>
@@ -413,7 +430,7 @@ Ini memberikan akses ke semua client (userbot & bot).
 
     # Page 2: Bot Assistant
     """<b>📚 Eval & Reval Guide</b>
-<b>Page 2/17: Bot Assistant</b>
+<b>Page 2/22: Bot Assistant</b>
 
 <b>Altruix.bot</b> = Bot utama dari .env
 
@@ -428,7 +445,7 @@ await Altruix.bot.send_message(
 
     # Page 3: Userbot List
     """<b>📚 Eval & Reval Guide</b>
-<b>Page 3/17: Userbot List</b>
+<b>Page 3/22: Userbot List</b>
 
 <b>Altruix.clients</b> = List semua userbot
 
@@ -444,7 +461,7 @@ await c.send_message(
 
     # Page 4: Multiple Sessions
     """<b>📚 Eval & Reval Guide</b>
-<b>Page 4/17: Multiple Sessions</b>
+<b>Page 4/22: Multiple Sessions</b>
 
 <b>Akses session lain:</b>
 <pre language="python"># Session kedua
@@ -459,7 +476,7 @@ if len(Altruix.clients) > 1:
 
     # Page 5: Client Aktif (PENTING!)
     """<b>📚 Eval & Reval Guide</b>
-<b>Page 5/17: Client Aktif ⭐</b>
+<b>Page 5/22: Client Aktif ⭐</b>
 
 <b>CARA TERMUDAH:</b>
 Gunakan <code>client</code> dari handler!
@@ -477,7 +494,7 @@ Client otomatis terdeteksi!
 
     # Page 6: Contoh Client Aktif Detail
     """<b>📚 Eval & Reval Guide</b>
-<b>Page 6/17: Contoh Client Aktif</b>
+<b>Page 6/22: Contoh Client Aktif</b>
 
 <b>Dalam eval/reval:</b>
 <pre language="python"># Kirim ke diri sendiri
@@ -500,7 +517,7 @@ print(f"ID: {me.id}")</pre>
 
     # Page 7: Get Index
     """<b>📚 Eval & Reval Guide</b>
-<b>Page 7/17: Deteksi Index</b>
+<b>Page 7/22: Deteksi Index</b>
 
 <b>Cari tahu session ke berapa:</b>
 <pre language="python"># Dapatkan index
@@ -513,7 +530,7 @@ print(f"Session ke-{idx + 1}")</pre>
 
     # Page 8: Find by User ID
     """<b>📚 Eval & Reval Guide</b>
-<b>Page 8/17: Cari by User ID</b>
+<b>Page 8/22: Cari by User ID</b>
 
 <b>Cari client berdasarkan ID:</b>
 <pre language="python">def get_client(uid):
@@ -533,7 +550,7 @@ if c:
 
     # Page 9: Bot Manager
     """<b>📚 Eval & Reval Guide</b>
-<b>Page 9/17: Bot Manager</b>
+<b>Page 9/22: Bot Manager</b>
 
 <b>Support Custom Bot:</b>
 <pre language="python"># Auto pilih bot
@@ -549,7 +566,7 @@ await bot.send_message(
 
     # Page 10: Plugin Example
     """<b>📚 Eval & Reval Guide</b>
-<b>Page 10/17: Plugin Example</b>
+<b>Page 10/22: Plugin Example</b>
 
 <pre language="python">@Altruix.on_message(
     filters.command("test", ".")
@@ -568,7 +585,7 @@ async def test(client, message):
 
     # Page 11: Handler Best Practice
     """<b>📚 Eval & Reval Guide</b>
-<b>Page 11/17: Best Practice</b>
+<b>Page 11/22: Best Practice</b>
 
 <b>Dalam handler:</b>
 <pre language="python">async def handler(client, message):
@@ -587,7 +604,7 @@ async def test(client, message):
 
     # Page 12: Prefix Handling
     """<b>📚 Eval & Reval Guide</b>
-<b>Page 12/17: Prefix</b>
+<b>Page 12/22: Prefix</b>
 
 <b>Owner:</b> Hanya respond ke CMD_HANDLER
 <b>Sudo:</b> Hanya respond ke SUDO_CMD_HANDLER
@@ -598,7 +615,7 @@ Ini cegah dual response.
 
     # Page 13: De-duplication
     """<b>📚 Eval & Reval Guide</b>
-<b>Page 13/17: De-duplication</b>
+<b>Page 13/22: De-duplication</b>
 Hanya satu session yang akan memproses pesan jika multiple session aktif di grup yang sama.
 Ini otomatis ditangani oleh <code>xpm_logger_user</code>.
 
@@ -606,7 +623,7 @@ Ini otomatis ditangani oleh <code>xpm_logger_user</code>.
 
     # Page 14: Config & LOG_CHAT_ID
     """<b>📚 Eval & Reval Guide</b>
-<b>Page 14/17: Config & Log ID</b>
+<b>Page 14/22: Config & Log ID</b>
 
 <b>Cara akses config & LOG_CHAT_ID:</b>
 <pre language="python">from Main import Altruix
@@ -628,7 +645,7 @@ token = env.get("BOT_TOKEN")</pre>
 
     # Page 15: Database Persistence
     """<b>📚 Eval & Reval Guide</b>
-<b>Page 15/17: Database Persistence</b>
+<b>Page 15/22: Database Persistence</b>
 
 <b>Simpan data permanen:</b>
 <pre language="python">from Main import Altruix
@@ -648,9 +665,106 @@ print(res.get("val"))</pre>
 
 <i>→ .evaldoc 16</i>""",
 
-    # Page 16: Quick Reference
+    # Page 16: Additional Examples - Delay & Delete
     """<b>📚 Eval & Reval Guide</b>
-<b>Page 16/17: Quick Reference</b>
+<b>Page 16/22: Delay & Hapus Pesan</b>
+
+<b>Delay (Tidur/Jeda):</b>
+<pre language="python">import asyncio
+
+await message.reply("Tunggu 3 detik...")
+# HARUS pakai asyncio, jangan time.sleep()
+await asyncio.sleep(3) 
+await message.reply("Selesai!")</pre>
+
+<b>Hapus Pesan:</b>
+<pre language="python"># Hapus pesan pengguna
+try:
+    await message.delete()
+except Exception: pass
+
+# Hapus banyak pesan
+await client.delete_messages(
+    chat_id=message.chat.id,
+    message_ids=[msg1.id, msg2.id]
+)</pre>
+
+<i>→ .evaldoc 17</i>""",
+
+    # Page 17: Format HTML & Markdown
+    """<b>📚 Eval & Reval Guide</b>
+<b>Page 17/22: Markdown & HTML</b>
+
+<b>Format Standar Telegram (HTML):</b>
+<pre language="python">text = (
+    "&lt;b&gt;Tebal&lt;/b&gt;\\n"
+    "&lt;i&gt;Miring&lt;/i&gt;\\n"
+    "&lt;u&gt;Garis bawah&lt;/u&gt;\\n"
+    "&lt;s&gt;Coret&lt;/s&gt;\\n"
+    "&lt;code&gt;Monospace&lt;/code&gt;\\n"
+    "&lt;pre&gt;Blok Kode&lt;/pre&gt;\\n"
+    "&lt;a href='t.me/'&gt;Link&lt;/a&gt;\\n"
+    "&lt;tg-spoiler&gt;Rahasia&lt;/tg-spoiler&gt;"
+)
+await message.reply(text, parse_mode=enums.ParseMode.HTML)</pre>
+
+<b>Markdown V2 (Butuh escape karakter khusus!):</b>
+<pre language="python">text = "*Tebal* _Miring_ ~Coret~ ||Rahasia||"
+await message.reply(text, parse_mode=enums.ParseMode.MARKDOWN)</pre>
+
+<i>→ .evaldoc 18</i>""",
+
+    # Page 18: Inline Buttons (Bot)
+    """<b>📚 Eval & Reval Guide</b>
+<b>Page 18/22: Inline Buttons</b>
+
+<b>HANYA Bot Assistant yang bisa kirim tombol:</b>
+<pre language="python">from pyrogram.types import (
+    InlineKeyboardMarkup, InlineKeyboardButton
+)
+
+# Buat Layout Tombol
+kb = InlineKeyboardMarkup([
+    [InlineKeyboardButton("Pilihan 1", callback_data="cb_1")],
+    [InlineKeyboardButton("Link", url="t.me/")]
+])
+
+# Kirim menggunakan bot
+await Altruix.bot.send_message(
+    chat_id=message.chat.id,
+    text="Silakan klik:",
+    reply_markup=kb
+)</pre>
+
+<i>→ .evaldoc 19</i>""",
+
+    # Page 19: Inline Builder (Tag via@bot)
+    """<b>📚 Eval & Reval Guide</b>
+<b>Page 19/22: Mengirim Pesan (via@bot)</b>
+
+<b>Fitur Builder (Ekosistem Altruix):</b>
+<pre language="python"># 1. Dapatkan nama bot kamu
+bot_usr = Altruix.bot_manager.get_bot_username(client.me.id)
+
+# 2. Panggil Inline Query dari bot kamu
+# (Harus ada handler @bot.on_inline_query di pluginnya)
+query_str = f"my_menu_{client.me.id}"
+res = await client.get_inline_bot_results(bot_usr, query_str)
+
+# 3. Userbot "menekan" hasil inline & kirim ke chat
+if res.results:
+    await client.send_inline_bot_result(
+        chat_id=message.chat.id,
+        query_id=res.query_id,
+        result_id=res.results[0].id,
+        reply_to_message_id=message.id
+    )</pre>
+
+<i>→ .evaldoc 20</i>""",
+
+    # Page 20: Quick Reference
+    """<b>📚 Eval & Reval Guide</b>
+<b>Page 20/22: Quick Reference</b>
 
 <code>Altruix.bot</code>
 → Bot utama
@@ -667,11 +781,11 @@ print(res.get("val"))</pre>
 <code>Altruix.bot_manager.get_bot(uid)</code>
 → Bot (custom/default)
 
-<i>→ .evaldoc 15</i>""",
+<i>→ .evaldoc 21</i>""",
 
-    # Page 15: Tips
+    # Page 21: Tips
     """<b>📚 Eval & Reval Guide</b>
-<b>Page 15/17: Tips Eval/Reval</b>
+<b>Page 21/22: Tips Eval/Reval</b>
 
 <b>💡 Tips:</b>
 
@@ -690,7 +804,17 @@ print(res.get("val"))</pre>
 5. Info session aktif:
    <code>await client.get_me()</code>
 
-<b>Selesai!</b> Gunakan .evaldoc 1 untuk kembali ke awal."""
+<i>→ .evaldoc 22</i>""",
+
+    # Page 22: Akhir
+    """<b>📚 Eval & Reval Guide</b>
+<b>Page 22/22: Penutup</b>
+
+Semua dokumentasi ini tersedia juga di file <code>DEVELOPER_GUIDE.md</code> di repo utama.
+
+Gunakan standar ekosistem Altruix untuk memastikan module Anda bebas bug dan aman diletakkan dalam Loop asyncio!
+
+<b>Selesai!</b> Gunakan <code>.evaldoc 1</code> untuk kembali ke awal."""
 ]
 
 
@@ -853,7 +977,7 @@ async def evaldoc_inline_handler(client: Client, query: InlineQuery):
         await query.answer(
             results=[
                 InlineQueryResultArticle(
-                    title=f"📚 Eval & Reval Guide - Page {page_num}/15",
+                    title=f"📚 Eval & Reval Guide - Page {page_num}/22",
                     description=f"Comprehensive documentation for eval/reval usage",
                     input_message_content=InputTextMessageContent(
                         page_content,
@@ -877,7 +1001,7 @@ async def evaldoc_inline_handler(client: Client, query: InlineQuery):
         "example": "evaldoc 1",
         "user_input": {
             "required": False,
-            "placeholder": "page number (1-15)"
+            "placeholder": f"page number (1-{len(EVAL_DOC_PAGES)})"
         }
     },
 )

@@ -27,11 +27,17 @@ class BotManager:
                 # if db allows make_collection
                 if hasattr(self.altruix.db, 'make_collection'):
                     col = self.altruix.db.make_collection("custom_bots")
+                    all_docs = []
                     async for doc in col.find({}):
+                        all_docs.append(doc)
+                    
+                    total = len(all_docs)
+                    for i, doc in enumerate(all_docs, 1):
                         user_id = doc.get("_id")
                         token = doc.get("token")
                         if user_id and token:
-                            await self.start_custom_bot(user_id, token)
+                            progress = f"[{i}/{total}] "
+                            await self.start_custom_bot(user_id, token, progress=progress)
             else:
                 logger.warning("DB not available for BotManager")
         except Exception as e:
@@ -51,7 +57,7 @@ class BotManager:
             col = self.altruix.db.make_collection("custom_bots")
             await col.find_one_and_delete({"_id": user_id})
 
-    async def start_custom_bot(self, user_id: int, token: str) -> bool:
+    async def start_custom_bot(self, user_id: int, token: str, progress: str = "") -> bool:
         """Start a custom bot for a user session."""
         try:
             # ✅ IDEMPOTENCY CHECK: If already running with same token, skip
@@ -65,7 +71,7 @@ class BotManager:
                 # If different token or not connected, restart
                 await self.stop_custom_bot(user_id)
 
-            logger.info(f"Starting custom bot for user {user_id}...")
+            logger.info(f"{progress}Starting custom bot for user {user_id}...")
             
             # Initialize Client
             api_id = self.altruix.config.API_ID
@@ -95,7 +101,7 @@ class BotManager:
                     for handler in handlers:
                         bot_client.add_handler(handler, group)
 
-            logger.info(f"✅ Custom bot started for {user_id}: @{bot_client.me.username}")
+            logger.info(f"{progress}✅ Custom bot started for {user_id}: @{bot_client.me.username}")
             return True
         except Exception as e:
             logger.error(f"❌ Failed to start custom bot for {user_id}: {e}")
