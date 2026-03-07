@@ -64,7 +64,9 @@ async def send_log_notification(
         
         # Buat pesan log
         log_message = (
-            f"📢 <b>PROFIL ACTIONS - {action_text}</b>\n\n"
+            f"<blockquote expandable>"
+            f"📢 <b>PROFIL ACTIONS - {action_text}</b>\n"
+            f"{'━' * 18}\n"
             f"• Status: <b>{status}</b>\n"
             f"• User: <b><a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a></b>\n"
             f"• User ID: <code>{user.id}</code>\n"
@@ -88,7 +90,11 @@ async def send_log_notification(
                     else:
                         log_message += f"• {key}: <code>{html.escape(val_str)}</code>\n"
         
-        log_message += f"• Time: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>"
+        log_message += (
+            f"• Time: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>\n"
+            f"{'━' * 18}"
+            f"</blockquote>"
+        )
         
         if edit_message:
             try:
