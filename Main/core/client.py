@@ -177,7 +177,7 @@ class AltruixClient:
         self.clients: List[Client] = []
         self.cmd_list = {}
         self.all_lang_strings = {}
-        self.__version__ = "0.0.10.0789H" # ✅ Sync Bottleneck Fix
+        self.__version__ = "0.0.10.0790H" # ✅ Sync Bottleneck Fix
         self.upm = UPM(self)
         self.selected_lang = "english"
         self.local_lang_file = "./Main/localization"
