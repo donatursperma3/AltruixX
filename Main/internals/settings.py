@@ -71,23 +71,13 @@ PLUGIN_VERSION = "1.5.5.10b"
 logger = logging.getLogger("altruix.settings")
 
 # ====================== SHARED STATES ======================
-# Re-exported or used by sub-handlers
-user_confirmation_state = {}
-user_text_confirmation_state = {}
-user_bulk_join_state = {}
-user_dlphoto_state = {}
-user_purge_state = {}
-user_eval_state = {}
-user_exec_state = {}
-user_sys_ctrl_state = {}
-user_profile_edit_state = {}
-user_photo_delete_state = {}
-user_edit_confirmation_state = {}
-user_mentions_state = {}
-user_recent_messages_state = {}
-user_message_count_state = {}
-user_limit_check_state = {}
-user_dlstory_state = {}
+from .settings_handlers.states import (
+    user_confirmation_state, user_text_confirmation_state, user_bulk_join_state,
+    user_dlphoto_state, user_purge_state, user_eval_state, user_exec_state,
+    user_sys_ctrl_state, user_profile_edit_state, user_photo_delete_state,
+    user_edit_confirmation_state, user_mentions_state, user_recent_messages_state,
+    user_message_count_state, user_limit_check_state, user_dlstory_state
+)
 
 # ====================== MODULAR IMPORTS ======================
 # Note: Handlers are registered in the sub-modules
@@ -109,7 +99,7 @@ import Main.internals.settings_handlers.cmd_settings_handlers
 import Main.internals.settings_handlers.global_purgeme
 import Main.internals.settings_handlers.backup_handlers
 import Main.internals.settings_handlers.custom_alert_handlers
-import Main.internals.session_handlers
+import Main.internals.settings_handlers.session_handlers
 
 # ====================== LOCALIZATION ======================
 SETTINGS_LANG = getattr(Altruix.config, "UB_LANG", "english").lower()
@@ -339,9 +329,12 @@ async def bot_controls_menu_handler(c: Client, cb: CallbackQuery):
         ],
         [
             InlineKeyboardButton("👤 Custom Bot Manager", callback_data="custom_bot_manager", style=user_style),
-            InlineKeyboardButton("🔘 Custom Link/Text", callback_data="custom_link_settings", style=user_style),
+            InlineKeyboardButton("♻️ Cache Cleaner Log", callback_data="cache_cleaner_settings", style=user_style),
         ],
-        [InlineKeyboardButton("🔙 Back to Settings", callback_data="settings_menu", style=user_style)]
+        [
+            InlineKeyboardButton("🔘 Custom Link/Text", callback_data="custom_link_settings", style=user_style),
+            InlineKeyboardButton("🔙 Back to Settings", callback_data="settings_menu", style=user_style)
+        ]
     ]
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
 

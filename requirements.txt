@@ -101,3 +101,5 @@ telethon
 # phlogo
 # fontTools
 # ssl
+
+colorama

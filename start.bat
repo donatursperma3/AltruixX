@@ -5,16 +5,18 @@ REM For users without Git Bash/MSYS
 REM =============================================================================
 
 setlocal enabledelayedexpansion
+chcp 65001 >nul
 
 REM ANSI Color Codes (Windows 10+)
-set "RED=[91m"
-set "GREEN=[92m"
-set "YELLOW=[93m"
-set "BLUE=[94m"
-set "MAGENTA=[95m"
-set "CYAN=[96m"
-set "WHITE=[97m"
-set "NC=[0m"
+for /F "delims=#" %%a in ('"prompt #$E# & for %%b in (1) do rem"') do set "ESC=%%a"
+set "RED=%ESC%[91m"
+set "GREEN=%ESC%[92m"
+set "YELLOW=%ESC%[93m"
+set "BLUE=%ESC%[94m"
+set "MAGENTA=%ESC%[95m"
+set "CYAN=%ESC%[96m"
+set "WHITE=%ESC%[97m"
+set "NC=%ESC%[0m"
 
 REM =============================================================================
 REM Display Banner

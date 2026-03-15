@@ -23,49 +23,52 @@ from .states import user_bulk_join_state, user_bulk_leave_state, user_bulk_repor
 logger = logging.getLogger(__name__)
 
 # ====================== BULK JOIN FEATURE ======================
-@Altruix.bot.on_callback_query(filters.regex("bulk_join_menu"))
+@Altruix.bot.on_callback_query(filters.regex(r"^bulk_join_menu(?:_(\d+))?$"))
 @iuser_check
 @log_errors
 async def bulk_join_menu_handler(c: Client, cb: CallbackQuery):
     """Handler untuk menu bulk join"""
     if not await check_authorization(cb): return
     from Main.utils.file_helpers import get_user_button_style
-    user_style = get_user_button_style(cb.from_user.id)
+    
+    index = int(cb.matches[0].group(1)) if (cb.matches and len(cb.matches[0].groups()) >= 1 and cb.matches[0].group(1)) else None
+    
+    if index is not None and index < len(Altruix.clients):
+        client = Altruix.clients[index]
+        me = getattr(client, "myself", None) or await client.get_me()
+        user_style = get_user_button_style(me.id)
+    else:
+        user_style = get_user_button_style(cb.from_user.id)
+        
     await cb.answer()
     
     # Tampilkan pilihan delay
+    back_cb = f"session_info_{index}_1_5" if index is not None else "sessions_list_1"
+    
     delay_buttons = [
         [
-            InlineKeyboardButton("2 detik", callback_data="bulk_join_delay_2", style=user_style),
-            InlineKeyboardButton("4 detik", callback_data="bulk_join_delay_4", style=user_style),
-            InlineKeyboardButton("6 detik", callback_data="bulk_join_delay_6", style=user_style),
+            InlineKeyboardButton("2 detik", callback_data=f"bulk_join_delay_2{'_' + str(index) if index is not None else ''}", style=user_style),
+            InlineKeyboardButton("4 detik", callback_data=f"bulk_join_delay_4{'_' + str(index) if index is not None else ''}", style=user_style),
+            InlineKeyboardButton("6 detik", callback_data=f"bulk_join_delay_6{'_' + str(index) if index is not None else ''}", style=user_style),
         ],
         [
-            InlineKeyboardButton("2 detik", callback_data="bulk_join_delay_8", style=user_style), # Note: typo in original labels (2, 2?) no, labels were correct in snippet
-            InlineKeyboardButton("2 detik", callback_data="bulk_join_delay_10", style=user_style), # Wait, let me check the snippet again
-            InlineKeyboardButton("2 detik", callback_data="bulk_join_delay_15", style=user_style),
-        ],
-        # Actually I misread the snippet in my thought, let me re-examine line 37-52 of bulk_handlers.
-        # Line 37: 2 detik, 4 detik, 6 detik
-        # Line 42: 8 detik, 10 detik, 15 detik
-        # Fixed replacement content below:
-        [
-            InlineKeyboardButton("8 detik", callback_data="bulk_join_delay_8", style=user_style),
-            InlineKeyboardButton("10 detik", callback_data="bulk_join_delay_10", style=user_style),
-            InlineKeyboardButton("15 detik", callback_data="bulk_join_delay_15", style=user_style),
+            InlineKeyboardButton("8 detik", callback_data=f"bulk_join_delay_8{'_' + str(index) if index is not None else ''}", style=user_style),
+            InlineKeyboardButton("10 detik", callback_data=f"bulk_join_delay_10{'_' + str(index) if index is not None else ''}", style=user_style),
+            InlineKeyboardButton("15 detik", callback_data=f"bulk_join_delay_15{'_' + str(index) if index is not None else ''}", style=user_style),
         ],
         [
-            InlineKeyboardButton("20 detik", callback_data="bulk_join_delay_20", style=user_style),
-            InlineKeyboardButton("30 detik", callback_data="bulk_join_delay_30", style=user_style),
-            InlineKeyboardButton("60 detik", callback_data="bulk_join_delay_60", style=user_style),
+            InlineKeyboardButton("20 detik", callback_data=f"bulk_join_delay_20{'_' + str(index) if index is not None else ''}", style=user_style),
+            InlineKeyboardButton("30 detik", callback_data=f"bulk_join_delay_30{'_' + str(index) if index is not None else ''}", style=user_style),
+            InlineKeyboardButton("60 detik", callback_data=f"bulk_join_delay_60{'_' + str(index) if index is not None else ''}", style=user_style),
         ],
         [
-            InlineKeyboardButton("🔙 Back", callback_data="sessions_list_1", style=user_style),
+            InlineKeyboardButton("🔙 Back", callback_data=back_cb, style=user_style),
         ]
     ]
     
+    total_sessions = len(Altruix.clients)
     await edit_cb(cb, 
-        text="<b>👥 Bulk Join Settings</b>\n\n"
+        text=f"<b>👥 Bulk Join Settings ({total_sessions} Sesi)</b>\n\n"
              "Pilih jeda waktu antara join (untuk menghindari flood wait):\n\n"
              "⚠️ <b>Note:</b>\n"
              "• Delay yang lebih besar mengurangi risiko flood wait\n"
@@ -73,7 +76,7 @@ async def bulk_join_menu_handler(c: Client, cb: CallbackQuery):
         reply_markup=InlineKeyboardMarkup(delay_buttons)
     )
 
-@Altruix.bot.on_callback_query(filters.regex("bulk_join_delay_(\\d+)"))
+@Altruix.bot.on_callback_query(filters.regex(r"^bulk_join_delay_(\d+)(?:_(\d+))?$"))
 @iuser_check
 @log_errors
 async def bulk_join_delay_handler(c: Client, cb: CallbackQuery):
@@ -83,14 +86,17 @@ async def bulk_join_delay_handler(c: Client, cb: CallbackQuery):
     
     try:
         delay = int(cb.matches[0].group(1))
+        index = int(cb.matches[0].group(2)) if cb.matches[0].group(2) else None
     except (ValueError, IndexError):
         delay = 5
+        index = None
     
     user_id = cb.from_user.id
     user_bulk_join_state[user_id] = {
         'delay': delay,
         'link': None,
-        'step': 'waiting_link'
+        'step': 'waiting_link',
+        'session_index': index
     }
     
     await edit_cb(cb, 
@@ -104,7 +110,7 @@ async def bulk_join_delay_handler(c: Client, cb: CallbackQuery):
         parse_mode=ParseMode.HTML
     )
 
-@Altruix.bot.on_callback_query(filters.regex("bulk_join_confirm_(yes|no)"))
+@Altruix.bot.on_callback_query(filters.regex(r"^bulk_join_confirm_(yes|no)(?:_(\d+))?$"))
 @iuser_check
 @log_errors
 async def bulk_join_confirm_handler(c: Client, cb: CallbackQuery):
@@ -112,15 +118,22 @@ async def bulk_join_confirm_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     await cb.answer()
     choice = cb.matches[0].group(1)
+    index = int(cb.matches[0].group(2)) if cb.matches[0].group(2) else None
     user_id = cb.from_user.id
     
     if choice == "no":
         if user_id in user_bulk_join_state:
             del user_bulk_join_state[user_id]
         from Main.utils.file_helpers import get_user_button_style
-        user_style = get_user_button_style(user_id)
+        
+        if index is not None and index < len(Altruix.clients):
+            user_style = get_user_button_style(Altruix.clients[index].me.id)
+        else:
+            user_style = get_user_button_style(user_id)
+            
+        back_cb = f"session_info_{index}_1_5" if index is not None else "sessions_list_1"
         await edit_cb(cb, "❌ Bulk join dibatalkan.", 
-                             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="sessions_list_1", style=user_style)]]))
+                             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data=back_cb, style=user_style)]]))
         return
     
     if user_id not in user_bulk_join_state:
@@ -129,11 +142,12 @@ async def bulk_join_confirm_handler(c: Client, cb: CallbackQuery):
     
     state = user_bulk_join_state[user_id]
     delay, link = state['delay'], state['link']
+    index = state.get('session_index')
     del user_bulk_join_state[user_id]
     
-    await execute_bulk_join(c, cb, delay, link)
+    await execute_bulk_join(c, cb, delay, link, index)
 
-async def execute_bulk_join(c: Client, cb: CallbackQuery, delay: int, link: str):
+async def execute_bulk_join(c: Client, cb: CallbackQuery, delay: int, link: str, index: int = None):
     """Esekusi bulk join"""
     user = cb.from_user
     total_sessions = len(Altruix.clients)
@@ -145,163 +159,218 @@ async def execute_bulk_join(c: Client, cb: CallbackQuery, delay: int, link: str)
     
     success_count, failed_count = 0, 0
     
-    for index, client in enumerate(Altruix.clients):
+    for i, client in enumerate(Altruix.clients):
         try:
             await client.join_chat(link)
             success_count += 1
         except UserAlreadyParticipant:
             success_count += 1
-        except Exception as e:
+        except Exception:
             failed_count += 1
         
-        await edit_cb(cb, f"🔄 Progress: {index+1}/{total_sessions}\nSuccess: {success_count}\nFailed: {failed_count}")
-        if index < total_sessions - 1:
+        await edit_cb(cb, f"🔄 Progress: {i+1}/{total_sessions}\nSuccess: {success_count}\nFailed: {failed_count}")
+        if i < total_sessions - 1:
             await asyncio.sleep(delay)
             
     from Main.utils.file_helpers import get_user_button_style
-    user_style = get_user_button_style(user.id)
+    if index is not None and index < len(Altruix.clients):
+        user_style = get_user_button_style(Altruix.clients[index].me.id)
+    else:
+        user_style = get_user_button_style(user.id)
+        
+    back_cb = f"session_info_{index}_1_5" if index is not None else "sessions_list_1"
     await edit_cb(cb, f"✅ <b>Bulk Join Completed</b>\nSuccess: {success_count}\nFailed: {failed_count}",
-                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="sessions_list_1", style=user_style)]]))
+                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data=back_cb, style=user_style)]]))
     
     await send_log_notification(c, 'bulk_join', 0, user, True, additional_info={'Link': link, 'Success': success_count, 'Failed': failed_count})
 
 # ====================== BULK LEAVE FEATURE ======================
-@Altruix.bot.on_callback_query(filters.regex("bulk_leave_menu"))
+@Altruix.bot.on_callback_query(filters.regex(r"^bulk_leave_menu(?:_(\d+))?$"))
 @iuser_check
 @log_errors
 async def bulk_leave_menu_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     from Main.utils.file_helpers import get_user_button_style
-    user_style = get_user_button_style(cb.from_user.id)
+    
+    index = int(cb.matches[0].group(1)) if (cb.matches and len(cb.matches[0].groups()) >= 1 and cb.matches[0].group(1)) else None
+    
+    if index is not None and index < len(Altruix.clients):
+        user_style = get_user_button_style(Altruix.clients[index].me.id)
+    else:
+        user_style = get_user_button_style(cb.from_user.id)
+        
     await cb.answer()
     
+    back_cb = f"session_info_{index}_1_5" if index is not None else "sessions_list_1"
+    
     delay_buttons = [
-        [InlineKeyboardButton(f"{d} detik", callback_data=f"bulk_leave_delay_{d}", style=user_style) for d in [2, 4, 6]],
-        [InlineKeyboardButton(f"{d} detik", callback_data=f"bulk_leave_delay_{d}", style=user_style) for d in [8, 10, 15]],
-        [InlineKeyboardButton("🔙 Back", callback_data="sessions_list_1", style=user_style)]
+        [InlineKeyboardButton(f"{d} detik", callback_data=f"bulk_leave_delay_{d}{'_' + str(index) if index is not None else ''}", style=user_style) for d in [2, 4, 6]],
+        [InlineKeyboardButton(f"{d} detik", callback_data=f"bulk_leave_delay_{d}{'_' + str(index) if index is not None else ''}", style=user_style) for d in [8, 10, 15]],
+        [InlineKeyboardButton("🔙 Back", callback_data=back_cb, style=user_style)]
     ]
     
     await edit_cb(cb, text="<b>🏃 Bulk Leave Settings</b>\nPilih jeda waktu antara keluar dari chat:", 
                         reply_markup=InlineKeyboardMarkup(delay_buttons))
 
-@Altruix.bot.on_callback_query(filters.regex("bulk_leave_delay_(\\d+)"))
+@Altruix.bot.on_callback_query(filters.regex(r"^bulk_leave_delay_(\d+)(?:_(\d+))?$"))
 @iuser_check
 @log_errors
 async def bulk_leave_delay_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     await cb.answer()
     delay = int(cb.matches[0].group(1))
-    user_bulk_leave_state[cb.from_user.id] = {'delay': delay, 'chat_id': None, 'step': 'waiting_chat'}
+    index = int(cb.matches[0].group(2)) if cb.matches[0].group(2) else None
+    user_bulk_leave_state[cb.from_user.id] = {'delay': delay, 'chat_id': None, 'step': 'waiting_chat', 'session_index': index}
     await edit_cb(cb, text=f"<b>🏃 Bulk Leave - Delay {delay}s</b>\nKirim Chat ID/Username target:\n/cancel untuk batal")
 
-@Altruix.bot.on_callback_query(filters.regex("bulk_leave_confirm_(yes|no)"))
+@Altruix.bot.on_callback_query(filters.regex(r"^bulk_leave_confirm_(yes|no)(?:_(\d+))?$"))
 @iuser_check
 @log_errors
 async def bulk_leave_confirm_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     await cb.answer()
-    choice, user_id = cb.matches[0].group(1), cb.from_user.id
+    choice = cb.matches[0].group(1)
+    index = int(cb.matches[0].group(2)) if cb.matches[0].group(2) else None
+    user_id = cb.from_user.id
+    
     if choice == "no":
         if user_id in user_bulk_leave_state: del user_bulk_leave_state[user_id]
         from Main.utils.file_helpers import get_user_button_style
-        user_style = get_user_button_style(user_id)
-        await edit_cb(cb, "❌ Batal.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="sessions_list_1", style=user_style)]]))
+        if index is not None and index < len(Altruix.clients):
+            user_style = get_user_button_style(Altruix.clients[index].me.id)
+        else:
+            user_style = get_user_button_style(user_id)
+        back_cb = f"session_info_{index}_1_5" if index is not None else "sessions_list_1"
+        await edit_cb(cb, "❌ Batal.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data=back_cb, style=user_style)]]))
         return
     if user_id not in user_bulk_leave_state: return
     state = user_bulk_leave_state[user_id]
+    index = state.get('session_index')
     del user_bulk_leave_state[user_id]
-    await execute_bulk_leave(c, cb, state['delay'], state['chat_id'])
+    await execute_bulk_leave(c, cb, state['delay'], state['chat_id'], index)
 
-async def execute_bulk_leave(c: Client, cb: CallbackQuery, delay: int, chat_id: str):
+async def execute_bulk_leave(c: Client, cb: CallbackQuery, delay: int, chat_id: str, index: int = None):
     total, success, failed = len(Altruix.clients), 0, 0
     await edit_cb(cb, f"🔄 Leaving {chat_id}...")
     for i, client in enumerate(Altruix.clients):
         try:
             await client.leave_chat(chat_id)
             success += 1
-        except: failed += 1
+        except Exception: failed += 1
         if i < total - 1: await asyncio.sleep(delay)
     from Main.utils.file_helpers import get_user_button_style
-    user_style = get_user_button_style(cb.from_user.id)
-    await edit_cb(cb, f"✅ Done\nSuccess: {success}\nFailed: {failed}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="sessions_list_1", style=user_style)]]))
+    if index is not None and index < len(Altruix.clients):
+        user_style = get_user_button_style(Altruix.clients[index].me.id)
+    else:
+        user_style = get_user_button_style(cb.from_user.id)
+    back_cb = f"session_info_{index}_1_5" if index is not None else "sessions_list_1"
+    await edit_cb(cb, f"✅ Done\nSuccess: {success}\nFailed: {failed}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data=back_cb, style=user_style)]]))
 
 # ====================== BULK REPORT FEATURE ======================
-@Altruix.bot.on_callback_query(filters.regex("bulk_report_menu"))
+@Altruix.bot.on_callback_query(filters.regex(r"^bulk_report_menu(?:_(\d+))?$"))
 @iuser_check
 @log_errors
 async def bulk_report_menu_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     from Main.utils.file_helpers import get_user_button_style
-    user_style = get_user_button_style(cb.from_user.id)
+    
+    index = int(cb.matches[0].group(1)) if (cb.matches and len(cb.matches[0].groups()) >= 1 and cb.matches[0].group(1)) else None
+    
+    if index is not None and index < len(Altruix.clients):
+        user_style = get_user_button_style(Altruix.clients[index].me.id)
+    else:
+        user_style = get_user_button_style(cb.from_user.id)
+        
     await cb.answer()
+    
+    back_cb = f"session_info_{index}_1_5" if index is not None else "sessions_list_1"
+    
     delay_buttons = [
-        [InlineKeyboardButton(f"{d} detik", callback_data=f"bulk_report_delay_{d}", style=user_style) for d in [2, 4, 6]],
-        [InlineKeyboardButton(f"{d} detik", callback_data=f"bulk_report_delay_{d}", style=user_style) for d in [8, 10, 15]],
-        [InlineKeyboardButton("🔙 Back", callback_data="sessions_list_1", style=user_style)]
+        [InlineKeyboardButton(f"{d} detik", callback_data=f"bulk_report_delay_{d}{'_' + str(index) if index is not None else ''}", style=user_style) for d in [2, 4, 6]],
+        [InlineKeyboardButton(f"{d} detik", callback_data=f"bulk_report_delay_{d}{'_' + str(index) if index is not None else ''}", style=user_style) for d in [8, 10, 15]],
+        [InlineKeyboardButton("🔙 Back", callback_data=back_cb, style=user_style)]
     ]
     await edit_cb(cb, text="<b>🚩 Bulk Report Settings</b>\nPilih jeda waktu antar report:", 
                         reply_markup=InlineKeyboardMarkup(delay_buttons))
 
-@Altruix.bot.on_callback_query(filters.regex("bulk_report_delay_(\\d+)"))
+@Altruix.bot.on_callback_query(filters.regex(r"^bulk_report_delay_(\d+)(?:_(\d+))?$"))
 @iuser_check
 @log_errors
 async def bulk_report_delay_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     await cb.answer()
     delay = int(cb.matches[0].group(1))
-    user_bulk_report_state[cb.from_user.id] = {'delay': delay, 'target': None, 'step': 'waiting_target'}
+    index = int(cb.matches[0].group(2)) if cb.matches[0].group(2) else None
+    user_bulk_report_state[cb.from_user.id] = {'delay': delay, 'target': None, 'step': 'waiting_target', 'session_index': index}
     await edit_cb(cb, text=f"<b>🚩 Bulk Report - Delay {delay}s</b>\nKirim Target ID/Username:\n/cancel untuk batal")
 
-@Altruix.bot.on_callback_query(filters.regex("bulk_report_reason_(\\d+)_(.*)"))
+@Altruix.bot.on_callback_query(filters.regex(r"^bulk_report_reason_(\d+)_([^_]+)(?:_(\d+))?$"))
 @iuser_check
 @log_errors
 async def bulk_report_reason_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     await cb.answer()
     user_id, reason = int(cb.matches[0].group(1)), cb.matches[0].group(2)
+    index = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else None
+    
     if user_id not in user_bulk_report_state: return
     user_bulk_report_state[user_id].update({'reason': reason, 'step': 'confirming'})
     target, delay = user_bulk_report_state[user_id]['target'], user_bulk_report_state[user_id]['delay']
     
     from Main.utils.file_helpers import get_user_button_style
-    user_style = get_user_button_style(cb.from_user.id)
+    if index is not None and index < len(Altruix.clients):
+        user_style = get_user_button_style(Altruix.clients[index].me.id)
+    else:
+        user_style = get_user_button_style(cb.from_user.id)
     
     await edit_cb(cb, text=f"<b>🚩 Confirm Bulk Report</b>\nTarget: {target}\nReason: {reason.upper()}\nDelay: {delay}s",
                         reply_markup=InlineKeyboardMarkup([
-                            [InlineKeyboardButton("✅ Yes", callback_data="bulk_report_confirm_yes", style=user_style),
-                             InlineKeyboardButton("❌ No", callback_data="bulk_report_confirm_no", style=user_style)]
+                            [InlineKeyboardButton("✅ Yes", callback_data=f"bulk_report_confirm_yes{'_' + str(index) if index is not None else ''}", style=user_style),
+                             InlineKeyboardButton("❌ No", callback_data=f"bulk_report_confirm_no{'_' + str(index) if index is not None else ''}", style=user_style)]
                         ]))
 
-@Altruix.bot.on_callback_query(filters.regex("bulk_report_confirm_(yes|no)"))
+@Altruix.bot.on_callback_query(filters.regex(r"^bulk_report_confirm_(yes|no)(?:_(\d+))?$"))
 @iuser_check
 @log_errors
 async def bulk_report_confirm_handler(c: Client, cb: CallbackQuery):
     if not await check_authorization(cb): return
     await cb.answer()
-    choice, user_id = cb.matches[0].group(1), cb.from_user.id
+    choice = cb.matches[0].group(1)
+    index = int(cb.matches[0].group(2)) if cb.matches[0].group(2) else None
+    user_id = cb.from_user.id
+    
     if choice == "no":
         if user_id in user_bulk_report_state: del user_bulk_report_state[user_id]
         from Main.utils.file_helpers import get_user_button_style
-        user_style = get_user_button_style(user_id)
-        await edit_cb(cb, "❌ Batal.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="sessions_list_1", style=user_style)]]))
+        if index is not None and index < len(Altruix.clients):
+            user_style = get_user_button_style(Altruix.clients[index].me.id)
+        else:
+            user_style = get_user_button_style(user_id)
+        back_cb = f"session_info_{index}_1_5" if index is not None else "sessions_list_1"
+        await edit_cb(cb, "❌ Batal.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data=back_cb, style=user_style)]]))
         return
     if user_id not in user_bulk_report_state: return
     state = user_bulk_report_state[user_id]
+    index = state.get('session_index')
     del user_bulk_report_state[user_id]
-    await execute_bulk_report(c, cb, state['delay'], state['target'], state['reason'])
+    await execute_bulk_report(c, cb, state['delay'], state['target'], state['reason'], index)
 
-async def execute_bulk_report(c: Client, cb: CallbackQuery, delay: int, target: str, reason: str):
+async def execute_bulk_report(c: Client, cb: CallbackQuery, delay: int, target: str, reason: str, index: int = None):
     total, success, failed = len(Altruix.clients), 0, 0
     await edit_cb(cb, f"🔄 Reporting {target}...")
     for i, client in enumerate(Altruix.clients):
         try:
             await client.report_peer(target, reason)
             success += 1
-        except: failed += 1
+        except Exception: failed += 1
         if i < total - 1: await asyncio.sleep(delay)
     from Main.utils.file_helpers import get_user_button_style
-    user_style = get_user_button_style(cb.from_user.id)
-    await edit_cb(cb, f"✅ Done\nSuccess: {success}\nFailed: {failed}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="sessions_list_1", style=user_style)]]))
+    if index is not None and index < len(Altruix.clients):
+        user_style = get_user_button_style(Altruix.clients[index].me.id)
+    else:
+        user_style = get_user_button_style(cb.from_user.id)
+    back_cb = f"session_info_{index}_1_5" if index is not None else "sessions_list_1"
+    await edit_cb(cb, f"✅ Done\nSuccess: {success}\nFailed: {failed}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data=back_cb, style=user_style)]]))
 
 # ====================== INPUT PROCESSING HANDLERS ======================
 
@@ -314,13 +383,19 @@ async def process_bulk_join_input(c: Client, m: Message, state: dict):
     
     state['link'] = link
     state['step'] = 'confirming'
+    index = state.get('session_index')
     
     from Main.utils.file_helpers import get_user_button_style
-    user_style = get_user_button_style(m.from_user.id)
+    if index is not None and index < len(Altruix.clients):
+        user_style = get_user_button_style(Altruix.clients[index].me.id)
+    else:
+        user_style = get_user_button_style(m.from_user.id)
+        
+    idx_str = f"_{index}" if index is not None else ""
     buttons = [
         [
-            InlineKeyboardButton("✅ Yes, Join All", callback_data="bulk_join_confirm_yes", style=user_style),
-            InlineKeyboardButton("❌ No, Cancel", callback_data="bulk_join_confirm_no", style=user_style)
+            InlineKeyboardButton("✅ Yes, Join All", callback_data=f"bulk_join_confirm_yes{idx_str}", style=user_style),
+            InlineKeyboardButton("❌ No, Cancel", callback_data=f"bulk_join_confirm_no{idx_str}", style=user_style)
         ]
     ]
     await m.reply(
@@ -334,13 +409,19 @@ async def process_bulk_leave_input(c: Client, m: Message, state: dict):
     chat_id = m.text.strip()
     state['chat_id'] = chat_id
     state['step'] = 'confirming'
+    index = state.get('session_index')
     
     from Main.utils.file_helpers import get_user_button_style
-    user_style = get_user_button_style(m.from_user.id)
+    if index is not None and index < len(Altruix.clients):
+        user_style = get_user_button_style(Altruix.clients[index].me.id)
+    else:
+        user_style = get_user_button_style(m.from_user.id)
+        
+    idx_str = f"_{index}" if index is not None else ""
     buttons = [
         [
-            InlineKeyboardButton("✅ Yes, Leave All", callback_data="bulk_leave_confirm_yes", style=user_style),
-            InlineKeyboardButton("❌ No, Cancel", callback_data="bulk_leave_confirm_no", style=user_style)
+            InlineKeyboardButton("✅ Yes, Leave All", callback_data=f"bulk_leave_confirm_yes{idx_str}", style=user_style),
+            InlineKeyboardButton("❌ No, Cancel", callback_data=f"bulk_leave_confirm_no{idx_str}", style=user_style)
         ]
     ]
     await m.reply(
@@ -355,17 +436,23 @@ async def process_bulk_report_input(c: Client, m: Message, state: dict):
     target = m.text.strip()
     state['target'] = target
     state['step'] = 'selecting_reason'
+    index = state.get('session_index')
     
     reasons = ["spam", "violence", "pornography", "child_abuse", "other"]
     buttons = []
     from Main.utils.file_helpers import get_user_button_style
-    user_style = get_user_button_style(user_id)
+    if index is not None and index < len(Altruix.clients):
+        user_style = get_user_button_style(Altruix.clients[index].me.id)
+    else:
+        user_style = get_user_button_style(user_id)
+        
+    idx_str = f"_{index}" if index is not None else ""
     for i in range(0, len(reasons), 2):
-        row = [InlineKeyboardButton(reasons[i].upper(), callback_data=f"bulk_report_reason_{user_id}_{reasons[i]}", style=user_style)]
+        row = [InlineKeyboardButton(reasons[i].upper(), callback_data=f"bulk_report_reason_{user_id}_{reasons[i]}{idx_str}", style=user_style)]
         if i+1 < len(reasons):
-            row.append(InlineKeyboardButton(reasons[i+1].upper(), callback_data=f"bulk_report_reason_{user_id}_{reasons[i+1]}", style=user_style))
+            row.append(InlineKeyboardButton(reasons[i+1].upper(), callback_data=f"bulk_report_reason_{user_id}_{reasons[i+1]}{idx_str}", style=user_style))
         buttons.append(row)
-    buttons.append([InlineKeyboardButton("✍️ Custom Reason", callback_data=f"bulk_report_reason_{user_id}_custom", style=user_style)])
+    buttons.append([InlineKeyboardButton("✍️ Custom Reason", callback_data=f"bulk_report_reason_{user_id}_custom{idx_str}", style=user_style)])
     
     await m.reply(
         f"<b>🚩 Bulk Report</b>\nTarget: {target}\n\nPilih alasan report:",
@@ -407,21 +494,87 @@ async def gcast_user_handler(c: Client, cb: CallbackQuery):
     )
 
 async def process_gcast_input(c: Client, m: Message, state: dict):
-    """Initiate gcast execution from message input"""
+    """Store gcast message and show confirmation before executing."""
     user_id = m.from_user.id
     index = state['index']
+    page = state.get('page', 1)
     text = m.text or m.caption
     
-    await m.reply("🔄 <b>Starting Broadcast...</b>\n\nProcess started in background.")
+    if not text:
+        await m.reply("❌ <b>Error:</b> Pesan kosong. Silakan kirim ulang.", parse_mode=ParseMode.HTML)
+        return
+
+    # Store the message in state for later confirmation
+    from .states import user_privacy_state
+    user_privacy_state[user_id] = {
+        'type': 'gcast_user',
+        'index': index,
+        'page': page,
+        'step': 'confirming_gcast',
+        'gcast_text': text
+    }
     
-    # Simple async broadcast
-    asyncio.create_task(execute_gcast(c, index, text, m))
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(user_id)
+    
+    # Preview first 200 chars of the message
+    preview = html.escape(text[:200]) + ("..." if len(text) > 200 else "")
+    
+    confirm_buttons = [
+        [
+            InlineKeyboardButton("✅ Yes, Broadcast!", callback_data=f"gcast_confirm_yes_{index}_{page}", style=user_style),
+            InlineKeyboardButton("❌ No, Cancel", callback_data=f"gcast_confirm_no_{index}_{page}", style=user_style)
+        ]
+    ]
+    
+    await m.reply(
+        f"<b>⚠️ CONFIRM BROADCAST</b>\n\n"
+        f"<b>Session:</b> #{index}\n"
+        f"<b>Target:</b> All Private Chats\n\n"
+        f"<b>Message Preview:</b>\n<blockquote expandable>{preview}</blockquote>\n\n"
+        f"⚠️ <b>Are you absolutely sure you want to broadcast this message to ALL private chats?</b>",
+        reply_markup=InlineKeyboardMarkup(confirm_buttons),
+        parse_mode=ParseMode.HTML
+    )
+
+@Altruix.bot.on_callback_query(filters.regex(r"^gcast_confirm_(yes|no)_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def gcast_confirm_handler(c: Client, cb: CallbackQuery):
+    """Handle gcast confirmation — only execute on explicit 'yes'."""
+    if not await check_authorization(cb): return
+    await cb.answer()
+    
+    choice = cb.matches[0].group(1)
+    index = int(cb.matches[0].group(2))
+    page = int(cb.matches[0].group(3))
+    user_id = cb.from_user.id
     
     from .states import user_privacy_state
-    if user_id in user_privacy_state:
-        del user_privacy_state[user_id]
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(user_id)
+    
+    if choice == "no":
+        if user_id in user_privacy_state:
+            del user_privacy_state[user_id]
+        await edit_cb(cb, "❌ <b>Broadcast dibatalkan.</b>",
+                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}", style=user_style)]]))
+        return
+    
+    # choice == "yes"
+    state = user_privacy_state.get(user_id)
+    if not state or state.get('step') != 'confirming_gcast':
+        await edit_cb(cb, "❌ <b>Session expired.</b> Silakan ulangi dari awal.",
+                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}", style=user_style)]]))
+        return
+    
+    gcast_text = state.get('gcast_text', '')
+    del user_privacy_state[user_id]
+    
+    await edit_cb(cb, "🔄 <b>Starting Broadcast...</b>\n\nProcess started in background.")
+    asyncio.create_task(execute_gcast(c, index, gcast_text, cb))
 
-async def execute_gcast(c, index, text, m):
+async def execute_gcast(c, index, text, source):
     """Logic for broadcasting messages to private dialogs"""
     from pyrogram.enums import ChatType
     try:
@@ -439,8 +592,15 @@ async def execute_gcast(c, index, text, m):
                     await asyncio.sleep(2) # FloodWait prevention
                 except:
                     failed += 1
-                    
-        await m.reply(f"✅ <b>GCAST COMPLETED</b>\n\nSent: {count}\nFailed: {failed}")
+        
+        # Try to notify completion                    
+        try:
+            if hasattr(source, 'reply'):
+                await source.reply(f"✅ <b>GCAST COMPLETED</b>\n\nSent: {count}\nFailed: {failed}", parse_mode=ParseMode.HTML)
+            elif hasattr(source, 'edit_message_text'):
+                await edit_cb(source, f"✅ <b>GCAST COMPLETED</b>\n\nSent: {count}\nFailed: {failed}")
+        except:
+            pass
     except Exception as e:
         logger.error(f"Error in execute_gcast: {e}")
 

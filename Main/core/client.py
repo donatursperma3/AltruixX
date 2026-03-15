@@ -177,7 +177,7 @@ class AltruixClient:
         self.clients: List[Client] = []
         self.cmd_list = {}
         self.all_lang_strings = {}
-        self.__version__ = "0.0.10.0790H" # ✅ Sync Bottleneck Fix
+        self.__version__ = "0.0.10.0891H" # ✅ Global Inline Fix & Reg Fix
         self.upm = UPM(self)
         self.selected_lang = "english"
         self.local_lang_file = "./Main/localization"
@@ -277,6 +277,8 @@ class AltruixClient:
         if hasattr(asyncio, 'get_event_loop_policy'):
             policy = asyncio.get_event_loop_policy()
             if sys.platform == "win32":
+                # winloop can sometimes cause deadlocks with Pyrogram, disabling temporarily for stability
+                # pass
                 try:
                     import winloop
                     asyncio.set_event_loop_policy(winloop.EventLoopPolicy())
@@ -504,22 +506,16 @@ class AltruixClient:
         Handles both Global and Per-Account sudo settings from DB and .env.
         Inclue Sudo Enabled/Disabled check.
         """
-        self.log(f"🔍 DEBUG: is_sudo(user_id={user_id}, client={client.me.id if client and hasattr(client, 'me') and client.me else 'None'})", level=logging.DEBUG)
+        # logger.debug(f"🔍 is_sudo(user_id={user_id}, ...)") # Too slow for tight loops
         
+        if user_id in self._auth_users_cache:
+            return True
+            
         if user_id in self.config.OWNER_USERS_ID:
-            self.log(f"✅ is_sudo: User {user_id} is OWNER.", level=logging.DEBUG)
+            self._auth_users_cache.add(user_id) # Cache it
             return True
-            
-        # Check active userbot session IDs (Self is always authorized)
-        ourselves_ids = []
-        for acc in self.ourselves:
-            try:
-                ourselves_ids.append(int(acc.id))
-            except: pass
-            
-        if user_id in ourselves_ids:
-            self.log(f"✅ is_sudo: User {user_id} is in ourselves (session account).", level=logging.DEBUG)
-            return True
+        
+        # Sudo list check follows...
 
         # ====================== ENABLEMENT CHECK ======================
         # ✅ OPTIMIZED: Use cache if available
@@ -600,7 +596,12 @@ class AltruixClient:
             if user_id in self._sudo_membership_cache:
                 return self._sudo_membership_cache[user_id]
                 
-            group_list = await self.get_group_wl_list()
+            try:
+                group_list = await asyncio.wait_for(self.get_group_wl_list(), timeout=5)
+            except asyncio.TimeoutError:
+                self.log("⏰ get_group_wl_list TIMEOUT. Defaulting to empty list.", level=30)
+                group_list = []
+                
             if not group_list:
                 self._sudo_membership_cache[user_id] = False
                 return False
@@ -617,13 +618,13 @@ class AltruixClient:
                 for group in group_list:
                     chat_id = group["_id"]
                     try:
-                        # ✅ Check chat member status
-                        member = await client.get_chat_member(int(chat_id), user_id)
+                        # ✅ Check chat member status with timeout
+                        member = await asyncio.wait_for(client.get_chat_member(int(chat_id), user_id), timeout=3)
                         from pyrogram.enums import ChatMemberStatus
                         if member.status in [ChatMemberStatus.OWNER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.MEMBER]:
                             is_member = True
                             break
-                    except Exception:
+                    except (asyncio.TimeoutError, RPCError, Exception):
                         continue
                 if is_member:
                     break
@@ -796,6 +797,47 @@ class AltruixClient:
             msg = f"[{error_name}] {error_msg}"
         else:
             msg = str(message)
+            
+        # ✅ ENHANCEMENT: Add Caller Info (Module & Function)
+        # Identify Caller (Plugin/Function) - Highly Optimized using sys._getframe
+        debug_mode = getattr(self.config, "DEBUG", False)
+        caller_info = ""
+        
+        # Only extract caller info if DEBUG mode is ON, or if it's an ERROR/CRITICAL log (level >= 40)
+        if debug_mode or level >= 40:
+            try:
+                import sys as _sys
+                # Traverse frames to find the first non-core frame
+                f = _sys._getframe(1)
+                depth = 0
+                while f and depth < 10:
+                    module_name = f.f_globals.get('__name__', 'unknown')
+                    
+                    # Exclude logging machinery itself, but allow decorators
+                    if module_name in ["logging", "importlib", "asyncio.events", "threading", "Main.core.client", "Main.utils.essentials"]:
+                         f = f.f_back
+                         depth += 1
+                         continue
+                         
+                    func_name = f.f_code.co_name
+                    
+                    # Ignore wrapper functions inside decorators
+                    if func_name in ["wrapper", "check_inline"]:
+                        f = f.f_back
+                        depth += 1
+                        continue
+    
+                    parts = module_name.split(".")
+                    mod_display = ".".join(parts[-2:]) if len(parts) > 1 else module_name
+                    caller_info = f" [📍 {mod_display}.{func_name}]"
+                    break
+                    
+            except Exception:
+                pass
+                
+        if caller_info:
+            msg += caller_info
+
 
         # ✅ ENHANCEMENT: Add Session/Account Information to terminal logs
         session_info = ""
@@ -817,11 +859,15 @@ class AltruixClient:
             session_info = f"[ID: {target_uid}] | "
 
         if session_info:
-            # Ensure the prefix is at the VERY start of the line
             msg = f"{session_info}{msg}"
 
-        # Suppress DEBUG: logs unless config.DEBUG is True
-        if msg and "DEBUG:" in msg and not getattr(self.config, "DEBUG", False):
+        # ✅ FINAL: Apply DEBUG prefix at the VERY start if mode is True
+        if debug_mode:
+            if not msg.startswith("[DEBUG]: »"):
+                msg = f"[DEBUG]: » {msg}"
+
+        # Suppress DEBUG level logs unless config.DEBUG is True
+        if level <= logging.DEBUG and not debug_mode:
             return msg
             
         logger.log(level, msg)
@@ -866,6 +912,14 @@ class AltruixClient:
         root_logger.addHandler(file_handler)
         root_logger.addHandler(stream_handler)
         
+        # ✅ Windows Terminal Color Support (Colorama)
+        try:
+            import colorama
+            colorama.init(autoreset=True)
+            self.log("Colorama initialized successfully (Windows Color Support)")
+        except ImportError:
+            pass
+
         self.log("Initialized Logger successfully!")
 
     async def resolve_dns(self):
@@ -1219,6 +1273,8 @@ class AltruixClient:
                 # ✅ Initialize defaults at scope start to avoid UnboundLocalError
                 is_user_cmd = False
                 is_sudo_cmd = False
+                is_bot_plugin = False
+                is_bot_command = False
                 
                 # ✅ MULTI-CLIENT CROSS-EXECUTION PREVENTION
                 # Prevent Client B from executing commands sent by Client A
@@ -1250,15 +1306,20 @@ class AltruixClient:
                     is_user_cmd = message.text and message.text.startswith(u_p)
                     is_sudo_cmd = message.text and message.text.startswith(s_p)
 
-                    # ✅ ENFORCE STRICT PREFIX SEPARATION (Requirement 1.A)
-                    if is_self:
-                        # Owner session ONLY responds to User Prefix
-                        if not is_user_cmd:
-                            return
-                    else:
-                        # Sudo user ONLY responds to Sudo Prefix
-                        if not is_sudo_cmd:
-                            return
+                    # ✅ Bot mode check bypass for bot handlers (Check early)
+                    is_bot_plugin = self.plugin_categories.get(file_name.lower()) == "bot"
+                    is_bot_command = message.text and message.text.startswith("/")
+
+                    # ✅ ENFORCE STRICT PREFIX SEPARATION (Requirement 1.A) - Bypass for Bot Commands
+                    if not (is_bot_plugin and is_bot_command):
+                        if is_self:
+                            # Owner session ONLY responds to User Prefix
+                            if not is_user_cmd:
+                                return
+                        else:
+                            # Sudo user ONLY responds to Sudo Prefix
+                            if not is_sudo_cmd:
+                                return
 
                     # ✅ FIXED: SMART SUDO HANDLING for Multi-Client Setup
                     if is_sudo_cmd and is_sudo_user:
@@ -1286,6 +1347,29 @@ class AltruixClient:
                         other_client_ids = [c.me.id for c in self.clients if hasattr(c, 'me')]
                         if sender_id in other_client_ids:
                             return
+                elif message.outgoing:
+                    # ✅ CHANNEL POST HANDLING: from_user is None but message is outgoing.
+                    # message.outgoing is ONLY True for messages sent by THIS userbot session.
+                    # This is safe — it cannot be spoofed by other channels or users.
+                    # NOTE: We intentionally do NOT check message.sender_chat here,
+                    # because sender_chat could match ANY channel (including ones we don't own),
+                    # which would be a critical security hole.
+                    current_client_id = client.me.id
+                    if self._prefix_cache["apply_type"] == "global":
+                        if is_ultroid:
+                            u_p = self._prefix_cache.get("ultroid_owner", ",")
+                        else:
+                            u_p = self._prefix_cache["prefix_owner_user"]
+                    else:
+                        pa = self._prefix_cache["per_account"].get(current_client_id, {})
+                        if is_ultroid:
+                            u_p = pa.get("ult_u", self._prefix_cache.get("ultroid_owner", ","))
+                        else:
+                            u_p = pa.get("u", self._prefix_cache["prefix_owner_user"])
+                    
+                    is_user_cmd = message.text and message.text.startswith(u_p)
+                    if not is_user_cmd:
+                        return
                 
                 # ✅ DEDUPLICATION for Self-Messages (Distant execution from phone)
                 if not message.outgoing and message.from_user and message.from_user.is_self:
@@ -2240,6 +2324,7 @@ class AltruixClient:
                 total_sessions = len(string_sessions)
                 unloaded_sessions = []
                 loaded_user_ids = set() # Track IDs to prevent dupes
+                self.config.SESSION_NAMES = [] # ✅ Reset session names
 
                 for count, each in enumerate(string_sessions):
                     try:
@@ -2281,6 +2366,7 @@ class AltruixClient:
                         # ✅ Store session string for easier removal later
                         client.session_string = each
                         self.clients.append(client)
+                        self.config.SESSION_NAMES.append(client.name) # ✅ Synchronize name
                         # ✅ ALWAYS add to ourselves to keep indices in sync with clients
                         self.ourselves.append(me)
                     except Exception as err:
@@ -2325,8 +2411,8 @@ class AltruixClient:
                             if client == self.bot:
                                 base_text = f"<b>✅ Altroid-X Bot Assistant is alive!</b>"
                                 final_message = (
-                                    f"{base_text}\n"
-                                    f"<b>{client_type}: {mention_user}</b> [ <code>{user_id}</code> ]\n"
+                                    f"<blockquote expandable>{base_text}\n"
+                                    f"<b>{client_type}: {mention_user}</b> [ <code>{user_id}</code> ]</blockquote>\n"
                                 )
                             else:
                                 user_index = self.clients.index(client)
@@ -2351,8 +2437,8 @@ class AltruixClient:
                                 if state == "default":
                                     base_text = f"<b>✅ Altroid-X Userbot [{user_display_index}/{total_user_sessions}] is alive!</b>"
                                     final_message = (
-                                        f"{base_text}\n"
-                                        f"<b>{client_type}: {mention_user}</b> [ <code>{user_id}</code> ]\n"
+                                        f"<blockquote expandable>{base_text}\n"
+                                        f"<b>{client_type}: {mention_user}</b> [ <code>{user_id}</code> ]</blockquote>\n"
                                     )
                                     parse_mode = ParseMode.HTML
 
@@ -2528,6 +2614,7 @@ class AltruixClient:
             
             # Add to active clients list
             self.clients.append(app)
+            self.config.SESSION_NAMES.append(app.name) # ✅ Synchronize name
 
             # Jika ini session pertama, matikan TWP
             if self.training_wheels_protocol:
@@ -3227,7 +3314,9 @@ class AltruixClient:
                 # ✅ Add Module Docstring if exists
                 if mod_help := self._module_helps.get(plugin_name):
                     # Basic cleanup and placeholder preparation
-                    self._command_help_message_data[plugin_name] += f"<i>{mod_help}</i>\n\n"
+                    import html
+                    e_mod_help = html.escape(mod_help)
+                    self._command_help_message_data[plugin_name] += f"<i>{e_mod_help}</i>\n\n"
 
                 for each_command_data in commands_data:
                     commands_: List[str] = each_command_data.get("commands", ["???"])
@@ -3248,20 +3337,29 @@ class AltruixClient:
                     self._command_help_message_data[plugin_name] = (
                         self._command_help_message_data[plugin_name][:-3] + "\n"
                     )
+                    import html
+                    e_help = html.escape(str(help_text))
                     self._command_help_message_data[
                         plugin_name
-                    ] += f"\n<b>➥ Help :</b>  <i>{help_text}</i>\n"
+                    ] += f"\n<b>➥ Help :</b>  <i>{e_help}</i>\n"
                     if usage_text:
+                        import html
+                        e_usage = html.escape(str(usage_text))
                         self._command_help_message_data[
                             plugin_name
-                        ] += f"\n<b>➥ Usage :</b>  <code>{usage_text}</code>\n"
+                        ] += f"\n<b>➥ Usage :</b>  <code>{e_usage}</code>\n"
                     if example_text:
-                        example_render = example_text
-                        if not example_render.startswith(display_pfx):
-                            example_render = f"{display_pfx}{example_render}"
+                        # ✅ Auto-repair prefix: strip existing prefixes from example/usage to avoid double prefix
+                        punctuation = ".!/? "
+                        example_render = example_text.lstrip(punctuation)
+                        
+                        # Add the correct placeholder prefix
+                        example_render = f"{display_pfx}{example_render}"
+                        import html
+                        e_example = html.escape(str(example_render))
                         self._command_help_message_data[
                             plugin_name
-                        ] += f"\n<b>➥ Example :</b>  <code>{example_render}</code>\n"
+                        ] += f"\n<b>➥ Example :</b>  <code>{e_example}</code>\n"
                     
                     # ✅ Support for 'detail' key
                     if detail_text := each_command_data.get("detail"):
@@ -3277,6 +3375,7 @@ class AltruixClient:
                         if isinstance(user_args, list):
                             for arg_data in user_args:
                                 if isinstance(arg_data, dict):
+                                    import html
                                     arg_name = html.escape(str(arg_data.get("arg", "")))
                                     help_txt = html.escape(str(arg_data.get("help", "")))
                                     requires_input = arg_data.get("requires_input", False)
@@ -3299,6 +3398,7 @@ class AltruixClient:
                             self._command_help_message_data[
                                 plugin_name
                             ] += f" <i>{str(user_args)}</i>\n"
+                
             except Exception as e:
                 self.log(
                     f"Failed to prepare help for plugin '{plugin_name}': {e}",

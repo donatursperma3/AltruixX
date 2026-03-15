@@ -21,7 +21,7 @@ from .states import user_confirmation_state, user_text_confirmation_state
 logger = logging.getLogger(__name__)
 
 # ====================== EXPORT SESSIONS FEATURE ======================
-@Altruix.bot.on_callback_query(filters.regex("export_all_sessions_confirmation"))
+@Altruix.bot.on_callback_query(filters.regex(r"^export_all_sessions_confirmation$"))
 @log_errors
 @iuser_check
 async def export_all_sessions_confirmation_handler(c: Client, cb: CallbackQuery):
@@ -57,7 +57,7 @@ async def export_all_sessions_confirmation_handler(c: Client, cb: CallbackQuery)
         parse_mode=ParseMode.HTML
     )
 
-@Altruix.bot.on_callback_query(filters.regex("export_all_sessions_confirm_no"))
+@Altruix.bot.on_callback_query(filters.regex(r"^export_all_sessions_confirm_no$"))
 @log_errors
 @iuser_check
 async def export_all_sessions_cancel_handler(c: Client, cb: CallbackQuery):
@@ -72,7 +72,7 @@ async def export_all_sessions_cancel_handler(c: Client, cb: CallbackQuery):
     from .sessions_list import sessions_menu_cb_handler
     await sessions_menu_cb_handler(c, cb)
 
-@Altruix.bot.on_callback_query(filters.regex("export_all_sessions_confirm_yes"))
+@Altruix.bot.on_callback_query(filters.regex(r"^export_all_sessions_confirm_yes$"))
 @log_errors
 @iuser_check
 async def export_all_sessions_confirm_yes_handler(c: Client, cb: CallbackQuery):
@@ -100,7 +100,7 @@ async def export_all_sessions_confirm_yes_handler(c: Client, cb: CallbackQuery):
     asyncio.create_task(clear_user_state_after_timeout(user_id, 60))
 
 # ====================== EXPORT PHONES FEATURE ======================
-@Altruix.bot.on_callback_query(filters.regex("export_all_phones_confirmation"))
+@Altruix.bot.on_callback_query(filters.regex(r"^export_all_phones_confirmation$"))
 @log_errors
 @iuser_check
 async def export_all_phones_confirmation_handler(c: Client, cb: CallbackQuery):
@@ -136,7 +136,7 @@ async def export_all_phones_confirmation_handler(c: Client, cb: CallbackQuery):
         parse_mode=ParseMode.HTML
     )
 
-@Altruix.bot.on_callback_query(filters.regex("export_all_phones_confirm_no"))
+@Altruix.bot.on_callback_query(filters.regex(r"^export_all_phones_confirm_no$"))
 @log_errors
 @iuser_check
 async def export_all_phones_cancel_handler(c: Client, cb: CallbackQuery):
@@ -151,7 +151,7 @@ async def export_all_phones_cancel_handler(c: Client, cb: CallbackQuery):
     from .sessions_list import sessions_menu_cb_handler
     await sessions_menu_cb_handler(c, cb)
 
-@Altruix.bot.on_callback_query(filters.regex("export_all_phones_confirm_yes"))
+@Altruix.bot.on_callback_query(filters.regex(r"^export_all_phones_confirm_yes$"))
 @log_errors
 @iuser_check
 async def export_all_phones_confirm_yes_handler(c: Client, cb: CallbackQuery):

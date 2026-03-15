@@ -70,7 +70,7 @@ async def toggle_addons_handler(c: Client, cb: CallbackQuery):
     text, reply_markup = await get_session_info_data(idx, pg, 5)
     
     await cb.edit_message_text(
-        text=f"<b>ℹ️ SESSION MANAGER</b>\n\n<blockquote expandable>{text}</blockquote>",
+        text=f"╭━━━━━━━━━━━━━━━━━━━━━╮\n   <b>𝐒𝐄𝐒𝐒𝐈𝐎𝐍 𝐌𝐀𝐍𝐀𝐆𝐄𝐑</b>\n╰━━━━━━━━━━━━━━━━━━━━━╯\n\n<blockquote expandable>{text}</blockquote>",
         reply_markup=reply_markup,
         parse_mode=ParseMode.HTML,
         link_preview_options=LinkPreviewOptions(is_disabled=True)

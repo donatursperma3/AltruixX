@@ -73,6 +73,7 @@ async def backup_manager_handler(c: Client, cb: CallbackQuery):
     )
     
     from Main.utils.file_helpers import get_user_button_style
+    from .states import user_confirmation_state
     user_style = get_user_button_style(cb.from_user.id)
     
     await cb.edit_message_text(text, reply_markup=await get_backup_kb(user_style=user_style))

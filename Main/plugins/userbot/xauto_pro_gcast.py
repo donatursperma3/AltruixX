@@ -13,7 +13,7 @@ import time
 import random
 import logging
 import html
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from pyrogram import Client, filters, enums
 from pyrogram.types import (
@@ -31,7 +31,7 @@ from Main.utils.file_helpers import get_user_button_style
 # Plugin Metadata
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xauto_pro_gcast"
-PLUGIN_VERSION = "1.0.400"
+PLUGIN_VERSION = "1.0.518"
 
 logger = logging.getLogger("altruix.xauto_pro_gcast")
 logger.setLevel(logging.INFO)
@@ -101,7 +101,13 @@ def get_settings(user_id: int) -> dict:
             {"content": "Izin up kak, moga makin rame ya! 🔥", "parse_mode": "html"}
         ],
         # Menu settings
-        "menu_mode": "hide"         # full / hide
+        "menu_mode": "hide",         # full / hide
+        "queues": {},               # { "QueueName": [chat_id1, chat_id2, ...] }
+        "recurring_mode": "interval", # interval / time
+        "recurring_interval_hours": 0,
+        "recurring_interval_minutes": 10,
+        "recurring_specific_hour": 0,
+        "recurring_specific_minute": 0,
     }
     if uid not in all_s:
         all_s[uid] = defaults
@@ -409,6 +415,10 @@ async def safe_edit_message(cb: CallbackQuery, text: str, reply_markup=None, par
         # logger.info(f"[safe_edit_message] Successfully edited message")
         return True
                 
+    except errors.MessageNotModified:
+        # Ignore this error as it's not a failure, just means state didn't change
+        # logger.info(f"[safe_edit_message] Message was not modified, ignoring.")
+        return True
     except Exception as e:
         Altruix.log(f"[safe_edit_message] Error editing message: {e}", level=40)
         Altruix.log(f"[safe_edit_message] Callback data: {cb.data}", level=40)
@@ -416,8 +426,27 @@ async def safe_edit_message(cb: CallbackQuery, text: str, reply_markup=None, par
         return False
 
 
+def _get_q_hash(name: str) -> str:
+    """Get short hash of a queue name to stay under 64b callback limit."""
+    import hashlib
+    return hashlib.sha256(name.encode()).hexdigest()[:8]
+
+def _resolve_q_name(user_id: int, maybe_hash: str) -> str:
+    """Resolve a hash (h:hash) or name back to the full queue name."""
+    s = get_settings(user_id)
+    queues = s.get("queues", {})
+    
+    if maybe_hash.startswith("h:"):
+        target_hash = maybe_hash[2:]
+        for q_name in queues.keys():
+            if _get_q_hash(q_name) == target_hash:
+                return q_name
+    return maybe_hash
+
 def _filter_label(val: str) -> str:
     """Convert filter value to display label."""
+    if val.startswith("q:"):
+        return f"Q: {val[2:]}"
     return {"all": "All", "groups": "Groups", "personal": "Personal",
             "admin": "Admin", "nonadmin": "Non-Admin"}.get(val, val.title())
 
@@ -478,6 +507,19 @@ def build_dashboard_text(user_id: int) -> str:
                 account_mention = f"<a href='tg://user?id={user_id}'>{account_name}</a>"
             break
     
+    # Recurring detailed info
+    rec_val = "OFF"
+    if s.get('recurring', False):
+        mode = s.get('recurring_mode', 'interval')
+        if mode == 'interval':
+            h = s.get('recurring_interval_hours', 0)
+            m = s.get('recurring_interval_minutes', 10)
+            rec_val = f"ON (Every {h}h {m}m)"
+        else:
+            sh = s.get('recurring_specific_hour', 0)
+            sm = s.get('recurring_specific_minute', 0)
+            rec_val = f"ON (At {sh:02d}:{sm:02d} Daily)"
+
     text = (
         f"<blockquote expandable>📡 <b>Auto Pro Global BroadCast</b>\n"
         f"{'━' * 18}\n"
@@ -490,7 +532,7 @@ def build_dashboard_text(user_id: int) -> str:
         f"• Texts: <b>{len(s.get('text_list', []))}</b> | "
         f"• Media: <b>{len(s.get('media_list', []))}</b>\n"
         f"• Random Gcast: <b>{'ON' if s['random_text'] else 'OFF'}</b> | "
-        f"• Recurring: <b>{'ON' if s['recurring'] else 'OFF'}</b>\n"
+        f"• Recurring: <b>{rec_val}</b>\n"
         f"• Auto-Reply: <b>{'ON' if s.get('auto_reply', False) else 'OFF'}</b> (<b>{s.get('reply_delay', 3)}s</b>)\n"
         f"• Random Reply: <b>{'ON' if s.get('random_reply', True) else 'OFF'}</b> | "
         f"• Reply Msgs: <b>{len(s.get('reply_text_list', []))}</b>\n"
@@ -507,6 +549,24 @@ def build_dashboard_text(user_id: int) -> str:
         )
     text += f"{'━' * 18}</blockquote>"
     return text
+
+def build_task_control_kb(user_id: int, task_id: str) -> InlineKeyboardMarkup:
+    """Build dynamic task control keyboard for log messages."""
+    btn_style = get_user_button_style(user_id)
+    state = GCAST_TASKS.get(user_id)
+    
+    is_paused = state and not state["pause_event"].is_set()
+    
+    pause_resume_btn = (
+        InlineKeyboardButton("▶️ Resume", callback_data=f"pgc_resume_{user_id}_{task_id}", style=btn_style)
+        if is_paused else
+        InlineKeyboardButton("⏸ Pause", callback_data=f"pgc_pause_{user_id}_{task_id}", style=btn_style)
+    )
+    
+    return InlineKeyboardMarkup([
+        [pause_resume_btn, InlineKeyboardButton("⏹ Stop", callback_data=f"pgc_stop_{user_id}_{task_id}", style=btn_style)],
+        [InlineKeyboardButton("ℹ️ Status", callback_data=f"pgc_status_{user_id}_{task_id}", style=btn_style)]
+    ])
 
 def build_dashboard_kb(user_id: int) -> InlineKeyboardMarkup:
     """Build the main dashboard inline keyboard with exact requested layout."""
@@ -549,10 +609,15 @@ def build_dashboard_kb(user_id: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton(f"📋 List Chats", callback_data=f"pgc_listchats_{uid}", style=btn_style),
         ])
 
+        # 4.5 Queue Manager
+        rows.append([
+            InlineKeyboardButton(f"📁 Queue Manager ({len(s.get('queues', {}))})", callback_data=f"pgc_queuemgr_{uid}", style=btn_style),
+        ])
+
         # 5. Recurring / Notif
         notif_status = "ON" if s.get('notify_logs', True) else "OFF"
         rows.append([
-            InlineKeyboardButton(f"🔁 Recurring: {'ON' if s['recurring'] else 'OFF'}", callback_data=f"pgc_recurring_{uid}", style=btn_style),
+            InlineKeyboardButton(f"🔁 Recurring Settings", callback_data=f"pgc_rec_menu_{uid}", style=btn_style),
             InlineKeyboardButton(f"🔔 Notif: {notif_status}", callback_data=f"pgc_notiftoggle_{uid}", style=btn_style),
         ])
 
@@ -625,6 +690,62 @@ def build_dashboard_kb(user_id: int) -> InlineKeyboardMarkup:
 
     return InlineKeyboardMarkup(rows)
 
+def build_queuemgr_kb(user_id: int) -> InlineKeyboardMarkup:
+    """Build the Queue Manager list keyboard."""
+    s = get_settings(user_id)
+    queues = s.get("queues", {})
+    btn_style = get_user_button_style(user_id)
+    uid = user_id
+    rows = []
+
+    rows.append([InlineKeyboardButton("➕ Create New Queue", callback_data=f"pgc_qadd_{uid}", style=btn_style)])
+
+    for q_name in sorted(queues.keys()):
+        count = len(queues[q_name])
+        q_hash = _get_q_hash(q_name)
+        rows.append([
+            InlineKeyboardButton(f"📁 {q_name} ({count})", callback_data=f"pgc_qedit_{uid}_h:{q_hash}", style=btn_style),
+            InlineKeyboardButton("🗑", callback_data=f"pgc_qdelconf_{uid}_h:{q_hash}", style=btn_style)
+        ])
+
+    rows.append([InlineKeyboardButton("⬅️ Back", callback_data=f"pgc_backmain_{uid}", style=btn_style)])
+    return InlineKeyboardMarkup(rows)
+
+def build_queue_edit_kb(user_id: int, queue_name: str) -> InlineKeyboardMarkup:
+    """Build the keyboard for editing a specific queue."""
+    s = get_settings(user_id)
+    queue = s.get("queues", {}).get(queue_name, [])
+    btn_style = get_user_button_style(user_id)
+    uid = user_id
+    rows = []
+
+    q_hash = _get_q_hash(queue_name)
+    rows.append([
+        InlineKeyboardButton(f"📁 Queue: {queue_name}", callback_data=f"pgc_noop_{uid}", style=btn_style)
+    ])
+    
+    rows.append([
+        InlineKeyboardButton("✏️ Edit Name", callback_data=f"pgc_qeditname_{uid}_h:{q_hash}", style=btn_style),
+        InlineKeyboardButton("➕ Add Chat (Current)", callback_data=f"pgc_qaddchat_{uid}_h:{q_hash}", style=btn_style),
+    ])
+    rows.append([
+        InlineKeyboardButton("➕ Add Chat (by ID)", callback_data=f"pgc_qaddid_{uid}_h:{q_hash}", style=btn_style),
+    ])
+
+    # Show items in queue
+    for cid in queue[:15]: # Show max 15
+        rows.append([
+            InlineKeyboardButton(f"Chat ID: {cid}", callback_data=f"pgc_noop_{uid}", style=btn_style),
+            InlineKeyboardButton("🗑", callback_data=f"pgc_qremchat_{uid}_h:{q_hash}_{cid}", style=btn_style)
+        ])
+    
+    if len(queue) > 15:
+        rows.append([InlineKeyboardButton(f"... and {len(queue)-15} more", callback_data=f"pgc_noop_{uid}", style=btn_style)])
+
+    rows.append([InlineKeyboardButton("⬅️ Back to Queues", callback_data=f"pgc_queuemgr_{uid}", style=btn_style)])
+    return InlineKeyboardMarkup(rows)
+
+
 def build_sd_submenu_kb(user_id: int) -> InlineKeyboardMarkup:
     """Build the Self-Destruct settings submenu keyboard."""
     uid = user_id
@@ -687,7 +808,86 @@ def build_delay_submenu_kb(user_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
-# ==================== AUTO-REPLY SUB-MENU ====================
+def build_recurring_settings_kb(user_id: int) -> InlineKeyboardMarkup:
+    """Build the main Recurring settings submenu keyboard."""
+    uid = user_id
+    s = get_settings(user_id)
+    is_enabled = s.get('recurring', False)
+    mode = s.get('recurring_mode', 'interval')
+    btn_style = get_user_button_style(user_id)
+
+    rows = []
+    # Toggle Master Recurring
+    toggle_text = "🔴 Disable Recurring" if is_enabled else "🟢 Enable Recurring"
+    rows.append([InlineKeyboardButton(toggle_text, callback_data=f"pgc_rec_toggle_{uid}", style=btn_style)])
+
+    if is_enabled:
+        # Mode Selection
+        rows.append([
+            InlineKeyboardButton(f"{'✅ ' if mode=='interval' else ''}Repetition", callback_data=f"pgc_rec_rep_{uid}", style=btn_style),
+            InlineKeyboardButton(f"{'✅ ' if mode=='time' else ''}Specific Time", callback_data=f"pgc_rec_time_{uid}", style=btn_style),
+        ])
+        
+        if mode == "interval":
+            h = s.get('recurring_interval_hours', 0)
+            m = s.get('recurring_interval_minutes', 10)
+            rows.append([InlineKeyboardButton(f"⏱ Every: {h}h {m}m", callback_data=f"pgc_rec_rep_{uid}", style=btn_style)])
+        else:
+            sh = s.get('recurring_specific_hour', 0)
+            sm = s.get('recurring_specific_minute', 0)
+            rows.append([InlineKeyboardButton(f"{'✅ ' if mode=='time' else ''}At: {sh:02d}:{sm:02d} Daily", callback_data=f"pgc_rec_time_{uid}", style=btn_style)])
+
+    rows.append([InlineKeyboardButton("⬅️ Back", callback_data=f"pgc_backmain_{uid}", style=btn_style)])
+    return InlineKeyboardMarkup(rows)
+
+def build_repetition_menu_kb(user_id: int) -> InlineKeyboardMarkup:
+    """Build the interval-based repetition sub-menu with grid layout."""
+    btn_style = get_user_button_style(user_id)
+    uid = user_id
+    rows = []
+    
+    # Hours Grid
+    rows.append([InlineKeyboardButton("─── Set Hours ───", callback_data="pgc_noop", style=btn_style)])
+    h_vals = [1, 2, 3, 4, 6, 8, 12, 24]
+    for i in range(0, len(h_vals), 4):
+        rows.append([InlineKeyboardButton(f"{v}h", callback_data=f"pgc_rec_set_rep_h_{v}_{uid}", style=btn_style) for v in h_vals[i:i+4]])
+    
+    # Minutes Grid
+    rows.append([InlineKeyboardButton("─── Set Minutes ───", callback_data="pgc_noop", style=btn_style)])
+    m_vals = [1, 2, 3, 5, 10, 15, 20, 30]
+    for i in range(0, len(m_vals), 4):
+        rows.append([InlineKeyboardButton(f"{v}m", callback_data=f"pgc_rec_set_rep_m_{v}_{uid}", style=btn_style) for v in m_vals[i:i+4]])
+        
+    rows.append([InlineKeyboardButton("⬅️ Back to Recurring", callback_data=f"pgc_rec_menu_{uid}", style=btn_style)])
+    return InlineKeyboardMarkup(rows)
+
+def build_time_menu_kb(user_id: int) -> InlineKeyboardMarkup:
+    """Build the daily specific time sub-menu with 6-column grid layout."""
+    btn_style = get_user_button_style(user_id)
+    uid = user_id
+    rows = []
+    
+    rows.append([InlineKeyboardButton("─── Select Hour (24h) ───", callback_data="pgc_noop", style=btn_style)])
+    # 24 hours in 6 columns = 4 rows
+    for r in range(0, 24, 6):
+        row = []
+        for c in range(6):
+            h = r + c
+            row.append(InlineKeyboardButton(f"{h:02d}", callback_data=f"pgc_rec_set_spec_h_{h}_{uid}", style=btn_style))
+        rows.append(row)
+    
+    # Minutes Selection
+    rows.append([InlineKeyboardButton("─── Select Minute ───", callback_data="pgc_noop", style=btn_style)])
+    # 60 minutes in 6 columns = 10 rows
+    for r in range(0, 60, 6):
+        row = []
+        for c in range(6):
+            m = r + c
+            row.append(InlineKeyboardButton(f"{m:02d}m", callback_data=f"pgc_rec_set_spec_m_{m}_{uid}", style=btn_style))
+        rows.append(row)
+        
+    rows.append([InlineKeyboardButton("⬅️ Back to Recurring", callback_data=f"pgc_rec_menu_{uid}", style=btn_style)])
+    return InlineKeyboardMarkup(rows)
 
 def build_reply_msglist_text(user_id: int, page: int = 0) -> str:
     """Build the auto-reply message list sub-menu text (paginated)."""
@@ -946,22 +1146,25 @@ def build_msglist_kb(user_id: int, page: int = 0) -> InlineKeyboardMarkup:
     for i, (mtype, o_idx, item) in enumerate(page_items, start=start_idx + 1):
         if mtype == "text":
             content = item.get("content", "") if isinstance(item, dict) else str(item)
-            preview = content[:20].strip() + (".." if len(content) > 20 else "")
+            preview = content[:25].strip() + (".." if len(content) > 25 else "")
             label = f"📝 #{i}: {preview}"
             cb_fixed = f"pgc_msgsetfixed_text_{uid}_{o_idx}_p{page}"
             cb_preview = f"pgc_msgpreview_text_{uid}_{o_idx}_p{page}"
+            cb_edit = f"pgc_msgeditedit_text_{uid}_{o_idx}_p{page}"
             cb_del = f"pgc_msgdelconf_text_{uid}_{o_idx}_p{page}"
         else:
             media_type = item.get("type", "unknown")
             label = f"🎬 #{i}: {media_type.title()}"
             cb_fixed = f"pgc_msgsetfixed_media_{uid}_{o_idx}_p{page}"
             cb_preview = f"pgc_msgpreview_media_{uid}_{o_idx}_p{page}"
+            cb_edit = f"pgc_msgeditedit_media_{uid}_{o_idx}_p{page}"
             cb_del = f"pgc_msgdelconf_media_{uid}_{o_idx}_p{page}"
             
+        rows.append([InlineKeyboardButton(label, callback_data=cb_fixed, style=btn_style)])
         rows.append([
-            InlineKeyboardButton(label, callback_data=cb_fixed, style=btn_style),
-            InlineKeyboardButton("👁", callback_data=cb_preview, style=btn_style),
-            InlineKeyboardButton("🗑", callback_data=cb_del, style=btn_style),
+            InlineKeyboardButton("👁 Preview", callback_data=cb_preview, style=btn_style),
+            InlineKeyboardButton("✏️ Edit", callback_data=cb_edit, style=btn_style),
+            InlineKeyboardButton("🗑 Delete", callback_data=cb_del, style=btn_style),
         ])
     
     # Navigation Row
@@ -1286,10 +1489,43 @@ def build_info_text(page: int = 0) -> str:
             "  ↳ <b>Emoji:</b> Pilih emoji (👍❤️🔥🎉😊💯)\n"
             "  ↳ React count ditampilkan di completion log</blockquote>"
         ),
-        # Page 3: Format Text
+        # Page 3: Dynamic Variables
         (
             "<blockquote expandable><b>📊 AUTO PRO GLOBAL BROADCAST - INFO</b>\n"
-            "<i>Page 4/4</i>\n\n"
+            "<i>Page 4/5</i>\n\n"
+            "<b>✨ DYNAMIC VARIABLES:</b>\n\n"
+            "Gunakan variabel ini agar pesan terasa lebih natural:\n\n"
+            "• <code>{group_title}</code>\n"
+            "  ↳ Nama group atau Nama User (jika private)\n\n"
+            "• <code>{chat_name}</code>\n"
+            "  ↳ Nama depan User atau Nama Group\n\n"
+            "<b>💡 CONTOH PENGGUNAAN:</b>\n"
+            "• <code>Halo member group {group_title}!</code>\n"
+            "  ↳ <i>Halo member group Altruix Community!</i>\n\n"
+            "• <code>Hi {chat_name}, apa kabar?</code>\n"
+            "  ↳ <i>Hi Budi, apa kabar?</i>\n\n"
+            "<i>Variabel ini bekerja di Pesan GCast & Auto-Reply.</i></blockquote>"
+        ),
+        # Page 4: Chat Queues
+        (
+            "<blockquote expandable><b>📊 AUTO PRO GLOBAL BROADCAST - INFO</b>\n"
+            "<i>Page 5/6</i>\n\n"
+            "<b>📁 CHAT QUEUES:</b>\n"
+            "Gunakan Chat Queue untuk membuat daftar target kustom.\n\n"
+            "<b>Cara Menggunakan:</b>\n"
+            "1. Buka <b>Queue Manager</b> di Dashboard.\n"
+            "2. Buat queue baru (misal: 'Promo').\n"
+            "3. Tambahkan chat melalui tombol Edit atau perintah manual.\n"
+            "4. Klik tombol <code>Chat: ...</code> di menu utama hingga muncul <code>Q: NamaQueue</code>.\n\n"
+            "<b>Manual Commands:</b>\n"
+            "• <code>.gcastqadd [Nama] [@id]</code>\n"
+            "• <code>.gcastqdel [Nama] [id]</code>\n"
+            "• <code>.gcastqlist</code></blockquote>"
+        ),
+        # Page 5: Format Text
+        (
+            "<blockquote expandable><b>📊 AUTO PRO GLOBAL BROADCAST - INFO</b>\n"
+            "<i>Page 6/6</i>\n\n"
             "<b>📝 FORMAT TEXT:</b>\n\n"
             "<b>HTML Format:</b>\n"
             "• <code>&lt;b&gt;Bold&lt;/b&gt;</code> → <b>Bold</b>\n"
@@ -1354,13 +1590,29 @@ def build_showcmd_text() -> str:
 async def get_target_chats(client: Client, settings: dict) -> list:
     """
     Scan dialogs and return list of target chats based on filter settings.
-    Returns list of (chat_id, chat_title).
+    Returns list of dicts: {"chat_id": int, "group_title": str, "chat_name": str}.
     """
     targets = []
     blacklist = set(settings.get("blacklist", []))
     chat_filter = settings.get("chat_filter", "all")
     admin_filter = settings.get("admin_filter", "all")
     
+    if chat_filter.startswith("q:"):
+        queue_name = chat_filter[2:]
+        queue_ids = settings.get("queues", {}).get(queue_name, [])
+        for cid in queue_ids:
+            if cid in blacklist: continue
+            try:
+                chat = await client.get_chat(cid)
+                targets.append({
+                    "chat_id": chat.id,
+                    "group_title": chat.title or chat.first_name or f"Chat {chat.id}",
+                    "chat_name": chat.first_name or chat.title or f"User {chat.id}"
+                })
+            except Exception as e:
+                Altruix.log(f"Failed to get chat {cid} for queue {queue_name}: {e}", level=30)
+        return targets
+
     try:
         async for dialog in client.get_dialogs():
             chat = dialog.chat
@@ -1400,12 +1652,34 @@ async def get_target_chats(client: Client, settings: dict) -> list:
                     if admin_filter == "admin":
                         continue
             
-            title = chat.title or chat.first_name or f"Chat {cid}"
-            targets.append((cid, title))
+            group_title = chat.title or chat.first_name or f"Group {cid}"
+            chat_name = chat.first_name or chat.title or f"User {cid}"
+            
+            targets.append({
+                "chat_id": cid,
+                "group_title": group_title,
+                "chat_name": chat_name
+            })
     except Exception as e:
         Altruix.log(f"get_target_chats error: {e}", level=40, client=client)
     
     return targets
+
+def _apply_dynamic_vars(text: str, chat_info: dict) -> str:
+    """Replace dynamic variables in text with chat-specific metadata."""
+    if not text or not isinstance(text, str):
+        return text
+    
+    # {group_title} and {chat_name} replacement
+    # Fallback to chat_name if group_title is missing/generic in personal chats
+    group_title = chat_info.get("group_title", "")
+    chat_name = chat_info.get("chat_name", "")
+    
+    # Basic replacements
+    text = text.replace("{group_title}", group_title)
+    text = text.replace("{chat_name}", chat_name)
+    
+    return text
 
 async def smart_purge_chat(client: Client, chat_id: int, title: str, settings: dict, user_id: int) -> dict:
     """
@@ -1527,7 +1801,7 @@ async def broadcast_loop(client: Client, user_id: int, start_index: int = 0):
     task_id = generate_task_id("G")
     
     # Get target chats
-    await send_log(f"📡 <b>GCast</b> <code>{task_id}</code>\n🔍 Scanning target chats...", client=client)
+    await send_log(f"<blockquote expandable>📡 <b>GCast</b> <code>{task_id}</code>\n🔍 Scanning target chats...</blockquote>", client=client)
     targets = await get_target_chats(client, settings)
     
     if not targets:
@@ -1575,29 +1849,20 @@ async def broadcast_loop(client: Client, user_id: int, start_index: int = 0):
     
     from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     btn_style = get_user_button_style(user_id)
-    kb = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("⏸ Pause", callback_data=f"pgc_pause_{user_id}_{task_id}", style=btn_style),
-            InlineKeyboardButton("▶️ Resume", callback_data=f"pgc_resume_{user_id}_{task_id}", style=btn_style)
-        ],
-        [
-            InlineKeyboardButton("⏹ Stop", callback_data=f"pgc_stop_{user_id}_{task_id}", style=btn_style),
-            InlineKeyboardButton("ℹ️ Status", callback_data=f"pgc_status_{user_id}_{task_id}", style=btn_style)
-        ]
-    ])
+    kb = build_task_control_kb(user_id, task_id)
     
     started_msg = await send_log(
-        f"📡 <b>GCast Started</b> <code>{task_id}</code>\n"
+        f"<blockquote expandable>📡 <b>GCast Started</b> <code>{task_id}</code>\n"
         f"{'━' * 18}\n"
-        f"👤 <b>Account:</b> {account_name}\n"
-        f"🎯 <b>Targets:</b> {len(targets)} chats\n"
-        f"📝 <b>Messages:</b> {len(all_messages)} items ({len(text_list)} text, {len(media_list)} media)\n"
-        f"⏱ <b>Delay/Chat:</b> {settings['delay_per_chat']}s\n"
-        f"🔀 <b>Random:</b> {'ON' if settings['random_text'] else 'OFF'}\n"
-        f"🔁 <b>Recurring:</b> {'ON' if settings['recurring'] else 'OFF'}\n"
-        f"📋 <b>Chat Filter:</b> {_filter_label(settings['chat_filter'])}\n"
-        f"👑 <b>Admin Filter:</b> {_filter_label(settings['admin_filter'])}\n"
-        f"{'━' * 18}",
+        f"  • <b>Account:</b> {account_name}\n"
+        f"  • <b>Targets:</b> {len(targets)} chats\n"
+        f"  • <b>Messages:</b> {len(all_messages)} items ({len(text_list)} text, {len(media_list)} media)\n"
+        f"  • <b>Delay/Chat:</b> {settings['delay_per_chat']}s\n"
+        f"  • <b>Random:</b> {'ON' if settings['random_text'] else 'OFF'}\n"
+        f"  • <b>Recurring:</b> {'ON' if settings['recurring'] else 'OFF'}\n"
+        f"  • <b>Chat Filter:</b> {_filter_label(settings['chat_filter'])}\n"
+        f"  • <b>Admin Filter:</b> {_filter_label(settings['admin_filter'])}\n"
+        f"{'━' * 18}</blockquote>",
         client=client,
         reply_markup=kb
     )
@@ -1609,7 +1874,7 @@ async def broadcast_loop(client: Client, user_id: int, start_index: int = 0):
     # Save persistent broadcast state for resume after restart
     save_active_task(user_id, {
         "task_id": task_id,
-        "targets": [(cid, title) for cid, title in targets],
+        "targets": targets,
         "sent_index": 0,
         "msg_idx": 0,
         "started_at": task_state["started_at"],
@@ -1618,7 +1883,9 @@ async def broadcast_loop(client: Client, user_id: int, start_index: int = 0):
     
     try:
         msg_idx = 0
-        for i, (cid, title) in enumerate(targets):
+        for i, chat_info in enumerate(targets):
+            cid = chat_info["chat_id"]
+            title = chat_info["group_title"]
             # Skip already-sent chats on resume
             if i < start_index:
                 task_state["sent_count"] += 1
@@ -1649,18 +1916,22 @@ async def broadcast_loop(client: Client, user_id: int, start_index: int = 0):
                         Altruix.log(f"[GCast] Smart Purge completed for {title}: {purge_count} deleted", level=20, client=client)
                         # Log purge activity to group log
                         await send_log(
+                            f"<blockquote expandable>"
                             f"🧹 <b>Smart Purge</b> <code>{task_id}</code>\n"
                             f"Chat: {html.escape(title[:30])}\n"
                             f"Deleted: {purge_stats['deleted']} messages\n"
-                            f"Errors: {purge_stats['errors']}",
+                            f"Errors: {purge_stats['errors']}"
+                            f"</blockquote>",
                             client=client
                         )
                 except Exception as e:
                     Altruix.log(f"[GCast] Smart Purge error for {title}: {e}", level=40, client=client)
                     await send_log(
+                        f"<blockquote expandable>"
                         f"⚠️ <b>Smart Purge Error</b> <code>{task_id}</code>\n"
                         f"Chat: {html.escape(title[:30])}\n"
-                        f"Error: {str(e)[:100]}",
+                        f"Error: {str(e)[:100]}"
+                        f"</blockquote>",
                         client=client
                     )
             
@@ -1690,6 +1961,9 @@ async def broadcast_loop(client: Client, user_id: int, start_index: int = 0):
                 if message["type"] == "text":
                     # Send text message with format
                     content = message.get("content", "")
+                    # Apply dynamic variables
+                    content = _apply_dynamic_vars(content, chat_info)
+                    
                     content_preview = content
                     message_type = "Text"
                     parse_mode_str = message.get("parse_mode", "html")
@@ -1709,6 +1983,9 @@ async def broadcast_loop(client: Client, user_id: int, start_index: int = 0):
                     message_type = media_subtype.title()
                     file_id = message.get("file_id")
                     caption = message.get("caption", "")
+                    # Apply dynamic variables to caption
+                    caption = _apply_dynamic_vars(caption, chat_info)
+                    
                     content_preview = caption if caption else f"[{media_subtype}]"
                     caption_parse_mode_str = message.get("parse_mode", "html")
                     
@@ -1801,7 +2078,7 @@ async def broadcast_loop(client: Client, user_id: int, start_index: int = 0):
                 has_reply = settings.get("auto_reply", False) and (settings.get("reply_text_list") or settings.get("reply_media_list"))
                 
                 if sent_msg and (sd_enabled or has_reply):
-                    async def handle_post_send(c, cid, gcast_mid, s, t_state, _log_status, _log_msg):
+                    async def handle_post_send(c, cid, gcast_mid, s, t_state, _log_status, _log_msg, chat_info):
                         replied_msg = None
                         reply_delay_time = s.get("reply_delay", 3)
                         
@@ -1833,11 +2110,15 @@ async def broadcast_loop(client: Client, user_id: int, start_index: int = 0):
                                     try:
                                         if r_type == "text":
                                             r_content = r_item["content"]
+                                            # Apply dynamic variables to auto-reply
+                                            r_content = _apply_dynamic_vars(r_content, chat_info)
                                             replied_msg = await c.send_message(chat_id=cid, text=r_content, reply_to_message_id=gcast_mid, parse_mode=pm)
                                         else:
                                             m_subtype = r_item.get("media_type", r_item.get("type", "photo"))
                                             f_id = r_item.get("file_id")
                                             cap = r_item.get("caption", "")
+                                            # Apply dynamic variables to auto-reply media caption
+                                            cap = _apply_dynamic_vars(cap, chat_info)
                                             
                                             if m_subtype == "photo": replied_msg = await c.send_photo(cid, f_id, caption=cap, reply_to_message_id=gcast_mid, parse_mode=pm)
                                             elif m_subtype == "video": replied_msg = await c.send_video(cid, f_id, caption=cap, reply_to_message_id=gcast_mid, parse_mode=pm)
@@ -1909,7 +2190,7 @@ async def broadcast_loop(client: Client, user_id: int, start_index: int = 0):
                                 text = build_detailed_log_text(_log_status)
                                 await edit_log_msg(_log_msg, text, client=c)
                     
-                    asyncio.create_task(handle_post_send(client, cid, sent_msg.id, settings, task_state, log_status, detail_log_msg))
+                    asyncio.create_task(handle_post_send(client, cid, sent_msg.id, settings, task_state, log_status, detail_log_msg, chat_info))
                 
                 # Log every 10 chats or last chat
                 if (i + 1) % 10 == 0 or (i + 1) == len(targets):
@@ -2052,7 +2333,7 @@ async def broadcast_loop(client: Client, user_id: int, start_index: int = 0):
             if (i + 1) % 5 == 0 or (i + 1) == len(targets):
                 save_active_task(user_id, {
                     "task_id": task_id,
-                    "targets": [(c, t) for c, t in targets],
+                    "targets": targets,
                     "sent_index": i + 1,
                     "msg_idx": msg_idx,
                     "started_at": task_state["started_at"],
@@ -2073,17 +2354,17 @@ async def broadcast_loop(client: Client, user_id: int, start_index: int = 0):
         success_rate = (sent / len(targets) * 100) if len(targets) > 0 else 0
         
         await send_log(
-            f"✅ <b>GCast Completed</b> <code>{task_id}</code>\n"
+            f"<blockquote expandable>✅ <b>GCast Completed</b> <code>{task_id}</code>\n"
             f"{'━' * 18}\n"
-            f"👤 <b>Account:</b> {account_name}\n"
-            f"📊 <b>Statistics:</b>\n"
-            f"  • Sent: <b>{sent}/{len(targets)}</b> ({success_rate:.1f}%)\n"
-            f"  • Failed: <b>{errs}</b> chats\n"
-            f"  • Reacted: <b>{task_state.get('react_count', 0)}</b> messages\n"
-            f"  • Duration: <b>{mins}m {secs}s</b>\n"
-            f"⏱ <b>Delay/Chat:</b> {settings['delay_per_chat']}s\n"
-            f"📝 <b>Messages Used:</b> {len(all_messages)} items ({len(text_list)} text, {len(media_list)} media)\n"
-            f"{'━' * 18}",
+            f"  • <b>Account:</b> <b>{account_name}</b>\n"
+            f"  • <b>Statistics:</b>\n"
+            f"  • <b>Sent:</b> <code>{sent}/{len(targets)}</code> ({success_rate:.1f}%)\n"
+            f"  • <b>Failed:</b> <code>{errs}</code> chats\n"
+            f"  • <b>Reacted:</b> <code>{task_state.get('react_count', 0)}</code> messages\n"
+            f"  • <b>Duration:</b> <code>{mins}</code>m <code>{secs}</code>s\n"
+            f"  • <b>Delay/Chat:</b> <code>{settings['delay_per_chat']}</code>s\n"
+            f"  • <b>Messages Used:</b> <code>{len(all_messages)}</code> items (<code>{len(text_list)}</code> text, <code>{len(media_list)}</code> media)\n"
+            f"{'━' * 18}</blockquote>",
             client=client
         )
         
@@ -2110,11 +2391,39 @@ async def broadcast_loop(client: Client, user_id: int, start_index: int = 0):
         # Check recurring
         current_settings = get_settings(user_id)
         if current_settings.get("recurring", False):
-            await send_log(
-                f"🔁 <b>GCast Recurring</b> <code>{task_id}</code>\n"
-                f"Restarting in 10 seconds...", client=client
-            )
-            await asyncio.sleep(10)
+            mode = current_settings.get("recurring_mode", "interval")
+            wait_seconds = 10 # Default fallback
+            
+            if mode == "interval":
+                h = current_settings.get("recurring_interval_hours", 0)
+                m = current_settings.get("recurring_interval_minutes", 10)
+                wait_seconds = (h * 3600) + (m * 60)
+                if wait_seconds < 10: wait_seconds = 10
+                
+                next_run_dt = datetime.now() + timedelta(seconds=wait_seconds)
+                next_run_str = next_run_dt.strftime("%H:%M:%S")
+                await send_log(
+                    f"🔁 <b>GCast Recurring (Interval)</b> <code>{task_id}</code>\n"
+                    f"Next run: <b>{next_run_str}</b> (In {h}h {m}m)", client=client
+                )
+            else: # mode == "time"
+                sh = current_settings.get("recurring_specific_hour", 0)
+                sm = current_settings.get("recurring_specific_minute", 0)
+                now = datetime.now()
+                target_time = now.replace(hour=sh, minute=sm, second=0, microsecond=0)
+                if target_time <= now:
+                    target_time += timedelta(days=1)
+                
+                wait_seconds = int((target_time - now).total_seconds())
+                next_run_str = target_time.strftime("%d/%m %H:%M:%S")
+                
+                await send_log(
+                    f"🕒 <b>GCast Recurring (Specific Time)</b> <code>{task_id}</code>\n"
+                    f"Target Time: <b>{sh:02d}:{sm:02d}</b>\n"
+                    f"Next run: <b>{next_run_str}</b>", client=client
+                )
+
+            await asyncio.sleep(wait_seconds)
             # Create new task for the next cycle
             new_task = asyncio.create_task(broadcast_loop(client, user_id))
             GCAST_TASKS[user_id] = {**task_state, "asyncio_task": new_task, "running": True}
@@ -2162,25 +2471,24 @@ async def pgc_callback_handler(c: Client, cb: CallbackQuery):
     uid = None
     try:
         # Format detection based on action
-        if action in ["msgpreview", "msgdelconf", "msgdel", "msgsetfixed", "repmsgpreview", "repmsgdelconf", "repmsgdel", "repmsgsetfixed", "pause", "resume", "stop", "status"]:
-            # Format: pgc_action_type_uid_index[_pPAGE] or pgc_action_uid_taskid
-            # Example: pgc_msgpreview_text_7844837037_0 or pgc_pause_7844837037_#G12AB
+        if action in ["msgpreview", "msgdelconf", "msgdel", "msgsetfixed", "repmsgpreview", "repmsgdelconf", "repmsgdel", "repmsgsetfixed"]:
+            # Format: pgc_action_type_uid_index[_pPAGE]
             if len(parts) >= 4:
-                uid = int(parts[3]) if action in ["msgpreview", "msgdelconf", "msgdel", "msgsetfixed", "repmsgpreview", "repmsgdelconf", "repmsgdel", "repmsgsetfixed"] else int(parts[2])
+                uid = int(parts[3])
+                
+        elif action in ["pause", "resume", "stop", "status"]:
+            if len(parts) >= 3:
+                uid = int(parts[2])
 
-        elif action in ["bldel"]:
-            # Format: pgc_bldel_uid_index
-            # Example: pgc_bldel_7844837037_0
-            if len(parts) >= 4:
-                uid = int(parts[2])  # UID is at parts[2]
+        elif action in ["bldel", "rec", "rec_set_rep_h", "rec_set_rep_m", "rec_set_spec"]:
+            # Example: pgc_rec_menu_7844837037 or pgc_rec_set_rep_h_1_7844837037
+            # UID is frequently the last part
+            uid = int(parts[-1])
+            
         elif len(parts) >= 5 and parts[-2] == "page":
-            # Format: pgc_action_uid_page_N
-            # Example: pgc_info_7844837037_page_2
-            uid = int(parts[2])  # UID is always at parts[2] for pagination
+            uid = int(parts[2])
         else:
-            # Standard format: pgc_action_uid or pgc_action_subaction_uid
-            # Example: pgc_backmain_7844837037 or pgc_sp_toggle_7844837037
-            # UID is always the last numeric part
+            # Standard: pgc_action_uid
             for i in range(len(parts) - 1, 1, -1):
                 try:
                     uid = int(parts[i])
@@ -2200,32 +2508,53 @@ async def pgc_callback_handler(c: Client, cb: CallbackQuery):
     # ========== TASK CONTROLS ==========
     
     if action in ["pause", "resume", "stop", "status"]:
-        if len(parts) < 4:
-            return
-        # task_id may contain underscores/special chars, join everything after uid
-        task_id = "_".join(parts[3:])
         state = GCAST_TASKS.get(uid)
         
-        if not state or state.get("task_id") != task_id:
-            await safe_cb_answer(cb, "❌ Task not found or already finished.", show_alert=True)
-            return
+        # If task_id is provided in callback (from log msg), use it to check
+        if len(parts) >= 4:
+            task_id = "_".join(parts[3:])
+            if not state or state.get("task_id") != task_id:
+                await safe_cb_answer(cb, "❌ Task not found or already finished.", show_alert=True)
+                return
+        else:
+            # If no task_id provided (from dashboard), just act on the user's active task
+            if not state or not state.get("running"):
+                await safe_cb_answer(cb, "⚫ No active broadcast.", show_alert=True)
+                return
+            task_id = state.get("task_id")
 
         if action == "pause":
-            state["pause_event"].clear()
+            if state.get("pause_event"):
+                state["pause_event"].clear()
             await safe_cb_answer(cb, "⏸ GCast paused.", show_alert=True)
         elif action == "resume":
-            state["pause_event"].set()
+            if state.get("pause_event"):
+                state["pause_event"].set()
             await safe_cb_answer(cb, "▶️ GCast resumed.", show_alert=True)
         elif action == "stop":
             state["running"] = False
-            state["pause_event"].set()
+            if state.get("pause_event"):
+                state["pause_event"].set()
             await safe_cb_answer(cb, "⏹ GCast stopped.", show_alert=True)
         elif action == "status":
             pct = (state["sent_count"] / state["total_chats"]) * 100 if state["total_chats"] > 0 else 0
-            status_text = f"Status: {'Running' if state['pause_event'].is_set() else 'Paused'}\n"
+            is_running = state.get("pause_event") and state["pause_event"].is_set()
+            status_text = f"Status: {'Running' if is_running else 'Paused'}\n"
             status_text += f"Progress: {state['sent_count']}/{state['total_chats']} ({pct:.1f}%)\n"
             status_text += f"Errors: {state['errors']}"
             await safe_cb_answer(cb, status_text, show_alert=True)
+            return
+
+        # UI Refresh
+        if len(parts) >= 4:
+            # From Log Message: Update specific control buttons
+            kb = build_task_control_kb(uid, task_id)
+            await safe_edit_message(cb, cb.message.text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+        else:
+            # From Dashboard: Refresh full dashboard
+            text = build_dashboard_text(uid)
+            kb = build_dashboard_kb(uid)
+            await safe_edit_message(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
         return
 
     # ========== MAIN MENU ACTIONS ==========
@@ -2252,9 +2581,19 @@ async def pgc_callback_handler(c: Client, cb: CallbackQuery):
         return
     
     elif action == "chatfilter":
-        # Cycle: all → groups → personal → all
-        cycle = {"all": "groups", "groups": "personal", "personal": "all"}
-        s["chat_filter"] = cycle.get(s["chat_filter"], "all")
+        # Cycle: all → groups → personal → [queues] → all
+        options = ["all", "groups", "personal"]
+        queues = list(s.get("queues", {}).keys())
+        for q in queues:
+            options.append(f"q:{q}")
+        
+        current = s.get("chat_filter", "all")
+        try:
+            next_idx = (options.index(current) + 1) % len(options)
+        except ValueError:
+            next_idx = 0
+            
+        s["chat_filter"] = options[next_idx]
         save_settings(uid, s)
         text = build_dashboard_text(uid)
         kb = build_dashboard_kb(uid)
@@ -2324,12 +2663,87 @@ async def pgc_callback_handler(c: Client, cb: CallbackQuery):
         return
     
     elif action == "recurring":
-        s["recurring"] = not s["recurring"]
-        save_settings(uid, s)
+        # Legacy toggle, redirect to menu or keep simple?
+        # User requested sub-menus, so let's redirect pgc_recurring to menu
         text = build_dashboard_text(uid)
-        kb = build_dashboard_kb(uid)
+        kb = build_recurring_settings_kb(uid)
         await safe_edit_message(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
-        await safe_cb_answer(cb, f"Recurring: {'ON' if s['recurring'] else 'OFF'}", show_alert=False)
+        await safe_cb_answer(cb, "Recurring Settings.", show_alert=False)
+        return
+
+    # Granular Recurring Handlers
+    elif action == "rec":
+        # pgc_rec_SUB_uid or pgc_rec_set_rep_h_VAL_uid
+        sub = parts[2]
+        if sub == "menu":
+            kb = build_recurring_settings_kb(uid)
+            await safe_edit_message(cb, build_dashboard_text(uid), reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+            await safe_cb_answer(cb, "Recurring settings.")
+        elif sub == "toggle":
+            s["recurring"] = not s.get("recurring", False)
+            save_settings(uid, s)
+            kb = build_recurring_settings_kb(uid)
+            await safe_edit_message(cb, build_dashboard_text(uid), reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+            await safe_cb_answer(cb, f"Recurring: {'ENABLED' if s['recurring'] else 'DISABLED'}")
+        elif sub == "rep":
+            s["recurring_mode"] = "interval"
+            save_settings(uid, s)
+            kb = build_repetition_menu_kb(uid)
+            await safe_edit_message(cb, build_dashboard_text(uid), reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+            await safe_cb_answer(cb, "Interval Repetition settings.")
+        elif sub == "time":
+            s["recurring_mode"] = "time"
+            save_settings(uid, s)
+            kb = build_time_menu_kb(uid)
+            await safe_edit_message(cb, build_dashboard_text(uid), reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+            await safe_cb_answer(cb, "Specific Time settings.")
+        
+        # Handling for: pgc_rec_set_rep_h_VAL_uid
+        elif sub == "set" and len(parts) >= 6:
+            action_type = parts[3] # rep
+            sub_type = parts[4] # h or m or spec
+            
+            if action_type == "rep":
+                if sub_type == "h":
+                    try:
+                        val = int(parts[5])
+                        s["recurring_interval_hours"] = val
+                        save_settings(uid, s)
+                        kb = build_repetition_menu_kb(uid)
+                        await safe_edit_message(cb, build_dashboard_text(uid), reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+                        await safe_cb_answer(cb, f"Interval Hours set to {val}h")
+                    except Exception as e:
+                        await safe_cb_answer(cb, f"❌ Error: {e}", show_alert=True)
+                elif sub_type == "m":
+                    try:
+                        val = int(parts[5])
+                        s["recurring_interval_minutes"] = val
+                        save_settings(uid, s)
+                        kb = build_repetition_menu_kb(uid)
+                        await safe_edit_message(cb, build_dashboard_text(uid), reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+                        await safe_cb_answer(cb, f"Interval Minutes set to {val}m")
+                    except Exception as e:
+                        await safe_cb_answer(cb, f"❌ Error: {e}", show_alert=True)
+            elif action_type == "spec":
+                sub_type = parts[4] # h or m
+                try:
+                    val = int(parts[5])
+                    if sub_type == "h":
+                        s["recurring_specific_hour"] = val
+                        msg = f"Specific Hour set to {val:02d}"
+                    else: # m
+                        s["recurring_specific_minute"] = val
+                        msg = f"Specific Minute set to {val:02d}"
+                        
+                    save_settings(uid, s)
+                    kb = build_time_menu_kb(uid)
+                    await safe_edit_message(cb, build_dashboard_text(uid), reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+                    await safe_cb_answer(cb, msg)
+                except Exception as e:
+                    await safe_cb_answer(cb, f"❌ Error: {e}", show_alert=True)
+        else:
+            # Prevent stuck spinner if unknown sub-action
+            await safe_cb_answer(cb, "Unknown recurring sub-action.")
         return
     
     elif action == "notiftoggle":
@@ -2341,6 +2755,164 @@ async def pgc_callback_handler(c: Client, cb: CallbackQuery):
         await safe_cb_answer(cb, f"Notif Logs: {'ON' if s['notify_logs'] else 'OFF'}", show_alert=False)
         return
     
+    # ========== QUEUE MANAGER ACTIONS ==========
+
+    elif action == "queuemgr":
+        text = (
+            f"<blockquote expandable>📁 <b>Chat Queue Manager</b>\n"
+            f"{'━' * 18}\n"
+            f"Kelola daftar target chat kustom Anda.\n"
+            f"Pilih queue untuk filter gcast yang lebih spesifik.</blockquote>"
+        )
+        kb = build_queuemgr_kb(uid)
+        await safe_edit_message(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+        await safe_cb_answer(cb, "Queue Manager.", show_alert=False)
+        return
+
+    elif action == "qadd":
+        # Request new queue name
+        GCAST_TEXT_INPUT_STATE[uid] = {"action": "qadd"}
+        text = (
+            f"<blockquote expandable>➕ <b>Create New Queue</b>\n"
+            f"{'━' * 18}\n"
+            f"Silahkan balas (reply) pesan ini dengan <b>Nama Queue</b> baru yang ingin Anda buat.\n\n"
+            f"Contoh: <code>Queue1</code> atau <code>Target Promosi</code></blockquote>"
+        )
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data=f"pgc_queuemgr_{uid}", style=btn_style)]])
+        await safe_edit_message(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+        await safe_cb_answer(cb, "📝 Silahkan balas (reply) pesan di LOG/Bot dengan Nama Queue baru.", show_alert=True)
+        return
+
+    elif action == "qeditname":
+        if len(parts) < 4: return
+        q_name = _resolve_q_name(uid, parts[3])
+        GCAST_TEXT_INPUT_STATE[uid] = {"action": "qeditname", "old_name": q_name}
+        text = (
+            f"<blockquote expandable>✏️ <b>Edit Queue Name</b>\n"
+            f"{'━' * 18}\n"
+            f"Queue saat ini: <code>{q_name}</code>\n\n"
+            f"Silahkan balas (reply) pesan ini dengan <b>Nama Baru</b> untuk queue ini.</blockquote>"
+        )
+        q_hash = _get_q_hash(q_name)
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data=f"pgc_qedit_{uid}_h:{q_hash}", style=btn_style)]])
+        await safe_edit_message(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+        await safe_cb_answer(cb, "📝 Silahkan balas (reply) pesan ini dengan Nama Baru.", show_alert=True)
+        return
+
+    elif action == "qedit":
+        if len(parts) < 4: return
+        # Might be hashed: h:hash
+        raw_q = parts[3]
+        q_name = _resolve_q_name(uid, raw_q)
+        
+        text = (
+            f"<blockquote expandable>📁 <b>Edit Queue: {q_name}</b>\n"
+            f"{'━' * 18}\n"
+            f"Gunakan tombol di bawah untuk menambah atau menghapus chat dari queue ini.</blockquote>"
+        )
+        kb = build_queue_edit_kb(uid, q_name)
+        await safe_edit_message(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+        await safe_cb_answer(cb, f"Editing queue: {q_name}", show_alert=False)
+        return
+
+    elif action == "qdelconf":
+        if len(parts) < 4: return
+        q_name = _resolve_q_name(uid, parts[3])
+        q_hash = _get_q_hash(q_name)
+        text = (
+            f"<blockquote expandable>⚠️ <b>Delete Queue: {q_name}</b>\n"
+            f"{'━' * 18}\n"
+            f"Apakah Anda yakin ingin menghapus queue ini?\n"
+            f"Tindakan ini tidak dapat dibatalkan.</blockquote>"
+        )
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Yes, Delete", callback_data=f"pgc_qdel_{uid}_h:{q_hash}", style=btn_style)],
+            [InlineKeyboardButton("⬅️ Cancel", callback_data=f"pgc_queuemgr_{uid}", style=btn_style)]
+        ])
+        await safe_edit_message(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+        return
+
+    elif action == "qdel":
+        if len(parts) < 4: return
+        q_name = _resolve_q_name(uid, parts[3])
+        queues = s.get("queues", {})
+        if q_name in queues:
+            del queues[q_name]
+            s["queues"] = queues
+            if s["chat_filter"] == f"q:{q_name}":
+                s["chat_filter"] = "all"
+            save_settings(uid, s)
+            await safe_cb_answer(cb, f"Queue '{q_name}' deleted.", show_alert=True)
+        
+        # Back to mgr
+        text = (
+            f"<blockquote expandable>📁 <b>Chat Queue Manager</b>\n"
+            f"{'━' * 18}\n"
+            f"Kelola daftar target chat kustom Anda.\n"
+            f"Pilih queue untuk filter gcast yang lebih spesifik.</blockquote>"
+        )
+        kb = build_queuemgr_kb(uid)
+        await safe_edit_message(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+        return
+
+    elif action == "qaddchat":
+        if len(parts) < 4: return
+        q_name = _resolve_q_name(uid, parts[3])
+        cid = cb.message.chat.id
+        title = cb.message.chat.title or cb.message.chat.first_name or "Unknown"
+        
+        queues = s.get("queues", {})
+        if q_name not in queues: queues[q_name] = []
+        if cid not in queues[q_name]:
+            queues[q_name].append(cid)
+            s["queues"] = queues
+            save_settings(uid, s)
+            await safe_cb_answer(cb, f"Added {title} ({cid}) to {q_name}.", show_alert=True)
+        else:
+            await safe_cb_answer(cb, f"Chat already in queue {q_name}.", show_alert=True)
+            
+        kb = build_queue_edit_kb(uid, q_name)
+        await safe_edit_message(cb, cb.message.text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+        return
+
+    elif action == "qaddid":
+        if len(parts) < 4: return
+        q_name = _resolve_q_name(uid, parts[3])
+        GCAST_TEXT_INPUT_STATE[uid] = {"action": "qaddid", "qname": q_name}
+        text = (
+            f"<blockquote expandable>➕ <b>Add Chat to Queue: {q_name}</b>\n"
+            f"{'━' * 18}\n"
+            f"Silahkan balas (reply) pesan ini dengan <b>Chat ID</b> atau <b>Username</b> grup/user yang ingin Anda tambahkan ke queue.</blockquote>"
+        )
+        q_hash = _get_q_hash(q_name)
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data=f"pgc_qedit_{uid}_h:{q_hash}", style=btn_style)]])
+        await safe_edit_message(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+        await safe_cb_answer(cb, "📝 Silahkan balas (reply) pesan di LOG/Bot dengan Chat ID/Username.", show_alert=True)
+        return
+
+    elif action == "qremchat":
+        # pgc_qremchat_uid_hash_cid
+        if len(parts) < 5: return
+        # CID is the last part
+        cid_str = parts[-1]
+        try:
+            cid = int(cid_str)
+            raw_q = parts[3]
+            q_name = _resolve_q_name(uid, raw_q)
+            queues = s.get("queues", {})
+            if q_name in queues and cid in queues[q_name]:
+                queues[q_name].remove(cid)
+                s["queues"] = queues
+                save_settings(uid, s)
+                await safe_cb_answer(cb, f"Removed {cid} from {q_name}.", show_alert=True)
+        except Exception:
+            await safe_cb_answer(cb, "Failed to remove chat.", show_alert=True)
+            
+        # Refresh
+        kb = build_queue_edit_kb(uid, q_name)
+        await safe_edit_message(cb, cb.message.text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+        return
+
     elif action == "smartpurge":
         # Open smart purge sub-menu
         text = build_smartpurge_text(uid)
@@ -2651,9 +3223,13 @@ async def pgc_callback_handler(c: Client, cb: CallbackQuery):
         chat_id = cb.message.chat.id if cb.message and cb.message.chat else uid
         msg_id = cb.message.id if cb.message else 0
         
-        GCAST_REPLY_TEXT_INPUT_STATE[uid] = {"chat_id": chat_id, "msg_id": msg_id, "page": page}
-        await send_log(f"📝 <b>Add Auto-Reply Text</b>\n<i>Return to Page {page+1} after adding</i>\n\nReply with your text.", client=None)
-        await safe_cb_answer(cb, "Please SEND the text you want to add as an AUTO-REPLY.", show_alert=True)
+        GCAST_REPLY_TEXT_INPUT_STATE[uid] = {"chat_id": chat_id, "msg_id": msg_id, "page": page, "action": "add"}
+        log_msg = await send_log(f"📝 <b>Add Auto-Reply Text</b>\n<i>Return to Page {page+1} after adding</i>\n\nReply with your text.", client=None)
+        
+        if log_msg:
+            await safe_cb_answer(cb, "📝 Silahkan balas (reply) pesan di LOG/Bot dengan Teks balasan baru.", show_alert=True)
+        else:
+            await safe_cb_answer(cb, "❌ Gagal mengirim perintah input. Silahkan coba lagi.", show_alert=True)
         return
 
     elif action == "repmsgaddmedia":
@@ -2668,9 +3244,42 @@ async def pgc_callback_handler(c: Client, cb: CallbackQuery):
         
         # Re-use media state with a flag or separate dic? I'll use separate for clarity if I can.
         # But I'll modify pgc_input_handler accordingly.
-        GCAST_REPLY_MEDIA_INPUT_STATE[uid] = {"chat_id": chat_id, "msg_id": msg_id, "page": page}
-        await send_log(f"🎬 <b>Add Auto-Reply Media</b>\n<i>Return to Page {page+1} after adding</i>\n\nReply with your media.", client=None)
-        await safe_cb_answer(cb, "Please SEND the media you want to add as an AUTO-REPLY.", show_alert=True)
+        GCAST_REPLY_MEDIA_INPUT_STATE[uid] = {"chat_id": chat_id, "msg_id": msg_id, "page": page, "action": "add"}
+        log_msg = await send_log(f"🎬 <b>Add Auto-Reply Media</b>\n<i>Return to Page {page+1} after adding</i>\n\nReply with your media.", client=None)
+        
+        if log_msg:
+            await safe_cb_answer(cb, "🎬 Silahkan balas (reply) pesan di LOG/Bot dengan Media baru.", show_alert=True)
+        else:
+            await safe_cb_answer(cb, "❌ Gagal mengirim perintah input. Silahkan coba lagi.", show_alert=True)
+        return
+
+    elif action == "repeditedit":
+        # pgc_repeditedit_{type}_{uid}_{idx}_p{page}
+        if len(parts) < 6: return
+        mtype = parts[2]
+        try:
+            idx = int(parts[4])
+            page = int(parts[5][1:]) if parts[5].startswith("p") else 0
+        except: return
+        
+        msg_id = cb.message.id if cb.message else None
+        if mtype == "text":
+            GCAST_REPLY_TEXT_INPUT_STATE[uid] = {"action": "edit", "idx": idx, "msg_id": msg_id, "page": page}
+            prompt = "Silahkan balas (reply) pesan ini dengan Teks balasan baru."
+        else:
+            GCAST_REPLY_MEDIA_INPUT_STATE[uid] = {"action": "edit", "idx": idx, "msg_id": msg_id, "page": page}
+            prompt = "Silahkan balas (reply) pesan ini dengan Caption balasan baru."
+            
+        log_msg = await send_log(
+            f"✏️ <b>Edit Auto-Reply {mtype.title()} #{idx+1}</b>\n"
+            f"{'━' * 18}\n{prompt}",
+            client=None
+        )
+        
+        if log_msg:
+            await safe_cb_answer(cb, f"✏️ {prompt}", show_alert=True)
+        else:
+            await safe_cb_answer(cb, "❌ Gagal mengirim perintah input. Silahkan coba lagi.", show_alert=True)
         return
 
     elif action == "repmsgclearconf":
@@ -2805,15 +3414,15 @@ async def pgc_callback_handler(c: Client, cb: CallbackQuery):
             ]
         ])
         text = (
-            f"⚠️ <b>Confirm Start GCast?</b>\n"
+            f"<blockquote expandable>⚠️ <b>Confirm Start GCast?</b>\n"
             f"{'━' * 18}\n"
-            f"Chat Filter: {_filter_label(s['chat_filter'])}\n"
-            f"Admin Filter: {_filter_label(s['admin_filter'])}\n"
-            f"Messages: {total_messages} items ({len(s.get('text_list', []))} text, {len(s.get('media_list', []))} media)\n"
-            f"Delay: {s['delay_per_chat']}s/chat\n"
-            f"Random: {'ON' if s['random_text'] else 'OFF'}\n"
-            f"Recurring: {'ON' if s['recurring'] else 'OFF'}"
-            f"{smart_purge_text}"
+            f"Chat Filter: <b>{_filter_label(s['chat_filter'])}</b>\n"
+            f"Admin Filter: <b>{_filter_label(s['admin_filter'])}</b>\n"
+            f"Messages: <b>{total_messages} items</b> ({len(s.get('text_list', []))} text, {len(s.get('media_list', []))} media)\n"
+            f"Delay: <b>{s['delay_per_chat']}s/chat</b>\n"
+            f"Random: <b>{'ON' if s['random_text'] else 'OFF'}</b>\n"
+            f"Recurring: <b>{'ON' if s['recurring'] else 'OFF'}</b>"
+            f"{smart_purge_text}</blockquote>"
         )
         await safe_edit_message(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
         await safe_cb_answer(cb, "Confirm to start.", show_alert=False)
@@ -2830,10 +3439,9 @@ async def pgc_callback_handler(c: Client, cb: CallbackQuery):
             if hasattr(cl, 'me') and cl.me and cl.me.id == uid:
                 broadcast_client = cl
                 break
-        if not broadcast_client and Altruix.clients:
-            broadcast_client = Altruix.clients[0]
+                
         if not broadcast_client:
-            await safe_cb_answer(cb, "❌ No userbot client available.", show_alert=True)
+            await safe_cb_answer(cb, "❌ Session Client Userbot not found or not available.", show_alert=True)
             return
         
         # Start broadcast in background
@@ -2938,9 +3546,38 @@ async def pgc_callback_handler(c: Client, cb: CallbackQuery):
         )
         
         if log_msg:
-            await safe_cb_answer(cb, "📝 Reply to the message in LOG chat with your broadcast text.", show_alert=True)
+            await safe_cb_answer(cb, "📝 Silahkan balas (reply) pesan di LOG/Bot dengan Teks baru.", show_alert=True)
         else:
-            await safe_cb_answer(cb, "❌ Failed to send prompt. Please try again.", show_alert=True)
+            await safe_cb_answer(cb, "❌ Gagal mengirim perintah input. Silahkan coba lagi.", show_alert=True)
+        return
+
+    elif action == "msgeditedit":
+        # pgc_msgeditedit_{type}_{uid}_{idx}_p{page}
+        if len(parts) < 6: return
+        mtype = parts[2]
+        try:
+            idx = int(parts[4])
+            page = int(parts[5][1:]) if parts[5].startswith("p") else 0
+        except: return
+        
+        msg_id = cb.message.id if cb.message else None
+        if mtype == "text":
+            GCAST_TEXT_INPUT_STATE[uid] = {"action": "edit", "idx": idx, "msg_id": msg_id, "page": page}
+            prompt = "Silahkan balas (reply) pesan ini dengan Teks baru."
+        else:
+            GCAST_MEDIA_INPUT_STATE[uid] = {"action": "edit", "idx": idx, "msg_id": msg_id, "page": page}
+            prompt = "Silahkan balas (reply) pesan ini dengan Caption baru."
+            
+        log_msg = await send_log(
+            f"✏️ <b>Edit GCast {mtype.title()} #{idx+1}</b>\n"
+            f"{'━' * 18}\n{prompt}",
+            client=None
+        )
+        
+        if log_msg:
+            await safe_cb_answer(cb, f"✏️ {prompt}", show_alert=True)
+        else:
+            await safe_cb_answer(cb, "❌ Gagal mengirim perintah input. Silahkan coba lagi.", show_alert=True)
         return
     
     # Combined handlers for GCast message actions (preview, del, setfixed)
@@ -3043,18 +3680,22 @@ async def pgc_callback_handler(c: Client, cb: CallbackQuery):
                 try: page = int(parts[-1][1:])
                 except: page = 0
                 
-        # Set state to wait for user media input
+        # Send log message for user to reply to
         msg_id = cb.message.id if cb.message else None
         GCAST_MEDIA_INPUT_STATE[uid] = {"action": "add", "msg_id": msg_id, "page": page}
         
-        await send_log(
+        log_msg = await send_log(
             f"🎬 <b>Add Media to GCast</b>\n"
             f"<i>Return to Page {page+1} after adding</i>\n\n"
             f"Reply to this message with the media you want to add.\n"
             f"Supported: Photo, Video, Animation, Audio, etc.",
             client=None
         )
-        await safe_cb_answer(cb, "🎬 Reply to the message in LOG chat with your media.", show_alert=True)
+        
+        if log_msg:
+            await safe_cb_answer(cb, "🎬 Silahkan balas (reply) pesan di LOG/Bot dengan Media baru.", show_alert=True)
+        else:
+            await safe_cb_answer(cb, "❌ Gagal mengirim perintah input. Silahkan coba lagi.", show_alert=True)
         return
     
     elif action == "msgclearconf":
@@ -3289,7 +3930,9 @@ async def pgc_callback_handler(c: Client, cb: CallbackQuery):
             
             # Build chat list for current page
             chat_list = []
-            for i, (cid, title) in enumerate(page_targets, start=start_idx + 1):
+            for i, target in enumerate(page_targets, start=start_idx + 1):
+                cid = target["chat_id"]
+                title = target["group_title"]
                 chat_list.append(f"{i}. {html.escape(title[:40])} (<code>{cid}</code>)")
             
             text = (
@@ -3395,6 +4038,17 @@ async def pgc_input_handler(c: Client, m: PyroMessage):
                 f"Preview: {html.escape(new_text[:80])}"
             )
             return
+        
+        elif m.from_user.id == uid and state.get("action") == "edit" and m.text:
+            idx = state["idx"]
+            new_text = m.text.strip()
+            s = get_settings(uid)
+            if idx < len(s.get("reply_text_list", [])):
+                s["reply_text_list"][idx]["content"] = new_text
+                save_settings(uid, s)
+                GCAST_REPLY_TEXT_INPUT_STATE.pop(uid, None)
+                await m.reply(f"✅ <b>Auto-Reply Text #{idx+1} Updated!</b>")
+            return
     
     # Check Auto-Reply media input state
     for uid, state in list(GCAST_REPLY_MEDIA_INPUT_STATE.items()):
@@ -3449,6 +4103,17 @@ async def pgc_input_handler(c: Client, m: PyroMessage):
                 f"Caption: {html.escape(caption[:50]) or '<i>none</i>'}"
             )
             return
+        
+        elif m.from_user.id == uid and state.get("action") == "edit":
+            idx = state["idx"]
+            cap = m.caption or ""
+            s = get_settings(uid)
+            if idx < len(s.get("reply_media_list", [])):
+                s["reply_media_list"][idx]["caption"] = cap
+                save_settings(uid, s)
+                GCAST_REPLY_MEDIA_INPUT_STATE.pop(uid, None)
+                await m.reply(f"✅ <b>Auto-Reply Media #{idx+1} Caption Updated!</b>")
+            return
     
     # Check text input state
     for uid, state in list(GCAST_TEXT_INPUT_STATE.items()):
@@ -3480,6 +4145,17 @@ async def pgc_input_handler(c: Client, m: PyroMessage):
                 f"Total texts: {len(s['text_list'])}\n"
                 f"Preview: {html.escape(new_text[:80])}"
             )
+            return
+
+        elif m.from_user.id == uid and state.get("action") == "edit" and m.text:
+            idx = state["idx"]
+            new_text = m.text.strip()
+            s = get_settings(uid)
+            if idx < len(s.get("text_list", [])):
+                s["text_list"][idx]["content"] = new_text
+                save_settings(uid, s)
+                GCAST_TEXT_INPUT_STATE.pop(uid, None)
+                await m.reply(f"✅ <b>GCast Text #{idx+1} Updated!</b>")
             return
     
     # Check media input state
@@ -3550,6 +4226,17 @@ async def pgc_input_handler(c: Client, m: PyroMessage):
                 f"Caption: {html.escape(caption[:50]) if caption else '<i>no caption</i>'}"
             )
             return
+
+        elif m.from_user.id == uid and state.get("action") == "edit":
+            idx = state["idx"]
+            cap = m.caption or ""
+            s = get_settings(uid)
+            if idx < len(s.get("media_list", [])):
+                s["media_list"][idx]["caption"] = cap
+                save_settings(uid, s)
+                GCAST_MEDIA_INPUT_STATE.pop(uid, None)
+                await m.reply(f"✅ <b>GCast Media #{idx+1} Caption Updated!</b>")
+            return
     
     # Check blacklist input state
     for uid, state in list(GCAST_BL_INPUT_STATE.items()):
@@ -3568,8 +4255,6 @@ async def pgc_input_handler(c: Client, m: PyroMessage):
                         if hasattr(cl, 'me') and cl.me and cl.me.id == uid:
                             uc = cl
                             break
-                    if not uc and Altruix.clients:
-                        uc = Altruix.clients[0]
                     
                     if uc:
                         try:
@@ -3602,6 +4287,82 @@ async def pgc_input_handler(c: Client, m: PyroMessage):
                     save_settings(uid, s)
                     await m.reply(f"✅ Chat <code>{chat_id}</code> added to blacklist.\n\n<i>Use <code>.gcastblist</code> to view all blacklisted chats.</i>")
                 GCAST_BL_INPUT_STATE.pop(uid, None)
+            return
+
+    # Check GCAST_TEXT_INPUT_STATE for Queue Actions
+    for uid, state in list(GCAST_TEXT_INPUT_STATE.items()):
+        if state["action"] == "qadd" and m.text:
+            q_name = m.text.strip()
+            if not q_name:
+                await m.reply("❌ Queue name cannot be empty.")
+                return
+            
+            s = get_settings(uid)
+            if "queues" not in s: s["queues"] = {}
+            if q_name in s["queues"]:
+                await m.reply(f"⚠️ Queue '{q_name}' already exists.")
+            else:
+                s["queues"][q_name] = []
+                save_settings(uid, s)
+                await m.reply(f"✅ <b>Queue Created:</b> <code>{q_name}</code>")
+            
+            GCAST_TEXT_INPUT_STATE.pop(uid, None)
+            return
+
+        elif state["action"] == "qeditname" and m.text:
+            new_name = m.text.strip()
+            old_name = state["old_name"]
+            s = get_settings(uid)
+            if "queues" in s and old_name in s["queues"]:
+                if new_name in s["queues"]:
+                    await m.reply("⚠️ Name already exists.")
+                else:
+                    # Rename key
+                    s["queues"][new_name] = s["queues"].pop(old_name)
+                    # Check if filters need update
+                    if s["chat_filter"] == f"q:{old_name}":
+                        s["chat_filter"] = f"q:{new_name}"
+                    save_settings(uid, s)
+                    await m.reply(f"✅ Queue <b>{old_name}</b> renamed to <b>{new_name}</b>")
+            GCAST_TEXT_INPUT_STATE.pop(uid, None)
+            return
+
+        elif state["action"] == "qaddid" and m.text:
+            input_val = m.text.strip()
+            q_name = state["qname"]
+            chat_id = None
+            
+            try:
+                if input_val.lstrip("-").isdigit():
+                    chat_id = int(input_val)
+                elif input_val.startswith("@"):
+                    # Resolve username
+                    uc = None
+                    for cl in Altruix.clients:
+                        if hasattr(cl, 'me') and cl.me and cl.me.id == uid:
+                            uc = cl; break
+                    
+                    if uc:
+                        try:
+                            chat = await uc.get_chat(input_val)
+                            chat_id = chat.id
+                            await m.reply(f"✅ Resolved <code>{input_val}</code> → <code>{chat_id}</code>")
+                        except Exception as e:
+                            await m.reply(f"❌ Could not resolve: {input_val}\n{e}")
+                
+                if chat_id:
+                    s = get_settings(uid)
+                    if q_name not in s["queues"]: s["queues"][q_name] = []
+                    if chat_id not in s["queues"][q_name]:
+                        s["queues"][q_name].append(chat_id)
+                        save_settings(uid, s)
+                        await m.reply(f"✅ Added <code>{chat_id}</code> to queue <b>{q_name}</b>")
+                    else:
+                        await m.reply(f"⚠️ Chat <code>{chat_id}</code> is already in queue <b>{q_name}</b>")
+            except Exception as e:
+                await m.reply(f"❌ Error: {e}")
+            
+            GCAST_TEXT_INPUT_STATE.pop(uid, None)
             return
 
 
@@ -3724,6 +4485,94 @@ async def gcast_start_cmd(client: Client, message: Message):
         return
     await message.reply("🟢 Starting Global BroadCast...")
     asyncio.create_task(broadcast_loop(client, user_id))
+
+@Altruix.register_on_cmd(
+    ["gcastqadd"],
+    cmd_help={"help": "Add chat to a specific queue.", "example": ".gcastqadd Queue1 [-100... or @user]"}
+)
+@iuser_check
+@log_errors
+async def gcast_qadd_cmd(client: Client, message: Message):
+    """Add chat to a queue via command."""
+    user_id = client.me.id
+    parts = message.text.split(maxsplit=2)
+    if len(parts) < 2:
+        await message.reply("❌ Usage: <code>.gcastqadd [queue_name] [chat_id/@username]</code>")
+        return
+    
+    q_name = parts[1]
+    input_val = parts[2] if len(parts) > 2 else str(message.chat.id)
+    chat_id = None
+    
+    try:
+        if input_val.lstrip("-").isdigit():
+            chat_id = int(input_val)
+        else:
+            chat = await client.get_chat(input_val)
+            chat_id = chat.id
+            
+        s = get_settings(user_id)
+        if "queues" not in s: s["queues"] = {}
+        if q_name not in s["queues"]: s["queues"][q_name] = []
+        
+        if chat_id not in s["queues"][q_name]:
+            s["queues"][q_name].append(chat_id)
+            save_settings(user_id, s)
+            await message.reply(f"✅ Added <code>{chat_id}</code> to queue <b>{q_name}</b>")
+        else:
+            await message.reply(f"⚠️ Chat already in queue <b>{q_name}</b>")
+    except Exception as e:
+        await message.reply(f"❌ Error: {e}")
+
+@Altruix.register_on_cmd(
+    ["gcastqdel"],
+    cmd_help={"help": "Remove chat from a specific queue.", "example": ".gcastqdel Queue1 [-100...]"}
+)
+@iuser_check
+@log_errors
+async def gcast_qdel_cmd(client: Client, message: Message):
+    """Remove chat from a queue via command."""
+    user_id = client.me.id
+    parts = message.text.split(maxsplit=2)
+    if len(parts) < 2:
+        await message.reply("❌ Usage: <code>.gcastqdel [queue_name] [chat_id]</code>")
+        return
+    
+    q_name = parts[1]
+    input_val = parts[2] if len(parts) > 2 else str(message.chat.id)
+    
+    try:
+        cid = int(input_val) if input_val.lstrip("-").isdigit() else (await client.get_chat(input_val)).id
+        s = get_settings(user_id)
+        if q_name in s.get("queues", {}) and cid in s["queues"][q_name]:
+            s["queues"][q_name].remove(cid)
+            save_settings(user_id, s)
+            await message.reply(f"✅ Removed <code>{cid}</code> from queue <b>{q_name}</b>")
+        else:
+            await message.reply(f"⚠️ Chat not found in queue <b>{q_name}</b>")
+    except Exception as e:
+        await message.reply(f"❌ Error: {e}")
+
+@Altruix.register_on_cmd(
+    ["gcastqlist"],
+    cmd_help={"help": "List all chat queues.", "example": ".gcastqlist"}
+)
+@iuser_check
+@log_errors
+async def gcast_qlist_cmd(client: Client, message: Message):
+    """List all queues."""
+    user_id = client.me.id
+    s = get_settings(user_id)
+    queues = s.get("queues", {})
+    if not queues:
+        await message.reply("🚙 No queues found.")
+        return
+    
+    text = "📁 <b>Chat Queues:</b>\n\n"
+    for qname, chats in queues.items():
+        text += f"• <b>{qname}</b>: {len(chats)} chats\n"
+    
+    await message.reply(text)
 
 @Altruix.register_on_cmd(
     ["gcaststop"],

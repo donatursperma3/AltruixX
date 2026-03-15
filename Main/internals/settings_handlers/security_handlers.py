@@ -17,6 +17,7 @@ from .states import (
     user_privacy_state, user_confirmation_state,
     user_exec_state, user_eval_state
 )
+from .utils import edit_cb, check_authorization
 # from .session_info import sessions_info_cb_handler
 
 # Logger
@@ -29,24 +30,60 @@ logger = logging.getLogger(__name__)
 from Main.utils.file_helpers import get_user_button_style
 from .custom_alert_handlers import _get_session_user_id
 
-@Altruix.bot.on_callback_query(filters.regex(r"^gen_conf_export_session_(\d+)_(\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^export_session_(\d+)_(\d+)$"))
 @iuser_check
 @log_errors
-async def export_session_cb_handler(c: Client, cb: CallbackQuery):
+async def export_session_menu_handler(c: Client, cb: CallbackQuery):
+    """Entry menu for choosing export method: File or Message"""
+    index, page = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
+    await cb.answer()
+    
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
+    
+    text = (
+        f"<blockquote expandable><b>📤 Export Session Option</b>\n\n"
+        f"Choose how you want to export the session session for:\n"
+        f"• <b>Account:</b> {Altruix.clients[index].me.first_name}\n"
+        f"• <b>Index:</b> {index+1}\n\n"
+        f"<i>Select an option below:</i></blockquote>"
+    )
+    
+    buttons = [
+        [
+            InlineKeyboardButton("📂 Export as File", f"exs_file_{index}_{page}", style=user_style),
+            InlineKeyboardButton("💬 View Message", f"exs_msg_{index}_{page}", style=user_style)
+        ],
+        [InlineKeyboardButton("🔙 Back to Session Info", f"session_info_{index}_{page}_4", style=user_style)]
+    ]
+    
+    await edit_cb(cb, text=text, reply_markup=InlineKeyboardMarkup(buttons))
+
+@Altruix.bot.on_callback_query(filters.regex(r"^exs_file_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def export_session_file_handler(c: Client, cb: CallbackQuery):
     """Export the .session file of current session to user's PM"""
     index, page = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
-    await cb.answer("📤 Exporting session...", show_alert=False)
+    await cb.answer("📤 Exporting as file...", show_alert=False)
     
+    from Main.utils.file_helpers import get_user_button_style
     # Resolve user_style
-    user_id_key = _get_session_user_id(index)
-    user_style = get_user_button_style(user_id_key)
+    if index < len(Altruix.clients):
+        user_style = get_user_button_style(Altruix.clients[index].me.id)
+    else:
+        user_style = get_user_button_style(cb.from_user.id)
     
     file_name = Altruix.config.SESSION_NAMES[index] if index < len(Altruix.config.SESSION_NAMES) else None
     if not file_name:
-        await cb.edit_message_text("❌ Session file name not found.")
+        await cb.edit_message_text("<blockquote expandable>❌ Session file name not found.</blockquote>")
         return
         
-    session_path = os.path.join("Main/sessions", f"{file_name}.session")
+    session_path = os.path.join("cache", f"{file_name}.session")
+    
+    # Back button for choice menu
+    back_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"export_session_{index}_{page}", style=user_style)]])
+
     if os.path.exists(session_path):
         await c.send_document(
             chat_id=cb.from_user.id,
@@ -54,9 +91,68 @@ async def export_session_cb_handler(c: Client, cb: CallbackQuery):
             caption=f"📄 <b>Session File</b>\n• User: {Altruix.clients[index].me.first_name}\n• Index: {index+1}",
             parse_mode=ParseMode.HTML
         )
-        await cb.edit_message_text("✅ Session file has been sent to your PM.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}", style=user_style)]]))
+        await cb.edit_message_text("<blockquote expandable>✅ Session file has been sent to your PM.</blockquote>", reply_markup=back_markup)
     else:
-        await cb.edit_message_text(f"❌ Session file not found at: <code>{session_path}</code>", parse_mode=ParseMode.HTML)
+        # ✅ FALLBACK: Export as Session String if file not found
+        try:
+            import io
+            target_client = Altruix.clients[index]
+            session_str = await target_client.export_session_string()
+            
+            # Create a bytes stream for the string text
+            file_stream = io.BytesIO(session_str.encode())
+            file_stream.name = f"{file_name}_string.txt"
+            
+            await c.send_document(
+                chat_id=cb.from_user.id,
+                document=file_stream,
+                caption=f"<blockquote expandable>📝 <b>Session String (Fallback)</b>\n"
+                        f"• User: <b>{html.escape(target_client.me.first_name or 'Unknown')}</b>\n"
+                        f"• Index: {index+1}\n\n"
+                        f"<i>The physical .session file was not found in cache, so the session string has been exported instead.</i></blockquote>",
+                parse_mode=ParseMode.HTML
+            )
+            await cb.edit_message_text("<blockquote expandable>✅ Session string has been sent to your PM (Fallback).</blockquote>", 
+                                     reply_markup=back_markup)
+        except Exception as e:
+            await cb.edit_message_text(f"<blockquote expandable>❌ Session file not found, and fallback string export failed: <code>{html.escape(str(e))}</code></blockquote>", parse_mode=ParseMode.HTML, reply_markup=back_markup)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^exs_msg_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def export_session_msg_handler(c: Client, cb: CallbackQuery):
+    """Export the session string as a clickable message in PM"""
+    index, page = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
+    await cb.answer("💬 Sending session string...", show_alert=False)
+    
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
+    back_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"export_session_{index}_{page}", style=user_style)]])
+
+    try:
+        target_client = Altruix.clients[index]
+        session_str = await target_client.export_session_string()
+        
+        msg_text = (
+            f"<blockquote expandable>📝 <b>Session String Information</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"👤 <b>User:</b> {html.escape(target_client.me.first_name or 'Unknown')}\n"
+            f"🆔 <b>ID:</b> <code>{target_client.me.id}</code>\n"
+            f"🔢 <b>Index:</b> {index+1}\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"<b>👇 Click below to copy:</b>\n"
+            f"<code>{session_str}</code>\n\n"
+            f"⚠️ <b>WARNING:</b> Keep this string safe and never share it!</blockquote>"
+        )
+        
+        await c.send_message(
+            chat_id=cb.from_user.id,
+            text=msg_text,
+            parse_mode=ParseMode.HTML
+        )
+        await edit_cb(cb, text="<blockquote expandable>✅ Session string has been sent to your PM as a message.</blockquote>", reply_markup=back_markup)
+    except Exception as e:
+        await edit_cb(cb, text=f"<blockquote expandable>❌ Failed to fetch session string: <code>{html.escape(str(e))}</code></blockquote>", reply_markup=back_markup)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^gen_conf_export_phone_(\d+)_(\d+)$"))
 @iuser_check
@@ -70,8 +166,11 @@ async def export_phone_cb_handler(c: Client, cb: CallbackQuery):
     phone = me.phone_number if me.phone_number else "Hidden/N/A"
     
     # Resolve user_style
-    user_id_key = _get_session_user_id(index)
-    user_style = get_user_button_style(user_id_key)
+    from Main.utils.file_helpers import get_user_button_style
+    if index < len(Altruix.clients):
+        user_style = get_user_button_style(Altruix.clients[index].me.id)
+    else:
+        user_style = get_user_button_style(cb.from_user.id)
 
     await cb.edit_message_text(
         f"📱 <b>Phone Number Information</b>\n\n• Session: {index+1}\n• User: {me.first_name}\n• Phone: <code>+{phone}</code>",
@@ -93,11 +192,13 @@ async def track_profile_handler(c: Client, cb: CallbackQuery):
     # We use a global state to wait for target ID in on_message
     from .states import user_dlphoto_state # Reusing wait logic if compatible or define new
     user_id = cb.from_user.id
-    # Altruix.user_track_state[user_id] = {'session_index': index, 'page': page, 'step': 'waiting_target_id'}
     
     # Resolve user_style
-    user_id_key = _get_session_user_id(index)
-    user_style = get_user_button_style(user_id_key)
+    from Main.utils.file_helpers import get_user_button_style
+    if index < len(Altruix.clients):
+        user_style = get_user_button_style(Altruix.clients[index].me.id)
+    else:
+        user_style = get_user_button_style(user_id)
     
     await cb.edit_message_text(
         "🔍 <b>Profile Tracker</b>\n\n"
@@ -120,8 +221,11 @@ async def exec_term_start_handler(c: Client, cb: CallbackQuery):
     user_exec_state[cb.from_user.id] = {'session_index': index, 'page': page, 'step': 'waiting_command', 'action': 'exec_terminal'}
     
     # Resolve user_style
-    user_id_key = _get_session_user_id(index)
-    user_style = get_user_button_style(user_id_key)
+    from Main.utils.file_helpers import get_user_button_style
+    if index < len(Altruix.clients):
+        user_style = get_user_button_style(Altruix.clients[index].me.id)
+    else:
+        user_style = get_user_button_style(cb.from_user.id)
 
     await cb.edit_message_text(
         "🖥️ <b>Terminal Execution</b>\n\n"
@@ -142,8 +246,11 @@ async def eval_exec_start_handler(c: Client, cb: CallbackQuery):
     user_eval_state[cb.from_user.id] = {'session_index': index, 'page': page, 'step': 'waiting_code', 'action': 'eval_python'}
     
     # Resolve user_style
-    user_id_key = _get_session_user_id(index)
-    user_style = get_user_button_style(user_id_key)
+    from Main.utils.file_helpers import get_user_button_style
+    if index < len(Altruix.clients):
+        user_style = get_user_button_style(Altruix.clients[index].me.id)
+    else:
+        user_style = get_user_button_style(cb.from_user.id)
 
     await cb.edit_message_text(
         "🐍 <b>Python Eval</b>\n\n"
@@ -162,8 +269,11 @@ async def check_limit_confirm_handler(c: Client, cb: CallbackQuery):
     session_client = Altruix.clients[index]
     
     # Resolve user_style
-    user_id_key = _get_session_user_id(index)
-    user_style = get_user_button_style(user_id_key)
+    from Main.utils.file_helpers import get_user_button_style
+    if index < len(Altruix.clients):
+        user_style = get_user_button_style(Altruix.clients[index].me.id)
+    else:
+        user_style = get_user_button_style(cb.from_user.id)
 
     try:
         # Send message to SpamBot
@@ -178,7 +288,7 @@ async def check_limit_confirm_handler(c: Client, cb: CallbackQuery):
                     f"<code>{html.escape(message.text)}</code>",
                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}", style=user_style)]])
                 )
-                from .utils import send_log_notification
+                from Main.internals.settings_handlers.utils import send_log_notification
                 await send_log_notification(c, 'check_limit', index, cb.from_user, True)
                 return
         await cb.edit_message_text("❌ No response from @SpamBot.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}", style=user_style)]]))
@@ -223,8 +333,11 @@ async def change_login_email_handler(c: Client, cb: CallbackQuery):
         )
         
         # Resolve user_style
-        user_id_key = _get_session_user_id(index)
-        user_style = get_user_button_style(user_id_key)
+        from Main.utils.file_helpers import get_user_button_style
+        if index < len(Altruix.clients):
+            user_style = get_user_button_style(Altruix.clients[index].me.id)
+        else:
+            user_style = get_user_button_style(cb.from_user.id)
         
         buttons = [
             [

@@ -16,7 +16,7 @@ from Main.internals.settings_handlers.auto_global_purgeme import (
 # Plugin Metadata
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xautogp"
-PLUGIN_VERSION = "0.0.43"
+PLUGIN_VERSION = "0.0.441"
 
 # Cooldown/Task tracking is now handled by GLOBAL_PURGE_LOCK in auto_global_purgeme.py
 
@@ -25,7 +25,8 @@ PLUGIN_VERSION = "0.0.43"
     cmd_help={
         "help": "Open Auto Global Purgeme dashboard via Bot Assistant.",
         "example": ".autogp"
-    }
+    },
+    bot_mode_unsupported=True
 )
 @iuser_check
 @log_errors
@@ -34,6 +35,14 @@ async def autogp_dashboard_cmd(client: Client, message: Message):
     Open the Auto Global Purgeme dashboard.
     Attempts to use the bot assistant's inline mode for a seamless UI.
     """
+    if not client or not client.me or client.me.is_bot:
+        return
+
+    # Deduplicate: only the primary session handles broadcast commands
+    sender_id = message.from_user.id if message.from_user else 0
+    is_self = sender_id == client.me.id or message.outgoing
+    if not is_self and Altruix.clients and client != Altruix.clients[0]:
+        return
     user_id = client.me.id
     bot_username = Altruix.bot_manager.get_bot_username(user_id)
     
@@ -111,12 +120,20 @@ async def autogp_dashboard_cmd(client: Client, message: Message):
 
 @Altruix.register_on_cmd(
     ["autogpon", "autogpoff"],
-    cmd_help={"help": "Quick toggle Auto Global Purgeme ON or OFF."}
+    cmd_help={"help": "Quick toggle Auto Global Purgeme ON or OFF."},
+    bot_mode_unsupported=True
 )
 @iuser_check
 @log_errors
 async def autogp_toggle_cmd(client: Client, message: Message):
     """Quick toggle Auto Global Purgeme."""
+    if not client or not client.me or client.me.is_bot:
+        return
+    
+    sender_id = message.from_user.id if message.from_user else 0
+    is_self = sender_id == client.me.id or message.outgoing
+    if not is_self and Altruix.clients and client != Altruix.clients[0]:
+        return
     user_id = client.me.id
     settings = await get_auto_gp_settings(user_id)
     
@@ -133,7 +150,8 @@ async def autogp_toggle_cmd(client: Client, message: Message):
     cmd_help={
         "help": "Blacklist or whitelist a chat for Auto-GP. This prevents Auto-GP from purging messages in that specific chat.",
         "example": ".autogpbl or .autogpbl <chat_id>"
-    }
+    },
+    bot_mode_unsupported=True
 )
 @iuser_check
 @log_errors
@@ -142,23 +160,67 @@ async def autogp_blacklist_cmd(client: Client, message: Message):
     Toggle the blacklist status of a chat for Auto Global Purgeme.
     If no chat ID is provided, the current chat is toggled.
     """
+    if not client or not client.me or client.me.is_bot:
+        return
+    
+    sender_id = message.from_user.id if message.from_user else 0
+    is_self = sender_id == client.me.id or message.outgoing
+    if not is_self and Altruix.clients and client != Altruix.clients[0]:
+        return
     user_id = client.me.id
     chat_id = message.chat.id
     
     if message.user_input and message.user_input.lstrip('-').isdigit():
         chat_id = int(message.user_input)
-        
+    elif message.reply_to_message and message.reply_to_message.chat:
+        # Check if replying to a message from a chat to get its ID
+        chat_id = message.reply_to_message.chat.id
+
     settings = await get_auto_gp_settings(user_id)
     
-    if chat_id in settings["blacklist"]:
-        settings["blacklist"].remove(chat_id)
-        action = "REMOVED FROM"
+    # Resolve chat name for better notification
+    resolved_name = f"Chat {chat_id}"
+    try:
+        from pyrogram import enums
+        chat = await client.get_chat(chat_id)
+        resolved_name = chat.title or chat.first_name or f"Chat {chat_id}"
+    except Exception:
+        pass
+
+    import html
+    safe_name = html.escape(resolved_name)
+    
+    is_already_bl = chat_id in settings["blacklist"]
+    
+    if is_already_bl:
+        # If already in blacklist and not just toggling via current chat
+        # User wants a specific message for "already exists"
+        text = f"<blockquote expandable>⚠️ {safe_name} ({chat_id}) is already in the blacklist.</blockquote>"
     else:
         settings["blacklist"].append(chat_id)
-        action = "ADDED TO"
-        
-    await save_auto_gp_settings(user_id, settings)
-    await message.edit(f"✅ Chat <code>{chat_id}</code> has been <b>{action}</b> Auto-GP Blacklist.")
+        await save_auto_gp_settings(user_id, settings)
+        text = (
+            f"<blockquote expandable>✅ {safe_name} ({chat_id}) has been ADDED to Auto-GP Blacklist.\n"
+            f"📋 Total blacklisted: {len(settings['blacklist'])} chats\n\n"
+            f"Use .autogpblist to view all blacklisted chats.</blockquote>"
+        )
+
+    # Check if replying to the Auto-GP prompt to edit it
+    is_prompt_reply = False
+    if message.reply_to_message:
+        rep = message.reply_to_message
+        if rep.from_user and rep.from_user.is_bot and "Add Chat to Auto-GP Blacklist" in (rep.text or ""):
+            is_prompt_reply = True
+            try:
+                # Use bot client to edit if possible
+                bot = Altruix.bot_manager.get_bot(user_id) if hasattr(Altruix, 'bot_manager') else Altruix.bot
+                await bot.edit_message_text(rep.chat.id, rep.id, text, parse_mode=enums.ParseMode.HTML)
+            except Exception:
+                pass
+
+    if not is_prompt_reply:
+        await message.edit(text)
+    
     raise StopPropagation
 
 @Altruix.register_on_cmd(
@@ -166,7 +228,8 @@ async def autogp_blacklist_cmd(client: Client, message: Message):
     cmd_help={
         "help": "Remove a specific chat from Auto-GP blacklist by its chat ID.",
         "example": ".autogpdel -100123456789"
-    }
+    },
+    bot_mode_unsupported=True
 )
 @iuser_check
 @log_errors
@@ -175,6 +238,13 @@ async def autogp_del_blacklist_cmd(client: Client, message: Message):
     Remove a specific chat_id from the Auto-GP blacklist.
     Usage: .autogpdel <chat_id>
     """
+    if not client or not client.me or client.me.is_bot:
+        return
+    
+    sender_id = message.from_user.id if message.from_user else 0
+    is_self = sender_id == client.me.id or message.outgoing
+    if not is_self and Altruix.clients and client != Altruix.clients[0]:
+        return
     user_id = client.me.id
 
     if not message.user_input or not message.user_input.lstrip('-').isdigit():
@@ -203,7 +273,8 @@ async def autogp_del_blacklist_cmd(client: Client, message: Message):
     cmd_help={
         "help": "View all blacklisted chats for Auto Global Purgeme.",
         "example": ".autogpblist"
-    }
+    },
+    bot_mode_unsupported=True
 )
 @iuser_check
 @log_errors
@@ -212,6 +283,13 @@ async def autogp_view_blacklist_cmd(client: Client, message: Message):
     Display all chat IDs currently on the Auto-GP blacklist,
     with resolved chat names where possible.
     """
+    if not client or not client.me or client.me.is_bot:
+        return
+    
+    sender_id = message.from_user.id if message.from_user else 0
+    is_self = sender_id == client.me.id or message.outgoing
+    if not is_self and Altruix.clients and client != Altruix.clients[0]:
+        return
     user_id = client.me.id
     settings = await get_auto_gp_settings(user_id)
     bl = settings["blacklist"]
@@ -242,7 +320,8 @@ async def autogp_view_blacklist_cmd(client: Client, message: Message):
 
 @Altruix.register_on_cmd(
     ["autogpstatus"],
-    cmd_help={"help": "View current Auto Global Purgeme status, limit, and active filters."}
+    cmd_help={"help": "View current Auto Global Purgeme status, limit, and active filters."},
+    bot_mode_unsupported=True
 )
 @iuser_check
 @log_errors
@@ -251,6 +330,13 @@ async def autogp_status_cmd(client: Client, message: Message):
     Display the current configuration and status of the Auto-GP system 
     for the active session.
     """
+    if not client or not client.me or client.me.is_bot:
+        return
+    
+    sender_id = message.from_user.id if message.from_user else 0
+    is_self = sender_id == client.me.id or message.outgoing
+    if not is_self and Altruix.clients and client != Altruix.clients[0]:
+        return
     user_id = client.me.id
     text = await get_auto_gp_status_text(user_id)
     await message.edit(text)
@@ -264,7 +350,7 @@ async def auto_gp_message_trigger(client: Client, message: Message):
     Triggered for session owner's outgoing messages.
     Group -1 ensures it runs before command handlers.
     """
-    if not message:
+    if not message or client.me.is_bot:
         return
 
     # Check if message has text or caption to look for prefixes

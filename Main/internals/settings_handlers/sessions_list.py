@@ -70,13 +70,16 @@ def get_sessions_buttons(page=1, user_id=None) -> tuple:
     has_next = page < total_pages
     return arranged_buttons, has_next, total_pages
 
-@Altruix.bot.on_callback_query(filters.regex("sessions_list_(\\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^sessions_list_(\d+)$"))
 @log_errors
 @iuser_check
 async def sessions_menu_cb_handler(c: Client, cb: CallbackQuery):
     """Handler untuk menampilkan menu sessions dengan layout baru"""
     if not await check_authorization(cb): return
-    await cb.answer()
+    try:
+        await cb.answer()
+    except Exception:
+        pass
     try:
         page = int(cb.data.split("_")[-1])
     except (ValueError, IndexError):

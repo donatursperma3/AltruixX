@@ -25,7 +25,9 @@ async def privacy_menu_handler(c: Client, cb: CallbackQuery):
     page = int(cb.matches[0].group(2))
     button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     from Main.utils.file_helpers import get_user_button_style
-    user_style = get_user_button_style(cb.from_user.id)
+    
+    session_id = Altruix.clients[index].me.id if index < len(Altruix.clients) and hasattr(Altruix.clients[index], 'me') and Altruix.clients[index].me else cb.from_user.id
+    user_style = get_user_button_style(session_id)
 
     buttons = [
         [
@@ -49,116 +51,160 @@ async def privacy_menu_handler(c: Client, cb: CallbackQuery):
 @Altruix.bot.on_callback_query(filters.regex(r"^native_privacy_menu_(\d+)_(\d+)(?:_(\d+))?$"))
 @iuser_check
 @log_errors
-async def native_privacy_menu_handler(c: Client, cb: CallbackQuery):
-    """Stub for Native Telegram Privacy Settings"""
-    index = int(cb.matches[0].group(1))
-    page = int(cb.matches[0].group(2))
-    button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
-    await cb.answer()
+async def native_privacy_menu_handler(c: Client, cb: CallbackQuery, index: int = None, page: int = None, button_page: int = None):
+    """Dynamic Native Telegram Privacy Settings Menu using Raw Functions"""
+    if index is None:
+        index = int(cb.matches[0].group(1))
+        page = int(cb.matches[0].group(2))
+        button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     
+    await cb.answer("Fetching privacy settings...", show_alert=False)
+    
+    session_client = Altruix.clients[index]
+    
+    async def get_raw_status(p_key):
+        try:
+            res = await session_client.invoke(raw.functions.account.GetPrivacy(key=p_key))
+            rules = res.rules
+            if not rules: return "Unknown"
+            
+            # Check for primary permissive/restrictive rules
+            for rule in rules:
+                if isinstance(rule, raw.types.PrivacyValueAllowAll): return "Everybody ✅"
+                if isinstance(rule, raw.types.PrivacyValueAllowContacts): return "My Contacts 👥"
+                if isinstance(rule, raw.types.PrivacyValueDisallowAll): return "Nobody 🔒"
+            return "Custom 🛠️"
+        except Exception as e:
+            logger.error(f"Failed to fetch privacy for {p_key}: {e}")
+            return "Error ⚠️"
+
+    status_phone = await get_raw_status(raw.types.InputPrivacyKeyPhoneNumber())
+    status_seen = await get_raw_status(raw.types.InputPrivacyKeyStatusTimestamp())
+    status_photo = await get_raw_status(raw.types.InputPrivacyKeyProfilePhoto())
+    status_fwd = await get_raw_status(raw.types.InputPrivacyKeyForwards())
+    status_calls = await get_raw_status(raw.types.InputPrivacyKeyPhoneCall())
+    status_groups = await get_raw_status(raw.types.InputPrivacyKeyChatInvite())
+
     text = (
-        "<b>🔒 Privacy Settings (Native)</b>\n\n"
-        "Configurable privacy options (Coming Soon):\n"
-        "• Phone Number\n"
-        "• Last Seen & Online\n"
-        "• Profile Photos\n"
-        "• Forwarded Messages\n"
-        "• Calls\n"
-        "• Groups & Channels\n\n"
-        "<i>Currently read-only / placeholder.</i>"
+        f"<b>🔒 Privacy Settings (Native)</b>\n"
+        f"Session: {session_client.me.mention}\n\n"
+        f"Atur siapa yang dapat melihat atau melakukan hal berikut:\n\n"
+        f"• <b>Phone Number:</b> {status_phone}\n"
+        f"• <b>Last Seen & Online:</b> {status_seen}\n"
+        f"• <b>Profile Photos:</b> {status_photo}\n"
+        f"• <b>Forwarded Messages:</b> {status_fwd}\n"
+        f"• <b>Calls:</b> {status_calls}\n"
+        f"• <b>Groups & Channels:</b> {status_groups}\n\n"
+        f"<i>Klik kategori di bawah untuk mengubah status.</i>"
     )
     
     from Main.utils.file_helpers import get_user_button_style
-    user_style = get_user_button_style(cb.from_user.id)
+    session_id = session_client.me.id
+    user_style = get_user_button_style(session_id)
     
     buttons = [
+        [
+            InlineKeyboardButton("📱 Phone Number", f"np_sub_phone_{index}_{page}_{button_page}", style=user_style),
+            InlineKeyboardButton("🕒 Last Seen", f"np_sub_lastseen_{index}_{page}_{button_page}", style=user_style)
+        ],
+        [
+            InlineKeyboardButton("🖼️ Profile Photo", f"np_sub_photo_{index}_{page}_{button_page}", style=user_style),
+            InlineKeyboardButton("⏩ Forwards", f"np_sub_fwd_{index}_{page}_{button_page}", style=user_style)
+        ],
+        [
+            InlineKeyboardButton("📞 Calls", f"np_sub_calls_{index}_{page}_{button_page}", style=user_style),
+            InlineKeyboardButton("👥 Groups", f"np_sub_groups_{index}_{page}_{button_page}", style=user_style)
+        ],
         [InlineKeyboardButton("🔙 Back", f"privacy_menu_{index}_{page}_{button_page}", style=user_style)]
     ]
     
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
-# ====================== CUSTOM BOT MANAGER ======================
-@Altruix.bot.on_callback_query(filters.regex(r"^custom_bot_manager$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^np_sub_(phone|lastseen|photo|fwd|calls|groups)_(\d+)_(\d+)_(\d+)$"))
 @iuser_check
 @log_errors
-async def custom_bot_manager_handler(c: Client, cb: CallbackQuery):
-    if not await check_authorization(cb): return
+async def native_privacy_submenu_handler(c: Client, cb: CallbackQuery):
+    """Submenu for specific privacy category"""
+    category = cb.matches[0].group(1)
+    index = int(cb.matches[0].group(2))
+    page = int(cb.matches[0].group(3))
+    button_page = int(cb.matches[0].group(4))
+    
+    cat_labels = {
+        "phone": "Phone Number",
+        "lastseen": "Last Seen & Online",
+        "photo": "Profile Photos",
+        "fwd": "Forwarded Messages",
+        "calls": "Calls",
+        "groups": "Groups & Channels"
+    }
+    
+    p_label = cat_labels[category]
     await cb.answer()
     
-    # List Custom Bots
-    custom_bots = Altruix.bot_manager.custom_bots if hasattr(Altruix, 'bot_manager') else {}
-    
-    text = (
-        f"<b>🤖 Custom Bot Manager (v1.5.5.9b)</b>\n\n"
-        f"Total Custom Bots: <code>{len(custom_bots)}</code>\n\n"
-        f"Select a bot to manage:"
-    )
-    
     from Main.utils.file_helpers import get_user_button_style
-    user_style = get_user_button_style(cb.from_user.id)
+    session_id = Altruix.clients[index].me.id
+    user_style = get_user_button_style(session_id)
     
-    buttons = []
-    if custom_bots:
-        for bot_id, bot_client in custom_bots.items():
-            name = f"Bot {bot_id}"
-            try:
-                me = bot_client.myself if hasattr(bot_client, "myself") else None
-                if me:
-                    name = f"{me.first_name} (@{me.username})"
-            except: pass
-            
-            buttons.append([InlineKeyboardButton(name, f"manage_custom_bot_{bot_id}", style=user_style)])
-    else:
-        text += f"\n\n<i>{gt('no_custom_bots') or 'No custom bots found.'}</i>"
-
-    buttons.append([InlineKeyboardButton(gt("back"), "bot_controls_menu", style=user_style)])
+    text = f"<b>🔒 Edit Privacy: {p_label}</b>\n\nSiapa yang dapat melihat {p_label.lower()} Anda?"
     
-    await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
-
-@Altruix.bot.on_callback_query(filters.regex(r"^manage_custom_bot_(\d+)$"))
-@iuser_check
-@log_errors
-async def manage_custom_bot_handler(c: Client, cb: CallbackQuery):
-    if not await check_authorization(cb): return
-    await cb.answer()
-    bot_id = int(cb.matches[0].group(1))
-    
-    custom_bots = Altruix.bot_manager.custom_bots if hasattr(Altruix, 'bot_manager') else {}
-    bot_client = custom_bots.get(bot_id)
-    
-    if not bot_client:
-        await cb.answer("Bot not found!", show_alert=True)
-        return await custom_bot_manager_handler(c, cb)
-        
-    me = bot_client.myself if hasattr(bot_client, "myself") else None
-    is_connected = getattr(bot_client, 'is_connected', False)
-    
-    name = me.first_name if me else f"Bot {bot_id}"
-    username = f"@{me.username}" if me and me.username else "No Username"
-    dc_id = getattr(me, 'dc_id', "N/A") if me else "N/A"
-    status_text = "✅ Running" if is_connected else "❌ Stopped"
-    
-    text = (
-        f"<b>⚙️ Manage Custom Bot</b>\n\n"
-        f"• <b>Name:</b> {html.escape(name)}\n"
-        f"• <b>Username:</b> {username}\n"
-        f"• <b>ID:</b> <code>{bot_id}</code>\n"
-        f"• <b>DC:</b> <code>{dc_id}</code>\n"
-        f"• <b>Status:</b> {status_text}\n"
-    )
-    
-    from Main.utils.file_helpers import get_user_button_style
-    user_style = get_user_button_style(cb.from_user.id)
-
     buttons = [
-        [
-            InlineKeyboardButton("🛑 Stop Bot", f"action_custom_bot_stop_{bot_id}", style=user_style),
-            InlineKeyboardButton("🗑️ Delete", f"action_custom_bot_delete_{bot_id}", style=user_style)
-        ],
-        [InlineKeyboardButton(gt("back"), "custom_bot_manager", style=user_style)]
+        [InlineKeyboardButton("Everybody 🌍", f"np_set_{category}_all_{index}_{page}_{button_page}", style=user_style)],
+        [InlineKeyboardButton("My Contacts 👥", f"np_set_{category}_contacts_{index}_{page}_{button_page}", style=user_style)],
+        [InlineKeyboardButton("Nobody 🔒", f"np_set_{category}_none_{index}_{page}_{button_page}", style=user_style)],
+        [InlineKeyboardButton("🔙 Back", f"native_privacy_menu_{index}_{page}_{button_page}", style=user_style)]
     ]
     
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^np_set_(phone|lastseen|photo|fwd|calls|groups)_(all|contacts|none)_(\d+)_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def native_privacy_set_handler(c: Client, cb: CallbackQuery):
+    """Handler to apply privacy changes using raw.functions.account.SetPrivacy"""
+    category = cb.matches[0].group(1)
+    rule_key = cb.matches[0].group(2)
+    index = int(cb.matches[0].group(3))
+    page = int(cb.matches[0].group(4))
+    button_page = int(cb.matches[0].group(5))
+    
+    cat_map = {
+        "phone": (raw.types.InputPrivacyKeyPhoneNumber(), "Phone Number"),
+        "lastseen": (raw.types.InputPrivacyKeyStatusTimestamp(), "Last Seen & Online"),
+        "photo": (raw.types.InputPrivacyKeyProfilePhoto(), "Profile Photos"),
+        "fwd": (raw.types.InputPrivacyKeyForwards(), "Forwarded Messages"),
+        "calls": (raw.types.InputPrivacyKeyPhoneCall(), "Calls"),
+        "groups": (raw.types.InputPrivacyKeyChatInvite(), "Groups & Channels")
+    }
+    
+    rule_map = {
+        "all": ([raw.types.InputPrivacyValueAllowAll()], "Everybody"),
+        "contacts": ([raw.types.InputPrivacyValueAllowContacts()], "My Contacts"),
+        "none": ([raw.types.InputPrivacyValueDisallowAll()], "Nobody")
+    }
+    
+    p_key, p_label = cat_map[category]
+    p_rules, r_label = rule_map[rule_key]
+    
+    session_client = Altruix.clients[index]
+    await cb.answer(f"Updating {p_label} to {r_label}...", show_alert=False)
+    
+    try:
+        await session_client.invoke(raw.functions.account.SetPrivacy(key=p_key, rules=p_rules))
+        
+        # Log to Group Log
+        from .utils import send_log_notification
+        await send_log_notification(
+            c, f"privacy_change_{category}", index, cb.from_user, True, 
+            additional_info={"Type": p_label, "New Value": r_label}
+        )
+        
+        await cb.answer(f"✅ {p_label} updated to {r_label}!", show_alert=True)
+        await native_privacy_menu_handler(c, cb, index=index, page=page, button_page=button_page)
+        
+    except Exception as e:
+        logger.error(f"Failed to set privacy for {category}: {e}")
+        await cb.answer(f"❌ Failed: {str(e)[:100]}", show_alert=True)
 
 # ====================== SUDO SETTINGS HANDLERS ======================
 @Altruix.bot.on_callback_query(filters.regex(r"^sudo_menu_(\d+)_(\d+)(?:_(\d+))?$"))
@@ -194,7 +240,8 @@ async def sudo_menu_handler(c: Client, cb: CallbackQuery):
     )
     
     from Main.utils.file_helpers import get_user_button_style
-    user_style = get_user_button_style(cb.from_user.id)
+    session_id = Altruix.clients[index].me.id if index < len(Altruix.clients) and hasattr(Altruix.clients[index], 'me') and Altruix.clients[index].me else cb.from_user.id
+    user_style = get_user_button_style(session_id)
 
     buttons = [
         [
@@ -230,7 +277,8 @@ async def sudo_add_remove_start_handler(c: Client, cb: CallbackQuery):
     
     label = "Tambah" if action_type == "add" else "Hapus"
     from Main.utils.file_helpers import get_user_button_style
-    user_style = get_user_button_style(cb.from_user.id)
+    session_id = Altruix.clients[index].me.id if index < len(Altruix.clients) and hasattr(Altruix.clients[index], 'me') and Altruix.clients[index].me else cb.from_user.id
+    user_style = get_user_button_style(session_id)
     await cb.edit_message_text(
         text=f"👑 <b>{label} Sudo User</b>\n\n"
              f"Silakan kirim <b>User ID</b> yang ingin di{label.lower()}.\n\n"
@@ -313,7 +361,8 @@ async def prefix_menu_handler(c: Client, cb: CallbackQuery):
     )
     
     from Main.utils.file_helpers import get_user_button_style
-    user_style = get_user_button_style(cb.from_user.id)
+    session_id = Altruix.clients[index].me.id if index < len(Altruix.clients) and hasattr(Altruix.clients[index], 'me') and Altruix.clients[index].me else cb.from_user.id
+    user_style = get_user_button_style(session_id)
 
     buttons = [
         [
@@ -342,7 +391,8 @@ async def prefix_info_handler(c: Client, cb: CallbackQuery):
         "Anda dapat mengubahnya melalui menu <b>Privacy > Prefix Settings</b>."
     )
     from Main.utils.file_helpers import get_user_button_style
-    user_style = get_user_button_style(cb.from_user.id)
+    session_id = Altruix.clients[index].me.id if index < len(Altruix.clients) and hasattr(Altruix.clients[index], 'me') and Altruix.clients[index].me else cb.from_user.id
+    user_style = get_user_button_style(session_id)
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}_{button_page}", style=user_style)]]), parse_mode=ParseMode.HTML)
 
 # ====================== FEATURE STATUS HANDLER ======================
@@ -380,7 +430,8 @@ async def feature_status_handler(c: Client, cb: CallbackQuery):
     )
     
     from Main.utils.file_helpers import get_user_button_style
-    user_style = get_user_button_style(cb.from_user.id)
+    session_id = Altruix.clients[index].me.id if index < len(Altruix.clients) and hasattr(Altruix.clients[index], 'me') and Altruix.clients[index].me else cb.from_user.id
+    user_style = get_user_button_style(session_id)
     
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}_{button_page}", style=user_style)]]), parse_mode=ParseMode.HTML)
 
@@ -408,12 +459,14 @@ async def check_2fa_info_handler(c: Client, cb: CallbackQuery):
         )
         
         from Main.utils.file_helpers import get_user_button_style
-        user_style = get_user_button_style(cb.from_user.id)
+        session_id = Altruix.clients[index].me.id if index < len(Altruix.clients) and hasattr(Altruix.clients[index], 'me') and Altruix.clients[index].me else cb.from_user.id
+        user_style = get_user_button_style(session_id)
         
         await edit_cb(cb, txt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"privacy_menu_{index}_{page}", style=user_style)]]) )
     except Exception as e:
         from Main.utils.file_helpers import get_user_button_style
-        user_style = get_user_button_style(cb.from_user.id)
+        session_id = Altruix.clients[index].me.id if index < len(Altruix.clients) and hasattr(Altruix.clients[index], 'me') and Altruix.clients[index].me else cb.from_user.id
+        user_style = get_user_button_style(session_id)
         await edit_cb(cb, f"❌ Error checking 2FA: {str(e)}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"privacy_menu_{index}_{page}", style=user_style)]]))
 
 @Altruix.bot.on_callback_query(filters.regex(r"^prefix_toggle_mode_(\d+)_(\d+)(?:_(\d+))?$"))
@@ -450,7 +503,8 @@ async def prefix_edit_start_handler(c: Client, cb: CallbackQuery):
     
     label = "Userbot" if p_type == 'u' else "Sudo"
     from Main.utils.file_helpers import get_user_button_style
-    user_style = get_user_button_style(cb.from_user.id)
+    session_id = Altruix.clients[index].me.id if index < len(Altruix.clients) and hasattr(Altruix.clients[index], 'me') and Altruix.clients[index].me else cb.from_user.id
+    user_style = get_user_button_style(session_id)
     await cb.edit_message_text(
         f"📝 <b>Edit {label} Prefix</b>\n\n"
         f"Silakan kirim karakter tunggal yang ingin dijadikan prefix baru.\n"
@@ -625,7 +679,7 @@ async def edit_cl_start_handler(c: Client, cb: CallbackQuery):
     Altruix.user_track_state[cb.from_user.id] = {"step": f"edit_cl_{target}"}
     
     from Main.utils.file_helpers import get_user_button_style
-    user_style = get_user_button_style(cb.from_user.id)
+    user_style = get_user_button_style(cb.from_user.id) # This one is actually for the interacting user in Bot Controls
     label = "Teks" if target == "text" else "Link"
     await cb.edit_message_text(
         f"📝 <b>Edit Custom {label}</b>\n\n"

@@ -11,6 +11,7 @@
 PLUGIN_VERSION = "0.0.12"
 import re
 import os
+import html
 import pyrogram
 import hashlib
 from Main import Altruix
@@ -20,11 +21,11 @@ from pyrogram import Client, filters
 from pyrogram.enums import ParseMode, ButtonStyle
 from pyrogram import enums, types
 from Main.core.decorators import log_errors, iuser_check
+from Main.utils.essentials import Essentials
 from pyrogram.types import (
     InlineQuery, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup,
     InputTextMessageContent, InlineQueryResultArticle, ChosenInlineResult)
 from datetime import datetime
-
 
 from Main.core.ext.callback_helpers import (
     create_callback_id, get_callback_data
@@ -50,28 +51,30 @@ def split_help_text(text: str, max_chars: int = None) -> list:
         return [text]
 
     chunks = []
-    # Split by blocks starting with <b>Command :</b>
-    pattern = r"(?=<b>Command :</b>)"
-    blocks = re.split(pattern, text)
+    # Split by blocks starting with ➤ Command : or <b>Command :</b>
+    # This ensure we dont split inside a command block.
+    pattern = r"(?=<b>➤ Command :</b>|➤ Command :|<b>Command :</b>)"
+    blocks = [b for b in re.split(pattern, text) if b.strip()]
     
-    if len(blocks) <= 1:
+    if not blocks:
         # Fallback: simple split by lines if no bold command headers found
+        # Restoration of previous feature as requested by user
         lines = text.split('\n')
         current_chunk = ""
         for line in lines:
-            if len(current_chunk) + len(line) + 1 > max_chars:
-                if current_chunk: chunks.append(current_chunk.strip())
+            if current_chunk and len(current_chunk) + len(line) + 1 > max_chars:
+                chunks.append(current_chunk.strip())
                 current_chunk = line + '\n'
             else:
-                current_chunk += line + '\n'
+                current_chunk += (line + '\n') if current_chunk else line
         if current_chunk:
             chunks.append(current_chunk.strip())
         return chunks
 
-    current_chunk = blocks[0]
-    for i in range(1, len(blocks)):
-        block = blocks[i]
-        if len(current_chunk) + len(block) > max_chars and current_chunk:
+    current_chunk = ""
+    for block in blocks:
+        # If adding the block exceeds max_chars, start a new chunk
+        if current_chunk and len(current_chunk) + len(block) > max_chars:
             chunks.append(current_chunk.strip())
             current_chunk = block
         else:
@@ -80,7 +83,7 @@ def split_help_text(text: str, max_chars: int = None) -> list:
     if current_chunk:
         chunks.append(current_chunk.strip())
         
-    return [c for c in chunks if c.strip()]
+    return chunks
 
 
 @log_errors
@@ -136,9 +139,9 @@ async def get_help_menu(return_all: bool = False, user_id: int = None, chat_id: 
         else:
             title = Altruix.get_string("extra_plugins")
             
-        help_msg = f"<b><u>❇️ {title}</u></b>\n\n" \
+        help_msg = f"<b><u>❇️ {html.escape(title)}</u></b>\n\n" \
                    f"{Altruix.get_string('help_tabs_desc')}\n\n" \
-                   f"<b>⚡ Userbot Version :</b> <code>V{Altruix.__version__}</code>\n" \
+                   f"<b>⚡ Userbot Version :</b> <code>V{html.escape(str(Altruix.__version__))}</code>\n" \
                    f"<b>📦 Total Plugins :</b> <code>{ub_plugins + bot_plugins}</code>\n" \
                    f"<b>🛠️ Total Commands :</b> <code>{Altruix.total_commands}</code>"
 
@@ -253,6 +256,7 @@ async def get_help_menu(return_all: bool = False, user_id: int = None, chat_id: 
             InlineKeyboardButton("Close", close_data, style=user_style)
         ])
         
+    help_msg = Essentials.fix_html(help_msg)
     if multi_pages and not return_all:
         return help_msg, buttons[0], parse_mode
     return help_msg, buttons, parse_mode
@@ -289,8 +293,8 @@ async def get_plugin_data(plugin: str, number: int = 0, sub_page: int = 0, user_
                 total_arg_count += len(u_args)
         total_cmd_count = len(set(cmds))
 
-    text = f"<b>❇️ Help for</b> <code>{plugin.title()}</code>\n"
-    text += f"<b>🏷️ Version:</b> <code>v{version}</code>\n"
+    text = f"<b>❇️ Help for</b> <code>{html.escape(plugin.title())}</code>\n"
+    text += f"<b>🏷️ Version:</b> <code>v{html.escape(str(version))}</code>\n"
     text += f"<b>ℹ️ Cmd:</b> <code>{total_cmd_count}</code> cmds\n"
     if total_arg_count > 0:
         text += f"<b>〽️ Arg:</b> <code>{total_arg_count}</code> args\n"
@@ -307,8 +311,26 @@ async def get_plugin_data(plugin: str, number: int = 0, sub_page: int = 0, user_
 
     # ✅ Resolve Placeholders (Dynamic Prefix Support)
     content = pages[sub_page]
-    resolved_content, _ = await Altruix.resolve_placeholders(content, index=session_index) if user_id else (content, None)
-    text += f"\n\n{resolved_content}"
+    res_placeholder = await Altruix.resolve_placeholders(content, index=session_index) if user_id else content
+    if isinstance(res_placeholder, tuple):
+        resolved_content, _ = res_placeholder
+    else:
+        resolved_content = res_placeholder
+    
+    # Wrap everything including header in a single blockquote expandable
+    # Avoid double-wrapping if the content already has a blockquote
+    if "<blockquote" in resolved_content.lower():
+        # Remove original blockquote tags from resolved_content if they exist to unify with header
+        # but simplify: just append them and let the parser handle it if they are already formatted.
+        # Actually, if it has a blockquote, it's safer to just merge the header into it or keep them separate.
+        # Let's strip the existing blockquote tags and wrap everything in one.
+        clean_content = re.sub(r'</?blockquote[^>]*>', '', resolved_content, flags=re.IGNORECASE).strip()
+        text = f"<blockquote expandable>{text}\n\n{clean_content}</blockquote>"
+    else:
+        text = f"<blockquote expandable>{text}\n\n{resolved_content}</blockquote>"
+    
+    # ✅ Final HTML Fix to prevent ENTITY_BOUNDS_INVALID
+    text = Essentials.fix_html(text)
     
     si_suffix = f"&si={session_index}" if session_index != -1 else "&si=-1"
     if chat_id:
@@ -354,6 +376,7 @@ async def close_help(c: Client, cq: CallbackQuery):
         reply_markup=InlineKeyboardMarkup(
             [[InlineKeyboardButton("Re-Open", re_open_data, style=enums.ButtonStyle.PRIMARY)]]
         ),
+        parse_mode=enums.ParseMode.HTML
     )
 
 
@@ -376,7 +399,8 @@ async def reload_language(c: Client, iq: InlineQuery):
             InlineQueryResultArticle(
                 title="Change Altruix default language",
                 input_message_content=InputTextMessageContent(
-                    "<b>Altruix Language Set-up Wizard</b> \n<b>Click a language available below to change Altruix's default langauge</b>"
+                    "<b>Altruix Language Set-up Wizard</b> \n<b>Click a language available below to change Altruix's default langauge</b>",
+                    parse_mode=enums.ParseMode.HTML
                 ),
                 reply_markup=InlineKeyboardMarkup(bttns),
             )
@@ -461,7 +485,7 @@ async def help(_: Client, iq: InlineQuery):
                 InlineQueryResultArticle(
                     id=r_id,
                     title=f"Userbot Help - {default_mode.title()}",
-                    input_message_content=InputTextMessageContent(help_msg, parse_mode=parse_mode),
+                    input_message_content=InputTextMessageContent(help_msg, parse_mode=enums.ParseMode.HTML),
                     reply_markup=InlineKeyboardMarkup(buttons),
                 )
             ],
@@ -487,7 +511,7 @@ async def help(_: Client, iq: InlineQuery):
                 InlineQueryResultArticle(
                     id=f"help_plugin_{plugin}_{chat_id if chat_id else 'Inline'}",
                     title=f"Help Module for {plugin}",
-                    input_message_content=InputTextMessageContent(text),
+                    input_message_content=InputTextMessageContent(text, parse_mode=enums.ParseMode.HTML),
                     reply_markup=markup if markup else InlineKeyboardMarkup(
                         [[InlineKeyboardButton(
                             "Goto help menu", f"help#_page{si_str}{cid_str}",
@@ -505,7 +529,8 @@ async def help(_: Client, iq: InlineQuery):
                 InlineQueryResultArticle(
                     title="Plugin not found!",
                     input_message_content=InputTextMessageContent(
-                        f"Help for {plugin_or_tab} is not found!"
+                        f"Help for {plugin_or_tab} is not found!",
+                        parse_mode=enums.ParseMode.HTML
                     ),
                 )
             ]
@@ -611,13 +636,15 @@ async def help_compressed(_: Client, cq: CallbackQuery):
             button_markup = buttons
             
         return await cq.edit_message_text(
-            help_msg, reply_markup=InlineKeyboardMarkup(button_markup), parse_mode=parse_mode
+            Essentials.fix_html(help_msg), reply_markup=InlineKeyboardMarkup(button_markup), parse_mode=parse_mode
         )
 
     res = await get_plugin_data(text_type, number, sub_page, user_id=user_id, chat_id=cid, mode=mode)
     if not res: return
     text, buttons = res
-    await cq.edit_message_text(text, reply_markup=buttons)
+    # Ensure finalized text is HTML-fixed even if it was already fixed in get_plugin_data
+    fixed_text = Essentials.fix_html(text)
+    await cq.edit_message_text(fixed_text, reply_markup=buttons, parse_mode=enums.ParseMode.HTML)
 
 
 @Altruix.bot.on_callback_query(filters.regex(r"^help_tab#(userbot|bot|extra|ultroid)\?si=(-?\d+)(?:&cid=(-?\d+))?"))
@@ -708,7 +735,7 @@ async def help_callback(_: Client, cq: CallbackQuery):
     res = await get_plugin_data(text_type, number, sub_page, user_id=user_id, chat_id=cid, mode=mode)
     if not res: return
     text, buttons = res
-    await cq.edit_message_text(text, reply_markup=buttons)
+    await cq.edit_message_text(text, reply_markup=buttons, parse_mode=enums.ParseMode.HTML)
 
 
 @Altruix.bot.on_message(filters.command("help", Altruix.bot_handler))
@@ -766,7 +793,7 @@ async def send_plugin_compressed(c: Client, cb: CallbackQuery):
         ]
     ]
     
-    await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+    await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=enums.ParseMode.HTML)
 
 
 @Altruix.bot.on_callback_query(filters.regex(r"^send_plugin#([\w_ ]+)\?page=(\d+)(?:&si=(-?\d+))?(?:&cid=(-?\d+))?(?:&mode=(\w+))?"))
@@ -802,7 +829,7 @@ async def send_plugin_confirm(c: Client, cb: CallbackQuery):
         ]
     ]
     
-    await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+    await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=enums.ParseMode.HTML)
 
 
 @Altruix.bot.on_callback_query(filters.regex(r"^csp#([a-f0-9]{12})$"))
@@ -833,7 +860,7 @@ async def send_plugin_execute_compressed(c: Client, cb: CallbackQuery):
     if answer == "no":
         # Return to plugin help with user_id persistence
         text, buttons = await get_plugin_data(plugin, page, user_id=cb.from_user.id, chat_id=cid, mode=mode)
-        return await cb.edit_message_text(text, reply_markup=buttons)
+        return await cb.edit_message_text(text, reply_markup=buttons, parse_mode=enums.ParseMode.HTML)
     
     # Continue with existing send logic...
     await cb.answer("🔍 Mencari file plugin...", show_alert=False)
@@ -909,14 +936,14 @@ async def send_plugin_execute_compressed(c: Client, cb: CallbackQuery):
         if plugin_key:
             version = Altruix.cmd_list[plugin_key][0].get("version", "Unknown")
             
-        caption = f"📦 **Plugin:** `{plugin}`\n🏷 **Version:** `v{version}`\n📁 **Path:** `{plugin_file}`\n\n_Generated by Altruix Assistant_"
+        caption = f"📦 **Plugin:** `{plugin}`\n🏷 **Version:** `v{version}`\n📁 **Path:** `{plugin_file}`\n\n_Generated by Altroid-X Assistant_"
         
         try:
             # 4) Send document via selected client
             await sender_client.send_document(
                 chat_id=target_chat,
                 document=plugin_file,
-                caption=caption
+                caption=f"<blockquote expandable>{caption}</blockquote>"
             )
             await cb.answer("✅ Plugin berhasil dikirim!", show_alert=True)
         except Exception as send_err:
@@ -926,7 +953,7 @@ async def send_plugin_execute_compressed(c: Client, cb: CallbackQuery):
                     await Altruix.bot.send_document(
                         chat_id=target_chat,
                         document=plugin_file,
-                        caption=caption + "\n_(Sent via Bot Fallback)_"
+                        caption=f"<blockquote expandable>{caption}</blockquote>" + "\n_(Sent via Bot Fallback)_"
                     )
                     await cb.answer("✅ Plugin dikirim via Bot!", show_alert=True)
                 except Exception as b_err:
@@ -936,7 +963,7 @@ async def send_plugin_execute_compressed(c: Client, cb: CallbackQuery):
                 
         # Return to plugin help page
         text, buttons = await get_plugin_data(plugin, page, user_id=cb.from_user.id, chat_id=cid, mode=mode)
-        await cb.edit_message_text(text, reply_markup=buttons)
+        await cb.edit_message_text(text, reply_markup=buttons, parse_mode=enums.ParseMode.HTML)
 
     except Exception as e:
         await cb.answer(f"❌ Error: {str(e)[:100]}", show_alert=True)
@@ -959,7 +986,7 @@ async def send_plugin_execute(c: Client, cb: CallbackQuery):
     if answer == "no":
         # Return to plugin help with user_id persistence
         text, buttons = await get_plugin_data(plugin, page, user_id=cb.from_user.id, chat_id=cid, mode=mode)
-        return await cb.edit_message_text(text, reply_markup=buttons)
+        return await cb.edit_message_text(text, reply_markup=buttons, parse_mode=enums.ParseMode.HTML)
         
     await cb.answer("🔍 Mencari file plugin...", show_alert=False)
     
@@ -1036,14 +1063,14 @@ async def send_plugin_execute(c: Client, cb: CallbackQuery):
         if plugin_key:
             version = Altruix.cmd_list[plugin_key][0].get("version", "Unknown")
             
-        caption = f"📦 **Plugin:** `{plugin}`\n🏷 **Version:** `v{version}`\n📁 **Path:** `{plugin_file}`\n\n_Generated by Altruix Assistant_"
+        caption = f"📦 **Plugin:** `{plugin}`\n🏷 **Version:** `v{version}`\n📁 **Path:** `{plugin_file}`\n\n_Generated by Altroid-X Assistant_"
         
         try:
             # 4) Send document via selected client
             await sender_client.send_document(
                 chat_id=target_chat,
                 document=plugin_file,
-                caption=caption
+                caption=f"<blockquote expandable>{caption}</blockquote>"
             )
             await cb.answer("✅ Plugin berhasil dikirim!", show_alert=True)
         except Exception as send_err:
@@ -1054,7 +1081,7 @@ async def send_plugin_execute(c: Client, cb: CallbackQuery):
                     await Altruix.bot.send_document(
                         chat_id=target_chat,
                         document=plugin_file,
-                        caption=caption + "\n_(Sent via Bot Fallback)_"
+                        caption=f"<blockquote expandable>{caption}</blockquote>" + "\n_(Sent via Bot Fallback)_"
                     )
                     await cb.answer("✅ Plugin dikirim via Bot!", show_alert=True)
                 except Exception as b_err:
@@ -1065,7 +1092,7 @@ async def send_plugin_execute(c: Client, cb: CallbackQuery):
         # Return to plugin help with user_id persistence
 
         text, buttons = await get_plugin_data(plugin, page, user_id=cb.from_user.id, chat_id=cid, mode=mode)
-        await cb.edit_message_text(text, reply_markup=buttons)
+        await cb.edit_message_text(text, reply_markup=buttons, parse_mode=enums.ParseMode.HTML)
         
     except Exception as e:
         Altruix.log(f"Failed to send plugin {plugin}: {e}", level=40)

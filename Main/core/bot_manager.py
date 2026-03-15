@@ -108,11 +108,13 @@ class BotManager:
             return False
 
     async def stop_custom_bot(self, user_id: int):
+        """Stop a custom bot for a user session."""
         if user_id in self.custom_bots:
             client = self.custom_bots[user_id]
             try:
                 if client.is_connected:
                     await client.stop()
+                logger.info(f"🛑 Custom bot stopped for user {user_id}")
             except Exception as e:
                 logger.warning(f"Error stopping custom bot for {user_id}: {e}")
             finally:
@@ -120,12 +122,32 @@ class BotManager:
                 self.custom_bots.pop(user_id, None)
                 self._bot_tokens.pop(user_id, None)
 
+    async def is_bot_alive(self, user_id: int) -> bool:
+        """Check if a custom bot is connected and authorized."""
+        if user_id not in self.custom_bots:
+            return False
+            
+        bot = self.custom_bots[user_id]
+        if not bot.is_connected:
+            return False
+            
+        try:
+            # Simple API call to verify authorization
+            await bot.get_me()
+            return True
+        except Exception:
+            return False
+
     def get_bot(self, user_id: int) -> Client:
         """Get custom bot for user, or fallback to default Altruix.bot."""
-        return self.custom_bots.get(user_id, getattr(self.altruix, 'bot', None))
+        bot = self.custom_bots.get(user_id)
+        if bot and bot.is_connected:
+            return bot
+        return getattr(self.altruix, 'bot', None)
 
     def get_bot_username(self, user_id: int) -> str:
-        bot = self.get_bot(user_id)
+        """Get the username of the custom bot if active, else default bot."""
+        bot = self.custom_bots.get(user_id)
         if bot and bot.me:
             return bot.me.username
         

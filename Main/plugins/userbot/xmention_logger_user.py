@@ -48,7 +48,7 @@ from Main.plugins.userbot.xpm_logger_user import SessionManager
 # ============================================================================
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "tags"  # Renamed from mentions
-PLUGIN_VERSION = "1.7.895-TAG"  # ✅ Cache optimization for hater detector testing
+PLUGIN_VERSION = "1.7.897-TAG"  # ✅ Cache optimization for hater detector testing
 
 # Gunakan logger Altruix jika tersedia, atau buat baru yang konsisten
 logger = logging.getLogger("altruix.mentions")
@@ -1131,13 +1131,16 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
                     if not getattr(rep_msg, "from_user", None):
                         try:
                             rep_id = getattr(m, "reply_to_message_id", None) or (getattr(m.reply_to, "reply_to_msg_id", None) if getattr(m, "reply_to", None) else None)
-                            if rep_id:
-                                msgs = await c.get_messages(m.chat.id, [int(rep_id)])
-                                if msgs and isinstance(msgs, list):
-                                    rep_msg = msgs[0]
-                                elif msgs:
-                                    rep_msg = msgs
-                        except Exception: 
+                            if rep_id and str(rep_id).isdigit():
+                                try:
+                                    msgs = await c.get_messages(m.chat.id, [int(rep_id)])
+                                    if msgs and isinstance(msgs, list) and msgs[0]:
+                                        rep_msg = msgs[0]
+                                    elif msgs:
+                                        rep_msg = msgs
+                                except Exception as e:
+                                    logger.debug(f"Failed to fetch reply {rep_id}: {e}")
+                        except Exception:
                             pass
                     
                     if getattr(rep_msg, "from_user", None):
@@ -1393,29 +1396,29 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
         block_label = "Yes 🤡" if is_blocked_status else "No 👩🏻‍🦳"
 
         log_message = (
-            f"{Altruix.get_string('LOGGER_TAG_TITLE')}\n"
+            f"⚡️ <b>Mention Detected</b>\n"
             f"<blockquote expandable>\n"
-            f"{Altruix.get_string('LOGGER_TAG_BY').format(mentioner_id, html.escape(full_name), mentioner_id)}\n"
-            f"{Altruix.get_string('LOGGER_TAG_USERNAME').format(username_display)}\n"
-            f"🤡 <b>Blocked Me:</b> {block_label}\n"
-            f"{Altruix.get_string('LOGGER_TAG_ACCOUNT').format(my_name_hyperlink + f' (<code>{c.me.id}</code>)')}\n"
-            f"{Altruix.get_string('LOGGER_TAG_GROUP').format(group_display)}\n"
-            f"{Altruix.get_string('LOGGER_TAG_TIME').format(mention_time)}\n"
-            f"📍 <b>Msg ID:</b>  <code>{m.id}</code>\n"
+            f"• <b>Tagged By:</b> {mentioner_hyperlink} (<code>{mentioner_id}</code>)\n"
+            f"• <b>Username:</b> {username_display}\n"
+            f"• <b>Blocked Me:</b> {block_label}\n"
+            f"• <b>My Account:</b> {my_name_hyperlink} (<code>{c.me.id}</code>)\n"
+            f"• <b>Group:</b> {group_display}\n"
+            f"• <b>Time:</b> <code>{mention_time}</code>\n"
+            f"• <b>Msg ID:</b> <code>{m.id}</code>\n"
         )
         
         if has_media:
             media_type = str(m.media.value) if m.media else "Unknown"
-            log_message += f"{Altruix.get_string('LOGGER_TAG_MEDIA').format(media_type)}\n"
+            log_message += f"• <b>Media:</b> {media_type}\n"
             if media_size > 0:
-                log_message += f"{Altruix.get_string('LOGGER_TAG_SIZE').format(size_str)}\n"
+                log_message += f"• <b>Size:</b> {size_str}\n"
             if is_restricted:
-                log_message += f"{Altruix.get_string('LOGGER_TAG_RESTRICTED')}\n"
+                log_message += f"• <b>Restricted:</b> Yes\n"
             
             # Auto-forward media to log group
             try:
                 await m.forward(Altruix.log_chat)
-                log_message += f"{Altruix.get_string('LOGGER_TAG_FORWARDED')}\n"
+                log_message += f"• <b>Forwarded:</b> Yes\n"
             except Exception as forward_err:
                 logger.debug(f"Media forward failed: {forward_err}")
 
@@ -1423,16 +1426,20 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
         log_message += "</blockquote>"
         
         # Add Message Content in a separate blockquote
-        log_message += f"\n\n{Altruix.get_string('LOGGER_TAG_MSG_HEADER')}\n<blockquote expandable>{message_text}</blockquote>"
+        log_message += f"\n\n📄 <b>Message:</b>\n<blockquote expandable>{message_text}</blockquote>"
+        
+        # Get dynamic button style
+        from Main.utils.file_helpers import get_user_button_style
+        btn_style_enum = get_user_button_style(client_id)
         
         # Buttons
         keyboard = [
             [
-                InlineKeyboardButton("⚙️ Menu", callback_data=f"tags_toggle_full_{m.chat.id}_{m.id}"),
-                InlineKeyboardButton(Altruix.get_string('BUTTON_GO_TO_MSG') or "🔗 Go to Message", url=m.link)
+                InlineKeyboardButton(await Essentials.get_user_button_style(client_id, "Menu"), callback_data=f"tags_toggle_full_{m.chat.id}_{m.id}", style=btn_style_enum),
+                InlineKeyboardButton("🔗 Go to Message", url=m.link, style=btn_style_enum)
             ],
             [
-                InlineKeyboardButton("💬 Chat with User", url=f"tg://user?id={mentioner_id}")
+                InlineKeyboardButton("💬 Chat with User", url=f"tg://user?id={mentioner_id}", style=btn_style_enum)
             ]
         ]
         
@@ -1657,15 +1664,17 @@ async def send_mention_edit_handler(c: Client, m: RawMessage):
         group_display_edit = f"{group_hyperlink_edit} ({m.chat.id})"
 
         log_content = (
-            f"{Altruix.get_string('LOGGER_TAG_TITLE')} [EDITED]\n\n"
-            f"{Altruix.get_string('LOGGER_TAG_BY').format(mentioner_id, html.escape(full_name_edit), mentioner_id)}\n"
-            f"{Altruix.get_string('LOGGER_TAG_USERNAME').format(username_display_edit)}\n"
-            f"{Altruix.get_string('LOGGER_TAG_ACCOUNT').format(f'<a href=\"tg://user?id={c.me.id}\">{html.escape(my_name_edit)}</a> (<code>{c.me.id}</code>)')}\n"
-            f"{Altruix.get_string('LOGGER_TAG_GROUP').format(group_display_edit)}\n"
-            f"🕒 <b>Original:</b> <code>{mention_time}</code>\n"
-            f"🕒 <b>Edited:</b> <code>{edit_time}</code>\n"
-            f"📍 <b>Msg ID:</b> <code>{m.id}</code>\n"
-            f"{Altruix.get_string('LOGGER_TAG_MSG_HEADER')}\n<blockquote>{message_text}</blockquote>"
+            f"⚡️ <b>Mention Detected</b> [EDITED]\n"
+            f"<blockquote expandable>\n"
+            f"• <b>Tagged By:</b> {mentioner_hyperlink} (<code>{mentioner_id}</code>)\n"
+            f"• <b>Username:</b> {username_display_edit}\n"
+            f"• <b>My Account:</b> <a href=\"tg://user?id={c.me.id}\">{html.escape(my_name_edit)}</a> (<code>{c.me.id}</code>)\n"
+            f"• <b>Group:</b> {group_display_edit}\n"
+            f"• <b>Original:</b> <code>{mention_time}</code>\n"
+            f"• <b>Edited:</b> <code>{edit_time}</code>\n"
+            f"• <b>Msg ID:</b> <code>{m.id}</code>\n"
+            f"</blockquote>\n\n"
+            f"📄 <b>Message:</b>\n<blockquote expandable>{message_text}</blockquote>"
         )
 
         # Preserve markup by fetching original msg
@@ -3069,7 +3078,12 @@ async def cleanup_old_entries():
                 
                 # ✅ NOTIF LOG
                 try:
-                    if getattr(Altruix.config, "CACHE_LOG_ENABLED", False) and Altruix.log_chat:
+                    # Robust check for CACHE_LOG_ENABLED (bool or string "on"/"true")
+                    cache_log_enabled = getattr(Altruix.config, "CACHE_LOG_ENABLED", False)
+                    if isinstance(cache_log_enabled, str):
+                        cache_log_enabled = cache_log_enabled.lower() in ["on", "true", "yes"]
+                        
+                    if cache_log_enabled and Altruix.log_chat:
                         await Altruix.bot.send_message(
                             chat_id=Altruix.log_chat,
                             text=f"🧹 <b>Cache Cleaner Triggered</b>\n\n• Cleaned: <code>{len(expired_cache)}</code> cache entries\n• Waiting: <code>{len(expired_waiting)}</code> entries",

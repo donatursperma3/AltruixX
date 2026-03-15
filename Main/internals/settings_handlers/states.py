@@ -8,6 +8,8 @@ user_text_confirmation_state = {}
 
 # Media & Download States
 user_dlphoto_state = {}
+user_dlstory_state = {}
+user_photo_delete_state = {}
 
 # Message & Interaction States
 user_purge_state = {}
@@ -16,6 +18,7 @@ user_mentions_state = {}
 user_bulk_join_state = {}
 user_bulk_leave_state = {}
 user_bulk_report_state = {}
+user_message_count_state = {}
 
 # Security & Tracking States
 user_limit_check_state = {}
@@ -31,6 +34,9 @@ user_privacy_state = {}
 
 # CreateGroup State
 user_creategroup_state = {}
+
+# Scan Limit State
+user_scan_limit_state = {}
 
 # Ultroid Addon States
 WAIT_ULTROID_PREFIX = "WAIT_ULTROID_PFX"

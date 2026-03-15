@@ -8,7 +8,7 @@ from pyrogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineK
 from Main.core.decorators import log_errors, iuser_check
 from Main.core.client import Altruix
 from pyrogram.enums import ParseMode
-from .utils import send_log_notification
+from .utils import edit_cb, send_log_notification
 from .states import user_privacy_state
 
 # Logger
@@ -55,10 +55,7 @@ async def startup_menu_handler(c: Client, cb: CallbackQuery):
         [InlineKeyboardButton("📝 Edit Message", f"startup_custom_input_{index}_{page}", style=user_style)],
         [InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}_3", style=user_style)]
     ]
-    if cb.message:
-        await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
-    else:
-        await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^startup_toggle_status_(\d+)_(\d+)$"))
 @iuser_check
@@ -108,20 +105,13 @@ async def startup_custom_input_handler(c: Client, cb: CallbackQuery):
     }
     from Main.utils.file_helpers import get_user_button_style
     user_style = get_user_button_style(cb.from_user.id)
-    if cb.message:
-        await cb.message.edit(
-            "⌨️ <b>Input Custom Startup Message</b>\n\n"
-            "Silakan kirim pesan kustom Anda.\n"
-            "Ketik /cancel untuk membatalkan.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancel", f"startup_menu_{index}_{page}", style=user_style)]])
-        )
-    else:
-        await cb.edit_message_text(
-            "⌨️ <b>Input Custom Startup Message</b>\n\n"
-            "Silakan kirim pesan kustom Anda.\n"
-            "Ketik /cancel untuk membatalkan.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancel", f"startup_menu_{index}_{page}", style=user_style)]])
-        )
+    await edit_cb(
+        cb,
+        "⌨️ <b>Input Custom Startup Message</b>\n\n"
+        "Silakan kirim pesan kustom Anda.\n"
+        "Ketik /cancel untuk membatalkan.",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancel", f"startup_menu_{index}_{page}", style=user_style)]])
+    )
 
 async def process_startup_msg_input(c: Client, m: Message, state: dict):
     """Save custom startup message text"""

@@ -171,11 +171,11 @@ async def cmd_logger_handler(c: Client, m: Message):
         log_message = (
             f"⚡️ <b>Command Executed</b>\n"
             f"<blockquote expandable>\n"
-            f"👤 <b>Account:</b> <b>{c.me.mention(style=enums.ParseMode.HTML)}</b>\n"
-            f"💬 <b>Chat:</b> {chat_display}\n"
-            f"🆔 <b>ChatID:</b> <code>{chat.id}</code>\n"
-            f"♻️ <b>Auto del:</b> <code>{autodel_enabled}</code>\n"
-            f"➡️ <b>Goto Msg:</b> {msg_link_display}\n"
+            f"• <b>Account:</b> <b>{c.me.mention(style=enums.ParseMode.HTML)}</b>\n"
+            f"• <b>Chat:</b> {chat_display}\n"
+            f"• <b>ChatID:</b> <code>{chat.id}</code>\n"
+            f"• <b>Auto del:</b> <code>{autodel_enabled}</code>\n"
+            f"• <b>Goto Msg:</b> {msg_link_display}\n"
         )
         
         # ✅ Add Active Task IDs from global registry
@@ -190,7 +190,7 @@ async def cmd_logger_handler(c: Client, m: Message):
                     for tid, t in active_tasks:
                         name = t.get("name", "?")[:15]
                         parts_list.append(f"<code>{tid}</code> ({name})")
-                    log_message += f"🏷 <b>Active Tasks:</b> {', '.join(parts_list)}\n"
+                    log_message += f"• <b>Active Tasks:</b> {', '.join(parts_list)}\n"
         except Exception:
             pass
         
@@ -198,17 +198,18 @@ async def cmd_logger_handler(c: Client, m: Message):
         if m.reply_to_message:
             reply_user = m.reply_to_message.from_user
             if reply_user:
-                r_mention = reply_user.mention(style=enums.ParseMode.HTML)
                 r_id = reply_user.id
+                # Generate a clickable HTML mention manually or via Pyrogram's mention method
+                r_mention = f"<a href='tg://user?id={r_id}'>{html.escape(reply_user.first_name or 'User')}</a>"
                 r_username = f"@{reply_user.username}" if reply_user.username else "N/A"
                 
                 log_message += (
-                    f"↩️ <b>Reply to user:</b> {r_mention}\n"
-                    f"🆔 <b>UserID :</b> <code>{r_id}</code>\n"
-                    f"*️⃣ <b>Username:</b> {r_username}\n"
+                    f"• <b>Reply to user:</b> {r_mention}\n"
+                    f"• <b>UserID :</b> <code>{r_id}</code>\n"
+                    f"• <b>Username:</b> {r_username}\n"
                 )
         
-        log_message += f"🕒 <b>Time:</b> <code>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</code></blockquote>"
+        log_message += f"• <b>Time:</b> <code>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</code></blockquote>"
         
         # 📝 Command at the bottom in a separate blockquote
         log_message += f"\n\n📝 <b>Command:</b>\n<pre language='python'>{html.escape(text[:2000])}</pre>"
@@ -234,7 +235,17 @@ async def cmd_logger_handler(c: Client, m: Message):
                 )
                 Altruix.log(f"✅ [CMD_LOGGER] Log sent successfully to {Altruix.log_chat}", level=logging.INFO)
             except Exception as send_err:
-                Altruix.log(f"❌ [CMD_LOGGER] Failed to send message: {send_err}", level=logging.ERROR)
+                Altruix.log(f"⚠️ [CMD_LOGGER] Bot failed to log: {send_err}. Attempting fallback with userbot...", level=logging.WARNING)
+                try:
+                    await c.send_message(
+                        Altruix.log_chat,
+                        log_message,
+                        parse_mode=enums.ParseMode.HTML,
+                        disable_web_page_preview=True
+                    )
+                    Altruix.log(f"✅ [CMD_LOGGER] Log sent successfully via userbot fallback to {Altruix.log_chat}", level=logging.INFO)
+                except Exception as fallback_err:
+                    Altruix.log(f"❌ [CMD_LOGGER] Fallback failed: {fallback_err}", level=logging.ERROR)
         
         asyncio.create_task(_log_task())
         

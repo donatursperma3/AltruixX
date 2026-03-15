@@ -98,6 +98,7 @@ class BaseConfig(object):
                     self.SUDO_USERS_ID = [int(value)]
             except: pass
     LOAD_ENV_TO_DB = getenv("LOAD_ENV_TO_DB", False)
+    SESSION_NAMES: List[str] = []
     CUSTOM_BT_START_MSG = getenv("CUSTOM_BT_START_MSG", "")
     SESSIONS = [i for i in getenv("SESSIONS", "").split(" ") if i != "" or None]
     API_ID = safe_int(getenv("API_ID"))

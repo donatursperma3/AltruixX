@@ -25,7 +25,7 @@ from datetime import datetime
 import re
 from collections import defaultdict
 from Main.utils.topic_utils import get_or_create_topic
-from Main.utils.file_helpers import get_db_path
+from Main.utils.file_helpers import get_db_path, get_user_button_style as get_btn_style
 
 # ─── LOGGER KHUSUS PLUGIN ───────────────────────────────────────────────
 
@@ -389,21 +389,22 @@ async def pm_logger_bot_handler(c: Client, m: RawMessage):
         row1 = reaction_btns[:3]
         row2 = reaction_btns[3:6]
         
+        button_style = get_btn_style(c.me.id)
         keyboard = [
             row1,
             row2,
             [
-                InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, "➕ Others"), callback_data=f"pmlb_others_{m.chat.id}_{m.id}_{c.me.id}"),
-                InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, "🗑️ Remove React"), callback_data=f"pmlb_unreact_{m.chat.id}_{m.id}_{c.me.id}")
+                InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, "➕ Others"), callback_data=f"pmlb_others_{m.chat.id}_{m.id}_{c.me.id}", style=button_style),
+                InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, "🗑️ Remove React"), callback_data=f"pmlb_unreact_{m.chat.id}_{m.id}_{c.me.id}", style=button_style)
             ],
             [
-                InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, f"🗨️ {get_permission_label(REPLY_ACCESS_MODE)}"), callback_data=f"pmlb_reply_menu_{m.chat.id}_{m.id}_{c.me.id}"),
-                InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, "💾 Save to Log"), callback_data=f"pmlb_save_{m.chat.id}_{m.id}_{c.me.id}")
+                InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, f"🗨️ {get_permission_label(REPLY_ACCESS_MODE)}"), callback_data=f"pmlb_reply_menu_{m.chat.id}_{m.id}_{c.me.id}", style=button_style),
+                InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, "💾 Save to Log"), callback_data=f"pmlb_save_{m.chat.id}_{m.id}_{c.me.id}", style=button_style)
             ],
             [
-                InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, "🗑️ Unsend"), callback_data=f"pmlb_unsend_{m.chat.id}_{m.id}_{c.me.id}")
+                InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, "🗑️ Unsend"), callback_data=f"pmlb_unsend_{m.chat.id}_{m.id}_{c.me.id}", style=button_style)
             ],
-            [InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, "🔗 Chat with User"), url=f"tg://user?id={sender_id}")]
+            [InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, "🔗 Chat with User"), url=f"tg://user?id={sender_id}", style=button_style)]
         ]
 
         # Get topic if any (bot will search, but won't create if no permission)

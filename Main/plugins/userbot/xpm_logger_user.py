@@ -38,8 +38,8 @@ logger = logging.getLogger("altruix.pm_logger_user")
 logger.setLevel(logging.INFO)
 
 PLUGIN_NAME = __plugin_name__ 
-PLUGIN_VERSION = "1.3.71C"  # ✅ Adjusted safe settings fallback logic
-from Main.utils.file_helpers import get_db_path
+PLUGIN_VERSION = "1.3.72C"  # ✅ Adjusted safe settings fallback logic
+from Main.utils.file_helpers import get_db_path, get_user_button_style as get_btn_style
 STORAGE_FILE = Path(get_db_path("pm_logger_user_settings.json"))
 
 # Settings Cache
@@ -160,17 +160,14 @@ def is_valid_emoji(emoji: str) -> bool:
 
 def get_permission_label(mode: str = "sudo") -> str:
     """Generate permission label for Reply button."""
-    # Format: [ reply : (all/as mentioned/sudo user/owner/sudo+owner) ]
-    # Default userbot logic usually allows Owner + Sudo
-    
     if mode == "owner":
-        return "Reply (Owner)"
+        return "Owner"
     elif mode == "sudo":
-        return "Reply (Sudo + Owner)"
+        return "Sudo + Owner"
     elif mode == "all":
-        return "Reply (All)"
+        return "All"
     else:
-        return f"Reply ({mode})"
+        return mode.capitalize()
 
 def get_shared_reply_mode():
     """Read reply mode from shared settings file."""
@@ -251,39 +248,65 @@ async def save_settings():
     except Exception as e:
         logger.error(f"Failed to save PM Logger User settings: {e}")
 
-def get_pm_setting_safe(client_id: int, key: str = "enabled") -> bool:
-    """Safe method to read PM Logger settings - combines per-account and global."""
+def get_pm_setting_safe(client_id: int, key: str, default: any = False) -> any:
+    """Safe method to read PM Logger settings - respects apply_type (global/per_account)."""
     user_id_str = str(client_id)
     
+    # helper for mode logic
+    def _apply_mode(data_src, target_key):
+        mode = data_src.get("mode", PM_LOGGER_USER_DATA.get("mode", "both")).lower()
+        if target_key == "log_from_user":
+            return mode in ["user", "both"]
+        if target_key == "log_from_bot":
+            return mode in ["bot", "both"]
+        return None
+
     # 0. Resolve apply_type
     apply_types = PM_LOGGER_USER_DATA.get("apply_types", {})
     if not isinstance(apply_types, dict): apply_types = {}
-    
     apply_type = apply_types.get(user_id_str, "per_account")
     
     # 1. Check Global configuration if apply_type is global
     if apply_type == "global":
         global_cfg = PM_LOGGER_USER_DATA.get("global_config", {})
         if not isinstance(global_cfg, dict): global_cfg = {}
-        # Fallback to root key if global_cfg doesn't have it
-        return bool(global_cfg.get(key, PM_LOGGER_USER_DATA.get(key, False)))
+        if key == "filters": return global_cfg.get("filters", {})
+        
+        # Check if key exists in global_cfg
+        if key in global_cfg: return global_cfg[key]
+        
+        # Mode-based fallback for user/bot logs
+        mode_val = _apply_mode(global_cfg, key)
+        if mode_val is not None: return mode_val
+        
+        return global_cfg.get(key, PM_LOGGER_USER_DATA.get(key, default))
 
     # 2. Check per-client settings
     if user_id_str in PM_LOGGER_USER_DATA:
         setting_data = PM_LOGGER_USER_DATA[user_id_str]
         if isinstance(setting_data, dict):
-            # Key found in per-account dict
-            if key in setting_data:
-                return bool(setting_data[key])
-            # Fallback to global_config key then root key
+            if key in setting_data: return setting_data[key]
+            if key == "filters": return setting_data.get("filters", {})
+            
+            # Mode-based fallback
+            mode_val = _apply_mode(setting_data, key)
+            if mode_val is not None: return mode_val
+            
             global_cfg = PM_LOGGER_USER_DATA.get("global_config", {})
-            return bool(global_cfg.get(key, PM_LOGGER_USER_DATA.get(key, False)))
+            return global_cfg.get(key, PM_LOGGER_USER_DATA.get(key, default))
         elif isinstance(setting_data, bool) and key == "enabled":
             return setting_data
 
-    # 3. Fallback to GLOBAL setting (root keys or global_config)
+    # 3. Fallback to GLOBAL setting
     global_cfg = PM_LOGGER_USER_DATA.get("global_config", {})
-    return bool(global_cfg.get(key, PM_LOGGER_USER_DATA.get(key, False)))
+    if key in global_cfg: return global_cfg[key]
+    
+    # Mode-based fallback for global
+    mode_val = _apply_mode(global_cfg, key)
+    if mode_val is not None: return mode_val
+    
+    if key == "filters": return global_cfg.get("filters", {})
+    return global_cfg.get(key, PM_LOGGER_USER_DATA.get(key, default))
 
 def save_pm_setting_safe(client_id: int, key: str, value: bool):
     """Save setting to the correct location based on apply_type."""
@@ -350,13 +373,9 @@ async def pmlu_settings_handler(c: Client, m: AltruixMessage):
 @log_errors
 async def pml_status_unified_handler(c: Client, m: AltruixMessage):
     await load_settings()
-    user_id_str = str(c.me.id)
-    session_settings = PM_LOGGER_USER_DATA.get(user_id_str, {})
     
-    # User status
-    is_globally_on = session_settings.get("enabled", PM_LOGGER_USER_DATA.get("enabled", False))
-    log_from_user = session_settings.get("log_from_user", is_globally_on)
-    log_from_bot = session_settings.get("log_from_bot", is_globally_on)
+    log_from_user = get_pm_setting_safe(c.me.id, "log_from_user", get_pm_setting_safe(c.me.id, "enabled"))
+    log_from_bot = get_pm_setting_safe(c.me.id, "log_from_bot", get_pm_setting_safe(c.me.id, "enabled"))
     
     # Bot assistant status
     try:
@@ -404,43 +423,13 @@ async def pm_logger_user_handler(c: Client, m: RawMessage):
         # ✅ Dynamic Reload: Catch UI updates from settings.py
         await load_settings()
         
-        # Resolve settings based on apply_type
-        user_id_str = str(c.me.id)
+        # Resolve settings using safe lookup
         if not get_pm_setting_safe(c.me.id, "enabled"):
             return
-        
-        apply_type = PM_LOGGER_USER_DATA.get("apply_types", {}).get(user_id_str, "per_account")
-        
-        if apply_type == "global":
-            session_settings = PM_LOGGER_USER_DATA.get("global_config", {})
-        else:
-            # PM_LOGGER_USER_DATA IS the sessions dict (from load_settings)
-            session_settings = PM_LOGGER_USER_DATA.get(user_id_str)
             
-        if session_settings is None:
-            # Fallback to legacy global setting
-            is_globally_on = PM_LOGGER_USER_DATA.get("enabled", False)
-            mode = PM_LOGGER_USER_DATA.get("mode", "both")
-            if mode == "user":
-                log_from_user = is_globally_on
-                log_from_bot = False
-            elif mode == "bot":
-                log_from_user = False
-                log_from_bot = is_globally_on
-            else:  # "both"
-                log_from_user = is_globally_on
-                log_from_bot = is_globally_on
-            session_filters = {}
-        elif isinstance(session_settings, bool):
-            is_globally_on = session_settings
-            log_from_user = is_globally_on
-            log_from_bot = is_globally_on
-            session_filters = {}
-        else:
-            is_globally_on = session_settings.get("enabled", False)
-            log_from_user = session_settings.get("log_from_user", is_globally_on)
-            log_from_bot = session_settings.get("log_from_bot", is_globally_on)
-            session_filters = session_settings.get("filters", {})
+        log_from_user = get_pm_setting_safe(c.me.id, "log_from_user", True)
+        log_from_bot = get_pm_setting_safe(c.me.id, "log_from_bot", True)
+        session_filters = get_pm_setting_safe(c.me.id, "filters", {})
 
         # ✅ Check Auto Create Topic Logic
         auto_create_topic = PM_LOGGER_USER_DATA.get("auto_create_topic", False) # Default Disable
@@ -577,14 +566,17 @@ async def pm_logger_user_handler(c: Client, m: RawMessage):
         else:
             log_content += "\n"
 
+        reply_id_val = m.reply_to_message_id if m.reply_to_message_id else "False"
+
         log_content += (
-            f"• <b>From:</b> {sender_hyperlink}\n"
+            f"<blockquote expandable>• <b>From:</b> {sender_hyperlink}\n"
             f"• <b>User ID:</b> <code>{sender_id}</code>\n"
             f"• <b>Username:</b> {sender_username}\n"
             f"• <b>To Account:</b> {c.me.mention}\n"
+            f"• <b>reply to msg id:</b> <code>{reply_id_val}</code>\n"
             f"• <b>Time:</b> <code>{log_time}</code>\n"
-            f"• <b>Type:</b> <code>{msg_type_str.upper()}</code>\n"
-            f"• <b>Message:</b>\n<blockquote>{html.escape(str(msg_text)[:1000])}</blockquote>"
+            f"• <b>Type:</b> <code>{msg_type_str.upper()}</code></blockquote>\n"
+            f"• <b>Message:</b>\n<blockquote expandable>{html.escape(str(msg_text)[:1000])}</blockquote>"
         )
 
         # Get topic: "pm logger"
@@ -614,19 +606,20 @@ async def pm_logger_user_handler(c: Client, m: RawMessage):
         # ─── BUTTONS ───
         # Main consolidated button using direct callback (skipping menu)
         p_label = get_permission_label(get_shared_reply_mode())
+        button_style = get_btn_style(c.me.id)
         keyboard = [
             [
-                InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, f"💬 Reply ({p_label[:22]})"), callback_data=f"pmlu_reply_{m.chat.id}_{m.id}_{c.me.id}"),
-                InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, "⚙️ Menu"), callback_data=f"pmlu_toggle_full_{m.chat.id}_{m.id}_{c.me.id}")
+                InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, f"💬 Reply ({p_label})"), callback_data=f"pmlu_reply_{m.chat.id}_{m.id}_{c.me.id}", style=button_style),
+                InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, "⚙️ Menu"), callback_data=f"pmlu_toggle_full_{m.chat.id}_{m.id}_{c.me.id}", style=button_style)
             ],
             [
-                InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, "👤 User"), url=f"tg://user?id={sender_id}"),
-                InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, "📂 Save"), callback_data=f"pmlu_save_{m.chat.id}_{m.id}_{c.me.id}")
+                InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, "👤 User"), url=f"tg://user?id={sender_id}", style=button_style),
+                InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, "📂 Save"), callback_data=f"pmlu_save_{m.chat.id}_{m.id}_{c.me.id}", style=button_style)
             ]
         ]
         
         if is_restricted:
-            keyboard[1].append(InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, "🚀 Bypass/Force Forward"), callback_data=f"pmlu_force_fwd_{m.chat.id}_{m.id}_{c.me.id}"))
+            keyboard[1].append(InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, "🚀 Bypass/Force Forward"), callback_data=f"pmlu_force_fwd_{m.chat.id}_{m.id}_{c.me.id}", style=button_style))
 
         # Forward message to topic
         fwd_msg = None
@@ -730,16 +723,19 @@ async def pm_logger_user_edit_handler(c: Client, m: RawMessage):
         log_time = m.date.strftime("%Y-%m-%d %H:%M:%S")
         edit_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
+        reply_id_val = m.reply_to_message_id if m.reply_to_message_id else "False"
+        
         log_content = (
-            f"👤 <b>New PM Received (User) [EDITED]</b>\n\n"
-            f"• <b>From:</b> {sender_hyperlink}\n"
+            f"👤 <b>New PM Received (User) [#EDITED]</b>\n\n"
+            f"<blockquote expandable>• <b>From:</b> {sender_hyperlink}\n"
             f"• <b>User ID:</b> <code>{sender_id}</code>\n"
             f"• <b>Username:</b> {sender_username}\n"
             f"• <b>To Account:</b> {c.me.mention}\n"
+            f"• <b>reply to msg id:</b> <code>{reply_id_val}</code>\n"
             f"• <b>Time Original:</b> <code>{log_time}</code>\n"
             f"• <b>Time Edited:</b> <code>{edit_time}</code>\n"
-            f"• <b>Type:</b> <code>{msg_type}</code>\n"
-            f"• <b>New Message:</b>\n<blockquote>{html.escape(str(msg_text)[:1000])}</blockquote>"
+            f"• <b>Type:</b> <code>{msg_type.upper()}</code></blockquote>\n"
+            f"• <b>New Message:</b>\n<blockquote expandable>{html.escape(str(msg_text)[:1000])}</blockquote>"
         )
 
         # Preserve the reply_markup by fetching it
@@ -1572,10 +1568,12 @@ async def resource_monitor():
             if (cpu_usage > 90 or ram_usage > 90) and not alert_triggered:
                 log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_USERS_ID))
                 alert_text = (
+                    "<blockquote expandable>"
                     "🚨 <b>SYSTEM OVERLOAD ALERT</b> 🚨\n\n"
                     f"⚠️ <b>CPU Usage:</b> <code>{cpu_usage}%</code>\n"
                     f"⚠️ <b>RAM Usage:</b> <code>{ram_usage}%</code>\n\n"
                     "Please check your server immediately to prevent crashes."
+                    "</blockquote>"
                 )
                 try:
                     await Altruix.bot.send_message(log_chat_id, alert_text)

@@ -31,7 +31,8 @@ async def gen_confirm_handler(c: Client, cb: CallbackQuery):
             index = parts[-1]
             page = "1"
             
-    from Main.utils.file_helpers import get_user_button_style, _get_session_user_id
+    from Main.utils.file_helpers import get_user_button_style
+    from Main.internals.settings_handlers.custom_alert_handlers import _get_session_user_id
     user_id_key = _get_session_user_id(int(index) if index.isdigit() else 0)
     user_style = get_user_button_style(user_id_key)
 

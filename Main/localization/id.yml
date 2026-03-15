@@ -1,4 +1,4 @@
-﻿language: indonesia
+language: indonesia
 def: indonesia
 
 404_FILE_NOT_FOUND: "File tidak ditemukan di server saya!"
@@ -145,7 +145,7 @@ PACKAGE_NOT_INSTALLED: "<b>Paket tidak terinstall :</b> <code>{}</code>"
 PACKAGE_REMOVED: "<b>Berhasil menghapus paket :</b> <code>{}</code>"
 PASTE_SOURCE_NOT_PROVIDED: "<i>Anda belum menentukan apa yang akan ditempel, lihat menu bantuan untuk mengetahui cara menggunakan perintah ini.</i>"
 PASTE_TEXT: "<b>Ditempel ke <a href='{}'>{}</a></b>"
-PING_TEXT: "<b>{} Pong!</b>\n<code>{} ms</code>\n<b>{} Waktu Aktif:</b> <code>{}</code>"
+PING_TEXT: "<blockquote><b>{} Pong!</b>\n<code>{} ms</code>\n<b>{} Waktu Aktif:</b> <code>{}</code></blockquote>"
 PINNED: "<code>Pesan yang dibalas telah disematkan.</code>"
 PLEASE_WAIT: "<i>Mohon tunggu..</i>"
 PLUGIN_404: "Error 404 : Plugin tidak ada!"
@@ -755,9 +755,18 @@ custom_bot_list_title: "<b>🤖 Hub Bot Kustom</b>"
 custom_bot_count: "Total Bot: <code>{}</code>"
 no_custom_bots: "Tidak ada bot kustom yang terhubung."
 manage_custom_bot_title: "<b>⚙️ Kelola Bot Kustom</b>"
-bot_status_running: "✅ Berjalan"
-bot_status_stopped: "❌ Berhenti"
-stop_bot: "🛑 Hentikan Bot"
+custom_bot_health_check: "🔍 <b>Health Check:</b> {}"
+custom_bot_status_ok: "✅ Terhubung"
+custom_bot_status_fail: "❌ Terputus"
+custom_bot_token_updated: "✅ <b>Token berhasil diperbarui!</b>"
+custom_bot_test_conn: "📡 Tes Koneksi"
+custom_bot_update_token: "🔑 Perbarui Token"
+custom_bot_invalid_token: "❌ Format token tidak valid. Silakan cek @BotFather."
+custom_bot_start_fail: "❌ Gagal menjalankan bot. Error: {}"
+custom_bot_running: "✅ Berjalan"
+custom_bot_stopped: "🛑 Berhenti"
+custom_bot_not_found: "❌ Bot kustom tidak ditemukan untuk sesi ini."
+custom_bot_help: "🤖 <b>Manajer Bot Kustom</b>\n\nBot asisten membantu mendistribusikan beban saat operasi intensif seperti Global Purgeme atau Mass Tagging untuk mencegah Flood Wait pada bot utama."
 
 # Missing Buttons
 upload_photo: "📤 Kirim Foto"

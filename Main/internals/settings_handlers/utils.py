@@ -8,6 +8,7 @@ from pyrogram import Client
 from pyrogram.types import CallbackQuery
 from Main.core.client import Altruix
 from pyrogram.enums import ParseMode
+from Main.utils.file_helpers import get_user_button_style # ✅ Exported for sub-handlers
 
 # Logger
 logger = logging.getLogger(__name__)
@@ -139,9 +140,15 @@ async def check_authorization(cb: CallbackQuery) -> bool:
     Returns True if authorized, False otherwise (and sends access denied message).
     """
     if not await is_authorized(cb.from_user.id):
-        msg = Altruix.get_string("ACCESS_DENIED")
-        full_msg = Altruix.get_string("AUTH_NO_PERMISSION")
-        await cb.answer(f"{msg} - {full_msg}", show_alert=True)
+        from Main.utils.file_helpers import get_user_custom_alert
+        alert_data = get_user_custom_alert(cb.from_user.id)
+        mode = alert_data.get("mode", "default")
+        text = alert_data.get("text", "⛔️ You are not allowed to use this button.")
+        
+        if mode == "popup":
+            await cb.answer(text, show_alert=True)
+        else:
+            await cb.answer(text, show_alert=False)
         return False
     return True
 
@@ -151,8 +158,9 @@ async def check_authorization_message(m: Any) -> bool:
     Returns True if authorized, False otherwise (and sends ❌ access denied reply).
     """
     if not await is_authorized(m.from_user.id):
-        msg = Altruix.get_string("ACCESS_DENIED")
-        full_msg = Altruix.get_string("AUTH_NO_PERMISSION")
-        await m.reply(f"❌ {msg} - {full_msg}")
+        from Main.utils.file_helpers import get_user_custom_alert
+        alert_data = get_user_custom_alert(m.from_user.id)
+        text = alert_data.get("text", "⛔️ You are not allowed to use this button.")
+        await m.reply(f"❌ {text}")
         return False
     return True

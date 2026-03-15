@@ -25,37 +25,49 @@ logger = logging.getLogger("Altruix")
 _ALTRUIX_INST = None
 
 def get_session_info(client):
-    """Extract session information from client"""
+    """Extract session information from client without triggering property hangs"""
     try:
-        if hasattr(client, 'me') and client.me:
-            client_name = client.me.first_name or "Unknown"
-            client_id = client.me.id
-            client_username = f"@{client.me.username}" if client.me.username else "No username"
+        # Use getattr with None to avoid property access hangs if possible
+        me = getattr(client, "myself", getattr(client, "me", None))
+        if me:
+            client_name = getattr(me, "first_name", "Unknown") or "Unknown"
+            client_id = getattr(me, "id", 0)
+            username = getattr(me, "username", None)
+            client_username = f"@{username}" if username else "No username"
             
-            # Get session index
+            # Get session index safely
             try:
                 if _ALTRUIX_INST:
-                    total_sessions = len(_ALTRUIX_INST.clients)
+                    # Use a local copy to avoid mutation issues during iteration
+                    clients = list(_ALTRUIX_INST.clients)
+                    total_sessions = len(clients)
                     current_index = None
-                    for idx, c in enumerate(_ALTRUIX_INST.clients, start=1):
-                        if hasattr(c, 'me') and c.me and c.me.id == client_id:
+                    for idx, c in enumerate(clients, start=1):
+                        # Use myself/me check that doesn't trigger remote calls
+                        c_me = getattr(c, "myself", getattr(c, "me", None))
+                        if c_me and getattr(c_me, "id", None) == client_id:
                             current_index = idx
                             break
+                    
                     if current_index:
                         session_index = f"{current_index}/{total_sessions}"
                     else:
-                        session_index = f"?/{total_sessions}"
+                        # Check if it's the bot assistant
+                        if _ALTRUIX_INST.bot == client:
+                            session_index = "B"
+                        else:
+                            session_index = "?"
                 else:
-                    session_index = "?/?"
+                    session_index = "?"
             except:
-                session_index = "?/?"
+                session_index = "?"
             
             return f"[{session_index}] {client_name} (ID: {client_id}, {client_username})"
         elif hasattr(client, 'name'):
-            return f"[?/?] {client.name}"
+            return f"[?] {client.name}"
     except:
         pass
-    return "[?/?] Unknown Client"
+    return "[?] Unknown"
 
 
 def handle_peer_id_invalid(error, client, context="Unknown"):
@@ -140,6 +152,8 @@ def install_exception_handler(altruix_instance=None):
             # Jalankan tanpa memblokir resolve_peer
             async def _do():
                 try:
+                    if hasattr(client, "me") and client.me and getattr(client.me, "is_bot", False):
+                        return
                     async for _ in client.get_dialogs():
                         break
                 except Exception:

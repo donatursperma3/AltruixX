@@ -31,7 +31,7 @@ from .states import (
 # Logger
 logger = logging.getLogger(__name__)
 
-from Main.utils.file_helpers import get_user_button_style
+from .utils import edit_cb, get_user_button_style
 from .custom_alert_handlers import _get_session_user_id
 
 @Altruix.bot.on_callback_query(filters.regex(r"change_name_menu_(\d+)_(\d+)"))
@@ -92,10 +92,7 @@ async def change_name_handler(c: Client, cb: CallbackQuery):
               f"❌ <b>Cancel:</b> Kirim /cancel",
         "parse_mode": ParseMode.HTML
     }
-    if cb.message:
-        await cb.message.edit(**args)
-    else:
-        await cb.edit_message_text(**args)
+    await edit_cb(cb, **args)
 
 @Altruix.bot.on_callback_query(filters.regex(r"change_bio_(\d+)_(\d+)"))
 @Altruix.bot.on_callback_query(filters.regex(r"^gen_conf_change_bio_(\d+)_(\d+)$"))
@@ -123,10 +120,7 @@ async def change_bio_handler(c: Client, cb: CallbackQuery):
               "❌ <b>Cancel:</b> Kirim /cancel",
         "parse_mode": ParseMode.HTML
     }
-    if cb.message:
-        await cb.message.edit(**args)
-    else:
-        await cb.edit_message_text(**args)
+    await edit_cb(cb, **args)
 
 @Altruix.bot.on_callback_query(filters.regex(r"change_username_(\d+)_(\d+)"))
 @Altruix.bot.on_callback_query(filters.regex(r"^gen_conf_change_username_(\d+)_(\d+)$"))
@@ -155,10 +149,7 @@ async def change_username_handler(c: Client, cb: CallbackQuery):
               "❌ <b>Cancel:</b> Kirim /cancel",
         "parse_mode": ParseMode.HTML
     }
-    if cb.message:
-        await cb.message.edit(**args)
-    else:
-        await cb.edit_message_text(**args)
+    await edit_cb(cb, **args)
 
 @Altruix.bot.on_callback_query(filters.regex(r"change_profile_photo_(\d+)_(\d+)"))
 @Altruix.bot.on_callback_query(filters.regex(r"^gen_conf_change_profile_photo_(\d+)_(\d+)$"))
@@ -186,10 +177,7 @@ async def change_profile_photo_handler(c: Client, cb: CallbackQuery):
               "❌ <b>Cancel:</b> Kirim /cancel",
         "parse_mode": ParseMode.HTML
     }
-    if cb.message:
-        await cb.message.edit(**args)
-    else:
-        await cb.edit_message_text(**args)
+    await edit_cb(cb, **args)
 
 @Altruix.bot.on_callback_query(filters.regex(r"delete_all_profile_photos_(\d+)_(\d+)"))
 @Altruix.bot.on_callback_query(filters.regex(r"^gen_conf_delete_all_profile_photos_(\d+)_(\d+)$"))

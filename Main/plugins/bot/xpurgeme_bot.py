@@ -1,4 +1,4 @@
-PLUGIN_VERSION = "0.0.25"
+PLUGIN_VERSION = "0.0.26"
 
 """
 Purgeme Bot Plugin
@@ -9,7 +9,7 @@ import re
 import time
 import asyncio
 from pyrogram import Client, filters, enums
-from pyrogram.errors import MessageNotModified
+from pyrogram.errors import MessageNotModified, FloodWait
 from pyrogram.types import (
     InlineQuery, InlineQueryResultArticle, InputTextMessageContent,
     InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
@@ -49,13 +49,13 @@ def get_purgeme_text(state):
         display_name = f"<a href='{chat_link}'>{chat_name}</a>" if chat_link else f"<b>{chat_name}</b>"
         
         return (
-            f"{title}\n"
-            f"<blockquote expandable>━━━━━━━━━━━━━━━━━━━━\n"
+            f"<blockquote expandable>{title}\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
             f"<b>Chat:</b> {display_name}\n"
             f"<b>Chat_ID:</b> <code>{chat_id}</code>\n"
-            f"━━━━━━━━━━━━━━━━━━━━</blockquote>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
             f"{menu_title}\n"
-            f"<i>Please select options:</i>"
+            f"<i>Please select options:</i></blockquote>"
         )
 
     chat_name = state.get("chat_name", "Unknown")
@@ -81,66 +81,87 @@ def get_purgeme_text(state):
         suffix = TYPE_MAP.get(raw_type, raw_type.upper())
         type_display = loc(f"GP_BTN_{suffix}") or suffix
 
-    header = (
-        f"{title}\n"
-        f"<blockquote expandable>━━━━━━━━━━━━━━━━━━━━\n"
+    chat_link = state.get("chat_link")
+    display_name = f"<a href='{chat_link}'>{chat_name}</a>" if chat_link else f"<b>{chat_name}</b>"
+    
+    header_content = (
         f"<b>Account:</b> <code>{account_name}</code>\n"
-        f"<b>Chat:</b> <b>{chat_name}</b>\n"
+        f"<b>Chat:</b> {display_name}\n"
         f"<b>Mode:</b> <code>{mode.capitalize()}</code> | <b>Type:</b> <code>{type_display}</code>\n"
         f"<b>Target:</b> <code>{count}</code> messages | <b>Offset:</b> <code>{offset}</code>\n"
-        f"<b>Batch:</b> <code>{batch_size}</code> | <b>DelayBc:</b> <code>{int(batch_delay/60)}m</code>\n"
-        f"━━━━━━━━━━━━━━━━━━━━</blockquote>"
+        f"<b>Batch:</b> <code>{batch_size}</code> | <b>DelayBc:</b> <code>{int(batch_delay/60)}m</code>"
     )
-        
+
     if status == "collecting":
         status_line = (loc("purgeme_collecting_detailed") or "<b>Collecting...</b>\nFound: <code>{processed}/{count}</code>\nScanned: <code>{scanned}</code>").format(
             processed=processed, count=count, scanned=scanned
         )
-        return f"{header}\n{status_line}"
+        return f"<blockquote expandable>{title}\n━━━━━━━━━━━━━━━━━━━━\n{header_content}\n━━━━━━━━━━━━━━━━━━━━\n{status_line}</blockquote>"
 
     elif status == "running":
-        status_line = (loc("purgeme_deleting_detailed") or "<b>Deleting...</b>\nDeleted: <code>{processed}/{count}</code>").format(
-            processed=processed, count=count
-        )
+        status_line = f"🗑 <b>Deleting...</b>\nDeleted: <code>{processed}/{count}</code>"
         if delay > 0: status_line += f"\nDelay: <code>{delay}s</code>"
-        return f"{header}\n{status_line}"
+        return f"<blockquote expandable>{title}\n━━━━━━━━━━━━━━━━━━━━\n{header_content}\n━━━━━━━━━━━━━━━━━━━━\n{status_line}</blockquote>"
 
     elif status == "paused":
         status_line = (loc("purgeme_paused_detailed") or "<b>PAUSED</b>\nDeleted: <code>{processed}/{count}</code>").format(
             processed=processed, count=count
         )
-        return f"{header}\n{status_line}"
+        return f"<blockquote expandable>{title}\n━━━━━━━━━━━━━━━━━━━━\n{header_content}\n━━━━━━━━━━━━━━━━━━━━\n{status_line}</blockquote>"
+
+    elif status == "waiting":
+        batch_delay = state.get("batch_delay", 0)
+        btn_lbl = loc("purgeme_waiting_detailed") or "<b>WAITING (Batch Cooldown)</b>"
+        return f"<blockquote expandable>{title}\n━━━━━━━━━━━━━━━━━━━━\n{header_content}\n━━━━━━━━━━━━━━━━━━━━\n{btn_lbl}\nNext batch in: <code>{batch_delay}s</code></blockquote>"
 
     elif status == "finished":
+        processed = state.get("processed", 0)
         start_time = state.get("start_time", 0)
         duration = round(time.time() - start_time, 2) if start_time > 0 else 0
+        failed = state.get("failed", 0)
         
         chat_link = state.get("chat_link")
         chat_display = f"<a href='{chat_link}'>{chat_name}</a>" if chat_link else f"<b>{chat_name}</b>"
         
-        fin_text = (loc("purgeme_finished_detailed") or "<b>Finished!</b>\nDeleted: <code>{processed}</code> messages\nTime: <code>{duration}s</code>\nChat: {chat}\nAccount: <code>{account}</code>").format(
-            processed=processed, duration=duration, chat=chat_display, account=account_name
+        fin_text = (
+            f"✅ <b>Finished!</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"• <b>Deleted:</b> <code>{processed}</code> messages\n"
+            f"• <b>Failed/Skip:</b> <code>{failed}</code> messages\n"
+            f"• <b>Time:</b> <code>{duration}s</code>\n"
+            f"• <b>Chat:</b> {chat_display}\n"
+            f"• <b>Account:</b> <code>{account_name}</code>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"• <b>Mode:</b> <code>{mode.capitalize()}</code> | <b>Type:</b> <code>{type_display}</code>\n"
+            f"• <b>Target:</b> <code>{count}</code> | <b>Offset:</b> <code>{offset}</code>\n"
+            f"• <b>Batch:</b> <code>{batch_size}</code>\n"
+            f"• <b>Delay/Msg:</b> <code>{delay}s</code>\n"
+            f"• <b>Delay/Batch:</b> <code>{int(batch_delay/60)}m</code>\n"
+            f"━━━━━━━━━━━━━━━━━━"
         )
-        return f"{title}\n\n{fin_text}"
+        return f"<blockquote expandable>{title}\n\n{fin_text}</blockquote>"
 
     elif status == "info":
         info_text = loc("purgeme_info_text") or "Info Text Not Found"
-        return f"{title}\n\n{info_text}"
+        return f"<blockquote expandable>{title}\n\n{info_text}</blockquote>"
         
     elif status == "confirm":
         confirm_text = (
-            f"{header}\n"
+            f"<blockquote expandable>{title}\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"{header_content}\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
             f"⚠️ <b>Konfirmasi Purgeme</b>\n"
             f"Apakah Anda yakin ingin menghapus <code>{count}</code> pesan Anda di <b>{chat_name}</b>?\n\n"
-            f"<i>Tekan [Yes, Delete!] untuk melanjutkan atau [No, Cancel] untuk membatalkan.</i>"
+            f"<i>Tekan [Yes, Delete!] untuk melanjutkan atau [No, Cancel] untuk membatalkan.</i></blockquote>"
         )
         return confirm_text
 
     elif status == "cancelled":
         lbl = loc("purgeme_cancelled_short") or "<b>Cancelled</b>"
-        return f"{title}\n━━━━━━━━━━━━━━━━━━━━\n{lbl}"
+        return f"<blockquote expandable>{title}\n━━━━━━━━━━━━━━━━━━━━\n{lbl}</blockquote>"
         
-    return title
+    return f"<blockquote expandable>{title}</blockquote>"
 
 async def get_purgeme_keyboard(chat_id, user_id, unique_id):
     # Ensure user_id is an integer for correct database lookup in get_user_button_style
@@ -151,7 +172,6 @@ async def get_purgeme_keyboard(chat_id, user_id, unique_id):
     if not state:
         return InlineKeyboardMarkup([[InlineKeyboardButton("Session Ended", callback_data="purgeme_close", style=btn_style)]])
 
-    status = state["status"]
     status = state["status"]
     count = state["count"]
     delay = state["delay"]
@@ -167,157 +187,237 @@ async def get_purgeme_keyboard(chat_id, user_id, unique_id):
         return s if s else default
 
     if status == "config":
-        # Count Controls
-        count_lbl = loc("purgeme_count", "Count: {}").format(count)
-        buttons.append([
-            InlineKeyboardButton(count_lbl, callback_data="noop", style=btn_style),
-            InlineKeyboardButton("-10", callback_data=f"pg_cnt_sub_10_{unique_id}", style=btn_style),
-            InlineKeyboardButton("+10", callback_data=f"pg_cnt_add_10_{unique_id}", style=btn_style),
-            InlineKeyboardButton("+100", callback_data=f"pg_cnt_add_100_{unique_id}", style=btn_style),
-        ])
+        sub_menu = state.get("sub_menu")
         
-        # Delay Controls
-        delay_lbl = loc("purgeme_delay", "Delay: {}s").format(delay)
-        reset_lbl = loc("purgeme_reset", "Reset")
-        buttons.append([
-            InlineKeyboardButton(delay_lbl, callback_data="noop", style=btn_style),
-            InlineKeyboardButton("-0.5s", callback_data=f"pg_dly_sub_0.5_{unique_id}", style=btn_style),
-            InlineKeyboardButton("+0.5s", callback_data=f"pg_dly_add_0.5_{unique_id}", style=btn_style),
-            InlineKeyboardButton(reset_lbl, callback_data=f"pg_dly_reset_{unique_id}", style=btn_style),
-        ])
+        # ─── SUB-MENUS ───
+        if sub_menu == "count":
+            # Count Sub-Menu
+            count_lbl = loc("purgeme_count", "Count: {}").format(count)
+            buttons.append([InlineKeyboardButton(f"━━ {count_lbl} ━━", callback_data="noop", style=btn_style)])
+            buttons.append([
+                InlineKeyboardButton("-10", callback_data=f"pg_cnt_sub_10_{unique_id}", style=btn_style),
+                InlineKeyboardButton("-1", callback_data=f"pg_cnt_sub_1_{unique_id}", style=btn_style),
+                InlineKeyboardButton("+1", callback_data=f"pg_cnt_add_1_{unique_id}", style=btn_style),
+                InlineKeyboardButton("+10", callback_data=f"pg_cnt_add_10_{unique_id}", style=btn_style),
+            ])
+            buttons.append([
+                InlineKeyboardButton("+50", callback_data=f"pg_cnt_add_50_{unique_id}", style=btn_style),
+                InlineKeyboardButton("+100", callback_data=f"pg_cnt_add_100_{unique_id}", style=btn_style),
+                InlineKeyboardButton("+500", callback_data=f"pg_cnt_add_500_{unique_id}", style=btn_style),
+            ])
+            buttons.append([InlineKeyboardButton("◀️ Back", callback_data=f"pg_back_{unique_id}", style=btn_style)])
         
-        # Mode Selection
-        curr_mode = state.get("mode", "latest")
-        mode_lbl_key = "purgeme_mode_latest" if curr_mode == "latest" else "purgeme_mode_oldest"
-        mode_lbl = loc(mode_lbl_key, curr_mode.capitalize())
+        elif sub_menu == "batch":
+            # Batch Sub-Menu
+            batch_lbl = f"Batch: {batch_size}"
+            buttons.append([InlineKeyboardButton(f"━━ {batch_lbl} ━━", callback_data="noop", style=btn_style)])
+            buttons.append([
+                InlineKeyboardButton("-10", callback_data=f"pg_btc_sub_10_{unique_id}", style=btn_style),
+                InlineKeyboardButton("-5", callback_data=f"pg_btc_sub_5_{unique_id}", style=btn_style),
+                InlineKeyboardButton("+5", callback_data=f"pg_btc_add_5_{unique_id}", style=btn_style),
+                InlineKeyboardButton("+10", callback_data=f"pg_btc_add_10_{unique_id}", style=btn_style),
+            ])
+            buttons.append([
+                InlineKeyboardButton("+50", callback_data=f"pg_btc_add_50_{unique_id}", style=btn_style),
+                InlineKeyboardButton("+100", callback_data=f"pg_btc_add_100_{unique_id}", style=btn_style),
+            ])
+            buttons.append([InlineKeyboardButton("◀️ Back", callback_data=f"pg_back_{unique_id}", style=btn_style)])
         
-        latest_btn = f"{'✅' if curr_mode == 'latest' else '☑️'} {loc('purgeme_mode_latest', 'Newest')}"
-        oldest_btn = f"{'✅' if curr_mode == 'oldest' else '☑️'} {loc('purgeme_mode_oldest', 'Oldest')}"
+        elif sub_menu == "delay":
+            # Delay/Msg Sub-Menu
+            delay_lbl = loc("purgeme_delay", "Delay/Msg: {}s").format(delay)
+            buttons.append([InlineKeyboardButton(f"━━ {delay_lbl} ━━", callback_data="noop", style=btn_style)])
+            buttons.append([
+                InlineKeyboardButton("-1s", callback_data=f"pg_dly_sub_1.0_{unique_id}", style=btn_style),
+                InlineKeyboardButton("-0.5s", callback_data=f"pg_dly_sub_0.5_{unique_id}", style=btn_style),
+                InlineKeyboardButton("+0.5s", callback_data=f"pg_dly_add_0.5_{unique_id}", style=btn_style),
+                InlineKeyboardButton("+1s", callback_data=f"pg_dly_add_1.0_{unique_id}", style=btn_style),
+            ])
+            buttons.append([
+                InlineKeyboardButton("+5s", callback_data=f"pg_dly_add_5.0_{unique_id}", style=btn_style),
+                InlineKeyboardButton("Reset", callback_data=f"pg_dly_reset_{unique_id}", style=btn_style),
+            ])
+            buttons.append([InlineKeyboardButton("◀️ Back", callback_data=f"pg_back_{unique_id}", style=btn_style)])
         
-        buttons.append([
-            InlineKeyboardButton(f"Mode: {mode_lbl}", callback_data="noop", style=btn_style),
-            InlineKeyboardButton(latest_btn, callback_data=f"pg_mode_latest_{unique_id}", style=btn_style),
-            InlineKeyboardButton(oldest_btn, callback_data=f"pg_mode_oldest_{unique_id}", style=btn_style),
-        ])
+        elif sub_menu == "bdelay":
+            # Delay/Batch Sub-Menu
+            bd_min = int(batch_delay / 60)
+            bd_lbl = f"Delay/Batch: {bd_min}m"
+            buttons.append([InlineKeyboardButton(f"━━ {bd_lbl} ━━", callback_data="noop", style=btn_style)])
+            buttons.append([
+                InlineKeyboardButton("-2m", callback_data=f"pg_dbc_sub_2m_{unique_id}", style=btn_style),
+                InlineKeyboardButton("+2m", callback_data=f"pg_dbc_add_2m_{unique_id}", style=btn_style),
+                InlineKeyboardButton("+5m", callback_data=f"pg_dbc_add_5m_{unique_id}", style=btn_style),
+                InlineKeyboardButton("+10m", callback_data=f"pg_dbc_add_10m_{unique_id}", style=btn_style),
+            ])
+            buttons.append([
+                InlineKeyboardButton("+30m", callback_data=f"pg_dbc_add_30m_{unique_id}", style=btn_style),
+                InlineKeyboardButton("Reset", callback_data=f"pg_dbc_sub_999m_{unique_id}", style=btn_style),
+            ])
+            buttons.append([InlineKeyboardButton("◀️ Back", callback_data=f"pg_back_{unique_id}", style=btn_style)])
         
-        # Row 4: Notification Toggle
-        notify_active = state.get("notify", True)
-        notif_lbl = Altruix.get_string("GP_BTN_NOTIF_ON" if notify_active else "GP_BTN_NOTIF_OFF") or (f"Notif: ON" if notify_active else "Notif: OFF")
-        buttons.append([
-            InlineKeyboardButton(notif_lbl, callback_data=f"pg_notify_{unique_id}", style=btn_style),
-        ])
-
-        # Batch Controls
-        batch_lbl = f"Batch: {batch_size}"
-        buttons.append([
-            InlineKeyboardButton(batch_lbl, callback_data="noop", style=btn_style),
-            InlineKeyboardButton("-10", callback_data=f"pg_btc_sub_10_{unique_id}", style=btn_style),
-            InlineKeyboardButton("+10", callback_data=f"pg_btc_add_10_{unique_id}", style=btn_style),
-        ])
-
-        # Batch Delay Controls
-        bd_min = int(batch_delay / 60)
-        bd_lbl = f"DelayBc: {bd_min}m"
-        buttons.append([
-            InlineKeyboardButton(bd_lbl, callback_data="noop", style=btn_style),
-            InlineKeyboardButton("-2m", callback_data=f"pg_dbc_sub_2m_{unique_id}", style=btn_style),
-            InlineKeyboardButton("+2m", callback_data=f"pg_dbc_add_2m_{unique_id}", style=btn_style),
-            InlineKeyboardButton("+10m", callback_data=f"pg_dbc_add_10m_{unique_id}", style=btn_style),
-        ])
-
-        # Offset Controls
-        off_lbl = f"Offset: {offset}"
-        buttons.append([
-            InlineKeyboardButton(off_lbl, callback_data="noop", style=btn_style),
-            InlineKeyboardButton("-5", callback_data=f"pg_off_sub_5_{unique_id}", style=btn_style),
-            InlineKeyboardButton("+5", callback_data=f"pg_off_add_5_{unique_id}", style=btn_style),
-            InlineKeyboardButton("Reset", callback_data=f"pg_off_reset_{unique_id}", style=btn_style),
-        ])
+        elif sub_menu == "mode":
+            # Mode & Notify Sub-Menu
+            curr_mode = state.get("mode", "latest")
+            buttons.append([InlineKeyboardButton("━━ Mode & Notify ━━", callback_data="noop", style=btn_style)])
+            latest_btn = f"{'✅' if curr_mode == 'latest' else '☑️'} {loc('purgeme_mode_latest', 'Newest')}"
+            oldest_btn = f"{'✅' if curr_mode == 'oldest' else '☑️'} {loc('purgeme_mode_oldest', 'Oldest')}"
+            buttons.append([
+                InlineKeyboardButton(latest_btn, callback_data=f"pg_mode_latest_{unique_id}", style=btn_style),
+                InlineKeyboardButton(oldest_btn, callback_data=f"pg_mode_oldest_{unique_id}", style=btn_style),
+            ])
+            notify_active = state.get("notify", True)
+            notif_lbl = Altruix.get_string("GP_BTN_NOTIF_ON" if notify_active else "GP_BTN_NOTIF_OFF") or (f"🔔 Notif: ON" if notify_active else "🔕 Notif: OFF")
+            buttons.append([InlineKeyboardButton(notif_lbl, callback_data=f"pg_notify_{unique_id}", style=btn_style)])
+            buttons.append([InlineKeyboardButton("◀️ Back", callback_data=f"pg_back_{unique_id}", style=btn_style)])
         
-        # Row 1: Core Media
-        type_row_1 = []
-        all_active = "✅" if "all" in types else "☑️"
-        type_row_1.append(InlineKeyboardButton(f"{all_active} {loc('GP_BTN_ALL', 'All')}", callback_data=f"pg_typ_all_{unique_id}", style=btn_style))
+        elif sub_menu == "offset":
+            # Offset Sub-Menu
+            off_lbl = f"Offset: {offset}"
+            buttons.append([InlineKeyboardButton(f"━━ {off_lbl} ━━", callback_data="noop", style=btn_style)])
+            buttons.append([
+                InlineKeyboardButton("-10", callback_data=f"pg_off_sub_10_{unique_id}", style=btn_style),
+                InlineKeyboardButton("-5", callback_data=f"pg_off_sub_5_{unique_id}", style=btn_style),
+                InlineKeyboardButton("+5", callback_data=f"pg_off_add_5_{unique_id}", style=btn_style),
+                InlineKeyboardButton("+10", callback_data=f"pg_off_add_10_{unique_id}", style=btn_style),
+            ])
+            buttons.append([
+                InlineKeyboardButton("+50", callback_data=f"pg_off_add_50_{unique_id}", style=btn_style),
+                InlineKeyboardButton("Reset", callback_data=f"pg_off_reset_{unique_id}", style=btn_style),
+            ])
+            buttons.append([InlineKeyboardButton("◀️ Back", callback_data=f"pg_back_{unique_id}", style=btn_style)])
         
-        photo_active = "✅" if ("photo" in types or "image" in types) else "☑️"
-        type_row_1.append(InlineKeyboardButton(f"{photo_active} {loc('GP_BTN_IMG', 'Photo')}", callback_data=f"pg_typ_photo_{unique_id}", style=btn_style))
+        elif sub_menu == "filter":
+            # Message Type Filter Sub-Menu
+            # Mapping for special types
+            TYPE_MAP = {
+                "video_note": "VNOTE", "animation": "GIF", "document": "DOC",
+                "location": "LOC", "contact": "CONT", "venue": "VEN"
+            }
+            if not types or "all" in types:
+                filter_display = loc("GP_BTN_ALL", "All")
+            elif len(types) > 1:
+                filter_display = f"Multiple ({len(types)})"
+            else:
+                raw = types[0].lower()
+                suffix = TYPE_MAP.get(raw, raw.upper())
+                filter_display = loc(f"GP_BTN_{suffix}", suffix)
+            
+            buttons.append([InlineKeyboardButton(f"━━ Filter: {filter_display} ━━", callback_data="noop", style=btn_style)])
+            
+            # Row 1
+            all_active = "✅" if "all" in types else "☑️"
+            photo_active = "✅" if ("photo" in types or "image" in types) else "☑️"
+            vid_active = "✅" if "video" in types else "☑️"
+            buttons.append([
+                InlineKeyboardButton(f"{all_active} {loc('GP_BTN_ALL', 'All')}", callback_data=f"pg_typ_all_{unique_id}", style=btn_style),
+                InlineKeyboardButton(f"{photo_active} {loc('GP_BTN_IMG', 'Photo')}", callback_data=f"pg_typ_photo_{unique_id}", style=btn_style),
+                InlineKeyboardButton(f"{vid_active} {loc('GP_BTN_VID', 'Video')}", callback_data=f"pg_typ_video_{unique_id}", style=btn_style),
+            ])
+            # Row 2
+            txt_active = "✅" if "text" in types else "☑️"
+            aud_active = "✅" if "audio" in types else "☑️"
+            stk_active = "✅" if "sticker" in types else "☑️"
+            buttons.append([
+                InlineKeyboardButton(f"{txt_active} {loc('GP_BTN_TXT', 'Text')}", callback_data=f"pg_typ_text_{unique_id}", style=btn_style),
+                InlineKeyboardButton(f"{aud_active} {loc('GP_BTN_AUD', 'Audio')}", callback_data=f"pg_typ_audio_{unique_id}", style=btn_style),
+                InlineKeyboardButton(f"{stk_active} {loc('GP_BTN_STK', 'Sticker')}", callback_data=f"pg_typ_sticker_{unique_id}", style=btn_style),
+            ])
+            # Row 3
+            anim_active = "✅" if ("animation" in types or "gif" in types) else "☑️"
+            doc_active = "✅" if ("document" in types or "file" in types) else "☑️"
+            vnote_active = "✅" if ("video_note" in types or "vnote" in types) else "☑️"
+            buttons.append([
+                InlineKeyboardButton(f"{anim_active} {loc('GP_BTN_GIF', 'Anim')}", callback_data=f"pg_typ_animation_{unique_id}", style=btn_style),
+                InlineKeyboardButton(f"{doc_active} {loc('GP_BTN_DOC', 'Doc')}", callback_data=f"pg_typ_document_{unique_id}", style=btn_style),
+                InlineKeyboardButton(f"{vnote_active} {loc('GP_BTN_VNOTE', 'VNote')}", callback_data=f"pg_typ_video_note_{unique_id}", style=btn_style),
+            ])
+            # Row 4
+            voice_active = "✅" if "voice" in types else "☑️"
+            contact_active = "✅" if "contact" in types else "☑️"
+            loc_active = "✅" if "location" in types else "☑️"
+            buttons.append([
+                InlineKeyboardButton(f"{voice_active} {loc('GP_BTN_VN', 'Voice')}", callback_data=f"pg_typ_voice_{unique_id}", style=btn_style),
+                InlineKeyboardButton(f"{contact_active} {loc('GP_BTN_CONT', 'Contact')}", callback_data=f"pg_typ_contact_{unique_id}", style=btn_style),
+                InlineKeyboardButton(f"{loc_active} {loc('GP_BTN_LOC', 'Loc')}", callback_data=f"pg_typ_location_{unique_id}", style=btn_style),
+            ])
+            # Row 5
+            venue_active = "✅" if "venue" in types else "☑️"
+            game_active = "✅" if "game" in types else "☑️"
+            poll_active = "✅" if "poll" in types else "☑️"
+            buttons.append([
+                InlineKeyboardButton(f"{venue_active} {loc('GP_BTN_VEN', 'Venue')}", callback_data=f"pg_typ_venue_{unique_id}", style=btn_style),
+                InlineKeyboardButton(f"{game_active} {loc('GP_BTN_GAME', 'Game')}", callback_data=f"pg_typ_game_{unique_id}", style=btn_style),
+                InlineKeyboardButton(f"{poll_active} {loc('GP_BTN_POLL', 'Poll')}", callback_data=f"pg_typ_poll_{unique_id}", style=btn_style),
+            ])
+            # Row 6
+            dice_active = "✅" if "dice" in types else "☑️"
+            web_active = "✅" if "web_page" in types else "☑️"
+            buttons.append([
+                InlineKeyboardButton(f"{dice_active} {loc('GP_BTN_DICE', 'Dice')}", callback_data=f"pg_typ_dice_{unique_id}", style=btn_style),
+                InlineKeyboardButton(f"{web_active} Link", callback_data=f"pg_typ_web_page_{unique_id}", style=btn_style),
+            ])
+            # Row 7
+            story_active = "✅" if "story" in types else "☑️"
+            svc_active = "✅" if "service" in types else "☑️"
+            buttons.append([
+                InlineKeyboardButton(f"{story_active} Story", callback_data=f"pg_typ_story_{unique_id}", style=btn_style),
+                InlineKeyboardButton(f"{svc_active} Service", callback_data=f"pg_typ_service_{unique_id}", style=btn_style),
+            ])
+            buttons.append([InlineKeyboardButton("◀️ Back", callback_data=f"pg_back_{unique_id}", style=btn_style)])
         
-        vid_active = "✅" if "video" in types else "☑️"
-        type_row_1.append(InlineKeyboardButton(f"{vid_active} {loc('GP_BTN_VID', 'Video')}", callback_data=f"pg_typ_video_{unique_id}", style=btn_style))
-        
-        buttons.append(type_row_1)
-
-        # Row 2: Engagement
-        type_row_2 = []
-        txt_active = "✅" if "text" in types else "☑️"
-        type_row_2.append(InlineKeyboardButton(f"{txt_active} {loc('GP_BTN_TXT', 'Text')}", callback_data=f"pg_typ_text_{unique_id}", style=btn_style))
-
-        aud_active = "✅" if "audio" in types else "☑️"
-        type_row_2.append(InlineKeyboardButton(f"{aud_active} {loc('GP_BTN_AUD', 'Audio')}", callback_data=f"pg_typ_audio_{unique_id}", style=btn_style))
-
-        stk_active = "✅" if "sticker" in types else "☑️"
-        type_row_2.append(InlineKeyboardButton(f"{stk_active} {loc('GP_BTN_STK', 'Sticker')}", callback_data=f"pg_typ_sticker_{unique_id}", style=btn_style))
-        
-        buttons.append(type_row_2)
-        
-        # Row 3: Rich Media
-        type_row_3 = []
-        anim_active = "✅" if ("animation" in types or "gif" in types) else "☑️"
-        type_row_3.append(InlineKeyboardButton(f"{anim_active} {loc('GP_BTN_GIF', 'Anim')}", callback_data=f"pg_typ_animation_{unique_id}", style=btn_style))
-
-        doc_active = "✅" if ("document" in types or "file" in types) else "☑️"
-        type_row_3.append(InlineKeyboardButton(f"{doc_active} {loc('GP_BTN_DOC', 'Doc')}", callback_data=f"pg_typ_document_{unique_id}", style=btn_style))
-
-        vnote_active = "✅" if ("video_note" in types or "vnote" in types) else "☑️"
-        type_row_3.append(InlineKeyboardButton(f"{vnote_active} {loc('GP_BTN_VNOTE', 'VNote')}", callback_data=f"pg_typ_video_note_{unique_id}", style=btn_style))
-        
-        buttons.append(type_row_3)
-
-        # Row 4: Specialized
-        type_row_4 = []
-        voice_active = "✅" if "voice" in types else "☑️"
-        type_row_4.append(InlineKeyboardButton(f"{voice_active} {loc('GP_BTN_VN', 'Voice')}", callback_data=f"pg_typ_voice_{unique_id}", style=btn_style))
-
-        contact_active = "✅" if "contact" in types else "☑️"
-        type_row_4.append(InlineKeyboardButton(f"{contact_active} {loc('GP_BTN_CONT', 'Contact')}", callback_data=f"pg_typ_contact_{unique_id}", style=btn_style))
-
-        loc_active = "✅" if "location" in types else "☑️"
-        type_row_4.append(InlineKeyboardButton(f"{loc_active} {loc('GP_BTN_LOC', 'Loc')}", callback_data=f"pg_typ_location_{unique_id}", style=btn_style))
-        
-        buttons.append(type_row_4)
-
-        # Row 5: Interaction
-        type_row_5 = []
-        venue_active = "✅" if "venue" in types else "☑️"
-        type_row_5.append(InlineKeyboardButton(f"{venue_active} {loc('GP_BTN_VEN', 'Venue')}", callback_data=f"pg_typ_venue_{unique_id}", style=btn_style))
-
-        game_active = "✅" if "game" in types else "☑️"
-        type_row_5.append(InlineKeyboardButton(f"{game_active} {loc('GP_BTN_GAME', 'Game')}", callback_data=f"pg_typ_game_{unique_id}", style=btn_style))
-
-        poll_active = "✅" if "poll" in types else "☑️"
-        type_row_5.append(InlineKeyboardButton(f"{poll_active} {loc('GP_BTN_POLL', 'Poll')}", callback_data=f"pg_typ_poll_{unique_id}", style=btn_style))
-        
-        buttons.append(type_row_5)
-
-        # Row 6: Games
-        buttons.append([
-            InlineKeyboardButton(f"{'✅' if 'dice' in types else '☑️'} {loc('GP_BTN_DICE', 'Dice')}", callback_data=f"pg_typ_dice_{unique_id}", style=btn_style)
-        ])
-        
-        # Action Buttons
-        start_lbl = loc("purgeme_start_purge", "Start Purgeme")
-        cancel_lbl = loc("purgeme_cancel_purge", "Cancel")
-        info_lbl = loc("purgeme_info_btn", "Info")
-        buttons.append([
-            InlineKeyboardButton(start_lbl, callback_data=f"pg_start_{unique_id}", style=btn_style),
-            InlineKeyboardButton(cancel_lbl, callback_data=f"pg_cancel_{unique_id}", style=btn_style),
-            InlineKeyboardButton(info_lbl, callback_data=f"pg_info_{unique_id}", style=btn_style),
-        ])
+        else:
+            # ─── MAIN CONFIG MENU (Compact) ───
+            curr_mode = state.get("mode", "latest")
+            mode_lbl = loc("purgeme_mode_oldest" if curr_mode == "oldest" else "purgeme_mode_latest", curr_mode.capitalize())
+            bd_min = int(batch_delay / 60)
+            
+            # Determine filter display text
+            TYPE_MAP = {
+                "video_note": "VNOTE", "animation": "GIF", "document": "DOC",
+                "location": "LOC", "contact": "CONT", "venue": "VEN"
+            }
+            if not types or "all" in types:
+                filter_display = loc("GP_BTN_ALL", "All")
+            elif len(types) > 1:
+                filter_display = f"Multi({len(types)})"
+            else:
+                raw = types[0].lower()
+                suffix = TYPE_MAP.get(raw, raw.upper())
+                filter_display = loc(f"GP_BTN_{suffix}", suffix)
+            
+            # Row 1: Count & Batch
+            buttons.append([
+                InlineKeyboardButton(f"📊 Count: {count} msg", callback_data=f"pg_menu_count_{unique_id}", style=btn_style),
+                InlineKeyboardButton(f"📦 Batch: {batch_size} msg", callback_data=f"pg_menu_batch_{unique_id}", style=btn_style),
+            ])
+            # Row 2: Delay/Msg & Delay/Batch
+            buttons.append([
+                InlineKeyboardButton(f"⏱ Delay: {delay}s", callback_data=f"pg_menu_delay_{unique_id}", style=btn_style),
+                InlineKeyboardButton(f"⏳ DelayBc: {bd_min}m", callback_data=f"pg_menu_bdelay_{unique_id}", style=btn_style),
+            ])
+            # Row 3: Mode & Offset
+            buttons.append([
+                InlineKeyboardButton(f"🔄 Mode: {mode_lbl}", callback_data=f"pg_menu_mode_{unique_id}", style=btn_style),
+                InlineKeyboardButton(f"📐 Offset: {offset}", callback_data=f"pg_menu_offset_{unique_id}", style=btn_style),
+            ])
+            # Row 4: Filter & Info
+            buttons.append([
+                InlineKeyboardButton(f"🔍 Filter: {filter_display}", callback_data=f"pg_menu_filter_{unique_id}", style=btn_style),
+                InlineKeyboardButton(loc("purgeme_info_btn", "ℹ️ Info"), callback_data=f"pg_info_{unique_id}", style=btn_style),
+            ])
+            # Row 5: Start & Cancel
+            start_lbl = loc("purgeme_start_purge", "🚀 Start Purgeme")
+            cancel_lbl = loc("purgeme_cancel_purge", "❌ Cancel")
+            buttons.append([
+                InlineKeyboardButton(start_lbl, callback_data=f"pg_start_{unique_id}", style=btn_style),
+                InlineKeyboardButton(cancel_lbl, callback_data=f"pg_cancel_{unique_id}", style=btn_style),
+            ])
     
-    elif status == "running":
+    elif status in ["running", "waiting"]:
         pause_lbl = loc("purgeme_pause", "Pause")
         stop_lbl = loc("purgeme_stop", "Stop")
-        refresh_lbl = loc("purgeme_refresh", "Refresh")
+        refresh_lbl = loc("purgeme_refresh", "Status")
         
         buttons.append([
             InlineKeyboardButton(pause_lbl, callback_data=f"pg_pause_{unique_id}", style=btn_style),
@@ -328,7 +428,7 @@ async def get_purgeme_keyboard(chat_id, user_id, unique_id):
     elif status == "paused":
         resume_lbl = loc("purgeme_resume", "Resume")
         stop_lbl = loc("purgeme_stop", "Stop")
-        refresh_lbl = loc("purgeme_refresh", "Refresh")
+        refresh_lbl = loc("purgeme_refresh", "Status")
         
         buttons.append([
             InlineKeyboardButton(resume_lbl, callback_data=f"pg_resume_{unique_id}", style=btn_style),
@@ -336,21 +436,32 @@ async def get_purgeme_keyboard(chat_id, user_id, unique_id):
         ])
         buttons.append([InlineKeyboardButton(refresh_lbl, callback_data=f"pg_refresh_{unique_id}", style=btn_style)])
 
-    elif status == "confirm":
-        yes_lbl = loc("purgeme_confirm_yes", "Yes, Delete!")
-        no_lbl = loc("purgeme_confirm_no", "No, Cancel")
+    elif status == "collecting":
+        stop_lbl = loc("purgeme_stop", "Stop")
         buttons.append([
-            InlineKeyboardButton(f"✅ {yes_lbl}", callback_data=f"pg_confirmyes_{unique_id}", style=btn_style),
-            InlineKeyboardButton(f"❌ {no_lbl}", callback_data=f"pg_cancel_{unique_id}", style=btn_style),
+            InlineKeyboardButton(stop_lbl, callback_data=f"pg_stop_{unique_id}", style=btn_style)
+        ])
+
+    elif status == "finished":
+        repeat_lbl = loc("purgeme_repeat", "🔁 Repeat")
+        close_lbl = loc("purgeme_close", "❌ Close")
+        buttons.append([
+            InlineKeyboardButton(repeat_lbl, callback_data=f"pg_repeat_{unique_id}", style=btn_style),
+            InlineKeyboardButton(close_lbl, callback_data=f"purgeme_close_{unique_id}", style=btn_style)
+        ])
+
+    elif status == "confirm":
+        yes_lbl = loc("purgeme_confirm_yes", "✅ Yes, Delete!")
+        no_lbl = loc("purgeme_confirm_no", "❌ No, Cancel")
+        buttons.append([
+            InlineKeyboardButton(yes_lbl, callback_data=f"pg_confirmyes_{unique_id}", style=btn_style),
+            InlineKeyboardButton(no_lbl, callback_data=f"pg_cancel_{unique_id}", style=btn_style),
         ])
 
     elif status == "info":
         back_lbl = loc("back", "Back")
         buttons.append([InlineKeyboardButton(back_lbl, callback_data=f"pg_back_{unique_id}", style=btn_style)])
 
-    elif status == "finished":
-        close_lbl = loc("purgeme_close", "Close")
-        buttons.append([InlineKeyboardButton(close_lbl, callback_data=f"purgeme_close_{unique_id}", style=btn_style)])
 
     return InlineKeyboardMarkup(buttons)
 
@@ -407,16 +518,22 @@ async def purgeme_callback_handler(client: Client, cb: CallbackQuery):
     # ─── 🔐 SECURITY ENFORCEMENT ───
     # We must determine the session owner before processing ANY action.
     # Format map: pg_{action}_{params}_{unique_id}
-    prefix_map = {
-        "cnt_add": 4, "cnt_sub": 4, "dly_add": 4, "dly_sub": 4, "dly_reset": 3,
-        "btc_add": 4, "btc_sub": 4, "dbc_add": 4, "dbc_sub": 4,
-        "off_add": 4, "off_sub": 4, "off_reset": 3,
-        "typ": 3, "start": 2, "confirmyes": 2, "cancel": 2, "stop": 2, "pause": 2,
-        "resume": 2, "refresh": 2, "mode": 3, "notify": 2, "abort": 2, "info": 2, "back": 2
-    }
+    # IMPORTANT: Order matters! Longer prefixes must be checked FIRST to prevent
+    # false substring matches (e.g., "pg_mode" matching inside "pg_menu_mode")
+    prefix_map = [
+        ("menu_count", 3), ("menu_batch", 3), ("menu_delay", 3), ("menu_bdelay", 3),
+        ("menu_mode", 3), ("menu_offset", 3), ("menu_filter", 3),
+        ("cnt_add", 4), ("cnt_sub", 4), ("dly_add", 4), ("dly_sub", 4), ("dly_reset", 3),
+        ("btc_add", 4), ("btc_sub", 4), ("dbc_add", 4), ("dbc_sub", 4),
+        ("off_add", 4), ("off_sub", 4), ("off_reset", 3),
+        ("confirmyes", 2),
+        ("typ", 3), ("start", 2), ("cancel", 2), ("stop", 2), ("pause", 2),
+        ("resume", 2), ("refresh", 2), ("mode", 3), ("notify", 2), ("abort", 2),
+        ("info", 2), ("back", 2), ("repeat", 2)
+    ]
     
     curr_prefix = None
-    for p, count in prefix_map.items():
+    for p, count in prefix_map:
         if f"pg_{p}" in data:
             curr_prefix = count
             break
@@ -470,6 +587,23 @@ async def purgeme_callback_handler(client: Client, cb: CallbackQuery):
         elif "dly_reset" in data:
             state["delay"] = 0
 
+        # ─── SUB-MENU NAVIGATION (must be checked BEFORE short prefixes!) ───
+        # "mode_" substring exists in "menu_mode", so menu_* MUST come first
+        elif "menu_count" in data:
+            state["sub_menu"] = "count"
+        elif "menu_batch" in data:
+            state["sub_menu"] = "batch"
+        elif "menu_delay" in data:
+            state["sub_menu"] = "delay"
+        elif "menu_bdelay" in data:
+            state["sub_menu"] = "bdelay"
+        elif "menu_mode" in data:
+            state["sub_menu"] = "mode"
+        elif "menu_offset" in data:
+            state["sub_menu"] = "offset"
+        elif "menu_filter" in data:
+            state["sub_menu"] = "filter"
+
         elif "mode_" in data:
             mode = parts[2]
             state["mode"] = mode
@@ -479,7 +613,12 @@ async def purgeme_callback_handler(client: Client, cb: CallbackQuery):
             state["notify"] = not state.get("notify", True)
 
         elif "typ_" in data:
-            t_type = parts[2]
+            # Extract full type name by stripping prefix and unique_id suffix
+            # This handles multi-word types like video_note, web_page correctly
+            # Format: pg_typ_{type}_{unique_id} where unique_id = {chat_id}_{user_id}
+            type_part = data.replace(f"pg_typ_", "", 1)  # Remove prefix
+            # unique_id is at the end, remove it
+            t_type = type_part.replace(f"_{unique_id}", "", 1)
             if t_type == "all":
                 if "all" in state["types"]:
                     state["types"] = []
@@ -529,10 +668,17 @@ async def purgeme_callback_handler(client: Client, cb: CallbackQuery):
 
         elif "info" in data:
             # ─── 1. FIX: Info Page Logic ───
+            state["sub_menu"] = None
             state["status"] = "info"
             
         elif "back" in data:
-            state["status"] = "config"
+            # If we're in a sub-menu, go back to main config; otherwise go to config from info
+            if state.get("sub_menu"):
+                state["sub_menu"] = None
+            else:
+                state["status"] = "config"
+
+
 
         elif "start" in data:
             # Switch to confirm state instead of immediately starting
@@ -546,6 +692,10 @@ async def purgeme_callback_handler(client: Client, cb: CallbackQuery):
                 title = Altruix.get_string("purgeme_title") or "<b>Userbot Purgeme</b>"
                 btn_style_local = get_user_button_style(int(user_id))
                 
+                chat_name = state.get("chat_name", "Unknown")
+                chat_link = state.get("chat_link")
+                display_name = f"<a href='{chat_link}'>{chat_name}</a>" if chat_link else f"<b>{chat_name}</b>"
+                
                 # IMPORTANT: Ensure persistent message tracking for deletion later
                 if cb.message:
                     state["dashboard_msg_id"] = cb.message.id
@@ -553,14 +703,15 @@ async def purgeme_callback_handler(client: Client, cb: CallbackQuery):
                     
                 await Altruix.edit_cb(
                     cb,
-                    f"{title}\n⏳ <i>Task is in progress...</i>",
+                    f"<blockquote expandable>{title}\n⏳ <i>Task is in progress...</i>\n<b>Chat:</b> {display_name}</blockquote>",
                     parse_mode=enums.ParseMode.HTML,
                     disable_web_page_preview=True,
                     reply_markup=InlineKeyboardMarkup([
                         [
                             InlineKeyboardButton("Delete MSG", callback_data=f"purgeme_close_{unique_id}", style=btn_style_local),
                             InlineKeyboardButton("Cancel", callback_data=f"pg_abort_{unique_id}", style=btn_style_local)
-                        ]
+                        ],
+                        [InlineKeyboardButton("Status", callback_data=f"pg_refresh_{unique_id}", style=btn_style_local)]
                     ])
                 )
             return # Prevent further processing
@@ -607,6 +758,17 @@ async def purgeme_callback_handler(client: Client, cb: CallbackQuery):
             state["pause_event"].set()
             # No need to answer here, will be answered by general update below
 
+        elif "repeat" in data:
+            state["status"] = "config"
+            state["sub_menu"] = None
+            state["processed"] = 0
+            state["scanned"] = 0
+            state["failed"] = 0
+            state["event"].clear()
+            state["stop_event"].clear()
+            state["pause_event"].set()
+            # Falls through to general UI update
+
         elif "refresh" in data:
             # Just trigger UI update, answer will be handled below
             pass
@@ -626,6 +788,19 @@ async def purgeme_callback_handler(client: Client, cb: CallbackQuery):
         except MessageNotModified:
             # Content didn't change, just answer the callback to stop loading animation
             await cb.answer("Status Updated", show_alert=False)
+        except FloodWait as fw:
+            # Respect Telegram's rate limit, then retry once
+            await asyncio.sleep(fw.value + 1)
+            try:
+                await Altruix.edit_cb(
+                    cb,
+                    new_text,
+                    reply_markup=new_kb,
+                    parse_mode=enums.ParseMode.HTML,
+                    disable_web_page_preview=True
+                )
+            except:
+                pass
         except Exception as inner_e:
             raise inner_e
 

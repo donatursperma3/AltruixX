@@ -38,6 +38,9 @@ async def help_settings_menu_handler(c: Client, cb: CallbackQuery):
         status = await Altruix.config.get_env(f"HELP_INFO_STATUS_{me.id}", default="default")
         custom_msg = await Altruix.config.get_env(f"HELP_INFO_CUSTOM_MSG_{me.id}", default="Not set")
     
+    # ✅ Safety check: Ensure custom_msg is not None for html.escape
+    custom_msg = custom_msg or "Not set"
+    
     # Resolve icons
     type_icon = "🌍" if apply_type == "global" else "👤"
     status_icon = "✅" if status == "custom" else "❌"

@@ -64,7 +64,7 @@ async def help_normal(c: Client, m):
 
     # ✅ PERBAIKAN: Jika ada user_input (plugin target), layani secara normal tanpa paksa inline
     # Fix: Allow plugin help on userbots by removing 'and not user_input' from the inline condition
-    if (not c.myself.is_bot) and "-basic" not in m.user_args and not user_input:
+    if (not c.myself.is_bot) and "-basic" not in m.user_args:
         try:
             bot_username = Altruix.bot_manager.get_bot_username(c.me.id)
             
@@ -72,9 +72,9 @@ async def help_normal(c: Client, m):
             if not bot_username or bot_username == "Unknown":
                 Altruix.log(f"Invalid bot username for user {c.me.id}: {bot_username}", level=40)
                 # Fallback to text help menu
-                pass  # Continue to text-based help below
             else:
-                results = await c.get_inline_bot_results(bot_username, f"help_{chat}")
+                query = f"help_{chat} {user_input}" if user_input else f"help_{chat}"
+                results = await c.get_inline_bot_results(bot_username, query)
                 await c.send_inline_bot_result(
                     chat_id=chat,
                     query_id=results.query_id,
@@ -123,7 +123,7 @@ async def help_normal(c: Client, m):
             header += f"<b>〽️ Arg:</b> <code>{total_arg_count}</code> args\n"
         header += "\n"
         
-        await m.handle_message(f"{header}{help_text.strip()}")
+        await m.handle_message(f"<blockquote expandable>{header}{help_text.strip()}</blockquote>")
     elif not user_input:
         import sys
         import pyrogram

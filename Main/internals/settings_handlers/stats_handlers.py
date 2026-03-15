@@ -65,7 +65,10 @@ async def chat_stats_scan_handler(c: Client, cb: CallbackQuery):
         )
         
         from Main.utils.file_helpers import get_user_button_style
-        user_style = get_user_button_style(cb.from_user.id)
+        if index < len(Altruix.clients):
+            user_style = get_user_button_style(Altruix.clients[index].me.id)
+        else:
+            user_style = get_user_button_style(cb.from_user.id)
         
         await cb.edit_message_text(
             txt,
@@ -75,11 +78,14 @@ async def chat_stats_scan_handler(c: Client, cb: CallbackQuery):
         await send_log_notification(c, 'chat_stats_scan', index, cb.from_user, True)
     except Exception as e:
         from Main.utils.file_helpers import get_user_button_style
-        user_style = get_user_button_style(cb.from_user.id)
+        if index < len(Altruix.clients):
+            user_style = get_user_button_style(Altruix.clients[index].me.id)
+        else:
+            user_style = get_user_button_style(cb.from_user.id)
         await cb.edit_message_text(f"❌ Error scanning stats: {str(e)}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}", style=user_style)]]))
         await send_log_notification(c, 'chat_stats_scan', index, cb.from_user, False, str(e))
 
-@Altruix.bot.on_callback_query(filters.regex("^sessions_stats$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^sessions_stats(?:_(\d+))?$"))
 @log_errors
 @iuser_check
 async def sessions_stats_cb_handler(c: Client, cb: CallbackQuery):
@@ -108,12 +114,17 @@ async def sessions_stats_cb_handler(c: Client, cb: CallbackQuery):
         f"<i>💡 This data reflects current in-memory state.</i>"
     )
     
+    index = int(cb.matches[0].group(1)) if cb.matches and len(cb.matches[0].groups()) >= 1 and cb.matches[0].group(1) else None
+    
     from Main.utils.file_helpers import get_user_button_style
-    user_style = get_user_button_style(cb.from_user.id)
+    if index is not None and index < len(Altruix.clients):
+        user_style = get_user_button_style(Altruix.clients[index].me.id)
+    else:
+        user_style = get_user_button_style(cb.from_user.id)
     
     buttons = [
-        [InlineKeyboardButton("🔄 Refresh Data", "sessions_stats", style=user_style)],
-        [InlineKeyboardButton("🔙 Back", "sessions_list_1", style=user_style)]
+        [InlineKeyboardButton("🔄 Refresh Data", f"sessions_stats{'_' + str(index) if index is not None else ''}", style=user_style)],
+        [InlineKeyboardButton("🔙 Back", f"session_info_{index}_1_5" if index is not None else "sessions_list_1", style=user_style)]
     ]
     
     await edit_cb(cb, txt, reply_markup=InlineKeyboardMarkup(buttons))

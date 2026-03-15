@@ -17,11 +17,18 @@ from pyrogram import Client as client
 
 
 async def set_inline_in_botfather(Client: client):
+    me = getattr(Client, 'myself', None) or getattr(Client, 'me', None)
+    if not me:
+        me = await Client.get_me()
+        Client.myself = me
+        
+    bot_username = Altruix.bot_manager.get_bot_username(me.id)
+    
     await Client.send_message("botfather", "/cancel")
     await asyncio.sleep(1)
     message = await Client.send_message("botfather", "/setinline")
     await asyncio.sleep(1)
-    await message.reply(f"@{Altruix.bot_info.username}")
+    await message.reply(f"@{bot_username}")
     await asyncio.sleep(1)
-    await message.reply("Powered by Altruix")
+    await message.reply("Powered by Altroid-X")
     await asyncio.sleep(1)

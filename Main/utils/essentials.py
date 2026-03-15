@@ -27,6 +27,58 @@ class _Essentials:
         return soup.get_text()
 
     @staticmethod
+    def fix_html(text: str) -> str:
+        """
+        Hardened HTML fixer for Telegram compatibility.
+        - Balances and closes tags.
+        - Whitelists only supported tags: b, i, u, s, code, pre, blockquote, a.
+        - Removes all attributes except 'href' for <a> and 'expandable' for <blockquote>.
+        - Removes empty tags.
+        """
+        if not text:
+            return ""
+        
+        ALLOWED_TAGS = ['b', 'strong', 'i', 'em', 'u', 'ins', 's', 'strike', 'del', 'code', 'pre', 'blockquote', 'a']
+        
+        try:
+            soup = BeautifulSoup(text, "html.parser")
+            
+            # Recursive cleaning
+            for tag in soup.find_all(True):
+                # Normalize tags (e.g., strong -> b, em -> i)
+                if tag.name == 'strong': tag.name = 'b'
+                elif tag.name == 'em': tag.name = 'i'
+                elif tag.name == 'ins': tag.name = 'u'
+                elif tag.name in ['strike', 'del']: tag.name = 's'
+                
+                if tag.name not in ALLOWED_TAGS:
+                    # Strip unsupported tags but keep their contents
+                    tag.unwrap()
+                else:
+                    # Filter attributes
+                    attrs = dict(tag.attrs)
+                    tag.attrs = {}
+                    if tag.name == 'a' and 'href' in attrs:
+                        tag.attrs['href'] = attrs['href']
+                    elif tag.name == 'blockquote':
+                        # Preserve 'expandable' as a boolean attribute for Telegram
+                        if 'expandable' in attrs:
+                            tag.attrs['expandable'] = ""
+            
+            # Remove empty tags (recursively)
+            for tag in soup.find_all(True):
+                if not tag.get_text(strip=True) and not tag.contents:
+                    tag.decompose()
+            
+            fixed = soup.decode_contents()
+            # Restore boolean attributes for Telegram parser
+            return fixed.replace('expandable=""', 'expandable')
+            
+        except Exception:
+            # Fallback for extreme cases: strip all tags if BS4 fails
+            return re.sub(r"<[^>]*>", "", text)
+
+    @staticmethod
     def clean_html(text: str) -> str:
         return re.sub(r"<[^>]*>", "", text)
 

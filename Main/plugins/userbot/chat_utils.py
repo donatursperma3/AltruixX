@@ -7,7 +7,7 @@
 # All rights reserved.
 
 
-PLUGIN_VERSION = "0.0.1"
+PLUGIN_VERSION = "0.0.20"
 import os
 from os import remove
 from Main import Altruix
@@ -28,7 +28,6 @@ b3 = bullets["bullet3"]
         "help": "To change the title of the chat!",
         "example": "setchattitle <newtitle>",
     },
-    group_only=True,
     requires_input=True,
 )
 async def set_chat_title_cmd_handler(c: Client, m: Message):
@@ -40,14 +39,13 @@ async def set_chat_title_cmd_handler(c: Client, m: Message):
         await c.set_chat_title(m.chat.id, title)
     except Exception as be:
         name, err = await Paste(be).paste()
-        return await msg.edit_msg("ERROR_", sting_args=(name, err))
+        return await msg.edit_msg("ERROR_", string_args=(name, err))
     await msg.edit_msg("CHAT_TITLE_CHANGED")
 
 
 @Altruix.register_on_cmd(
     ["setchatpic", "scp"],
     cmd_help={"help": "To set current chat pic", "example": "setchatpic"},
-    group_only=True,
 )
 async def set_chat_pic_cmd_handler(c: Client, m: Message):
     msg = await m.handle_message("PROCESSING")
@@ -77,7 +75,6 @@ async def set_chat_pic_cmd_handler(c: Client, m: Message):
         "help": "To delete chat current pic",
         "example": "delchatpic",
     },
-    group_only=True,
 )
 async def del_chat_pic_cmd_handler(c: Client, m: Message):
     msg = await m.handle_message("PROCESSING")
@@ -90,7 +87,7 @@ async def del_chat_pic_cmd_handler(c: Client, m: Message):
 
 
 @Altruix.register_on_cmd(
-    ["chatinfo", "cinfo", "ci", "groupinfo", "ginfo", "gi"],
+    ["chatinfo", "cinfo", "ci"],
     cmd_help={
         "help": "To get chat info",
         "example": "chatinfo <chat id/chat username>",
@@ -140,4 +137,3 @@ async def get_group_info_cmd_handler(c: Client, m: Message):
         return
     else:
         await msg.edit("".join(ci_text))
-

@@ -1,0 +1,9 @@
+Pillow
+googletrans-py
+moviepy
+aiosqlite
+# pyrogram
+tgcrypto; sys_platform != 'win32'
+pycryptodome
+python-magic; sys_platform != 'win32'
+python-magic-bin; sys_platform == 'win32'

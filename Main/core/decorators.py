@@ -110,7 +110,22 @@ def iuser_check(func):
         # ✅ FIXED: Check authorization using centralized helper
         # This handles dynamic sudo users from database, static list, and per-account settings
         c = args[0] if args and isinstance(args[0], Client) else None
-        is_sudo = await Altruix.is_sudo(user_id, client=c)
+        
+        # ✅ DEBUG STALLING: Log every callback intercept
+        if hasattr(update, 'data') and update.data:
+            Altruix.log(f"🔘 [iuser_check] Intercepted Callback: {update.data} (User: {user_id})", level=20, client=c)
+            
+        try:
+            Altruix.log(f"🔍 [iuser_check] Entering is_sudo for {user_id}...", level=20, client=c)
+            # Add a safety timeout for the authorization check itself
+            is_sudo = await asyncio.wait_for(Altruix.is_sudo(user_id, client=c), timeout=5)
+            Altruix.log(f"📬 [iuser_check] Leaving is_sudo for {user_id}. Result: {is_sudo}", level=20, client=c)
+        except asyncio.TimeoutError:
+            Altruix.log(f"⏰ [iuser_check] Authorization TIMEOUT for {user_id}. Defaulting to False.", level=30, client=c)
+            is_sudo = False
+        except Exception as e:
+            Altruix.log(f"💥 [iuser_check] Authorization ERR for {user_id}: {e}", level=40, client=c)
+            is_sudo = False
         
         # ✅ Also authorize all active userbot session IDs for inline queries
         # This ensures .ping, .help, etc. can use inline bot results
@@ -132,26 +147,21 @@ def iuser_check(func):
         if is_sudo:
             result_status = "AUTHORIZED"
         else:
-            if isinstance(update, CallbackQuery):
-                # ✅ FIX: The ID must be the USERBOT session owner's ID, not the bot assistant's ID.
-                # The custom alert is saved under the userbot's user ID (from Altruix.clients),
-                # while `c.me` here is the bot assistant (@coolkidxbot), NOT the userbot.
-                # We fall back to the first active userbot session for global mode.
+            if isinstance(update, (CallbackQuery, InlineQuery, Message)):
+                # ✅ FIX: Fetch custom alert for the account owner
                 owner_id = Altruix.config.OWNER_ID
                 if Altruix.clients:
                     first_client = Altruix.clients[0]
                     if hasattr(first_client, 'me') and first_client.me:
                         owner_id = first_client.me.id
+                
                 from Main.utils.file_helpers import get_user_custom_alert
                 alert_data = get_user_custom_alert(owner_id)
-                if alert_data.get("mode") == "custom":
-                    result_status = alert_data.get("text", Altruix.get_string("AUTH_BUTTON_DENIED"))
-                else:
-                    result_status = Altruix.get_string("AUTH_BUTTON_DENIED")
-            elif isinstance(update, InlineQuery):
-                result_status = "AUTH_FEATURE_DENIED"
+                result_status = alert_data.get("text", Altruix.get_string("AUTH_BUTTON_DENIED"))
+                alert_mode = alert_data.get("mode", "default")
             else:
                 result_status = "AUTH_FEATURE_DENIED"
+                alert_mode = "default"
 
 
         if is_sudo:
@@ -212,7 +222,7 @@ def iuser_check(func):
                                 except Exception as e:
                                     Altruix.log(f"[CB LOGGER] Cache fetch err: {e}", level=40)
 
-                            # Fallback: Extraction from callback_data (e.g. cid=...)
+                            # Fallback: Extraction from callback_data (e.g. cid=... or _cid...)
                             if not resolved_chat_id:
                                 import re
                                 from Main.core.ext.callback_helpers import get_callback_data
@@ -226,9 +236,14 @@ def iuser_check(func):
                                             actual_data = unhashed
                                             Altruix.log(f"[CB LOGGER] Unhashed data: {actual_data}", level=20)
 
+                                # Check cid=... (query param format)
                                 if cid_match := re.search(r"cid=(-?\d+)", actual_data):
                                     resolved_chat_id = cid_match.group(1)
                                     Altruix.log(f"[CB LOGGER] Extracted cid from data: {resolved_chat_id}", level=20)
+                                # Check _cid... (embedded format, e.g. rapmgr_export_uid123_cid-456)
+                                elif cid_match := re.search(r"_cid(-?\d+)", actual_data):
+                                    resolved_chat_id = cid_match.group(1)
+                                    Altruix.log(f"[CB LOGGER] Extracted _cid from data: {resolved_chat_id}", level=20)
                                 elif actual_data.startswith("settings_"):
                                     potential_cid = actual_data.replace("settings_", "")
                                     if potential_cid.lstrip('-').isdigit():
@@ -307,6 +322,7 @@ def iuser_check(func):
                         
                         log_message = (
                             f"{Altruix.get_string('LOGGER_CALLBACK_TITLE')}\n"
+                            f"<blockquote expandable>"
                             f"━━━━━━━━━━━━━━━━━━━━\n"
                             f"{Altruix.get_string('LOGGER_CALLBACK_BOT').format(html.escape(me.username) if me and me.username else 'bot', html.escape(bot_username))}\n"
                             f"{Altruix.get_string('LOGGER_CALLBACK_USER').format(user_id, final_name)}\n"
@@ -319,7 +335,8 @@ def iuser_check(func):
                             f"{task_id_line}"
                             f"{Altruix.get_string('LOGGER_CALLBACK_MSG_HEADER')}\n"
                             f"<blockquote>{html.escape(str(msg_text)[:1000])}</blockquote>\n"
-                            f"{Altruix.get_string('LOGGER_CALLBACK_TIME').format(time_now)}\n\n"
+                            f"{Altruix.get_string('LOGGER_CALLBACK_TIME').format(time_now)}\n"
+                            f"</blockquote>\n"
                             f"{Altruix.get_string('LOGGER_CALLBACK_PRIVATE_LINK').format(user_id)}"
                         )
                         await send_log_message(log_message)
@@ -377,6 +394,44 @@ def iuser_check(func):
                         chat_info = f"{prefix}: <b>{html.escape(chat_label)}</b>"
                         chat_id = chat.id
                         msg_text = update.message.text or update.message.caption or "[No Text/Media]"
+                    elif isinstance(update, CallbackQuery) and not update.message:
+                        # ✅ Inline mode: resolve chat from callback data (_cid or cid=)
+                        import re
+                        from Main.core.ext.callback_helpers import get_callback_data
+                        resolved_chat_id = None
+                        actual_data = cb_data
+                        
+                        # ✅ Unhash compressed callback data (e.g. h#6a3c40aeb50b → help#plugin?page=0&cid=-100123)
+                        if "#" in cb_data:
+                            parts = cb_data.split("#")
+                            if len(parts) > 1 and len(parts[1]) == 12:
+                                unhashed = await get_callback_data(parts[1])
+                                if unhashed:
+                                    actual_data = unhashed
+                        
+                        # Check cid=... (query param format)
+                        if cid_match := re.search(r"cid=(-?\d+)", actual_data):
+                            resolved_chat_id = cid_match.group(1)
+                        # Check _cid... (embedded format)
+                        elif cid_match := re.search(r"_cid(-?\d+)", actual_data):
+                            resolved_chat_id = cid_match.group(1)
+                        
+                        if resolved_chat_id:
+                            chat_id = str(resolved_chat_id)
+                            chat_title = "Group/Chat"
+                            try:
+                                _c = args[0] if args and isinstance(args[0], Client) else None
+                                if _c:
+                                    chat_obj = await _c.get_chat(int(chat_id))
+                                    chat_title = chat_obj.title or chat_obj.first_name or "Chat"
+                            except Exception:
+                                for ubot in Altruix.clients:
+                                    try:
+                                        chat_obj = await ubot.get_chat(int(chat_id))
+                                        chat_title = chat_obj.title or chat_obj.first_name or "Chat"
+                                        break
+                                    except Exception: continue
+                            chat_info = f"📱 {chat_title} (<code>{chat_id}</code>)"
                     
                     me = None
                     for arg in args:
@@ -404,6 +459,7 @@ def iuser_check(func):
                             
                         log_message = (
                             f"{title}\n"
+                            f"<blockquote expandable>"
                             f"━━━━━━━━━━━━━━━━━━━━\n"
                             f"{Altruix.get_string('LOGGER_CALLBACK_BOT').format(html.escape(me.username) if me and me.username else 'bot', html.escape(bot_username))}\n"
                             f"{Altruix.get_string('LOGGER_CALLBACK_USER').format(user_id, final_name)}\n"
@@ -415,7 +471,8 @@ def iuser_check(func):
                             f"{Altruix.get_string('LOGGER_CALLBACK_RESULT').format(html.escape(result_status))}\n"
                             f"{Altruix.get_string('LOGGER_CALLBACK_MSG_HEADER')}\n"
                             f"<blockquote>{html.escape(str(msg_text)[:1000])}</blockquote>\n"
-                            f"{Altruix.get_string('LOGGER_CALLBACK_TIME').format(time_now)}\n\n"
+                            f"{Altruix.get_string('LOGGER_CALLBACK_TIME').format(time_now)}\n"
+                            f"</blockquote>\n"
                             f"{Altruix.get_string('LOGGER_CALLBACK_PRIVATE_LINK').format(user_id)}"
                         )
                         await send_log_message(log_message)
@@ -429,9 +486,10 @@ def iuser_check(func):
 
             if isinstance(update, CallbackQuery):
                 try:
+                    show_alert = (alert_mode == "popup")
                     await update.answer(
                         result_status if 'result_status' in locals() else Altruix.get_string("AUTH_BUTTON_DENIED"),
-                        show_alert=True,
+                        show_alert=show_alert,
                         cache_time=5
                     )
                 except QueryIdInvalid:
@@ -569,19 +627,23 @@ def log_errors(func):
                 acc_info = f"<b>{html.escape(me_name)}</b> [<code>{me.id}</code>] Account #{idx}"
 
             error_detail = (
-                f"#LOG_ERROR\n"
+                f"<b>⚠️ #LOG_ERROR</b>\n"
+                f"<blockquote expandable>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"🎯 <b>CMD:</b> <code>{html.escape(str(msg_info)[:500])}</code>\n"
-                f"👤 <b>CMD BY:</b> {user_info}\n"
-                f"🤖 <b>ACCOUNT:</b> {acc_info}\n"
-                f"💬 <b>CHAT:</b> {chat_info}\n"
+                f"• <b>CMD:</b> <code>{html.escape(str(msg_info)[:500])}</code>\n"
+                f"• <b>CMD BY:</b> {user_info}\n"
+                f"• <b>ACCOUNT:</b> {acc_info}\n"
+                f"• <b>CHAT:</b> {chat_info}\n"
                 f"{reply_info}" # ✅ Inject reply info
-                f"🕒 <b>TIME:</b> <code>{time_now}</code>\n"
-                f"🔌 <b>PLUGIN VER:</b> <code>{plugin_ver}</code>\n"
-                f"🛰 <b>USERBOT VER:</b> <code>{Altruix.__version__}</code>\n"
+                f"• <b>TIME:</b> <code>{time_now}</code>\n"
+                f"• <b>PLUGIN VER:</b> <code>{plugin_ver}</code>\n"
+                f"• <b>USERBOT VER:</b> <code>{Altruix.__version__}</code>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"</blockquote>\n\n"
+                f"<blockquote expandable>\n"
                 f"💥 <b>ERROR:</b> <code>{_be}</code>\n"
-                f"📍 <b>IN:</b> <code>{module_name}.{func.__name__}</code>\n\n"
+                f"📍 <b>IN:</b> <code>{module_name}.{func.__name__}</code>\n"
+                f"</blockquote>\n\n"
                 f"📑 <b>TRACEBACK:</b>\n"
                 f"<pre>{html.escape(traceback.format_exc())}</pre>"
             )

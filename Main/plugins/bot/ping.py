@@ -9,7 +9,7 @@
 
 
 
-PLUGIN_VERSION = "0.0.2"
+PLUGIN_VERSION = "0.0.4"
 import time
 from Main import Altruix
 from style import ping_format as pf
@@ -113,3 +113,174 @@ async def ping_inline_handler(c: Client, iq: InlineQuery):
         switch_pm_text=f"{pf['ping_emoji1']} Ping",
         switch_pm_parameter="ping",
     )
+
+import random
+
+@Altruix.bot.on_inline_query(filters.regex("^pink"))
+@log_errors
+@iuser_check
+async def pink_inline_handler(c: Client, iq: InlineQuery):
+    # Extract session uid and chat_id from query text (format: "pink_{uid}_{chat_id}")
+    query_parts = iq.query.split("_")
+    uid = query_parts[1] if len(query_parts) > 1 else str(iq.from_user.id)
+    chat_id = query_parts[2] if len(query_parts) > 2 else "0"
+    
+    uptime = Essentials.get_readable_time(time.time() - Altruix.start_time)
+    start = time.perf_counter()
+    await c.invoke(Ping(ping_id=9999999))
+    end = time.perf_counter()
+    ms = round((end - start) * 1000, 2)
+    
+    styles = [ButtonStyle.PRIMARY, ButtonStyle.SUCCESS, ButtonStyle.DANGER, ButtonStyle.DEFAULT]
+    btn_style = random.choice(styles)
+    
+    text = f"""<blockquote expandable>─────────────────
+⚡️ <b>PONG!</b>  [● System OK]
+  ├─ • 🕹 <b>Latency:</b> {ms} ms 
+  ├─ • 🧟 <b>Uptime:</b> {uptime}  [● Online]
+  └─ • 🙊 <b>React:</b> —
+  ─────────────────</blockquote>"""
+
+    # callback_data format: "pkrep_{uid}_{chat_id}" and "pkreac_{uid}_{chat_id}"
+    # (shortened to stay within 64-byte Telegram limit)
+    await iq.answer(
+        [
+            InlineQueryResultArticle(
+                id=1,
+                title=f"🌸 Pink Ping!",
+                description=f"{ms} ms\n{uptime}",
+                input_message_content=InputTextMessageContent(text),
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("🪄 Pink", callback_data=f"pkrep_{uid}_{chat_id}", style=btn_style),
+                      InlineKeyboardButton("🙈 React", callback_data=f"pkreac_{uid}_{chat_id}", style=btn_style)]]
+                ),
+            )
+        ],
+        cache_time=0,
+        is_personal=True,
+    )
+
+@Altruix.bot.on_callback_query(filters.regex("^pkrep_"))
+@log_errors
+async def pink_reping_bot_cb(c: Client, cb: CallbackQuery):
+    from Main.utils.access_control import is_authorized_user
+    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+        msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+        return await cb.answer(msg, show_alert=True)
+    
+    # Extract from callback_data (format: "pkrep_{uid}_{chat_id}")
+    parts = cb.data.split("_")
+    uid = parts[1] if len(parts) > 1 else "0"
+    chat_id = parts[2] if len(parts) > 2 else "0"
+    
+    uptime = Essentials.get_readable_time(time.time() - Altruix.start_time)
+    start = time.perf_counter()
+    await c.invoke(Ping(ping_id=9999999))
+    end = time.perf_counter()
+    ms = round((end - start) * 1000, 2)
+    
+    styles = [ButtonStyle.PRIMARY, ButtonStyle.SUCCESS, ButtonStyle.DANGER, ButtonStyle.DEFAULT]
+    btn_style = random.choice(styles)
+    
+    text = f"""<blockquote expandable>─────────────────
+⚡️ <b>PONG!</b>  [● System OK]
+  ├─ • 🕹 <b>Latency:</b> {ms} ms 
+  ├─ • 🧟 <b>Uptime:</b> {uptime}  [● Online]
+  └─ • 🙊 <b>React:</b> —
+  ─────────────────</blockquote>"""
+
+    try:
+        await cb.edit_message_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🪄 Pink", callback_data=f"pkrep_{uid}_{chat_id}", style=btn_style),
+                  InlineKeyboardButton("🙈 React", callback_data=f"pkreac_{uid}_{chat_id}", style=btn_style)]]
+            ),
+        )
+        await cb.answer("Pink Pinged!", show_alert=False)
+    except Exception as e:
+        await cb.answer("Already latest state or too fast!", show_alert=False)
+
+@Altruix.bot.on_callback_query(filters.regex("^pkreac_"))
+@log_errors
+async def pink_react_bot_cb(c: Client, cb: CallbackQuery):
+    from Main.utils.access_control import is_authorized_user
+    if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+        msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+        return await cb.answer(msg, show_alert=True)
+    
+    # Extract from callback_data (format: "pkreac_{uid}_{chat_id}")
+    parts = cb.data.split("_")
+    uid = parts[1] if len(parts) > 1 else "0"
+    chat_id_str = parts[2] if len(parts) > 2 else "0"
+    
+    # Find the exact userbot client that ran the .pink command
+    userbot_client = None
+    if hasattr(Altruix, "clients") and Altruix.clients:
+        for cli in Altruix.clients:
+            if hasattr(cli, "me") and cli.me and str(cli.me.id) == uid:
+                userbot_client = cli
+                break
+    
+    if not userbot_client:
+        return await cb.answer("⚠️ Session userbot tidak ditemukan!", show_alert=True)
+    
+    try:
+        target_chat_id = int(chat_id_str)
+    except (ValueError, TypeError):
+        return await cb.answer("⚠️ Chat ID tidak valid!", show_alert=True)
+    
+    emojis = ['👍', '❤', '🔥', '🎉', '🤩', '⚡', '🙈', '💯']
+    rand_emoji = random.choice(emojis)
+    try:
+        # cb.message is None for inline messages (bot not in group)
+        # Use chat_id from callback_data and search for the via_bot message
+        if cb.message and cb.message.chat:
+            msg_chat_id = cb.message.chat.id
+            msg_id = cb.message.id
+        else:
+            # Find the latest via_bot message from the bot in the target chat
+            msg_chat_id = target_chat_id
+            msg_id = None
+            bot_username = Altruix.bot_manager.get_bot_username(int(uid))
+            async for msg in userbot_client.search_messages(target_chat_id, limit=5, from_user="me"):
+                if msg.via_bot and msg.via_bot.username == bot_username:
+                    msg_id = msg.id
+                    break
+            if not msg_id:
+                return await cb.answer("⚠️ Pesan inline tidak ditemukan di chat!", show_alert=True)
+        
+        await userbot_client.send_reaction(chat_id=msg_chat_id, message_id=msg_id, emoji=rand_emoji)
+        react_status = rand_emoji
+        await cb.answer(f"Reacted with {rand_emoji}", show_alert=False)
+    except Exception as e:
+        react_status = "not allowed"
+        await cb.answer(f"⚠️ Reaction failed!\nError: {str(e)[:50]}", show_alert=True)
+    
+    # Update the message text to show the react status
+    uptime = Essentials.get_readable_time(time.time() - Altruix.start_time)
+    start = time.perf_counter()
+    await c.invoke(Ping(ping_id=9999999))
+    end = time.perf_counter()
+    ms = round((end - start) * 1000, 2)
+    
+    styles = [ButtonStyle.PRIMARY, ButtonStyle.SUCCESS, ButtonStyle.DANGER, ButtonStyle.DEFAULT]
+    btn_style = random.choice(styles)
+    
+    updated_text = f"""<blockquote expandable>─────────────────
+⚡️ <b>PONG!</b>  [● System OK]
+  ├─ • 🕹 <b>Latency:</b> {ms} ms 
+  ├─ • 🧟 <b>Uptime:</b> {uptime}  [● Online]
+  └─ • 🙊 <b>React:</b> {react_status}
+  ─────────────────</blockquote>"""
+    
+    try:
+        await cb.edit_message_text(
+            updated_text,
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🪄 Pink", callback_data=f"pkrep_{uid}_{chat_id_str}", style=btn_style),
+                  InlineKeyboardButton("🙈 React", callback_data=f"pkreac_{uid}_{chat_id_str}", style=btn_style)]]
+            ),
+        )
+    except Exception:
+        pass

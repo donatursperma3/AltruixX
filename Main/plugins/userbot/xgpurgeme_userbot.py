@@ -19,7 +19,7 @@ from Main.internals.settings_handlers.global_purgeme import (
 # Plugin Metadata
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xgpurgeme"
-PLUGIN_VERSION = "0.0.31"
+PLUGIN_VERSION = "0.0.321"
 
 @Altruix.register_on_cmd(
     ["gpurgeme"],
@@ -39,7 +39,8 @@ Mass-delete your own messages across multiple chats with interactive UI.
 <b>Controls:</b>
 Interactive dashboard allows Pausing, Resuming, and Stopping the process.
 """
-    }
+    },
+    bot_mode_unsupported=True
 )
 @iuser_check
 @log_errors
@@ -48,6 +49,14 @@ async def gpurgeme_cmd(client: Client, message: Message):
     Mass-delete your messages globally across chats.
     Now supports 15 granular message filters.
     """
+    if not client or not client.me or client.me.is_bot:
+        return
+
+    # Deduplicate for Sudo: Only the primary session handles broadcast commands
+    sender_id = message.from_user.id if message.from_user else 0
+    is_self = sender_id == client.me.id or message.outgoing
+    if not is_self and Altruix.clients and client != Altruix.clients[0]:
+        return
     # ✅ SAFETY CHECK: Basic message validity
     if not message or not hasattr(message, 'chat') or not message.chat:
         return
@@ -145,12 +154,20 @@ async def gpurgeme_cmd(client: Client, message: Message):
         await message.edit(f"❌ Error initiating GPurgeme: {e}")
 
 @Altruix.register_on_cmd(
-    ["gpurgemestatus", "gpstatus"],
-    cmd_help={"help": "Check current Global Purgeme status."}
+    ["gpurgemestatus"],
+    cmd_help={"help": "Check current Global Purgeme status."},
+    bot_mode_unsupported=True
 )
 @iuser_check
 @log_errors
 async def gp_status_cmd(client: Client, message: Message):
+    if not client or not client.me or client.me.is_bot:
+        return
+    
+    sender_id = message.from_user.id if message.from_user else 0
+    is_self = sender_id == client.me.id or message.outgoing
+    if not is_self and Altruix.clients and client != Altruix.clients[0]:
+        return
     me = await _get_me(client)
     if not me: return
             
@@ -163,12 +180,20 @@ async def gp_status_cmd(client: Client, message: Message):
     await message.edit(text)
 
 @Altruix.register_on_cmd(
-    ["gpurgemestop", "gpstop"],
-    cmd_help={"help": "Stop a running Global Purgeme process."}
+    ["gpurgemestop"],
+    cmd_help={"help": "Stop a running Global Purgeme process."},
+    bot_mode_unsupported=True
 )
 @iuser_check
 @log_errors
 async def gp_stop_cmd(client: Client, message: Message):
+    if not client or not client.me or client.me.is_bot:
+        return
+    
+    sender_id = message.from_user.id if message.from_user else 0
+    is_self = sender_id == client.me.id or message.outgoing
+    if not is_self and Altruix.clients and client != Altruix.clients[0]:
+        return
     me = await _get_me(client)
     if not me: return
             
@@ -184,12 +209,20 @@ async def gp_stop_cmd(client: Client, message: Message):
     asyncio.create_task(update_gp_dashboard(unique_id))
 
 @Altruix.register_on_cmd(
-    ["gpurgemepause", "gppause"],
-    cmd_help={"help": "Pause a running Global Purgeme process."}
+    ["gpurgemepause"],
+    cmd_help={"help": "Pause a running Global Purgeme process."},
+    bot_mode_unsupported=True
 )
 @iuser_check
 @log_errors
 async def gp_pause_cmd(client: Client, message: Message):
+    if not client or not client.me or client.me.is_bot:
+        return
+    
+    sender_id = message.from_user.id if message.from_user else 0
+    is_self = sender_id == client.me.id or message.outgoing
+    if not is_self and Altruix.clients and client != Altruix.clients[0]:
+        return
     me = await _get_me(client)
     if not me: return
             
@@ -204,12 +237,20 @@ async def gp_pause_cmd(client: Client, message: Message):
     asyncio.create_task(update_gp_dashboard(unique_id))
 
 @Altruix.register_on_cmd(
-    ["gpurgemeresume", "gpresume"],
-    cmd_help={"help": "Resume a paused Global Purgeme process."}
+    ["gpurgemeresume"],
+    cmd_help={"help": "Resume a paused Global Purgeme process."},
+    bot_mode_unsupported=True
 )
 @iuser_check
 @log_errors
 async def gp_resume_cmd(client: Client, message: Message):
+    if not client or not client.me or client.me.is_bot:
+        return
+    
+    sender_id = message.from_user.id if message.from_user else 0
+    is_self = sender_id == client.me.id or message.outgoing
+    if not is_self and Altruix.clients and client != Altruix.clients[0]:
+        return
     me = await _get_me(client)
     if not me: return
             

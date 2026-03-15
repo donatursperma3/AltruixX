@@ -235,22 +235,34 @@ if [ -f ".env" ]; then
 fi
 
 # =============================================================================
-# Clean Up Existing Processes (Release Database Locks)
+# Clean Up Existing Processes & Stale Locks
 # =============================================================================
 echo ""
-log_msg "${YELLOW}" "🧹 Process: Cleaning up existing instances..."
+log_msg "${RED}" "🧹 Process: Cleaning up existing instances & stale locks..."
 has_killed=false
 
+# 1. Kill existing Python processes (Kill FIRST to release file locks)
 if [[ "$PLATFORM" == "windows" ]]; then
-    # Windows (Git Bash / MSYS / Cygwin)
+    # Native Windows
     if taskkill //F //IM python.exe //T 2>/dev/null; then
         has_killed=true
     fi
+elif [[ "$PLATFORM" == "wsl" ]]; then
+    # WSL: Kill both WSL processes and Windows processes (Windows processes can lock NTFS files)
+    if pkill -9 -f "python.* -m Main" 2>/dev/null; then
+        has_killed=true
+    fi
+    # Also attempt to kill Windows python processes if they are locking the F: drive files
+    if command -v taskkill.exe >/dev/null 2>&1; then
+        if taskkill.exe /F /IM python.exe /T 2>/dev/null; then
+            has_killed=true
+        fi
+    fi
 elif [[ "$PLATFORM" == "heroku" || "$PLATFORM" == "sevalla" ]]; then
-    # Cloud platforms - skip process killing
+    # Cloud platforms
     echo -e "${CYAN}⏩ Skipping process cleanup (Cloud platform)${NC}"
 else
-    # Linux / VPS / WSL / macOS / Termux
+    # Linux / VPS / macOS / Termux
     if pkill -9 -f "python.* -m Main" 2>/dev/null; then
         has_killed=true
     fi
@@ -263,10 +275,19 @@ else
     fi
 fi
 
-# Wait for file handles to be released
+# 2. Wait for handles to release & then clean stale SQLite journal/WAL files
 if [ "$has_killed" = true ]; then
     echo -e "${YELLOW}⏳ Waiting 3 seconds for file handles to be released...${NC}"
     sleep 3
+fi
+
+# 3. Clean up stale journal files AFTER killing processes
+if ls cache/*.session-journal >/dev/null 2>&1 || ls cache/*.session-wal >/dev/null 2>&1; then
+    log_msg "${CYAN}" "🧹 Cache: Removing stale journal/WAL files..."
+    rm -f cache/*.session-journal cache/*.session-wal
+fi
+
+if [ "$has_killed" = true ]; then
     echo -e "${GREEN}✅ Cleanup complete!${NC}"
 else
     echo -e "${CYAN}ℹ️  No existing processes found.${NC}"
@@ -282,9 +303,9 @@ echo -e "╚══════════════════════�
 echo ""
 log_msg "${CYAN}" "Info: Platform -> $PLATFORM"
 log_msg "${CYAN}" "Info: Python   -> $VENV_PYTHON"
-log_msg "${YELLOW}" "⏳ Launching Altroid-X engine..."
+log_msg "${YELLOW}" "⚙️ Launching Altroid-X engine..."
+log_msg "${YELLOW}" "⏳ Please be patient, it will take a few minutes..."
 echo ""
 
 # Run the bot
 $VENV_PYTHON -m Main
-

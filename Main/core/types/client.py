@@ -95,6 +95,8 @@ class CustomClientMethods:
             "messages.EditInlineBotMessage",
             "updates.GetChannelDifference", # ✅ SAFE TO SKIP: Crucial to prevent sync-induced hangs
             "GetChannelDifference",
+            "messages.GetStickerSet",
+            "GetStickerSet",
         ]
 
         # 4. METADATA INITIALIZATION
@@ -144,6 +146,17 @@ class CustomClientMethods:
                 Altruix.log(f"[{e.__class__.__name__}] {client_info} | sleeping for - {wait_time}s.", client=self)
                 await asyncio.sleep(wait_time)
                 max_count += 1
+            except (ConnectionResetError, BrokenPipeError) as e:
+                # Handle transport errors before general Exception
+                msg = f"[Transport-Error] {client_info} | {type(e).__name__}"
+                if max_count < mmax_:
+                    Altruix.log(f"{msg}: Retrying in 2s...", level=30, client=self)
+                    await asyncio.sleep(2.0)
+                    max_count += 1
+                    continue
+                else:
+                    Altruix.log(f"{msg}: Connection lost. Providing dummy.", level=40, client=self)
+                    return self._get_dummy_result(op_name)
             except Exception as e:
                 # 8. GENERAL EXCEPTION HANDLING
                 error_str = str(e)
@@ -162,7 +175,9 @@ class CustomClientMethods:
                 # These often happen when a peer is deleted or unreachable.
                 if "CHANNEL_INVALID" in error_str or "PEER_ID_INVALID" in error_str:
                     if is_non_critical:
-                        Altruix.log(f"[NonCritical-Skipped] {error_type}: {error_str[:150]}", level=30, client=self)
+                        debug_mode = getattr(Altruix.config, "DEBUG", False)
+                        msg_str = error_str if debug_mode else error_str[:150]
+                        Altruix.log(f"[NonCritical-Skipped] {error_type}: {msg_str}", level=30, client=self)
                         return self._get_dummy_result(op_name)
                     # For critical ops, we still raise it as it might be a legitimate fatal error for that task
                     raise e
@@ -177,7 +192,9 @@ class CustomClientMethods:
                             # Gradual exponential backoff with jitter for standard operations
                             wait_time = min(backoff * 1.5, 10) + random.uniform(0.1, 1.0)
                             
-                        Altruix.log(f"[Timeout-Retry] {op_name} ({max_count+1}/{mmax_}) | {error_str[:100]}", level=30, client=self)
+                        debug_mode = getattr(Altruix.config, "DEBUG", False)
+                        msg_str = error_str if debug_mode else error_str[:150]
+                        Altruix.log(f"[Timeout-Retry] {op_name} ({max_count+1}/{mmax_}) | {msg_str}", level=30, client=self)
                         await asyncio.sleep(wait_time)
                         max_count += 1
                         backoff = min(backoff * 2, 8)
@@ -201,7 +218,11 @@ class CustomClientMethods:
                 permanent_errors = [
                     "MessageIdsEmpty", "MessageEmpty", "MessageIdInvalid", 
                     "UserNotParticipant", "ChatWriteForbidden", "UserIsBlocked",
-                    "PeerIdInvalid", "ChannelInvalid", "PEER_ID_INVALID", "CHANNEL_INVALID"
+                    "PeerIdInvalid", "ChannelInvalid", "PEER_ID_INVALID", "CHANNEL_INVALID",
+                    "ChatAdminRequired", "ChatIdInvalid", "BroadcastForbidden",
+                    "StickersetInvalid", "STICKERSET_INVALID", "StickersEmpty",
+                    "ChannelPrivate", "CHANNEL_PRIVATE", # ✅ Prevent 5x retries on kicked channels
+                    "ChatForwardsRestricted", "CHAT_FORWARDS_RESTRICTED" # ✅ Bypasses retries on protected content
                 ]
                 # KeyError during peer lookup is also permanent
                 is_key_error_peer = isinstance(e, KeyError) and "ID not found" in str(e)
@@ -209,13 +230,19 @@ class CustomClientMethods:
                 
                 if is_permanent:
                     if is_non_critical:
-                        Altruix.log(f"[NonCritical-Permanent-Skipped] {error_type}: {error_str[:150]}", level=30, client=self)
+                        debug_mode = getattr(Altruix.config, "DEBUG", False)
+                        msg_str = error_str if debug_mode else error_str[:150]
+                        Altruix.log(f"[NonCritical-Permanent-Skipped] {error_type}: {msg_str}", level=30, client=self)
                         return self._get_dummy_result(op_name)
                     raise e
                 
                 # ✅ FINAL FALLBACK: General retry for unexpected errors
                 if max_count < mmax_:
-                    Altruix.log(f"[Error-Retry] {error_type} ({max_count+1}/{mmax_}) | {error_str[:100]}", level=30, client=self)
+                    debug_mode = getattr(Altruix.config, "DEBUG", False)
+                    msg_str = error_str if debug_mode else error_str[:150]
+                    # Check if it looks like a permanent 400/403 but wasn't caught
+                    perm_hint = " [Permanent?]" if any(x in error_str for x in ["400 ", "403 "]) else ""
+                    Altruix.log(f"[Error-Retry] {error_type}{perm_hint} ({max_count+1}/{mmax_}) | {msg_str}", level=30, client=self)
                     await asyncio.sleep(1.5 + random.uniform(0.1, 0.5))
                     max_count += 1
                     continue
@@ -265,6 +292,22 @@ class CustomClientMethods:
         msg_ops = ["EditMessage", "SendMessage", "SendMedia", "ForwardMessages", "EditInlineBotMessage"]
         if any(x in op_name for x in msg_ops):
              return raw.types.Updates(updates=[], users=[], chats=[], date=int(time.time()), seq=0)
+             
+        # F. STICKER SETS: Returns a minimal dummy StickerSet to prevent Pyrogram parser crashes
+        # Fixes: 'NoneType' object has no attribute 'set'
+        if "GetStickerSet" in op_name:
+            try:
+                # Ensure it exactly matches what Pyrogram expects: result.set.short_name
+                return raw.types.messages.StickerSet(
+                    set=raw.types.StickerSet(
+                        id=0, access_hash=0, title="Deleted Sticker", short_name="deleted", 
+                        count=0, hash=0, archived=False, official=False, masks=False, 
+                        animated=False, videos=False, emojis=False
+                    ),
+                    packs=[], keywords=[], documents=[]
+                )
+            except Exception:
+                pass # Fallback to None if MTProto signature evolved
 
         return None
 
