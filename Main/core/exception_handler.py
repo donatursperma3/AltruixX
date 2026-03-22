@@ -17,12 +17,17 @@ import asyncio
 import time
 from pyrogram.errors import PeerIdInvalid, ChannelInvalid
 from pyrogram import Client
+from Main.utils.file_helpers import get_user_button_style
 
 logger = logging.getLogger("Altruix")
 
 
 # Global state to avoid circular imports
 _ALTRUIX_INST = None
+
+# --- RECURSION GUARDS ---
+# Prevents infinite loops if the logging chat itself causes exceptions.
+HANDLING_PEER_NOTIFS = set()
 
 def get_session_info(client):
     """Extract session information from client without triggering property hangs"""
@@ -70,42 +75,133 @@ def get_session_info(client):
     return "[?] Unknown"
 
 
-def handle_peer_id_invalid(error, client, context="Unknown"):
-    """Handle PEER_ID_INVALID error with compact logging"""
+def handle_peer_id_invalid(error, client, context="Unknown", peer_id=None):
+    """Handle PEER_ID_INVALID error with compact logging and interactive cleanup option"""
     session_info = get_session_info(client)
     
-    # Extract peer ID from error
-    peer_id = "Unknown"
-    error_str = str(error)
-    if "ID not found:" in error_str:
-        try:
-            peer_id = error_str.split("ID not found:")[1].strip().strip("'\"")
-        except:
-            pass
+    # Extract peer ID from error string if not provided
+    if not peer_id:
+        error_str = str(error)
+        if "ID not found:" in error_str:
+            try:
+                peer_id = error_str.split("ID not found:")[1].strip().strip("'\"")
+            except:
+                pass
     
     # Compact log (one-liner)
     if _ALTRUIX_INST:
         _ALTRUIX_INST.log(
-            f"⚠️ [Dispatcher-PeerIdInvalid] Peer: {peer_id} | Context: {context} | "
+            f"⚠️ [Dispatcher-PeerIdInvalid] Peer: {peer_id or 'Unknown'} | Context: {context} | "
             f"💡 Solution: Send a message to this chat First with this account to refresh cache.",
             level=logging.WARNING,
             client=client
         )
+        
+        # ✅ ACTIONABLE LOG: Send interactive notification via prioritized bot
+        if peer_id and _ALTRUIX_INST.log_chat:
+            async def _send_interactive_notif():
+                try:
+                    # ✅ CHECK IF NOTIF IS ENABLED (Global Toggle)
+                    peer_notif = str(await _ALTRUIX_INST.config.get_env("PEER_NOTIF_ENABLED", default="on")).lower()
+                    if peer_notif == "off":
+                        return
+                    
+                    # 1. Determine accounts info
+                    me = getattr(client, "me", None)
+                    acc_name = getattr(me, "first_name", "Unknown") if me else "Unknown"
+                    acc_id = getattr(me, "id", 0) if me else 0
+                    
+                    # 2. Try to get chat title
+                    chat_title = "Unknown Chat"
+                    # Check cache first
+                    if hasattr(_ALTRUIX_INST, "PM_LOG_CACHE"):
+                        msg_key = f"{acc_id}_{peer_id}"
+                        cached = _ALTRUIX_INST.PM_LOG_CACHE.get(msg_key)
+                        if cached and isinstance(cached, dict):
+                            chat_title = cached.get("name") or cached.get("group_name") or "Unknown Chat"
+                    
+                    # 3. Prioritized Bot (Custom Bot > Main Bot)
+                    target_bot = _ALTRUIX_INST.bot
+                    if hasattr(_ALTRUIX_INST, "bot_manager"):
+                        cbot = _ALTRUIX_INST.bot_manager.get_bot(acc_id)
+                        if cbot and cbot.is_connected:
+                            target_bot = cbot
+                    
+                    if not target_bot or not target_bot.is_connected:
+                        return
+
+                    # Try one last attempt to get chat title via bot if still unknown
+                    if chat_title == "Unknown Chat":
+                        try:
+                            chat = await target_bot.get_chat(peer_id)
+                            chat_title = chat.title or f"{chat.first_name} {chat.last_name or ''}".strip()
+                        except: pass
+
+                    # 3. Construct Chat Link
+                    chat_link = None
+                    pid = str(peer_id)
+                    if pid.startswith("-100"):
+                        stripped_id = pid.replace("-100", "")
+                        chat_link = f"https://t.me/c/{stripped_id}/1"
+                    elif pid.isdigit() and not pid.startswith("-"): # User ID
+                        chat_link = f"tg://user?id={pid}"
+                    elif not pid.startswith("-") and not pid.isdigit() and not pid.isnumeric(): # Username
+                        chat_link = f"https://t.me/{pid.replace('@', '')}"
+
+                    from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+                    text = (
+                        "<blockquote expandable>"
+                        f"⚠️ <b>[Invalid Peer Detected]</b>\n\n"
+                        f"• <b>Account:</b> {acc_name} (<code>{acc_id}</code>)\n"
+                        f"• <b>Chat:</b> {chat_title} (<code>{peer_id}</code>)\n"
+                        f"• <b>Context:</b> <code>{context}</code>\n\n"
+                        f"💡 This account doesn't recognize the Chat ID above. If the account has been kicked or is no longer relevant, you can order it to leave (Leave Chat)."
+                        "</blockquote>"
+                    )
+                    
+                    # ✅ Resolve Button Style for this session
+                    user_style = get_user_button_style(acc_id)
+                    
+                    buttons = []
+                    if chat_link:
+                        buttons.append(InlineKeyboardButton("🔗 Open Chat", url=chat_link))
+                    buttons.append(InlineKeyboardButton("🗑 Leave Chat", callback_data=f"p_leave_req_{acc_id}_{peer_id}"))
+                    
+                    # Apply style to all buttons
+                    for btn in buttons:
+                        btn.style = user_style
+                    
+                    kb = InlineKeyboardMarkup([buttons])
+                    
+                    await target_bot.send_message(_ALTRUIX_INST.log_chat, text, reply_markup=kb)
+                except Exception as e:
+                    logger.debug(f"Failed to send interactive peer notif: {e}")
+                finally:
+                    # ✅ Release guard after task completion (or failure)
+                    if peer_id:
+                        HANDLING_PEER_NOTIFS.discard(peer_id)
+
+            # --- Apply Guard ---
+            if peer_id in HANDLING_PEER_NOTIFS:
+                return # Already handling this peer ID
+            
+            HANDLING_PEER_NOTIFS.add(peer_id)
+            asyncio.create_task(_send_interactive_notif())
     else:
         logger.warning(
-            f"⚠️ [Dispatcher-PeerIdInvalid] {session_info} | Peer: {peer_id} | Context: {context} | "
+            f"⚠️ [Dispatcher-PeerIdInvalid] {session_info} | Peer: {peer_id or 'Unknown'} | Context: {context} | "
             f"💡 Solution: Send a message to this chat First with this account to refresh cache."
         )
 
 
-def handle_channel_invalid(error, client, context="Unknown"):
+def handle_channel_invalid(error, client, context="Unknown", peer_id=None):
     """Handle CHANNEL_INVALID error with compact logging"""
     session_info = get_session_info(client)
     
     # Compact log
     if _ALTRUIX_INST:
         _ALTRUIX_INST.log(
-            f"⚠️ [Dispatcher-ChannelInvalid] Context: {context} | "
+            f"⚠️ [Dispatcher-ChannelInvalid] Peer: {peer_id or 'Unknown'} | Context: {context} | "
             f"💡 Solution: Check if Joined or if Channel ID is correct.",
             level=logging.WARNING,
             client=client
@@ -167,8 +263,8 @@ def install_exception_handler(altruix_instance=None):
         try:
             return await original_resolve_peer(self, peer_id)
         except PeerIdInvalid as e:
-            # Log with session info
-            handle_peer_id_invalid(e, self, context="resolve_peer")
+            # Log with session info and specific peer_id
+            handle_peer_id_invalid(e, self, context="resolve_peer", peer_id=peer_id)
             # Jadwalkan refresh dialogs untuk membantu cache peer
             try:
                 await _refresh_dialogs_debounced(self)
@@ -177,8 +273,8 @@ def install_exception_handler(altruix_instance=None):
             # Re-raise to maintain original behavior
             raise
         except ChannelInvalid as e:
-            # Log with session info
-            handle_channel_invalid(e, self, context="resolve_peer")
+            # Log with session info and specific peer_id
+            handle_channel_invalid(e, self, context="resolve_peer", peer_id=peer_id)
             # Re-raise to maintain original behavior
             raise
         except Exception as e:
@@ -255,4 +351,4 @@ def install_exception_handler(altruix_instance=None):
 
     pyrogram.dispatcher.log = PyrogramLogProxy()
 
-    logger.info("✅ Global exception handler installed for Pyrogram dispatcher (Deep Patch)")
+    logger.debug("✅ Global exception handler installed for Pyrogram dispatcher (Deep Patch)")

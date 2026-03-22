@@ -87,13 +87,16 @@ async def help_normal(c: Client, m):
             Altruix.log(f"Failed to send inline help menu: {e}", level=40)
             # Continue to text-based help below
     
-    if user_input and (cmd_lists.get(user_input) or user_input in Altruix.cmd_list):
-        help_text = cmd_lists.get(user_input, "")
+    # ✅ Case-insensitive lookup (Fix for ".help <PluginName>" failure)
+    user_input_lower = user_input.lower() if user_input else None
+    
+    if user_input_lower and (cmd_lists.get(user_input_lower) or user_input_lower in Altruix.cmd_list):
+        help_text = cmd_lists.get(user_input_lower, "")
         total_cmd_count = 0
         total_arg_count = 0
-        if user_input in Altruix.cmd_list:
+        if user_input_lower in Altruix.cmd_list:
             cmds = []
-            for item in Altruix.cmd_list[user_input]:
+            for item in Altruix.cmd_list[user_input_lower]:
                 cmds.extend(item["commands"])
                 
                 # Count arguments
@@ -110,13 +113,13 @@ async def help_normal(c: Client, m):
         
         # Case-insensitive lookup for version
         version = "0.0.1"
-        plugin_key = next((k for k in Altruix.cmd_list.keys() if k.lower() == user_input.lower()), None)
-        if plugin_key:
+        plugin_key = user_input_lower
+        if plugin_key in Altruix.cmd_list:
             version = Altruix.cmd_list[plugin_key][0].get("version")
             if not version or version == "unknown":
                 version = "0.0.1"
 
-        header = f"<b>❇️ Help for</b> <code>{user_input.title()}</code>\n"
+        header = f"<b>❇️ Help for</b> <code>{user_input_lower.title()}</code>\n"
         header += f"<b>🏷️ Version:</b> <code>v{version}</code>\n"
         header += f"<b>ℹ️ Cmd:</b> <code>{total_cmd_count}</code> cmds\n"
         if total_arg_count > 0:
@@ -185,15 +188,15 @@ async def help_normal(c: Client, m):
             cmd_list += f"\n<b>Total Commands:</b> <code>{total_commands}</code>"
             cmd_list += f"\n\n<i>Use</i> <code>{Altruix.prefix_owner_user}help <plugin name></code> <i>to know more!</i>"
         await m.handle_message(cmd_list, parse_mode=parse_mode)
-    elif user_input and not cmd_lists.get(user_input):
+    elif user_input_lower and not cmd_lists.get(user_input_lower):
         if (
-            len(get_close_matches(user_input, cmd_lists.keys(), n=4, cutoff=0.3))
+            len(get_close_matches(user_input_lower, cmd_lists.keys(), n=4, cutoff=0.3))
             > 0
         ):
             preds = "".join(
                 f"{i}, "
                 for i in get_close_matches(
-                    user_input, cmd_lists.keys(), n=4, cutoff=0.3
+                    user_input_lower, cmd_lists.keys(), n=4, cutoff=0.3
                 )
             )
             return await m.handle_message(

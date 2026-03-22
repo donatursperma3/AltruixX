@@ -48,7 +48,7 @@ from Main.plugins.userbot.xpm_logger_user import SessionManager
 # ============================================================================
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "tags"  # Renamed from mentions
-PLUGIN_VERSION = "1.7.897-TAG"  # ✅ Cache optimization for hater detector testing
+PLUGIN_VERSION = "1.7.901-TAG"  # ✅ Fixed formatting and clickable names
 
 # Gunakan logger Altruix jika tersedia, atau buat baru yang konsisten
 logger = logging.getLogger("altruix.mentions")
@@ -90,7 +90,7 @@ except ImportError as e:
         async def init_cache(config=None):
             return None
 
-logger.info(logger_info)
+logger.debug(logger_info)
 
 # ============================================================================
 # 🔥 CACHE KEY PREFIXES DAN KONFIGURASI
@@ -102,8 +102,21 @@ CACHE_PREFIX_SETTINGS = "settings:"
 CACHE_PREFIX_CLIENT = "client:"
 
 # 🔥 TTL SETTINGS (dalam detik)
-TTL_MENTION_CACHE = 7200  # 2 jam untuk mention cache
-TTL_WAITING_REPLY = 3600  # 1 jam untuk waiting replies
+import sys
+
+def get_mention_cache_ttl():
+    try:
+        import os, json
+        if os.path.exists("mentions_settings.json"):
+            with open("mentions_settings.json", "r") as f:
+                data = json.load(f)
+                return data.get("global", {}).get("cache_ttl", 86400)
+    except:
+        pass
+    return 86400
+
+TTL_MENTION_CACHE = 86400  # Fallback
+TTL_WAITING_REPLY = 86400  # Fallback
 TTL_USER_COUNTS = 86400   # 24 jam untuk rate limiting
 TTL_CLIENT_CACHE = 300    # 5 menit untuk client cache
 
@@ -205,7 +218,7 @@ async def cache_set(key: str, value: Any, ttl: int = None) -> bool:
     """Set value ke cache dengan TTL."""
     try:
         if CACHE_MANAGER_AVAILABLE and cache_manager:
-            return await cache_manager.set(key, value, ttl or TTL_MENTION_CACHE)
+            return await cache_manager.set(key, value, ttl or get_mention_cache_ttl())
         else:
             # Fallback ke in-memory dengan file backup
             return await _fallback_cache_set(key, value, ttl)
@@ -262,7 +275,7 @@ async def _fallback_cache_set(key: str, value: Any, ttl: int = None) -> bool:
         # In-memory storage
         MENTION_LOG_CACHE[key] = {
             "value": value,
-            "expires_at": time.time() + (ttl or TTL_MENTION_CACHE),
+            "expires_at": time.time() + (ttl or get_mention_cache_ttl()),
             "created_at": time.time()
         }
         
@@ -317,39 +330,20 @@ async def _fallback_cache_exists(key: str) -> bool:
         return False
 
 async def _save_fallback_cache():
-    """Save fallback cache to file."""
+    """Save fallback cache to file (Unified via SessionManager)."""
     try:
-        file_path = Path(get_db_path("mentions_cache_fallback.json"))
-        data = {
-            "cache": MENTION_LOG_CACHE,
-            "meta": {
-                "saved_at": time.time(),
-                "count": len(MENTION_LOG_CACHE)
-            }
-        }
-        async with aiofiles.open(file_path, 'w', encoding='utf-8') as f:
-            await f.write(json.dumps(data, indent=2, ensure_ascii=False))
+        from Main.plugins.userbot.xpm_logger_user import SessionManager
+        SessionManager.save()
     except Exception as e:
-        logger.error(f"❌ Failed to save fallback cache: {e}")
+        logger.error(f"❌ Failed to save unified cache: {e}")
 
 async def _load_fallback_cache():
-    """Load fallback cache from file."""
+    """Load fallback cache from file (Unified via SessionManager)."""
     try:
-        file_path = Path(get_db_path("mentions_cache_fallback.json"))
-        if file_path.exists():
-            async with aiofiles.open(file_path, 'r', encoding='utf-8') as f:
-                content = await f.read()
-                if content.strip():
-                    data = json.loads(content)
-                    # Filter expired entries
-                    now = time.time()
-                    for key, entry in data.get("cache", {}).items():
-                        if entry.get("expires_at", 0) > now:
-                            MENTION_LOG_CACHE[key] = entry
-                    
-            logger.info(f"Loaded {len(MENTION_LOG_CACHE)} entries from fallback cache")
+        from Main.plugins.userbot.xpm_logger_user import SessionManager
+        SessionManager.load()
     except Exception as e:
-        logger.error(f"Failed to load fallback cache: {e}")
+        logger.error(f"Failed to load unified cache: {e}")
 
 # Initialize fallback cache
 asyncio.create_task(_load_fallback_cache())
@@ -365,7 +359,7 @@ async def get_mention_from_cache(msg_key: str) -> Optional[Dict]:
 async def save_mention_to_cache(msg_key: str, data: Dict) -> bool:
     """Save mention data to cache."""
     cache_key = f"{CACHE_PREFIX_MENTION}{msg_key}"
-    return await cache_set(cache_key, data, TTL_MENTION_CACHE)
+    return await cache_set(cache_key, data, get_mention_cache_ttl())
 
 async def delete_mention_from_cache(msg_key: str) -> bool:
     """Delete mention data from cache."""
@@ -385,7 +379,7 @@ async def get_waiting_reply(waiting_id: str) -> Optional[Dict]:
 async def save_waiting_reply(waiting_id: str, data: Dict) -> bool:
     """Save waiting reply data."""
     cache_key = f"{CACHE_PREFIX_WAITING}{waiting_id}"
-    return await cache_set(cache_key, data, TTL_WAITING_REPLY)
+    return await cache_set(cache_key, data, get_mention_cache_ttl())
 
 async def delete_waiting_reply(waiting_id: str) -> bool:
     """Delete waiting reply data."""
@@ -618,7 +612,7 @@ async def init_mentions_cache():
         
         # Initialize cache manager
         await init_cache(cache_config)
-        logger.info(f"✅ Mentions cache initialized with {cache_config['cache_backend']} backend")
+        logger.debug(f"✅ Mentions cache initialized with {cache_config['cache_backend']} backend")
         
     except Exception as e:
         logger.error(f"❌ Failed to initialize cache: {e}")
@@ -838,8 +832,8 @@ async def debug_waiting_handler(c: Client, m: AltruixMessage):
             c,
             m.chat.id,
             msg.id,
-            response,
-            parse_mode=enums.ParseMode.MARKDOWN
+            response.replace("**", "<b>").replace("`", "<code>"), # Simple conversion for debug
+            parse_mode=enums.ParseMode.HTML
         )
         
     except Exception as e:
@@ -961,7 +955,10 @@ async def generate_mnt_menu_async(client_id):
                  InlineKeyboardButton(await Essentials.get_user_button_style(client_id, "🚫 Haters Detector Dashboard"), callback_data=f"haters_menu_{client_id}")
              ],
              [
-                 InlineKeyboardButton(await Essentials.get_user_button_style(client_id, "❌ Close"), callback_data="bot_controls_menu")
+                 InlineKeyboardButton(await Essentials.get_user_button_style(client_id, "🗃️ Cache Manager"), callback_data=f"mnt_cache_menu_{client_id}")
+             ],
+             [
+                 InlineKeyboardButton(await Essentials.get_user_button_style(client_id, "🔙 Back"), callback_data="bot_controls_menu")
              ]
         ]
         
@@ -980,6 +977,168 @@ async def generate_mnt_menu_async(client_id):
     except Exception as e:
         logger.error(f"Mention Menu Gen Error: {e}")
         return f"Error: {e}", None
+
+
+# ============================================================================
+# 🗃️ CACHE MANAGER MENU & HANDLERS
+# ============================================================================
+async def generate_mnt_cache_menu(client_id):
+    try:
+        user_id_str = str(client_id)
+        current_ttl = get_mention_cache_ttl()
+        ttl_hours = current_ttl // 3600
+        
+        # Calculate Sizes
+        import sys
+        mentions_count = len(MENTION_LOG_CACHE)
+        waiting_count = len(REPLY_AS_MENTIONED_WAITING)
+        user_counts = len(USER_REPLY_COUNTS)
+        block_count = len(BLOCK_STATUS_CACHE)
+        
+        # Deep size estimation
+        def get_size(obj, seen=None):
+            size = sys.getsizeof(obj)
+            if seen is None: seen = set()
+            obj_id = id(obj)
+            if obj_id in seen: return 0
+            seen.add(obj_id)
+            if isinstance(obj, dict):
+                size += sum([get_size(v, seen) for v in obj.values()])
+                size += sum([get_size(k, seen) for k in obj.keys()])
+            elif hasattr(obj, '__dict__'):
+                size += get_size(obj.__dict__, seen)
+            elif hasattr(obj, '__iter__') and not isinstance(obj, (str, bytes, bytearray)):
+                size += sum([get_size(i, seen) for i in obj])
+            return size
+            
+        total_size_bytes = get_size(MENTION_LOG_CACHE) + get_size(REPLY_AS_MENTIONED_WAITING) + get_size(USER_REPLY_COUNTS) + get_size(BLOCK_STATUS_CACHE)
+        size_kb = total_size_bytes / 1024
+        size_mb = size_kb / 1024
+        size_str = f"{size_mb:.2f} MB" if size_kb > 1024 else f"{size_kb:.2f} KB"
+        
+        # Check Next TTL Value
+        next_ttls = [43200, 86400, 172800, 259200]  # 12h, 24h, 48h, 72h
+        next_ttl = next_ttls[0]
+        for t in next_ttls:
+            if t > current_ttl:
+                next_ttl = t
+                break
+        
+        buttons = [
+            [
+                InlineKeyboardButton(await Essentials.get_user_button_style(client_id, f"🕒 Cache TTL: {ttl_hours}h"), callback_data="mnt_cache_noop"),
+                InlineKeyboardButton(await Essentials.get_user_button_style(client_id, f"📝 Change to {next_ttl//3600}h"), callback_data=f"mnt_cache_set_ttl_{client_id}_{next_ttl}")
+            ],
+            [
+                InlineKeyboardButton(await Essentials.get_user_button_style(client_id, f"🗑️ Mentions ({mentions_count})"), callback_data=f"mnt_cache_clear_mentions_{client_id}"),
+                InlineKeyboardButton(await Essentials.get_user_button_style(client_id, f"🗑️ Waiting ({waiting_count})"), callback_data=f"mnt_cache_clear_waiting_{client_id}")
+            ],
+            [
+                InlineKeyboardButton(await Essentials.get_user_button_style(client_id, f"🗑️ Users Count ({user_counts})"), callback_data=f"mnt_cache_clear_users_{client_id}"),
+                InlineKeyboardButton(await Essentials.get_user_button_style(client_id, f"🗑️ Block/Hater ({block_count})"), callback_data=f"mnt_cache_clear_blocks_{client_id}")
+            ],
+            [
+                InlineKeyboardButton(await Essentials.get_user_button_style(client_id, "🔙 Back to Settings"), callback_data=f"open_mentions_settings_{client_id}")
+            ]
+        ]
+        
+        res = (
+            f"🗃️ <b>Mention Logger Cache Manager</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"• <b>Cache Expiration Timer:</b> <code>{ttl_hours} hours</code>\n"
+            f"• <b>Estimated RAM Usage:</b> <code>{size_str}</code>\n\n"
+            f"📊 <b>Data Statistics:</b>\n"
+            f"• Mention Logs Cached: <code>{mentions_count}</code>\n"
+            f"• Waiting Replies: <code>{waiting_count}</code>\n"
+            f"• Rate Limit/User Counts: <code>{user_counts}</code>\n"
+            f"• Block / Hater Validation: <code>{block_count}</code>\n\n"
+            f"<i>Select an option below to manage memory.</i>"
+        )
+        return res, InlineKeyboardMarkup(buttons)
+    except Exception as e:
+        logger.error(f"Cache Menu Gen Error: {e}")
+        return f"Error: {e}", None
+
+@Altruix.bot.on_callback_query(filters.regex(r"^mnt_cache_menu_(\d+)$"))
+@log_errors
+@iuser_check
+async def mnt_cache_menu_handler(c: Client, cb: CallbackQuery):
+    try:
+        client_id = int(cb.data.split("_")[-1])
+        text, markup = await generate_mnt_cache_menu(client_id)
+        if markup:
+            await Altruix.edit_cb(cb, text, reply_markup=markup, parse_mode=enums.ParseMode.HTML)
+    except Exception as e:
+        await cb.answer(f"Error: {e}", show_alert=True)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^mnt_cache_set_ttl_(\d+)_(\d+)$"))
+@log_errors
+@iuser_check
+async def mnt_cache_set_ttl_handler(c: Client, cb: CallbackQuery):
+    try:
+        parts = cb.data.split("_")
+        client_id = int(parts[-2])
+        new_ttl = int(parts[-1])
+        
+        settings_file = "mentions_settings.json"
+        data = {"settings": {}, "global": {}}
+        import os, json
+        if os.path.exists(settings_file):
+            with open(settings_file, "r") as f:
+                data = json.load(f)
+        
+        if "global" not in data:
+            data["global"] = {}
+        data["global"]["cache_ttl"] = new_ttl
+        
+        with open(settings_file, "w") as f:
+            json.dump(data, f, indent=4)
+            
+        await cb.answer(f"✅ Cache TTL adjusted to {new_ttl//3600} hours!", show_alert=True)
+        
+        # Refresh Menu
+        text, markup = await generate_mnt_cache_menu(client_id)
+        if markup:
+            await Altruix.edit_cb(cb, text, reply_markup=markup, parse_mode=enums.ParseMode.HTML)
+    except Exception as e:
+        await cb.answer(f"Error: {e}", show_alert=True)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^mnt_cache_clear_(mentions|waiting|users|blocks)_(\d+)$"))
+@log_errors
+@iuser_check
+async def mnt_cache_clear_handler(c: Client, cb: CallbackQuery):
+    try:
+        action = cb.matches[0].group(1)
+        client_id = int(cb.matches[0].group(2))
+        
+        cleared_count = 0
+        if action == "mentions":
+            cleared_count = len(MENTION_LOG_CACHE)
+            MENTION_LOG_CACHE.clear()
+        elif action == "waiting":
+            cleared_count = len(REPLY_AS_MENTIONED_WAITING)
+            REPLY_AS_MENTIONED_WAITING.clear()
+        elif action == "users":
+            cleared_count = len(USER_REPLY_COUNTS)
+            USER_REPLY_COUNTS.clear()
+        elif action == "blocks":
+            from Main.plugins.userbot.xmention_logger_user import BLOCK_STATUS_CACHE
+            cleared_count = len(BLOCK_STATUS_CACHE)
+            BLOCK_STATUS_CACHE.clear()
+            
+        await cb.answer(f"✅ Cleared {cleared_count} items from {action} cache!", show_alert=True)
+        
+        # Refresh Menu
+        text, markup = await generate_mnt_cache_menu(client_id)
+        if markup:
+            await Altruix.edit_cb(cb, text, reply_markup=markup, parse_mode=enums.ParseMode.HTML)
+    except Exception as e:
+        await cb.answer(f"Error: {e}", show_alert=True)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^mnt_cache_noop$"))
+async def mnt_cache_noop_handler(c, cb):
+    await cb.answer("Current Cache TTL Duration", show_alert=False)
+
 
 @Altruix.bot.on_callback_query(filters.regex(r"^open_mentions_settings_(\d+|owner|self)$"))
 @log_errors
@@ -1114,7 +1273,7 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
                 logger.debug(f"⚠️ Ignoring mention from bot assistant in log group {m.chat.id}")
                 return
             else:
-                logger.info(f"✅ Processing mention in log group from user {sender.id if sender else 'unknown'}")
+                logger.debug(f"✅ Processing mention in log group from user {sender.id if sender else 'unknown'}")
                 # Debug: Trigger hater detection manually for log group mentions
                 # await _process_hater_message(c, m, True, False)
         
@@ -1330,7 +1489,7 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
         if not full_name:
             full_name = "Blank User"
         
-        # Hyperlink the name
+        # Hyperlink the name + ID for better clickability on mobile
         mentioner_hyperlink = f'<a href="tg://user?id={mentioner_id}">{html.escape(full_name)}</a>'
         
         # Username handling
@@ -1374,7 +1533,7 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
         my_name = c.me.first_name if c.me else "Unknown"
         my_name = Essentials.clean_user_name(my_name)
 
-        # Hyperlink the my name
+        # Hyperlink the my name + ID
         my_name_hyperlink = f'<a href="tg://user?id={c.me.id}">{html.escape(my_name)}</a>'
         
         # Group handling: Title as clickable hyperlink + (ID)
@@ -1426,7 +1585,7 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
         log_message += "</blockquote>"
         
         # Add Message Content in a separate blockquote
-        log_message += f"\n\n📄 <b>Message:</b>\n<blockquote expandable>{message_text}</blockquote>"
+        log_message += f"\n📄 <b>Message:</b>\n<blockquote expandable>{message_text}</blockquote>"
         
         # Get dynamic button style
         from Main.utils.file_helpers import get_user_button_style
@@ -1435,11 +1594,11 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
         # Buttons
         keyboard = [
             [
-                InlineKeyboardButton(await Essentials.get_user_button_style(client_id, "Menu"), callback_data=f"tags_toggle_full_{m.chat.id}_{m.id}", style=btn_style_enum),
+                InlineKeyboardButton(await Essentials.get_user_button_style(client_id, "⚙️ Menu"), callback_data=f"tags_toggle_full_{m.chat.id}_{m.id}", style=btn_style_enum),
                 InlineKeyboardButton("🔗 Go to Message", url=m.link, style=btn_style_enum)
             ],
             [
-                InlineKeyboardButton("💬 Chat with User", url=f"tg://user?id={mentioner_id}", style=btn_style_enum)
+                InlineKeyboardButton(f"💬 User Profile: {mentioner_id}", url=f"tg://user?id={mentioner_id}", style=btn_style_enum)
             ]
         ]
         
@@ -1496,7 +1655,7 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
             "message_id": m.id,
             "thread_id": topic_id,
             "timestamp_int": int(time.time()),
-            "mentioned_by": mentioner_id,
+            "mentioner_id": mentioner_id,
             "name": m.chat.title or full_name,
             "group_name": m.chat.title,
             "client_name": c.me.first_name if c.me else "Unknown",
@@ -1532,7 +1691,7 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
             "message_id": m.id,
             "thread_id": topic_id,
             "timestamp_int": int(time.time()),
-            "mentioned_by": mentioner_id,
+            "mentioner_id": mentioner_id,
             "name": m.chat.title or full_name,
             "group_name": m.chat.title,
             "client_name": c.me.first_name if c.me else "Unknown",
@@ -1639,6 +1798,7 @@ async def send_mention_edit_handler(c: Client, m: RawMessage):
         l_name_edit = (mentioner.last_name if mentioner else "") or ""
         full_name_edit = f"{f_name_edit} {l_name_edit}".strip() or "Blank User"
         
+        # Robust clickable hyperlink (Name + ID)
         mentioner_hyperlink = f'<a href="tg://user?id={mentioner_id}">{html.escape(full_name_edit)}</a>'
         username_display_edit = f"@{mentioner.username}" if mentioner and mentioner.username else "None"
         
@@ -1673,7 +1833,7 @@ async def send_mention_edit_handler(c: Client, m: RawMessage):
             f"• <b>Original:</b> <code>{mention_time}</code>\n"
             f"• <b>Edited:</b> <code>{edit_time}</code>\n"
             f"• <b>Msg ID:</b> <code>{m.id}</code>\n"
-            f"</blockquote>\n\n"
+            f"</blockquote>\n"
             f"📄 <b>Message:</b>\n<blockquote expandable>{message_text}</blockquote>"
         )
 
@@ -2008,14 +2168,26 @@ async def mentions_direct_reply_callback(c: Client, cb: CallbackQuery):
         user_mention = cb.from_user.mention(style=enums.ParseMode.HTML) if cb.from_user else "User"
         
         bot = Altruix.bot
+        
+        # Resolve button style
+        from Main.utils.file_helpers import get_user_button_style
+        user_style = get_user_button_style(cb.from_user.id)
+        
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("❌ Cancel", callback_data=f"mentions_cancel_{waiting_id}", style=user_style)]
+        ])
+        
         instr = await bot.send_message(
             Altruix.log_chat,
+            f"<blockquote expandable>"
             f"✉️ <b>Input Balasan Mention</b> (via {client_name})\n\n"
             f"Halo <b>{user_mention}</b>!\n"
             f"Silakan balas pesan ini dengan teks balasan Anda.\n"
-            f"Pesan akan dikirim ke chat ID <code>{chat_id}</code>.",
+            f"Pesan akan dikirim ke chat ID <code>{chat_id}</code>."
+            f"</blockquote",
             reply_to_message_id=log_msg_id,
-            parse_mode=enums.ParseMode.HTML
+            parse_mode=enums.ParseMode.HTML,
+            reply_markup=keyboard
         )
         
         # Simpan instruction_msg_id agar bisa direply langsung
@@ -2486,7 +2658,7 @@ async def fix_cache_command(c: Client, m: AltruixMessage):
                                                         "chat_id": chat_id,
                                                         "message_id": message_id,
                                                         "timestamp_int": int(time.time()),
-                                                        "mentioned_by": 0,
+                                                        "mentioner_id": 0,
                                                         "group_name": "Unknown",
                                                         "client_name": "Recovered"
                                                     }
@@ -2750,7 +2922,7 @@ async def test_buttons_command(c: Client, m: AltruixMessage):
             "chat_id": test_chat_id,
             "message_id": test_message_id,
             "timestamp_int": int(time.time()),
-            "mentioned_by": m.from_user.id if m.from_user else 0,
+            "mentioner_id": m.from_user.id if m.from_user else 0,
             "group_name": m.chat.title if m.chat else "Test",
             "client_name": c.me.first_name if c.me else "Bot"
         }
@@ -3074,7 +3246,7 @@ async def cleanup_old_entries():
                     pass
                 
             if expired_cache or expired_waiting:
-                logger.info(f"🧹 Cleaned {len(expired_cache)} cache and {len(expired_waiting)} waiting entries")
+                logger.debug(f"🧹 Cleaned {len(expired_cache)} cache and {len(expired_waiting)} waiting entries")
                 
                 # ✅ NOTIF LOG
                 try:
@@ -3099,14 +3271,14 @@ async def cleanup_old_entries():
 
 # Start cleanup task
 asyncio.create_task(cleanup_old_entries())
-logger.info("Cleanup task started")
+logger.debug("Cleanup task started")
 
 # ============================================================================
 # 🔥 CACHE CLEANUP TASK
 # ============================================================================
 async def cache_cleanup_task():
     """Regular cache cleanup task."""
-    logger.info("♻️ Starting cache cleanup task loop...")
+    logger.debug("♻️ Starting cache cleanup task loop...")
     while True:
         try:
             # Cleanup expired waiting replies di cache persisten
@@ -3116,7 +3288,7 @@ async def cache_cleanup_task():
                     if hasattr(cache_manager, 'cleanup_expired'):
                         cleaned = await cache_manager.cleanup_expired()
                         if cleaned > 0:
-                            logger.info(f"🧹 CacheManager cleaned {cleaned} expired entries")
+                            logger.debug(f"🧹 CacheManager cleaned {cleaned} expired entries")
                     else:
                         logger.warning("⚠️ CacheManager missing cleanup_expired method")
                 except Exception as e:
@@ -3144,7 +3316,7 @@ async def cache_cleanup_task():
                 MENTION_LOG_CACHE.pop(key, None)
             
             if expired_keys:
-                logger.info(f"🧹 Cleaned {len(expired_keys)} expired fallback cache entries")
+                logger.debug(f"🧹 Cleaned {len(expired_keys)} expired fallback cache entries")
                 await _save_fallback_cache()
                 
         except Exception as e:
@@ -3199,7 +3371,7 @@ async def tags_toggle_menu_callback(c: Client, cb: CallbackQuery):
                     InlineKeyboardButton("🗑️ Unsend", callback_data=f"mentions_unsend_{chat_id}_{msg_id}")
                 ],
                 [
-                    InlineKeyboardButton("💬 Chat with User", url=f"tg://user?id={mentioner_id}"),
+                    InlineKeyboardButton(f"💬 User Profile: {mentioner_id}", url=f"tg://user?id={mentioner_id}"),
                 ],
                 [
                     InlineKeyboardButton("📤 Send Message", callback_data=f"tags_send_msg_{chat_id}_{msg_id}_{mentioner_id}"),
@@ -3466,9 +3638,11 @@ async def tags_send_message_callback(c: Client, cb: CallbackQuery):
         # Send instruction
         instruction_msg = await Altruix.bot.send_message(
             Altruix.log_chat,
-            f"📤 **Send Message to User**\n\n"
-            f"Reply to this message with the text you want to send to user <code>{user_id}</code>\n\n"
-            f"⏱️ Waiting for your message...",
+            f"<blockquote expandable>\n"
+            f"📤 <b>Send Message to User</b>\n\n"
+            f"Reply to this message with the text or media you want to send to user <code>{user_id}</code>\n"
+            f"Pesan akan dikirim sebagai pesan baru, bukan balasan (reply).\n"
+            f"</blockquote>",
             parse_mode=enums.ParseMode.HTML,
             reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton("❌ Cancel", callback_data=f"tags_send_cancel_{waiting_id}")
@@ -3555,7 +3729,7 @@ async def handle_tags_send_message_input(c: Client, m: RawMessage):
 
 # Start cache cleanup task
 asyncio.create_task(cache_cleanup_task())
-logger.info("Cache cleanup task started")
+logger.debug("Cache cleanup task started")
 
 
 
@@ -3629,27 +3803,31 @@ async def get_settings(user_id: int) -> dict:
         "log_detections": True,     # Log detections to LOG_CHAT
         "random_response": True,    # Use random response from list
         "auto_detect_block": False, # Auto-detect and trap users who reply with .block
-        "apply_type": "account"     # "account" or "global"
+        "apply_type": "account",    # "account" or "global"
+        "auto_delete_response": False, # Auto-delete response message
+        "delete_response_delay": 6   # Delay before deleting response (seconds)
     }
     
+    # 1. Initialize user record if missing
     if uid not in all_s:
-        # Check if we should inherit from Global first if it exists
         if "GLOBAL" in all_s:
             all_s[uid] = all_s["GLOBAL"].copy()
-            all_s[uid]["apply_type"] = "account" 
+            all_s[uid]["apply_type"] = "account"
         else:
-            all_s[uid] = defaults
+            all_s[uid] = defaults.copy()
         await _save_all_settings_to_db(all_s)
-    else:
-        # Merge missing keys
-        changed = False
-        for k, v in defaults.items():
-            if k not in all_s[uid]:
-                all_s[uid][k] = v
-                changed = True
-        if changed:
-            await _save_all_settings_to_db(all_s)
-        
+
+    # 2. Merge defaults for both User and Global to ensure new keys exist
+    for target in [uid, "GLOBAL"]:
+        if target in all_s and isinstance(all_s[target], dict):
+            changed = False
+            for k, v in defaults.items():
+                if k not in all_s[target]:
+                    all_s[target][k] = v
+                    changed = True
+            if changed: 
+                await _save_all_settings_to_db(all_s)
+
     # If using Global, return global settings (but keep user's apply_type)
     if all_s[uid].get("apply_type") == "global":
         if "GLOBAL" not in all_s:
@@ -3694,7 +3872,7 @@ except Exception:
 # ==================== BLOCK STATUS CACHE ====================
 # Cache untuk menyimpan status block user (menghindari API call berulang)
 # Format: {user_id: {"blocked": bool, "timestamp": int}}
-BLOCK_STATUS_CACHE = {}
+BLOCK_STATUS_CACHE = Altruix.BLOCK_STATUS_CACHE
 # 🔥 Dynamic TTL: 
 # - Blocked users (True) are cached longer (10 mins) as block status is usually stable.
 # - NOT Blocked users (False) are cached briefly (30 secs) to allow quick re-tests if they block us.
@@ -3747,12 +3925,33 @@ def set_cached_block_status(user_id: int, is_blocked: bool):
 # ==================== HELPER FUNCTIONS ====================
 
 async def send_log(text: str, client=None):
-    """Send a log message to the LOG_CHAT_ID."""
+    """Send a log message prioritizing: Custom Bot > Main Bot > Userbot."""
     try:
+        # 1. Try Custom Bot (Session-specific bot)
+        if client and hasattr(client, "me") and client.me:
+            u_id = client.me.id
+            if hasattr(Altruix, "bot_manager"):
+                custom_bot = Altruix.bot_manager.get_bot(u_id)
+                if custom_bot and getattr(custom_bot, "is_connected", False):
+                    try:
+                        return await custom_bot.send_message(LOG_CHAT_ID, text, parse_mode=enums.ParseMode.HTML)
+                    except Exception as e:
+                        logger.error(f"Custom bot send_log failed for {u_id}: {e}")
+
+        # 2. Try Main Bot Assistant (Altruix.bot)
+        try:
+            return await Altruix.bot.send_message(LOG_CHAT_ID, text, parse_mode=enums.ParseMode.HTML)
+        except Exception as e:
+            logger.error(f"Main bot assistant send_log failed: {e}")
+
+        # 3. Fallback to provided client (Userbot)
         if client:
-            return await client.send_message(LOG_CHAT_ID, text, parse_mode=enums.ParseMode.HTML)
-    except Exception as e:
-        logger.error(f"send_log failed: {e}")
+            try:
+                return await client.send_message(LOG_CHAT_ID, text, parse_mode=enums.ParseMode.HTML)
+            except Exception as e2:
+                logger.error(f"Userbot send_log fallback failed: {e2}")
+    except Exception as e3:
+        logger.error(f"send_log critical error: {e3}")
     return None
 
 async def check_if_blocked(client: Client, user_id: int) -> bool:
@@ -3940,12 +4139,14 @@ async def _process_hater_message(client: Client, message: RawMessage, is_mention
         
         log_text = (
             f"🚫 <b>Hater Detected!</b>\n"
+            f"<blockquote expandable>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"👤 <b>Hater:</b> {html.escape(hater_info['first_name'])} (<code>{hater_id}</code>)\n"
-            f"💬 <b>Chat:</b> {html.escape(chat_title)} (<code>{chat_id}</code>)\n"
-            f"🤖 <b>Session:</b> {html.escape(me_name)} (<code>{user_id}</code>)\n"
-            f"📊 <b>Stats:</b> Detection <b>#{hater_info['count']}</b>\n"
-            f"📝 <b>Message:</b> {html.escape(message.text[:100] if message.text else '[Media]')}"
+            f"•  <b>Hater:</b> {html.escape(hater_info['first_name'])} (<code>{hater_id}</code>)\n"
+            f"•  <b>Chat:</b> {html.escape(chat_title)} (<code>{chat_id}</code>)\n"
+            f"•  <b>Session:</b> {html.escape(me_name)} (<code>{user_id}</code>)\n"
+            f"•  <b>Stats:</b> Detection <b>#{hater_info['count']}</b>\n"
+            f"•  <b>Message:</b> {html.escape(message.text[:100] if message.text else '[Media]')}\n"
+            f"</blockquote>"
         )
         await send_log(log_text, client=client)
     
@@ -4012,6 +4213,27 @@ async def _process_hater_message(client: Client, message: RawMessage, is_mention
             sent_msg = await message.reply(response_text, parse_mode=parse_mode, quote=True)
         
         logger.info(f"[Hater Detector] ✅ SUCCESS: Response sent by '{me_label}'! Msg ID: {sent_msg.id}")
+        
+        # --- Step 9: Optional Auto-Delete ---
+        is_autodel = s.get("auto_delete_response", False)
+        del_delay = s.get("delete_response_delay", 6)
+        logger.info(f"[Hater Detector] Debug Auto-Delete: status={is_autodel}, delay={del_delay}")
+        
+        if is_autodel:
+            logger.info(f"[Hater Detector] 🗑 Auto-Delete triggered for message {sent_msg.id} (Delay: {del_delay}s)")
+            
+            async def auto_delete_task(msg, delay):
+                logger.info(f"[Hater Detector] 🗑 Auto-Delete task started for {msg.id}, waiting {delay}s...")
+                await asyncio.sleep(delay)
+                try:
+                    await msg.delete()
+                    logger.info(f"[Hater Detector] 🗑 Auto-Deleted response message {msg.id} successfully.")
+                except Exception as del_err:
+                    logger.error(f"[Hater Detector] ❌ Auto-Delete FAILED for message {msg.id}: {del_err}")
+            
+            asyncio.create_task(auto_delete_task(sent_msg, del_delay))
+        else:
+            logger.info(f"[Hater Detector] ⏭ Auto-Delete skipped (Disabled in settings).")
     except Exception as e:
         logger.error(f"[Hater Detector] ❌ FAILED: Client '{user_id}' could not respond to {hater_id}: {e}")
         # Notify about failure in the log
@@ -4638,11 +4860,19 @@ async def generate_haters_menu_async(client_id):
             InlineKeyboardButton(f"Apply: {apply_text}", callback_data=f"haters_apply_{client_id}")
         ],
         [
-            InlineKeyboardButton(f"Responses ({total_responses})", callback_data=f"haters_responses_{client_id}"),
-            InlineKeyboardButton(f"Total Haters ({total_haters})", callback_data=f"haters_list_{client_id}")
+            InlineKeyboardButton(f"Total Haters ({total_haters})", callback_data=f"haters_list_{client_id}"),
+            InlineKeyboardButton("🗑 Clear Haters List", callback_data=f"haters_clear_{client_id}")
         ],
         [
-            InlineKeyboardButton("🗑 Clear Haters List", callback_data=f"haters_clear_{client_id}")
+            InlineKeyboardButton(
+                f"Auto-Delete: {'ON ✅' if s.get('auto_delete_response', False) else 'OFF ❌'}", 
+                callback_data=f"haters_toggledel_{client_id}"
+            )
+        ],
+        [
+            InlineKeyboardButton("-2s", callback_data=f"haters_ddelay_m_{client_id}"),
+            InlineKeyboardButton(f"Del Delay: {s.get('delete_response_delay', 6)}s", callback_data=f"haters_ddelay_v_{client_id}"),
+            InlineKeyboardButton("+2s", callback_data=f"haters_ddelay_p_{client_id}")
         ],
         [
             InlineKeyboardButton("🔙 Back to Mentions", callback_data=f"open_mentions_settings_{client_id}")
@@ -4663,14 +4893,28 @@ async def generate_haters_menu_async(client_id):
     )
     return text, InlineKeyboardMarkup(buttons)
 
-@Altruix.bot.on_callback_query(filters.regex(r"^haters_(menu|toggle|log|random|autoblock|delay|responses|list|clear|apply)(?:_(\d+))?$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^haters_(menu|toggle|log|random|autoblock|delay|responses|list|clear|apply|toggledel|ddelay)(?:_([mpv]))?(?:_(\d+))?$"))
 @log_errors
 @iuser_check
 async def haters_menu_callback(c, cb):
     try:
         action = cb.matches[0].group(1)
-        client_id_str = cb.matches[0].group(2)
-        client_id = int(client_id_str) if client_id_str else cb.from_user.id
+        sub_action = cb.matches[0].group(2)
+        client_id_str = cb.matches[0].group(3)
+        
+        # Resolve client_id: if small, treat as index in Altruix.clients
+        if client_id_str and client_id_str.isdigit():
+            val = int(client_id_str)
+            if val < 100: # Treating as index
+                if val < len(Altruix.clients):
+                    client_id = Altruix.clients[val].me.id
+                else:
+                    await cb.answer("❌ Session index out of range.", show_alert=True)
+                    return
+            else: # Treating as actual user ID
+                client_id = val
+        else:
+            client_id = cb.from_user.id
         
         s = await get_settings(client_id)
         
@@ -4724,6 +4968,32 @@ async def haters_menu_callback(c, cb):
             s["apply_type"] = new_type
             await save_settings(client_id, s)
             await cb.answer(f"Haters settings now applied as: {new_type.upper()}")
+        elif action == "toggledel":
+            s["auto_delete_response"] = not s.get("auto_delete_response", False)
+            await save_settings(client_id, s)
+            await cb.answer(f"Auto-Delete Respon: {'ENABLED' if s['auto_delete_response'] else 'DISABLED'}")
+        elif action == "ddelay":
+            current_delay = s.get("delete_response_delay", 6)
+            
+            if sub_action == "m": # minus
+                new_delay = max(2, current_delay - 2)
+                if new_delay == current_delay:
+                    await cb.answer("Minimum delay is 2 seconds.", show_alert=True)
+                    return
+                s["delete_response_delay"] = new_delay
+                await save_settings(client_id, s)
+                await cb.answer(f"Delete Delay decreased to {new_delay}s")
+            elif sub_action == "p": # plus
+                new_delay = min(60, current_delay + 2)
+                if new_delay == current_delay:
+                    await cb.answer("Maximum delay is 60 seconds.", show_alert=True)
+                    return
+                s["delete_response_delay"] = new_delay
+                await save_settings(client_id, s)
+                await cb.answer(f"Delete Delay increased to {new_delay}s")
+            else: # value button (v)
+                await cb.answer(f"Respon akan dihapus otomatis setelah {current_delay} detik.", show_alert=True)
+                return
             
         text, markup = await generate_haters_menu_async(client_id)
         if markup:

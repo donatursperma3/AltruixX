@@ -45,12 +45,48 @@ async def help_settings_menu_handler(c: Client, cb: CallbackQuery):
     type_icon = "🌍" if apply_type == "global" else "👤"
     status_icon = "✅" if status == "custom" else "❌"
     
+    design_apply_type = await Altruix.config.get_env("HELP_MENU_DESIGN_APPLY_TYPE", default="global") or "global"
+    if design_apply_type == "global":
+        help_design = await Altruix.config.get_env("HELP_MENU_DESIGN_GLOBAL", default="1") or "1"
+    else:
+        help_design = await Altruix.config.get_env(f"HELP_MENU_DESIGN_{me.id}", default="1") or "1"
+    design_type_icon = "🌍" if design_apply_type == "global" else "👤"
+    
+    # Compact Text Settings
+    compact_apply_type = await Altruix.config.get_env("HELP_COMPACT_APPLY_TYPE", default="global")
+    if compact_apply_type == "global":
+        compact_status = await Altruix.config.get_env("HELP_COMPACT_STATUS_GLOBAL", default="off")
+        res_max = await Altruix.config.get_env("HELP_COMPACT_MAX_LEN_GLOBAL", default=13)
+        compact_max = int(res_max if res_max is not None else 13)
+    else:
+        compact_status = await Altruix.config.get_env(f"HELP_COMPACT_STATUS_{me.id}", default="off")
+        res_max = await Altruix.config.get_env(f"HELP_COMPACT_MAX_LEN_{me.id}", default=13)
+        compact_max = int(res_max if res_max is not None else 13)
+
+    comp_type_icon = "🌍" if compact_apply_type == "global" else "👤"
+    comp_status_icon = "✅" if compact_status == "on" else "❌"
+
+    # Page Max Chars Settings (for plugin sub-page splitting)
+    page_chars_apply_type = await Altruix.config.get_env("HELP_PAGE_CHARS_APPLY_TYPE", default="global")
+    if page_chars_apply_type == "global":
+        res_page_max = await Altruix.config.get_env("HELP_PAGE_MAX_CHARS_GLOBAL", default=900)
+    else:
+        res_page_max = await Altruix.config.get_env(f"HELP_PAGE_MAX_CHARS_{me.id}", default=900)
+    page_max_chars = int(res_page_max if res_page_max is not None else 900)
+    page_chars_icon = "🌍" if page_chars_apply_type == "global" else "👤"
+
     text = (
         "<b>⚙️ Custom Help Settings</b>\n\n"
         f"Customize the message shown when running <code>.help</code>.\n\n"
+        "──────── <b>Message & Design</b> ────────\n"
         f"• <b>Status:</b> {status_icon} {'Custom' if status == 'custom' else 'Default'}\n"
         f"• <b>Apply Type:</b> {type_icon} {apply_type.replace('_', ' ').title()}\n"
+        f"• <b>Design Mode:</b> <code>Design {help_design}</code> ({design_type_icon})\n"
         f"• <b>Current Custom Message:</b>\n<blockquote>{html.escape(custom_msg)}</blockquote>\n\n"
+        "──────── <b>Display Settings</b> ────────\n"
+        f"• <b>Compact Text:</b> {comp_status_icon} {compact_status.upper()} ({comp_type_icon})\n"
+        f"• <b>Max Length:</b> <code>{compact_max} chars</code>\n"
+        f"• <b>Page Max Chars:</b> <code>{page_max_chars}</code> ({page_chars_icon})\n\n"
         "<i>Global mode applies one setting to all accounts. Per-Account allows different settings for each session.</i>"
     )
     
@@ -58,6 +94,27 @@ async def help_settings_menu_handler(c: Client, cb: CallbackQuery):
         [
             InlineKeyboardButton(f"Status: {'Custom' if status == 'custom' else 'Default'}", callback_data=f"toggle_help_status_{idx}_{pg}", style=user_style),
             InlineKeyboardButton(f"Type: {apply_type.title()}", callback_data=f"toggle_help_type_{idx}_{pg}", style=user_style)
+        ],
+        [
+            InlineKeyboardButton(f"Mode: Design {help_design}", callback_data=f"toggle_help_design_{idx}_{pg}", style=user_style),
+            InlineKeyboardButton(f"Scope: {design_apply_type.title()}", callback_data=f"toggle_help_design_type_{idx}_{pg}", style=user_style)
+        ],
+        [
+            InlineKeyboardButton(f"Compact: {compact_status.upper()}", callback_data=f"toggle_help_comp_status_{idx}_{pg}", style=user_style),
+            InlineKeyboardButton(f"Comp Scope: {compact_apply_type.title()}", callback_data=f"toggle_help_comp_type_{idx}_{pg}", style=user_style)
+        ],
+        [
+            InlineKeyboardButton("-1", callback_data=f"adj_help_comp_max_{idx}_{pg}_-1", style=user_style),
+            InlineKeyboardButton(f"Max Text: {compact_max}", callback_data="none", style=user_style),
+            InlineKeyboardButton("+1", callback_data=f"adj_help_comp_max_{idx}_{pg}_1", style=user_style)
+        ],
+        [
+            InlineKeyboardButton("-100", callback_data=f"adj_help_page_max_{idx}_{pg}_-100", style=user_style),
+            InlineKeyboardButton(f"Max Page: {page_max_chars}", callback_data="none", style=user_style),
+            InlineKeyboardButton("+100", callback_data=f"adj_help_page_max_{idx}_{pg}_100", style=user_style)
+        ],
+        [
+            InlineKeyboardButton(f"Page Scope: {page_chars_apply_type.title()}", callback_data=f"toggle_help_page_type_{idx}_{pg}", style=user_style)
         ],
         [
             InlineKeyboardButton("📝 Edit Custom Message", callback_data=f"edit_help_msg_{idx}_{pg}", style=user_style)
@@ -91,7 +148,7 @@ async def toggle_help_status_handler(c: Client, cb: CallbackQuery):
     current = await Altruix.config.get_env(key, default="default")
     new_status = "custom" if current == "default" else "default"
     await Altruix.config.set_env(key, new_status)
-    await cb.answer(f"Status set to {new_status.title()}")
+    await cb.answer(f"Status set to {new_status.title()}", show_alert=True)
     await help_settings_menu_handler(c, cb)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^toggle_help_type_(\d+)_(\d+)$"))
@@ -102,7 +159,120 @@ async def toggle_help_apply_type_handler(c: Client, cb: CallbackQuery):
     current = await Altruix.config.get_env("HELP_INFO_APPLY_TYPE", default="global")
     new_type = "per_account" if current == "global" else "global"
     await Altruix.config.set_env("HELP_INFO_APPLY_TYPE", new_type)
-    await cb.answer(f"Apply type set to {new_type.replace('_', ' ').title()}")
+    await cb.answer(f"Apply type set to {new_type.replace('_', ' ').title()}", show_alert=True)
+    await help_settings_menu_handler(c, cb)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^toggle_help_design_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def toggle_help_design_handler(c: Client, cb: CallbackQuery):
+    idx, pg = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
+    session_client = Altruix.clients[idx]
+    me = getattr(session_client, "myself", None) or await session_client.get_me()
+    
+    apply_type = await Altruix.config.get_env("HELP_MENU_DESIGN_APPLY_TYPE", default="global")
+    
+    if apply_type == "global":
+        key = "HELP_MENU_DESIGN_GLOBAL"
+    else:
+        key = f"HELP_MENU_DESIGN_{me.id}"
+        
+    current = await Altruix.config.get_env(key, default="1")
+    new_design = "2" if str(current) == "1" else "1"
+    await Altruix.config.set_env(key, new_design)
+    await cb.answer(f"Help Design set to Design {new_design}", show_alert=True)
+    await help_settings_menu_handler(c, cb)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^toggle_help_design_type_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def toggle_help_design_type_handler(c: Client, cb: CallbackQuery):
+    idx, pg = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
+    current = await Altruix.config.get_env("HELP_MENU_DESIGN_APPLY_TYPE", default="global")
+    new_type = "per_account" if current == "global" else "global"
+    await Altruix.config.set_env("HELP_MENU_DESIGN_APPLY_TYPE", new_type)
+    await cb.answer(f"Design scope set to {new_type.replace('_', ' ').title()}", show_alert=True)
+    await help_settings_menu_handler(c, cb)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^toggle_help_comp_status_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def toggle_help_compact_status_handler(c: Client, cb: CallbackQuery):
+    idx, pg = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
+    session_client = Altruix.clients[idx]
+    me = getattr(session_client, "myself", None) or await session_client.get_me()
+    
+    apply_type = await Altruix.config.get_env("HELP_COMPACT_APPLY_TYPE", default="global")
+    key = "HELP_COMPACT_STATUS_GLOBAL" if apply_type == "global" else f"HELP_COMPACT_STATUS_{me.id}"
+        
+    current = await Altruix.config.get_env(key, default="off")
+    new_status = "on" if current == "off" else "off"
+    await Altruix.config.set_env(key, new_status)
+    await cb.answer(f"Compact Text set to {new_status.upper()}", show_alert=True)
+    await help_settings_menu_handler(c, cb)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^toggle_help_comp_type_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def toggle_help_compact_apply_type_handler(c: Client, cb: CallbackQuery):
+    idx, pg = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
+    current = await Altruix.config.get_env("HELP_COMPACT_APPLY_TYPE", default="global")
+    new_type = "per_account" if current == "global" else "global"
+    await Altruix.config.set_env("HELP_COMPACT_APPLY_TYPE", new_type)
+    await cb.answer(f"Compact Scope set to {new_type.replace('_', ' ').title()}", show_alert=True)
+    await help_settings_menu_handler(c, cb)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^adj_help_comp_max_(\d+)_(\d+)_(-?\d+)$"))
+@iuser_check
+@log_errors
+async def adjust_help_compact_max_len_handler(c: Client, cb: CallbackQuery):
+    idx, pg = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
+    change = int(cb.matches[0].group(3))
+    
+    session_client = Altruix.clients[idx]
+    me = getattr(session_client, "myself", None) or await session_client.get_me()
+    
+    apply_type = await Altruix.config.get_env("HELP_COMPACT_APPLY_TYPE", default="global")
+    key = "HELP_COMPACT_MAX_LEN_GLOBAL" if apply_type == "global" else f"HELP_COMPACT_MAX_LEN_{me.id}"
+        
+    res_curr = await Altruix.config.get_env(key, default=13)
+    current = int(res_curr if res_curr is not None else 13)
+    new_val = max(1, current + change)
+    await Altruix.config.set_env(key, new_val)
+    await cb.answer(f"Max Text Length: {new_val}", show_alert=True)
+    await help_settings_menu_handler(c, cb)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^adj_help_page_max_(\d+)_(\d+)_(-?\d+)$"))
+@iuser_check
+@log_errors
+async def adjust_help_page_max_chars_handler(c: Client, cb: CallbackQuery):
+    """Adjust the maximum character limit per plugin help sub-page."""
+    idx, pg = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
+    change = int(cb.matches[0].group(3))
+    
+    session_client = Altruix.clients[idx]
+    me = getattr(session_client, "myself", None) or await session_client.get_me()
+    
+    apply_type = await Altruix.config.get_env("HELP_PAGE_CHARS_APPLY_TYPE", default="global")
+    key = "HELP_PAGE_MAX_CHARS_GLOBAL" if apply_type == "global" else f"HELP_PAGE_MAX_CHARS_{me.id}"
+        
+    res_curr = await Altruix.config.get_env(key, default=900)
+    current = int(res_curr if res_curr is not None else 900)
+    new_val = max(200, min(4000, current + change))  # Clamp between 200-4000
+    await Altruix.config.set_env(key, new_val)
+    await cb.answer(f"Max Page Chars: {new_val}", show_alert=True)
+    await help_settings_menu_handler(c, cb)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^toggle_help_page_type_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def toggle_help_page_chars_apply_type_handler(c: Client, cb: CallbackQuery):
+    """Toggle scope for page max chars between Global and Per-Account."""
+    idx, pg = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
+    current = await Altruix.config.get_env("HELP_PAGE_CHARS_APPLY_TYPE", default="global")
+    new_type = "per_account" if current == "global" else "global"
+    await Altruix.config.set_env("HELP_PAGE_CHARS_APPLY_TYPE", new_type)
+    await cb.answer(f"Page Chars Scope: {new_type.replace('_', ' ').title()}", show_alert=True)
     await help_settings_menu_handler(c, cb)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^help_vars_info_(\d+)_(\d+)$"))

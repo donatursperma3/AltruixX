@@ -316,6 +316,16 @@ async def process_profile_edit_input(c: Client, m: Message):
             success = True
             
         if success:
+            # ✅ Refresh session info cache
+            try:
+                session_client.myself = await session_client.get_me()
+                if action == 'change_bio':
+                    # Clear bio cache if it exists
+                    if hasattr(session_client, 'bio_cache'):
+                        delattr(session_client, 'bio_cache')
+            except Exception as e:
+                logger.warning(f"Failed to refresh session cache after update: {e}")
+
             from .utils import send_log_notification
             await m.reply(f"✅ <b>Berhasil!</b> Profil telah diperbarui.", parse_mode=ParseMode.HTML)
             await send_log_notification(c, action, index, m.from_user, True, additional_info={'New Value': text})

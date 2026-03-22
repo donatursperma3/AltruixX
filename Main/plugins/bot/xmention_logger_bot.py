@@ -10,6 +10,7 @@ from pyrogram.types import (
     CallbackQuery, ReplyParameters
 )
 from Main.core.decorators import log_errors, iuser_check
+from Main.utils.file_helpers import get_user_button_style
 import os
 import html
 import logging
@@ -147,13 +148,14 @@ async def mention_logger_bot_handler(c: Client, m: RawMessage):
         elif REPLY_ACCESS_MODE != "sudo":
              reply_label = f"Reply ({REPLY_ACCESS_MODE})"
 
+        user_style = get_user_button_style(c.me.id)
         buttons = [
             [
-                InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, f"💬 {reply_label}"), callback_data=f"mntlb_reply_{chat.id}_{m.id}_{sender_id}"),
-                InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, "🔇 Mute Group"), callback_data=f"mntlb_mute_{chat.id}"),
+                InlineKeyboardButton(f"💬 {reply_label}", callback_data=f"mntlb_reply_{chat.id}_{m.id}_{sender_id}", style=user_style),
+                InlineKeyboardButton("🔇 Mute Group", callback_data=f"mntlb_mute_{chat.id}", style=user_style),
             ],
             [
-                InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, "🔗 Go to Message"), url=m.link if m.link else f"https://t.me/c/{str(chat.id)[4:]}/{m.id}")
+                InlineKeyboardButton("🔗 Go to Message", url=m.link if m.link else f"https://t.me/c/{str(chat.id)[4:]}/{m.id}", style=user_style)
             ]
         ]
 
@@ -294,15 +296,16 @@ async def menlb_settings_handler(c: Client, m: RawMessage):
             f"• <b>Reply Mode:</b> {REPLY_ACCESS_MODE.upper()}"
         )
          
+         user_style = get_user_button_style(m.from_user.id)
          buttons = [
             [
-                InlineKeyboardButton(await Essentials.get_user_button_style(m.from_user.id, f"{'Disable' if enabled else 'Enable'} Bot Assist"), callback_data="mntlb_toggle_enabled")
+                InlineKeyboardButton(f"{'Disable' if enabled else 'Enable'} Bot Assist", callback_data="mntlb_toggle_enabled", style=user_style)
             ],
             [
-                InlineKeyboardButton(await Essentials.get_user_button_style(m.from_user.id, f"Mode: {REPLY_ACCESS_MODE.upper()}"), callback_data="mntlb_toggle_mode")
+                InlineKeyboardButton(f"Mode: {REPLY_ACCESS_MODE.upper()}", callback_data="mntlb_toggle_mode", style=user_style)
             ],
             [
-                InlineKeyboardButton(await Essentials.get_user_button_style(m.from_user.id, "🔙 Back"), callback_data="bot_controls_menu")
+                InlineKeyboardButton("🔙 Back", callback_data="bot_controls_menu", style=user_style)
             ]
         ]
          await m.reply_msg(text, reply_markup=InlineKeyboardMarkup(buttons))
@@ -347,15 +350,16 @@ async def mntlb_menu_handler(c: Client, cb: CallbackQuery):
             f"• <b>Reply Mode:</b> {REPLY_ACCESS_MODE.upper()}"
         )
         
+        user_style = get_user_button_style(cb.from_user.id)
         buttons = [
             [
-                InlineKeyboardButton(await Essentials.get_user_button_style(cb.from_user.id, f"{'Disable' if enabled else 'Enable'} Bot Assist"), callback_data="mntlb_toggle_enabled")
+                InlineKeyboardButton(f"{'Disable' if enabled else 'Enable'} Bot Assist", callback_data="mntlb_toggle_enabled", style=user_style)
             ],
             [
-                InlineKeyboardButton(await Essentials.get_user_button_style(cb.from_user.id, f"Mode: {REPLY_ACCESS_MODE.upper()}"), callback_data="mntlb_toggle_mode")
+                InlineKeyboardButton(f"Mode: {REPLY_ACCESS_MODE.upper()}", callback_data="mntlb_toggle_mode", style=user_style)
             ],
             [
-                InlineKeyboardButton(await Essentials.get_user_button_style(cb.from_user.id, "🔙 Back"), callback_data="bot_controls_menu")
+                InlineKeyboardButton("🔙 Back", callback_data="bot_controls_menu", style=user_style)
             ]
         ]
         await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=enums.ParseMode.HTML)

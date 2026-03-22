@@ -18,8 +18,9 @@ from pyrogram.types import Message
 
 from Main import Altruix
 from Main.core.decorators import log_errors
+from Main.utils.file_helpers import get_user_button_style
 
-PLUGIN_VERSION = "0.0.381"
+PLUGIN_VERSION = "0.0.384"
 logger = logging.getLogger("altruix.xcmd_logger")
 
 # Settings file
@@ -169,7 +170,8 @@ async def cmd_logger_handler(c: Client, m: Message):
         msg_link_display = f"[ <a href='{msg_link}'>here</a> ]" if msg_link else " N/A"
 
         log_message = (
-            f"⚡️ <b>Command Executed</b>\n"
+            f"⚡️ <b>Command Executed #LOG</b>\n\n"
+            f"<b>Detail:</b>\n"
             f"<blockquote expandable>\n"
             f"• <b>Account:</b> <b>{c.me.mention(style=enums.ParseMode.HTML)}</b>\n"
             f"• <b>Chat:</b> {chat_display}\n"
@@ -211,8 +213,8 @@ async def cmd_logger_handler(c: Client, m: Message):
         
         log_message += f"• <b>Time:</b> <code>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</code></blockquote>"
         
-        # 📝 Command at the bottom in a separate blockquote
-        log_message += f"\n\n📝 <b>Command:</b>\n<pre language='python'>{html.escape(text[:2000])}</pre>"
+        # Command at the bottom in a separate blockquote
+        log_message += f"\n\n<b>Command:</b>\n<pre language='python'>{html.escape(text[:2000])}</pre>"
         
         # Consistently use main Bot
         bot = Altruix.bot
@@ -225,13 +227,43 @@ async def cmd_logger_handler(c: Client, m: Message):
             Altruix.log("DEBUG: CmdLogger - Altruix.log_chat is NOT SET!", level=logging.ERROR)
             return
 
+        # 🔘 Create Copy Button Keyboard
+        from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+        
+        # Get custom button style from config synced with system
+        btn_style = get_user_button_style(user_id)
+        
+        btn_text = "Copy Cmd"
+
+        reply_markup = None
+        try:
+            # First try the newer CopyTextButton (native Pyrogram 2.4+)
+            from pyrogram.types import CopyTextButton
+            reply_markup = InlineKeyboardMarkup([[
+                InlineKeyboardButton(btn_text, copy_text=CopyTextButton(text=text), style=btn_style)
+            ]])
+        except (ImportError, TypeError):
+            # Fallback for older Pyrogram that accepts copy_text string directly
+            try:
+                reply_markup = InlineKeyboardMarkup([[
+                    InlineKeyboardButton(btn_text, copy_text=text, style=btn_style)
+                ]])
+            except TypeError:
+                # Absolute Fallback if older Pyrogram doesn't even support style kwarg
+                try:
+                    reply_markup = InlineKeyboardMarkup([[
+                        InlineKeyboardButton(btn_text, copy_text=text)
+                    ]])
+                except: pass
+
         async def _log_task():
             try:
                 await bot.send_message(
                     Altruix.log_chat,
                     log_message,
                     parse_mode=enums.ParseMode.HTML,
-                    disable_web_page_preview=True
+                    disable_web_page_preview=True,
+                    reply_markup=reply_markup
                 )
                 Altruix.log(f"✅ [CMD_LOGGER] Log sent successfully to {Altruix.log_chat}", level=logging.INFO)
             except Exception as send_err:
@@ -241,13 +273,15 @@ async def cmd_logger_handler(c: Client, m: Message):
                         Altruix.log_chat,
                         log_message,
                         parse_mode=enums.ParseMode.HTML,
-                        disable_web_page_preview=True
+                        disable_web_page_preview=True,
+                        reply_markup=reply_markup
                     )
                     Altruix.log(f"✅ [CMD_LOGGER] Log sent successfully via userbot fallback to {Altruix.log_chat}", level=logging.INFO)
                 except Exception as fallback_err:
                     Altruix.log(f"❌ [CMD_LOGGER] Fallback failed: {fallback_err}", level=logging.ERROR)
         
         asyncio.create_task(_log_task())
+
         
     except Exception as e:
         Altruix.log(f"Cmd logger fatal error: {e}", level=40)

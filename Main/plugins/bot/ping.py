@@ -9,7 +9,7 @@
 
 
 
-PLUGIN_VERSION = "0.0.4"
+PLUGIN_VERSION = "0.0.42"
 import time
 from Main import Altruix
 from style import ping_format as pf
@@ -55,14 +55,38 @@ async def ping_cb_handler(c: Client, cb: CallbackQuery):
     # Security: Verify if user is authorized
     from Main.utils.access_control import is_authorized_user
     if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-        msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+        # Extract uid if present in callback_data (format: "ping_{uid}")
+        parts = cb.data.split("_")
+        uid = parts[1] if len(parts) > 1 else None
+        
+        if uid:
+            from Main.utils.file_helpers import get_user_custom_alert
+            alert_data = get_user_custom_alert(uid)
+            msg = alert_data.get("text") if alert_data.get("mode") == "custom" else (Altruix.get_string("access_denied") or "⛔ Access denied")
+        else:
+            msg = (Altruix.get_string("access_denied") or "⛔ Access denied")
+            
         return await cb.answer(msg, show_alert=True)
 
-    uptime = Essentials.get_readable_time(time.time() - Altruix.start_time)
+    # Resolve session data
+    parts = cb.data.split("_")
+    uid = parts[1] if len(parts) > 1 else None
+    
+    target_client = c # Default to bot
+    if hasattr(Altruix, "clients") and Altruix.clients:
+        for cli in Altruix.clients:
+            if hasattr(cli, "me") and cli.me and str(cli.me.id) == uid:
+                target_client = cli
+                break
+
+    start_time_val = getattr(target_client, "start_time", Altruix.start_time)
+    uptime = Essentials.get_readable_time(time.time() - start_time_val)
+    
     start = time.perf_counter()
-    await c.invoke(Ping(ping_id=9999999))
+    await target_client.invoke(Ping(ping_id=9999999))
     end = time.perf_counter()
     ms = round((end - start) * 1000, 2)
+    
     text = Altruix.get_string("PING_TEXT").format(
         pf["ping_emoji1"], ms, pf["ping_emoji2"], uptime
     )
@@ -73,7 +97,7 @@ async def ping_cb_handler(c: Client, cb: CallbackQuery):
         ),
         reply_markup=InlineKeyboardMarkup(
             [[InlineKeyboardButton(
-                await Essentials.get_user_button_style(cb.from_user.id, f"{pf['ping_emoji1']} Ping"), "ping",
+                await Essentials.get_user_button_style(cb.from_user.id, f"{pf['ping_emoji1']} Ping"), cb.data,
                 style=enums.ButtonStyle.PRIMARY
                 )]]
         ),
@@ -84,11 +108,26 @@ async def ping_cb_handler(c: Client, cb: CallbackQuery):
 @log_errors
 @iuser_check
 async def ping_inline_handler(c: Client, iq: InlineQuery):
-    uptime = Essentials.get_readable_time(time.time() - Altruix.start_time)
+    # Extract session uid if provided (format: "ping_{uid}")
+    query_parts = iq.query.split("_")
+    uid = query_parts[1] if len(query_parts) > 1 else str(iq.from_user.id)
+    
+    # Resolve session data
+    target_client = c # Default to bot
+    if hasattr(Altruix, "clients") and Altruix.clients:
+        for cli in Altruix.clients:
+            if hasattr(cli, "me") and cli.me and str(cli.me.id) == uid:
+                target_client = cli
+                break
+
+    start_time_val = getattr(target_client, "start_time", Altruix.start_time)
+    uptime = Essentials.get_readable_time(time.time() - start_time_val)
+    
     start = time.perf_counter()
-    await c.invoke(Ping(ping_id=9999999))
+    await target_client.invoke(Ping(ping_id=9999999))
     end = time.perf_counter()
     ms = round((end - start) * 1000, 2)
+    
     await iq.answer(
         [
             InlineQueryResultArticle(
@@ -102,7 +141,7 @@ async def ping_inline_handler(c: Client, iq: InlineQuery):
                 ),
                 reply_markup=InlineKeyboardMarkup(
                     [[InlineKeyboardButton(
-                        await Essentials.get_user_button_style(iq.from_user.id, f"{pf['ping_emoji1']} Ping"), "ping",
+                        await Essentials.get_user_button_style(iq.from_user.id, f"{pf['ping_emoji1']} Ping"), f"ping_{uid}",
                         style=enums.ButtonStyle.PRIMARY
                         )]]
                 ),
@@ -125,9 +164,19 @@ async def pink_inline_handler(c: Client, iq: InlineQuery):
     uid = query_parts[1] if len(query_parts) > 1 else str(iq.from_user.id)
     chat_id = query_parts[2] if len(query_parts) > 2 else "0"
     
-    uptime = Essentials.get_readable_time(time.time() - Altruix.start_time)
+    # Resolve session data
+    target_client = c # Default to bot
+    if hasattr(Altruix, "clients") and Altruix.clients:
+        for cli in Altruix.clients:
+            if hasattr(cli, "me") and cli.me and str(cli.me.id) == uid:
+                target_client = cli
+                break
+
+    start_time_val = getattr(target_client, "start_time", Altruix.start_time)
+    uptime = Essentials.get_readable_time(time.time() - start_time_val)
+    
     start = time.perf_counter()
-    await c.invoke(Ping(ping_id=9999999))
+    await target_client.invoke(Ping(ping_id=9999999))
     end = time.perf_counter()
     ms = round((end - start) * 1000, 2)
     
@@ -136,9 +185,9 @@ async def pink_inline_handler(c: Client, iq: InlineQuery):
     
     text = f"""<blockquote expandable>─────────────────
 ⚡️ <b>PONG!</b>  [● System OK]
-  ├─ • 🕹 <b>Latency:</b> {ms} ms 
-  ├─ • 🧟 <b>Uptime:</b> {uptime}  [● Online]
-  └─ • 🙊 <b>React:</b> —
+  ├─ • <b>Latency:</b> {ms} ms 
+  ├─ • <b>Uptime:</b> {uptime}  [● Online]
+  └─ • <b>React:</b> —
   ─────────────────</blockquote>"""
 
     # callback_data format: "pkrep_{uid}_{chat_id}" and "pkreac_{uid}_{chat_id}"
@@ -151,7 +200,7 @@ async def pink_inline_handler(c: Client, iq: InlineQuery):
                 description=f"{ms} ms\n{uptime}",
                 input_message_content=InputTextMessageContent(text),
                 reply_markup=InlineKeyboardMarkup(
-                    [[InlineKeyboardButton("🪄 Pink", callback_data=f"pkrep_{uid}_{chat_id}", style=btn_style),
+                    [[InlineKeyboardButton("🚀 Pink", callback_data=f"pkrep_{uid}_{chat_id}", style=btn_style),
                       InlineKeyboardButton("🙈 React", callback_data=f"pkreac_{uid}_{chat_id}", style=btn_style)]]
                 ),
             )
@@ -165,7 +214,17 @@ async def pink_inline_handler(c: Client, iq: InlineQuery):
 async def pink_reping_bot_cb(c: Client, cb: CallbackQuery):
     from Main.utils.access_control import is_authorized_user
     if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-        msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+        # Extract uid (target session ID) from callback_data (format: "pkrep_{uid}_{chat_id}")
+        parts = cb.data.split("_")
+        uid = parts[1] if len(parts) > 1 else None
+        
+        if uid:
+            from Main.utils.file_helpers import get_user_custom_alert
+            alert_data = get_user_custom_alert(uid)
+            msg = alert_data.get("text") if alert_data.get("mode") == "custom" else (Altruix.get_string("access_denied") or "⛔ Access denied")
+        else:
+            msg = (Altruix.get_string("access_denied") or "⛔ Access denied")
+            
         return await cb.answer(msg, show_alert=True)
     
     # Extract from callback_data (format: "pkrep_{uid}_{chat_id}")
@@ -173,9 +232,19 @@ async def pink_reping_bot_cb(c: Client, cb: CallbackQuery):
     uid = parts[1] if len(parts) > 1 else "0"
     chat_id = parts[2] if len(parts) > 2 else "0"
     
-    uptime = Essentials.get_readable_time(time.time() - Altruix.start_time)
+    # Resolve session data
+    target_client = c # Default to bot
+    if hasattr(Altruix, "clients") and Altruix.clients:
+        for cli in Altruix.clients:
+            if hasattr(cli, "me") and cli.me and str(cli.me.id) == uid:
+                target_client = cli
+                break
+
+    start_time_val = getattr(target_client, "start_time", Altruix.start_time)
+    uptime = Essentials.get_readable_time(time.time() - start_time_val)
+    
     start = time.perf_counter()
-    await c.invoke(Ping(ping_id=9999999))
+    await target_client.invoke(Ping(ping_id=9999999))
     end = time.perf_counter()
     ms = round((end - start) * 1000, 2)
     
@@ -184,16 +253,16 @@ async def pink_reping_bot_cb(c: Client, cb: CallbackQuery):
     
     text = f"""<blockquote expandable>─────────────────
 ⚡️ <b>PONG!</b>  [● System OK]
-  ├─ • 🕹 <b>Latency:</b> {ms} ms 
-  ├─ • 🧟 <b>Uptime:</b> {uptime}  [● Online]
-  └─ • 🙊 <b>React:</b> —
+  ├─ • <b>Latency:</b> {ms} ms 
+  ├─ • <b>Uptime:</b> {uptime}  [● Online]
+  └─ • <b>React:</b> —
   ─────────────────</blockquote>"""
 
     try:
         await cb.edit_message_text(
             text,
             reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🪄 Pink", callback_data=f"pkrep_{uid}_{chat_id}", style=btn_style),
+                [[InlineKeyboardButton("🚀 Pink", callback_data=f"pkrep_{uid}_{chat_id}", style=btn_style),
                   InlineKeyboardButton("🙈 React", callback_data=f"pkreac_{uid}_{chat_id}", style=btn_style)]]
             ),
         )
@@ -206,7 +275,17 @@ async def pink_reping_bot_cb(c: Client, cb: CallbackQuery):
 async def pink_react_bot_cb(c: Client, cb: CallbackQuery):
     from Main.utils.access_control import is_authorized_user
     if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
-        msg = Altruix.get_string("access_denied") or "⛔ Akses Ditolak"
+        # Extract uid (target session ID) from callback_data (format: "pkreac_{uid}_{chat_id}")
+        parts = cb.data.split("_")
+        uid = parts[1] if len(parts) > 1 else None
+        
+        if uid:
+            from Main.utils.file_helpers import get_user_custom_alert
+            alert_data = get_user_custom_alert(uid)
+            msg = alert_data.get("text") if alert_data.get("mode") == "custom" else (Altruix.get_string("access_denied") or "⛔ Access denied")
+        else:
+            msg = (Altruix.get_string("access_denied") or "⛔ Access denied")
+            
         return await cb.answer(msg, show_alert=True)
     
     # Extract from callback_data (format: "pkreac_{uid}_{chat_id}")
@@ -258,9 +337,19 @@ async def pink_react_bot_cb(c: Client, cb: CallbackQuery):
         await cb.answer(f"⚠️ Reaction failed!\nError: {str(e)[:50]}", show_alert=True)
     
     # Update the message text to show the react status
-    uptime = Essentials.get_readable_time(time.time() - Altruix.start_time)
+    # Resolve session data
+    target_client = c # Default to bot
+    if hasattr(Altruix, "clients") and Altruix.clients:
+        for cli in Altruix.clients:
+            if hasattr(cli, "me") and cli.me and str(cli.me.id) == uid:
+                target_client = cli
+                break
+
+    start_time_val = getattr(target_client, "start_time", Altruix.start_time)
+    uptime = Essentials.get_readable_time(time.time() - start_time_val)
+    
     start = time.perf_counter()
-    await c.invoke(Ping(ping_id=9999999))
+    await target_client.invoke(Ping(ping_id=9999999))
     end = time.perf_counter()
     ms = round((end - start) * 1000, 2)
     
@@ -269,16 +358,16 @@ async def pink_react_bot_cb(c: Client, cb: CallbackQuery):
     
     updated_text = f"""<blockquote expandable>─────────────────
 ⚡️ <b>PONG!</b>  [● System OK]
-  ├─ • 🕹 <b>Latency:</b> {ms} ms 
-  ├─ • 🧟 <b>Uptime:</b> {uptime}  [● Online]
-  └─ • 🙊 <b>React:</b> {react_status}
+  ├─ • <b>Latency:</b> {ms} ms 
+  ├─ • <b>Uptime:</b> {uptime}  [● Online]
+  └─ • <b>React:</b> {react_status}
   ─────────────────</blockquote>"""
     
     try:
         await cb.edit_message_text(
             updated_text,
             reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🪄 Pink", callback_data=f"pkrep_{uid}_{chat_id_str}", style=btn_style),
+                [[InlineKeyboardButton("🚀 Pink", callback_data=f"pkrep_{uid}_{chat_id_str}", style=btn_style),
                   InlineKeyboardButton("🙈 React", callback_data=f"pkreac_{uid}_{chat_id_str}", style=btn_style)]]
             ),
         )

@@ -16,7 +16,7 @@ from Main.internals.settings_handlers.auto_global_purgeme import (
 # Plugin Metadata
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xautogp"
-PLUGIN_VERSION = "0.0.441"
+PLUGIN_VERSION = "0.0.442"
 
 # Cooldown/Task tracking is now handled by GLOBAL_PURGE_LOCK in auto_global_purgeme.py
 
@@ -49,7 +49,7 @@ async def autogp_dashboard_cmd(client: Client, message: Message):
     if not bot_username:
         # Fallback to direct edit if no bot found (still better than nothing)
         text = await get_auto_gp_status_text(user_id, current_chat_id=message.chat.id)
-        await message.edit(f"❌ <b>Bot assistant not found.</b>\n\n{text}")
+        await message.edit(f"<b>Bot assistant not found.</b>\n\n{text}")
         raise StopPropagation
 
     # 🚀 SHORTCUT: Quick run command (.autogp run)
@@ -59,11 +59,11 @@ async def autogp_dashboard_cmd(client: Client, message: Message):
 
         if inp == "run":
             if user_id in ACTIVE_PURGE_TASKS and not ACTIVE_PURGE_TASKS[user_id].done():
-                await message.edit("⚠️ <b>Auto-GP:</b> A purge cycle is already running.")
+                await message.edit("<b>Auto-GP:</b> A purge cycle is already running.")
                 return
-            await message.edit("🚀 <b>Auto-GP:</b> Initiating quick global purge cycle...")
-            Altruix.log(f"🚀 Auto-GP | Quick Run Triggered by command from {user_id}", level=20)
-            task = asyncio.create_task(auto_gp_global_cycle(client, force=True))
+            from Main.plugins.userbot.xcanceltask import generate_task_id
+            tid = generate_task_id("AGP")
+            task = asyncio.create_task(auto_gp_global_cycle(client, force=True, tid=tid))
             ACTIVE_PURGE_TASKS[user_id] = task
             return
         
@@ -72,16 +72,16 @@ async def autogp_dashboard_cmd(client: Client, message: Message):
             if task and not task.done():
                 task.cancel()
                 ACTIVE_PURGE_TASKS.pop(user_id, None)
-                await message.edit("🛑 <b>Auto-GP:</b> Purge cycle cancelled successfully.")
-                Altruix.log(f"🛑 Auto-GP | Purge cycle STOPPED by command from {user_id}", level=20)
+                await message.edit("<b>Auto-GP:</b> Purge cycle cancelled successfully.")
+                Altruix.log(f"Auto-GP | Purge cycle STOPPED by command from {user_id}", level=20)
             else:
-                await message.edit("ℹ️ <b>Auto-GP:</b> No active purge cycle found to stop.")
+                await message.edit("<b>Auto-GP:</b> No active purge cycle found to stop.")
             return
 
         elif inp == "status":
             task = ACTIVE_PURGE_TASKS.get(user_id)
-            is_running = "🏃 <b>RUNNING</b>" if (task and not task.done()) else "💤 <b>IDLE</b>"
-            await message.edit(f"📊 <b>Auto-GP Status:</b> {is_running}")
+            is_running = "<b>RUNNING</b>" if (task and not task.done()) else "<b>IDLE</b>"
+            await message.edit(f"<b>Auto-GP Status:</b> {is_running}")
             return
 
     # Try Inline first
@@ -108,13 +108,13 @@ async def autogp_dashboard_cmd(client: Client, message: Message):
         
         bot = Altruix.bot_manager.get_bot(user_id)
         if not bot:
-            await message.edit("❌ <b>Could not start bot assistant.</b>")
+            await message.edit("<b>Could not start bot assistant.</b>")
             return
             
         await bot.send_message(message.chat.id, text, reply_markup=kb)
         await message.delete_if_self()
     except Exception as e:
-        await message.edit(f"❌ <b>Error opening Auto-GP:</b> {e}")
+        await message.edit(f"<b>Error opening Auto-GP:</b> {e}")
     
     raise StopPropagation
 
@@ -142,7 +142,7 @@ async def autogp_toggle_cmd(client: Client, message: Message):
     await save_auto_gp_settings(user_id, settings)
     
     status_str = "ENABLED" if new_status else "DISABLED"
-    await message.edit(f"✅ Auto Global Purgeme has been <b>{status_str}</b>.")
+    await message.edit(f"Auto Global Purgeme has been <b>{status_str}</b>.")
     raise StopPropagation
 
 @Altruix.register_on_cmd(
@@ -195,13 +195,13 @@ async def autogp_blacklist_cmd(client: Client, message: Message):
     if is_already_bl:
         # If already in blacklist and not just toggling via current chat
         # User wants a specific message for "already exists"
-        text = f"<blockquote expandable>⚠️ {safe_name} ({chat_id}) is already in the blacklist.</blockquote>"
+        text = f"<blockquote expandable>{safe_name} ({chat_id}) is already in the blacklist.</blockquote>"
     else:
         settings["blacklist"].append(chat_id)
         await save_auto_gp_settings(user_id, settings)
         text = (
-            f"<blockquote expandable>✅ {safe_name} ({chat_id}) has been ADDED to Auto-GP Blacklist.\n"
-            f"📋 Total blacklisted: {len(settings['blacklist'])} chats\n\n"
+            f"<blockquote expandable>{safe_name} ({chat_id}) has been ADDED to Auto-GP Blacklist.\n"
+            f"Total blacklisted: {len(settings['blacklist'])} chats\n\n"
             f"Use .autogpblist to view all blacklisted chats.</blockquote>"
         )
 
@@ -248,7 +248,7 @@ async def autogp_del_blacklist_cmd(client: Client, message: Message):
     user_id = client.me.id
 
     if not message.user_input or not message.user_input.lstrip('-').isdigit():
-        await message.edit("❌ <b>Usage:</b> <code>.autogpdel &lt;chat_id&gt;</code>")
+        await message.edit("<b>Usage:</b> <code>.autogpdel &lt;chat_id&gt;</code>")
         raise StopPropagation
 
     chat_id = int(message.user_input)
@@ -256,15 +256,15 @@ async def autogp_del_blacklist_cmd(client: Client, message: Message):
 
     if chat_id not in settings["blacklist"]:
         await message.edit(
-            f"⚠️ Chat <code>{chat_id}</code> is <b>NOT</b> in the Auto-GP Blacklist."
+            f"Chat <code>{chat_id}</code> is <b>NOT</b> in the Auto-GP Blacklist."
         )
         raise StopPropagation
 
     settings["blacklist"].remove(chat_id)
     await save_auto_gp_settings(user_id, settings)
     await message.edit(
-        f"✅ Chat <code>{chat_id}</code> has been <b>REMOVED</b> from Auto-GP Blacklist.\n"
-        f"📋 Remaining blacklisted: <code>{len(settings['blacklist'])} chats</code>"
+        f"Chat <code>{chat_id}</code> has been <b>REMOVED</b> from Auto-GP Blacklist.\n"
+        f"Remaining blacklisted: <code>{len(settings['blacklist'])} chats</code>"
     )
     raise StopPropagation
 
@@ -296,7 +296,7 @@ async def autogp_view_blacklist_cmd(client: Client, message: Message):
 
     if not bl:
         await message.edit(
-            "📋 <b>Auto-GP Blacklist</b>\n\n"
+            "<b>Auto-GP Blacklist</b>\n\n"
             "<i>Blacklist is empty. No chats are excluded.</i>"
         )
         raise StopPropagation
@@ -311,7 +311,7 @@ async def autogp_view_blacklist_cmd(client: Client, message: Message):
         lines.append(f"• <code>{cid}</code> — {name}")
 
     text = (
-        f"📋 <b>Auto-GP Blacklist</b>\n"
+        f"<b>Auto-GP Blacklist</b>\n"
         f"Total: <code>{len(bl)}</code> chats\n\n"
         + "\n".join(lines)
     )
@@ -402,20 +402,25 @@ async def auto_gp_message_trigger(client: Client, message: Message):
                 return
 
     cycle_mode = settings.get("cycle", "global")
-
     if cycle_mode == "global":
         # 🚀 GLOBAL TRIGGER: Fire and forget the global cycle
         import asyncio
-        asyncio.create_task(auto_gp_global_cycle(client))
+        from Main.plugins.userbot.xcanceltask import generate_task_id
+        tid = generate_task_id("AGP")
+        asyncio.create_task(auto_gp_global_cycle(client, tid=tid))
     
     elif cycle_mode == "current_force":
         # ⚠️ FORCE TRIGGER: Force purge on current chat (Bypass guards)
         import asyncio
+        from Main.plugins.userbot.xcanceltask import generate_task_id
+        tid = generate_task_id("APC")
         Altruix.log(f"📍 Auto-GP Force Mode | Triggering Force Purge for Chat: {chat_id}", level=20)
-        asyncio.create_task(auto_gp_perform_purge(client, chat_id, message=message, bypass_guards=True))
+        asyncio.create_task(auto_gp_perform_purge(client, chat_id, message=message, bypass_guards=True, tid=tid))
     
     elif cycle_mode == "current_smart":
         # ✅ SMART TRIGGER: Purge current chat but RESPECT guards (Blacklist/Admin)
         import asyncio
+        from Main.plugins.userbot.xcanceltask import generate_task_id
+        tid = generate_task_id("APC")
         Altruix.log(f"📍 Auto-GP Smart Mode | Triggering Safe Purge for Chat: {chat_id}", level=20)
-        asyncio.create_task(auto_gp_perform_purge(client, chat_id, message=message, bypass_guards=False))
+        asyncio.create_task(auto_gp_perform_purge(client, chat_id, message=message, bypass_guards=False, tid=tid))

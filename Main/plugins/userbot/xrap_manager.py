@@ -58,13 +58,47 @@ import random
 import time
 import html
 import re
+import hashlib
+import traceback
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 import logging
 
+# --- TASK REGISTRY HELPERS ---
+def _x_gen_id(prefix="RP"):
+    try:
+        from Main.plugins.userbot.xcanceltask import generate_task_id
+        return generate_task_id(prefix)
+    except:
+        import random
+        import string
+        return f"#{prefix}" + ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
+
+def _x_register(tid, task, name, plugin, uid=None, details=""):
+    try:
+        from Main.plugins.userbot.xcanceltask import register_task
+        register_task(tid, task, name, plugin, uid, details)
+    except: pass
+
+def _x_unregister(tid):
+    try:
+        from Main.plugins.userbot.xcanceltask import unregister_task
+        unregister_task(tid)
+    except: pass
+
+def _get_bot(client_id):
+    """Get custom bot for session or fallback to main bot."""
+    if hasattr(Altruix, "bot_manager"):
+        try:
+            bot = Altruix.bot_manager.get_bot(client_id)
+            if bot and getattr(bot, "is_connected", False):
+                return bot
+        except: pass
+    return Altruix.bot
+
 # --- CONFIG & PATHS ---
 PLUGIN_NAME = "Rap Manager"
-PLUGIN_VERSION = "1.2.48.25"
+PLUGIN_VERSION = "1.2.48.34"
 RAP_DB_PATH = Path(get_db_path("rap_db.json"))
 logger = logging.getLogger("altruix.rap_manager")
 
@@ -91,7 +125,10 @@ class RapManager:
                 "mode": "reply", 
                 "inline_mode": False,
                 "lines_per_msg": 2,
-                "markdown_type": "None" # None, Italic, Underline, Italic+Underline
+                "markdown_type": "None", # None, Italic, Underline, Italic+Underline
+                "send_limit_enabled": True,
+                "send_limit_max": 4,
+                "send_limit_alert_enabled": True
             }
         }
         self.load()
@@ -160,9 +197,8 @@ rap_db = RapManager()
 
 # --- HELPERS ---
 # block generate task id
-def generate_task_id() -> str:
-    """Generate a unique 6-character uppercase alphanumeric ID for tasks."""
-    return "".join(random.choices("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", k=6))
+def generate_task_id():
+    return _x_gen_id("RAP")
 
 # block get target id
 def get_target_id(m: AltruixMessage) -> int:
@@ -237,6 +273,8 @@ async def send_log(text: str, userbot_name: str = "Unknown", chat_title: str = "
 # block core execution engine
 # Main executor for automated line-by-line lyric delivery.
 # Compatible with direct commands (.rap) and dashboard interactions (.rapmanage).
+# block rap executor
+# Core of the plugin: handles the asynchronous lyric delivery loop.
 async def rap_executor(c: Client, chat_id: int, slug: str, custom_delay: int = None, reply_to_id: int = None, task_id: str = None):
     """
     Background worker that handles line-by-line lyric delivery.
@@ -244,6 +282,10 @@ async def rap_executor(c: Client, chat_id: int, slug: str, custom_delay: int = N
     Includes 'Loopback' method for authorized inline edits.
     """
     if not task_id: task_id = generate_task_id()
+    
+    # Check for duplicate tasks
+    if task_id in RAP_TASKS: return
+    
     song = rap_db.get_song(slug)
     if not song: return
     
@@ -288,10 +330,20 @@ async def rap_executor(c: Client, chat_id: int, slug: str, custom_delay: int = N
         "client_id": c.me.id,
         "chat_id": chat_id,
         "slug": slug,
-        "start_time": time.time()
+        "start_time": time.time(),
+        "title": title,
+        "total_blocks": 0, # assigned below
+        "limit": 4 # default
     }
     
+    # Register with global task registry for .canceltask support
+    _x_register(task_id, asyncio.current_task(), f"🎤 Rap: {title}", "xrap_manager", uid=c.me.id, details=f"Chat: {chat_id}")
+    
     # block start log
+    total_blocks = len(lyrics) // lines_per_msg + (1 if len(lyrics) % lines_per_msg > 0 else 0)
+    RAP_TASKS[task_id]["total_blocks"] = total_blocks
+    RAP_TASKS[task_id]["title"] = title
+    RAP_TASKS[task_id]["limit"] = rap_db.data["global_config"].get("send_limit_max", 4)
     await send_log(
         f"🚀 <b>Started:</b> {html.escape(title)}\n"
         f"• <b>Task ID:</b> <code>{task_id}</code>\n"
@@ -300,6 +352,13 @@ async def rap_executor(c: Client, chat_id: int, slug: str, custom_delay: int = N
     )
     
     last_msg = None
+    bars_sent = 0  # Counter for send limit feature (resets each cycle)
+    total_bars_sent = 0  # Cumulative counter (never resets)
+    send_limit_on = rap_db.data["global_config"].get("send_limit_enabled", True)
+    send_limit_max = max(1, rap_db.data["global_config"].get("send_limit_max", 4))
+    
+    # Pre-store some task info for the inline alert handler
+    # limit and title are already handled by registration or will be updated below if needed
     # block process lyrics
     try:
         for i in range(0, len(lyrics), lines_per_msg):
@@ -395,20 +454,15 @@ async def rap_executor(c: Client, chat_id: int, slug: str, custom_delay: int = N
                                     # Suffix _e is mandatory to trigger the callback loopback for future edits
                                     # Minified to fit within 64 byte limit
                                     inline_query = f"line_{slug}_{i}_s{lines_per_msg}_e_u{user_id}_c{chat_id}"
-                                    results = await c.get_inline_bot_results(bot_username, inline_query)
-                                    last_msg = await c.send_inline_bot_result(
-                                        chat_id, results.query_id, results.results[0].id, 
-                                        reply_to_message_id=reply_to_id
-                                    )
-                                    delivered = True
                                 else:
                                     inline_query = f"line_{slug}_{i}_s{lines_per_msg}_u{user_id}_c{chat_id}"
-                                    results = await c.get_inline_bot_results(bot_username, inline_query)
-                                    last_msg = await c.send_inline_bot_result(
-                                        chat_id, results.query_id, results.results[0].id, 
-                                        reply_to_message_id=reply_to_id
-                                    )
-                                    delivered = True
+                                    
+                                results = await c.get_inline_bot_results(bot_username, inline_query)
+                                last_msg = await c.send_inline_bot_result(
+                                    chat_id, results.query_id, results.results[0].id, 
+                                    reply_to_message_id=reply_to_id
+                                )
+                                delivered = True
                             except Exception as inline_sub_e:
                                 logger.debug(f"Inline dispatch sub-error: {inline_sub_e}")
                                 # Automatic fallback to direct
@@ -453,35 +507,123 @@ async def rap_executor(c: Client, chat_id: int, slug: str, custom_delay: int = N
                 if last_msg: await last_msg.react("🔥")
             except: pass
             
+            # block send limit check
+            # Send Limit Confirmation
+            bars_sent += 1
+            total_bars_sent += 1
+            if send_limit_on and bars_sent >= send_limit_max and (i + lines_per_msg < len(lyrics)):
+                if not rap_db.data["global_config"].get("send_limit_alert_enabled", True):
+                    # If alert is disabled, just reset and continue
+                    bars_sent = 0
+                else:
+                    # Pause and ask for confirmation via bot assistant inline
+                    try:
+                        confirm_id = f"raplim_{task_id}"
+                        RAP_TASKS[task_id]["waiting_confirm"] = True
+                        RAP_TASKS[task_id]["confirm_event"] = asyncio.Event()
+                        RAP_TASKS[task_id]["bars_sent"] = total_bars_sent
+                        
+                        confirm_text = (
+                            "<blockquote expandable>"
+                            f"⚠️ <b>Send Limit Reached</b>\n"
+                            f"━━━━━━━━━━━━━━━━━━━━\n"
+                            f"Song: <b>{html.escape(title)}</b>\n"
+                            f"Bars Sent: <code>{total_bars_sent}/{total_blocks}</code>\n"
+                            f"Limit: <code>{send_limit_max}</code>\n\n"
+                            f"Continue sending the next bars?"
+                            "</blockquote>"
+                        )
+                        _user_style = get_user_button_style(c.me.id)
+                        confirm_kb = InlineKeyboardMarkup([
+                            [
+                                InlineKeyboardButton("🛑 Stop", callback_data=f"rapmgr_lim_stop_{task_id}", style=_user_style),
+                                InlineKeyboardButton("▶️ Continue", callback_data=f"rapmgr_lim_cont_{task_id}", style=_user_style)
+                            ]
+                        ])
+                        
+                        alert_sent = False
+                        target_bot = _get_bot(c.me.id)
+                        bot_username = None
+                        try: bot_username = Altruix.bot_manager.get_bot_username(c.me.id)
+                        except: pass
+                        
+                        if not bot_username and Altruix.bot_info:
+                            bot_username = Altruix.bot_info.username
+
+                        # 1. Inline Check (Priority: "Userbot via @Bot")
+                        if bot_username:
+                            try:
+                                inline_query = f"rap_alert_{task_id}"
+                                logger.debug(f"[RAP ALERT] Requesting inline results for {bot_username} with query: {inline_query}")
+                                results = await c.get_inline_bot_results(bot_username, inline_query)
+                                if results and results.results:
+                                    logger.debug(f"[RAP ALERT] Inline results found, sending via userbot.")
+                                    await c.send_inline_bot_result(chat_id, results.query_id, results.results[0].id, reply_to_message_id=reply_to_id)
+                                    alert_sent = True
+                                else:
+                                    logger.warning(f"[RAP ALERT] Inline query returned 0 results for task {task_id}.")
+                            except Exception as e:
+                                logger.warning(f"[RAP ALERT] Inline alert dispatch failed: {e}")
+
+                        # 2. Custom Bot (Fallback 1: Direct Message)
+                        if not alert_sent and target_bot and target_bot != Altruix.bot:
+                            try:
+                                logger.debug(f"[RAP ALERT] Falling back to Custom Bot direct message.")
+                                await target_bot.send_message(chat_id, confirm_text, reply_markup=confirm_kb, parse_mode=enums.ParseMode.HTML)
+                                alert_sent = True
+                            except Exception as e:
+                                logger.warning(f"Custom bot alert failed: {e}")
+
+                        # 3. Main Bot (Fallback 2: Direct Message)
+                        if not alert_sent:
+                            try:
+                                logger.debug(f"[RAP ALERT] Falling back to Main Bot direct message.")
+                                await Altruix.bot.send_message(chat_id, confirm_text, reply_markup=confirm_kb, parse_mode=enums.ParseMode.HTML)
+                                alert_sent = True
+                            except Exception as e:
+                                logger.warning(f"Main bot direct alert failed: {e}")
+
+                        # 4. Userbot (Final Fallback: Text Only)
+                        if not alert_sent:
+                            logger.info("[RAP ALERT] Final fallback to userbot (No Buttons).")
+                            try:
+                                await c.send_message(chat_id, confirm_text, parse_mode=enums.ParseMode.HTML)
+                            except: pass
+                        
+                        try:
+                            await asyncio.wait_for(RAP_TASKS[task_id]["confirm_event"].wait(), timeout=120)
+                        except asyncio.TimeoutError:
+                            await send_log(f"⏰ <b>Timeout:</b> {html.escape(title)}\nNo response within 120s. Auto-stopped.", userbot_name=userbot_name, chat_title=chat_title, chat_link=chat_link, chat_id=str(chat_id))
+                            break
+                        
+                        # Check if user chose Stop
+                        if RAP_TASKS.get(task_id, {}).get("user_stopped", False):
+                            break
+                        
+                        # User chose Continue - reset counter
+                        bars_sent = 0
+                        RAP_TASKS[task_id].pop("waiting_confirm", None)
+                        RAP_TASKS[task_id].pop("confirm_event", None)
+                    except Exception as lim_e:
+                        logger.warning(f"Limit check error: {lim_e}")
+
             # block loop/sleep execution
             # Wait for next line
             if i + lines_per_msg < len(lyrics):
                 await asyncio.sleep(delay)
                 
         # block finish log
-        await send_log(
-            f"✅ <b>Finished:</b> {html.escape(title)}\n"
-            f"ID: <code>{task_id}</code>",
-            userbot_name=userbot_name, chat_title=chat_title, chat_link=chat_link, chat_id=str(chat_id)
-        )
+        await send_log(f"✅ <b>Finished:</b> {html.escape(title)}\nID: <code>{task_id}</code>", userbot_name=userbot_name, chat_title=chat_title, chat_link=chat_link, chat_id=str(chat_id))
     except asyncio.CancelledError:
         # block stopped log
-        await send_log(
-            f"🛑 <b>Stopped:</b> {html.escape(title)}\n"
-            f"ID: <code>{task_id}</code>",
-            userbot_name=userbot_name, chat_title=chat_title, chat_link=chat_link, chat_id=str(chat_id)
-        )
+        await send_log(f"🛑 <b>Stopped:</b> {html.escape(title)}\nID: <code>{task_id}</code>", userbot_name=userbot_name, chat_title=chat_title, chat_link=chat_link, chat_id=str(chat_id))
     except Exception as e:
         # block error log
-        await send_log(
-            f"💥 <b>Error:</b> {html.escape(title)}\n"
-            f"ID: <code>{task_id}</code>\n"
-            f"Detail: {e}",
-            userbot_name=userbot_name, chat_title=chat_title, chat_link=chat_link, chat_id=str(chat_id)
-        )
+        await send_log(f"💥 <b>Error:</b> {html.escape(title)}\nID: <code>{task_id}</code>\nDetail: {e}", userbot_name=userbot_name, chat_title=chat_title, chat_link=chat_link, chat_id=str(chat_id))
     finally:
         # block cleanup task
         RAP_TASKS.pop(task_id, None)
+        _x_unregister(task_id)
 
 # --- COMMAND HANDLERS ---
 
@@ -775,15 +917,33 @@ def generate_pagination_keyboard(items: List[Any], page: int, page_size: int, pr
     for item in current_items:
         # Expected item: (slug, title)
         slug, title = item
-        buttons.append([InlineKeyboardButton(f"🎵 {title[:20]} ({slug})", callback_data=f"{prefix}_edit_{slug}{encoded_ctx}", style=style)])
+        # 🔘 Triple-fallback for Copy Button (Native -> String -> Callback)
+        copy_btn = None
+        try:
+            # 1. Native CopyTextButton (Pyrogram 2.4+)
+            from pyrogram.types import CopyTextButton
+            copy_btn = InlineKeyboardButton("Copy", copy_text=CopyTextButton(text=slug), style=style)
+        except (ImportError, TypeError):
+            try:
+                # 2. String-based copy_text (Older Pyrogram/Kurigram)
+                copy_btn = InlineKeyboardButton("Copy", copy_text=slug, style=style)
+            except Exception:
+                # 3. Last resort: internal callback for manual copy
+                copy_btn = InlineKeyboardButton("Copy", callback_data=f"{prefix}_copyslug_{slug}{encoded_ctx}", style=style)
+
+
+        buttons.append([
+            InlineKeyboardButton(f"🎵 {title[:16]} ({slug[:10]})", callback_data=f"{prefix}_edit_{slug}{encoded_ctx}", style=style),
+            copy_btn
+        ])
     
     # Navigation controls
     nav = []
     if page > 1:
-        nav.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"{prefix}_page_{page-1}{encoded_ctx}", style=style))
-    nav.append(InlineKeyboardButton(f"📄 {page}/{max(1, total_pages)}", callback_data="noop", style=style))
+        nav.append(InlineKeyboardButton("«", callback_data=f"{prefix}_page_{page-1}{encoded_ctx}", style=style))
+    nav.append(InlineKeyboardButton(f"{page}/{max(1, total_pages)}", callback_data="noop", style=style))
     if page < total_pages:
-        nav.append(InlineKeyboardButton("Next ➡️", callback_data=f"{prefix}_page_{page+1}{encoded_ctx}", style=style))
+        nav.append(InlineKeyboardButton("»", callback_data=f"{prefix}_page_{page+1}{encoded_ctx}", style=style))
     
     buttons.append(nav)
     buttons.append([
@@ -871,12 +1031,14 @@ async def rap_manage_handler(c: Client, m: Optional[AltruixMessage] = None, user
     # ─── 3. Fallback to Direct Bot Message ───
     
     text = (
+        f"<blockquote expandable>"
         f"🎤 <b>Userbot Rap Manager</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"Total Songs: <b>{len(items)}</b>\n"
         f"Storage Mode: <code>{rap_db.data['global_config'].get('mode', 'reply').upper()}</code>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"Select a song to edit or tap 'Add New' to create one:"
+        f"</blockquote>"
     )
     # ✅ REUSE generate_pagination_keyboard with page_size=6 and explicit chat_id
     kb = generate_pagination_keyboard(items, 1, 6, "rapmgr", style=user_style, chat_id=chat_id, user_id=user_id)
@@ -995,8 +1157,8 @@ async def rapmgr_cb_handler(c: Client, cb: CallbackQuery):
                     logger.debug(f"Fallback send_message also failed: {send_e}")
 
     # ✅ ANSWER CALLBACK EARLY to stop spinner
-    # Exceptions: set_mode/set_inline which answer later with text
-    if data not in ["set_mode", "set_inline", "refresh", "export"]:
+    # Exceptions for actions that send their own custom callback answers (notifs/alerts)
+    if data not in ["set_mode", "set_inline", "refresh", "export"] and not data.startswith(("lim_stop_", "lim_cont_", "stop_")):
         try: await cb.answer()
         except: pass
     
@@ -1016,18 +1178,20 @@ async def rapmgr_cb_handler(c: Client, cb: CallbackQuery):
         songs = rap_db.get_all_songs()
         items = [(slug, data["title"]) for slug, data in songs.items()]
         text = (
+            f"<blockquote expandable>"
             f"🎤 <b>Userbot Rap Manager</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"Total Songs: <b>{len(items)}</b>\n"
             f"Storage Mode: <code>{rap_db.data['global_config'].get('mode', 'reply').upper()}</code>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"Select a song to edit or tap 'Add New' to create one:"
+            f"</blockquote>"
         )
         kb = generate_pagination_keyboard(items, 1, 6, "rapmgr", style=user_style, chat_id=chat_id, user_id=user_id)
         
         # Add a back button to return to session info
         buttons = kb.inline_keyboard
-        buttons.append([InlineKeyboardButton("🔙 Back to Session Info", callback_data=f"session_info_{idx}_{pg}_5", style=user_style)])
+        buttons.append([InlineKeyboardButton("« Back to Session Info", callback_data=f"session_info_{idx}_{pg}_5", style=user_style)])
         
         await edit_or_send(text, InlineKeyboardMarkup(buttons))
         return
@@ -1041,12 +1205,14 @@ async def rapmgr_cb_handler(c: Client, cb: CallbackQuery):
         
         # ✅ FIX: Ensure text is reset when returning to main list
         text = (
+            f"<blockquote expandable>"
             f"🎤 <b>Userbot Rap Manager</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"Total Songs: <b>{len(items)}</b>\n"
             f"Storage Mode: <code>{rap_db.data['global_config'].get('mode', 'reply').upper()}</code>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"Select a song to edit or tap 'Add New' to create one:"
+            f"</blockquote>"
         )
         kb = generate_pagination_keyboard(items, page, 6, "rapmgr", style=user_style, chat_id=chat_id, user_id=user_id)
         await edit_or_send(text, kb)
@@ -1134,11 +1300,13 @@ async def rapmgr_cb_handler(c: Client, cb: CallbackQuery):
         if not song: return await cb.answer("Song not found.", show_alert=True)
         
         text = (
+            f"<blockquote expandable>"
             f"🎵 <b>Editing</b>\n"
             f"Title: <code>{song['title']}</code>\n"
             f"Slug: <code>{slug}</code>\n"
             f"Lines: {len(song['lyrics'])}\n\n"
             f"Select an operation for this song:"
+            f"</blockquote>"
         )
         
         kb = InlineKeyboardMarkup([
@@ -1214,6 +1382,30 @@ async def rapmgr_cb_handler(c: Client, cb: CallbackQuery):
         except Exception as e:
             await edit_or_send(f"❌ Error: {e}")
 
+    # block copy slug helper
+    elif data.startswith("copyslug_"):
+        slug = data.replace("copyslug_", "").strip()
+        # Remove context if present
+        if "_cid" in slug: slug = slug.split("_cid")[0]
+        if "_uid" in slug: slug = slug.split("_uid")[0]
+        
+        # 🟢 Priority 1: Answer with the slug in an alert (fastest)
+        await cb.answer(f"📋 Slug: {slug}", show_alert=True)
+        
+        # 🟢 Priority 2: Send a copyable message
+        try:
+            # We use a clear blockquote and code tag for easy mobile copying
+            copy_msg = (
+                f"📋 <b>Slug ready to copy:</b>\n"
+                f"<code>{slug}</code>\n\n"
+                f"<i>Tap the text above to copy it quickly.</i>"
+            )
+            # Send to the current interaction chat (PM or Group)
+            await c.send_message(chat_id, copy_msg)
+        except: 
+            pass
+
+
     # block view lyrics flow
     # Paginated Lyric Viewer
     elif data.startswith("view_"):
@@ -1244,12 +1436,12 @@ async def rapmgr_cb_handler(c: Client, cb: CallbackQuery):
         # Navigation buttons
         nav_buttons = []
         if page > 0:
-            nav_buttons.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"rapmgr_view_{slug}_{page-1}", style=user_style))
+            nav_buttons.append(InlineKeyboardButton("«", callback_data=f"rapmgr_view_{slug}_{page-1}", style=user_style))
         if end_idx < len(full_lyrics):
-            nav_buttons.append(InlineKeyboardButton("Next ➡️", callback_data=f"rapmgr_view_{slug}_{page+1}", style=user_style))
+            nav_buttons.append(InlineKeyboardButton("»", callback_data=f"rapmgr_view_{slug}_{page+1}", style=user_style))
             
         kb_list = [nav_buttons] if nav_buttons else []
-        kb_list.append([InlineKeyboardButton("⬅️ Back to Song", callback_data=f"rapmgr_edit_{slug}", style=user_style)])
+        kb_list.append([InlineKeyboardButton("« Back to Song", callback_data=f"rapmgr_edit_{slug}", style=user_style)])
         
         await edit_or_send(text, InlineKeyboardMarkup(kb_list))
 
@@ -1485,7 +1677,9 @@ async def rapmgr_cb_handler(c: Client, cb: CallbackQuery):
             f"Markdown Type: <b>{g_cfg.get('markdown_type', 'None')}</b>\n"
             f"Response Mode: <b>{g_cfg.get('mode', 'reply').upper()}</b>\n"
             f"Inline Support: <b>{'ON' if g_cfg.get('inline_mode', False) else 'OFF'}</b>\n"
-            f"Clean Reply: <b>{'ON' if g_cfg.get('clean_reply', False) else 'OFF'}</b></blockquote>"
+            f"Clean Reply: <b>{'ON' if g_cfg.get('clean_reply', False) else 'OFF'}</b>\n"
+            f"Send Bars Limit: <b>{'ON' if g_cfg.get('send_limit_enabled', True) else 'OFF'}</b> (Max: <b>{g_cfg.get('send_limit_max', 4)}</b> bars)\n"
+            f"Limit Alert: <b>{'ON' if g_cfg.get('send_limit_alert_enabled', True) else 'OFF'}</b></blockquote>"
         )
         
         kb = InlineKeyboardMarkup([
@@ -1495,7 +1689,12 @@ async def rapmgr_cb_handler(c: Client, cb: CallbackQuery):
              InlineKeyboardButton(f"🎨 Style: {g_cfg.get('markdown_type', 'None')}", callback_data="rapmgr_set_markdown", style=user_style)],
             [InlineKeyboardButton(f"📜 Lines: {g_cfg.get('lines_per_msg', 2)}", callback_data="rapmgr_set_lines", style=user_style),
              InlineKeyboardButton(f"🤖 Inline: {'ON' if g_cfg.get('inline_mode', False) else 'OFF'}", callback_data="rapmgr_set_inline", style=user_style)],
-            [InlineKeyboardButton(f"🧹 Clean Reply: {'ON' if g_cfg.get('clean_reply', False) else 'OFF'}", callback_data="rapmgr_set_clean", style=user_style)],
+            [InlineKeyboardButton(f"🧹 Clean Reply: {'ON' if g_cfg.get('clean_reply', False) else 'OFF'}", callback_data="rapmgr_set_clean", style=user_style),
+             InlineKeyboardButton(f"🔔 Alert: {'ON' if g_cfg.get('send_limit_alert_enabled', True) else 'OFF'}", callback_data="rapmgr_set_slimit_alert", style=user_style)],
+            [InlineKeyboardButton(f"🚦 Send Limit: {'ON' if g_cfg.get('send_limit_enabled', True) else 'OFF'}", callback_data="rapmgr_set_slimit_toggle", style=user_style)],
+            [InlineKeyboardButton("-1", callback_data="rapmgr_set_slimit_m", style=user_style),
+             InlineKeyboardButton(f"Max Bars: {g_cfg.get('send_limit_max', 4)}", callback_data="noop", style=user_style),
+             InlineKeyboardButton("+1", callback_data="rapmgr_set_slimit_p", style=user_style)],
             [InlineKeyboardButton("⬅️ Back", callback_data="rapmgr_page_1", style=user_style)]
         ])
         await edit_or_send(text, kb)
@@ -1597,6 +1796,61 @@ async def rapmgr_cb_handler(c: Client, cb: CallbackQuery):
         # Refresh current settings view
         cb.data = "rapmgr_settings"
         await rapmgr_cb_handler(c, cb)
+
+    # block send limit toggle
+    elif data == "set_slimit_toggle":
+        current = rap_db.data["global_config"].get("send_limit_enabled", True)
+        rap_db.data["global_config"]["send_limit_enabled"] = not current
+        rap_db.save()
+        try: await cb.answer(f"🚦 Send Limit: {'ON' if not current else 'OFF'}")
+        except: pass
+        cb.data = "rapmgr_settings"
+        await rapmgr_cb_handler(c, cb)
+
+    # block send limit alert toggle
+    elif data == "set_slimit_alert":
+        current = rap_db.data["global_config"].get("send_limit_alert_enabled", True)
+        rap_db.data["global_config"]["send_limit_alert_enabled"] = not current
+        rap_db.save()
+        try: await cb.answer(f"🔔 Limit Alert: {'ON' if not current else 'OFF'}")
+        except: pass
+        cb.data = "rapmgr_settings"
+        await rapmgr_cb_handler(c, cb)
+
+    # block send limit adjustment
+    elif data in ["set_slimit_m", "set_slimit_p"]:
+        current = rap_db.data["global_config"].get("send_limit_max", 4)
+        new_val = current - 1 if data == "set_slimit_m" else current + 1
+        new_val = max(1, min(50, new_val))  # Clamp 1-50
+        rap_db.data["global_config"]["send_limit_max"] = new_val
+        rap_db.save()
+        try: await cb.answer(f"Max Bars: {new_val}")
+        except: pass
+        cb.data = "rapmgr_settings"
+        await rapmgr_cb_handler(c, cb)
+
+    # block send limit confirmation callbacks
+    elif data.startswith("lim_stop_"):
+        task_id = data.replace("lim_stop_", "")
+        if task_id in RAP_TASKS:
+            RAP_TASKS[task_id]["user_stopped"] = True
+            evt = RAP_TASKS[task_id].get("confirm_event")
+            if evt: evt.set()
+        try:
+            if cb.message: await cb.message.edit("🛑 <b>Stopped by user.</b>", parse_mode=enums.ParseMode.HTML)
+        except: pass
+        await cb.answer("🛑 Task stopped.", show_alert=False)
+
+    elif data.startswith("lim_cont_"):
+        task_id = data.replace("lim_cont_", "")
+        if task_id in RAP_TASKS:
+            RAP_TASKS[task_id]["user_stopped"] = False
+            evt = RAP_TASKS[task_id].get("confirm_event")
+            if evt: evt.set()
+        try:
+            if cb.message: await cb.message.edit("▶️ <b>Continuing...</b>", parse_mode=enums.ParseMode.HTML)
+        except: pass
+        await cb.answer("▶️ Continuing!", show_alert=False)
 
     # block set lines flow
     elif data == "set_lines":
@@ -1729,7 +1983,7 @@ async def rapmgr_cb_handler(c: Client, cb: CallbackQuery):
             f"• <b>Task ID:</b> <code>{task_id}</code>", 
             kb=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🛑 Stop", callback_data=f"rapmgr_stop_{task_id}", style=user_style)],
-                [InlineKeyboardButton("🔚 Back to List", callback_data="rapmgr_page_1", style=user_style)]
+                [InlineKeyboardButton("« Back to List", callback_data="rapmgr_page_1", style=user_style)]
             ])
         )
 
@@ -1789,12 +2043,14 @@ async def rap_inline_query_handler(c: Client, q: InlineQuery):
             songs = rap_db.get_all_songs()
             items = [(slug, data["title"]) for slug, data in songs.items()]
             text = (
+                f"<blockquote expandable>"
                 f"🎤 <b>Userbot Rap Manager</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"Total Songs: <b>{len(items)}</b>\n"
                 f"Storage Mode: <code>{rap_db.data['global_config'].get('mode', 'reply').upper()}</code>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"Select a song to edit or tap 'Add New' to create one:"
+                f"</blockquote>"
             )
             
             # Use generate_pagination_keyboard which now handles context encoding automatically
@@ -1897,6 +2153,82 @@ async def rap_inline_query_handler(c: Client, q: InlineQuery):
             import traceback
             logger.error(traceback.format_exc())
             return await q.answer([])
+
+    # block inline alert response
+    # ─── LIMIT ALERT (Triggered by userbot when send limit is reached) ───
+    if query.startswith("rap_alert_"):
+        try:
+            # Extract original task_id from q.query to avoid case mismatch
+            raw_query = q.query.strip()
+            task_id = raw_query.split("_", 2)[-1] if "_" in raw_query else ""
+            
+            logger.debug(f"[RAP INLINE ALERT] Received query for task: {task_id}. Current tasks: {list(RAP_TASKS.keys())}")
+            
+            # Robust Case-Insensitive Lookup
+            task_info = None
+            if task_id in RAP_TASKS:
+                task_info = RAP_TASKS[task_id]
+            else:
+                # Fallback: search case-insensitively
+                for tid, info in RAP_TASKS.items():
+                    if tid.lower() == task_id.lower():
+                        task_info = info
+                        task_id = tid # Re-assign the correct key for consistency
+                        break
+            
+            if not task_info:
+                logger.warning(f"[RAP INLINE ALERT] Task {task_id} not found in RAP_TASKS.")
+                return await q.answer([], switch_pm_text="❌ Task Expired", switch_pm_parameter="help")
+            
+            title = task_info.get("title", "Unknown Song")
+            # For progress, we need to know how many bars were sent vs total
+            bars_sent = task_info.get("bars_sent", 0)
+            limit = task_info.get("limit", 0)
+            total_blocks = task_info.get("total_blocks", 0)
+            
+            text = (
+                "<blockquote expandable>"
+                f"⚠️ <b>Send Limit Reached</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"Song: <b>{html.escape(title)}</b>\n"
+                f"Bars Sent: <code>{bars_sent}/{total_blocks}</code>\n"
+                f"Limit: <code>{limit}</code>\n\n"
+                f"Continue sending the next bars?"
+                "</blockquote>"
+            )
+            
+            _alert_uid = task_info.get("client_id", 0)
+            _alert_style = get_user_button_style(_alert_uid) if _alert_uid else None
+            
+            kb = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("🛑 Stop", callback_data=f"rapmgr_lim_stop_{task_id}", style=_alert_style),
+                    InlineKeyboardButton("▶️ Continue", callback_data=f"rapmgr_lim_cont_{task_id}", style=_alert_style)
+                ]
+            ])
+            
+            import hashlib
+            result_id = hashlib.md5(query.encode()).hexdigest()
+            
+            return await q.answer(
+                results=[
+                    InlineQueryResultArticle(
+                        id=result_id,
+                        title="⚠️ Send Limit Reached",
+                        description=f"Song: {title} | Progress: {bars_sent}/{total_blocks}",
+                        input_message_content=InputTextMessageContent(
+                            text,
+                            parse_mode=enums.ParseMode.HTML
+                        ),
+                        reply_markup=kb
+                    )
+                ],
+                cache_time=1,
+                is_personal=True
+            )
+        except Exception as e:
+            logger.error(f"Inline alert dispatch failed: {e}")
+            return await q.answer([], cache_time=1)
 
     # block inline search response
     # ─── SEARCH REQUEST (@bot query) ───

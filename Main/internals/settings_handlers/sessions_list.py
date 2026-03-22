@@ -94,25 +94,9 @@ async def sessions_menu_cb_handler(c: Client, cb: CallbackQuery):
 
     action_buttons = [
         [
-            InlineKeyboardButton("👥 Bulk Join", "bulk_join_menu", style=user_style),
-            InlineKeyboardButton("🏃 Bulk Leave", "bulk_leave_menu", style=user_style),
-            InlineKeyboardButton("🚩 Bulk Report", "bulk_report_menu", style=user_style)
-        ],
-        [
-            InlineKeyboardButton("🏓 Test Ping All", "test_ping_all_confirmation", style=user_style),
             InlineKeyboardButton(gt("btn_stats"), "sessions_stats", style=user_style),
             InlineKeyboardButton("➕ Add a Session", "add_session", style=user_style)
         ]
-    ]
-    
-    export_buttons = [
-        InlineKeyboardButton("📤 Export Sessions", "export_all_sessions_confirmation", style=user_style),
-        InlineKeyboardButton("📲 Export Phones", "export_all_phones_confirmation", style=user_style)
-    ]
-
-    system_control_buttons = [
-        InlineKeyboardButton("🔄 Force Restart", "sys_ctrl_restart", style=user_style),
-        InlineKeyboardButton("❌ Force Shutdown", "sys_ctrl_shutdown", style=user_style)
     ]
     
     nav_buttons = []
@@ -126,8 +110,6 @@ async def sessions_menu_cb_handler(c: Client, cb: CallbackQuery):
     final_markup = []
     for row in session_buttons: final_markup.append(row)
     for row in action_buttons: final_markup.append(row)
-    final_markup.append(export_buttons)
-    final_markup.append(system_control_buttons)
     final_markup.append(nav_buttons)
     
     total_sessions = len(Altruix.clients)

@@ -98,7 +98,7 @@ async def manage_custom_bot_fallback_handler(c: Client, cb: CallbackQuery):
     buttons = [
         [
             InlineKeyboardButton("🛑 Stop Bot", f"action_custom_bot_stop_{bot_id}", style=user_style),
-            InlineKeyboardButton("🗑️ Delete", f"action_custom_bot_delete_{bot_id}", style=user_style)
+            InlineKeyboardButton(gt("delete_bot"), f"action_custom_bot_delete_{bot_id}", style=user_style)
         ],
         [InlineKeyboardButton(gt("back"), "custom_bot_manager", style=user_style)]
     ]
@@ -160,10 +160,10 @@ async def custom_bot_menu_handler(c: Client, cb: CallbackQuery):
         ])
         buttons.append([
             InlineKeyboardButton("ℹ️ Info", f"custom_bot_info_{index}_{page}_{button_page}", style=user_style),
-            InlineKeyboardButton("🗑️ " + gt("delete_bot"), f"custom_bot_remove_confirm_{index}_{page}_{button_page}", style=user_style)
+            InlineKeyboardButton(gt("delete_bot"), f"custom_bot_remove_confirm_{index}_{page}_{button_page}", style=user_style)
         ])
     else:
-        buttons.append([InlineKeyboardButton("🔑 " + gt("set_bot_token"), f"custom_bot_set_{index}_{page}_{button_page}", style=user_style)])
+        buttons.append([InlineKeyboardButton(gt("set_bot_token"), f"custom_bot_set_{index}_{page}_{button_page}", style=user_style)])
     
     buttons.append([InlineKeyboardButton(gt("back"), f"session_info_{index}_{page}_{button_page}", style=user_style)])
     

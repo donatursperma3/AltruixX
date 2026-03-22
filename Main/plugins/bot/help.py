@@ -47,13 +47,12 @@ def split_help_text(text: str, max_chars: int = None) -> list:
     if max_chars is None:
         max_chars = getattr(Altruix.config, "HELP_MENU_MAX_CHARS", 666)
 
-    if len(text) <= max_chars:
-        return [text]
+    # Process even if short to ensure consistent spacing between blocks
 
     chunks = []
-    # Split by blocks starting with ➤ Command : or <b>Command :</b>
-    # This ensure we dont split inside a command block.
-    pattern = r"(?=<b>➤ Command :</b>|➤ Command :|<b>Command :</b>)"
+    # Use a capturing group so that the delimiter itself is kept in the results list.
+    # This prevents overlapping lookaheads from creating isolated <b> tags that render as empty pages.
+    pattern = r"(<b>➤ Command :</b>|➤ Command :|<b>Command :</b>)"
     blocks = [b for b in re.split(pattern, text) if b.strip()]
     
     if not blocks:
@@ -72,13 +71,40 @@ def split_help_text(text: str, max_chars: int = None) -> list:
         return chunks
 
     current_chunk = ""
-    for block in blocks:
-        # If adding the block exceeds max_chars, start a new chunk
-        if current_chunk and len(current_chunk) + len(block) > max_chars:
-            chunks.append(current_chunk.strip())
-            current_chunk = block
+    i = 0
+    while i < len(blocks):
+        block = blocks[i]
+        
+        # If this block is a delimiter, the next block is its corresponding content
+        if re.match(pattern, block):
+            if i + 1 < len(blocks):
+                content = blocks[i + 1]
+                full_block = block + " " + content.lstrip()
+                i += 2  # Skip the content block since we merged it
+            else:
+                full_block = block
+                i += 1
         else:
-            current_chunk += block
+            full_block = block
+            i += 1
+        
+        # If a single block itself exceeds max_chars, split it line-by-line
+        if len(full_block) > max_chars:
+            lines = full_block.split('\n')
+            for line in lines:
+                if current_chunk and len(current_chunk) + len(line) + 1 > max_chars:
+                    chunks.append(current_chunk.strip())
+                    current_chunk = line + '\n'
+                else:
+                    current_chunk += (line + '\n') if current_chunk else (line + '\n')
+            continue
+            
+        # If adding the full block exceeds max_chars, start a new chunk
+        if current_chunk and len(current_chunk) + len(full_block) > max_chars:
+            chunks.append(current_chunk.strip())
+            current_chunk = full_block
+        else:
+            current_chunk += full_block if not current_chunk else f"\n\n{full_block}"
             
     if current_chunk:
         chunks.append(current_chunk.strip())
@@ -87,7 +113,7 @@ def split_help_text(text: str, max_chars: int = None) -> list:
 
 
 @log_errors
-async def get_help_menu(return_all: bool = False, user_id: int = None, chat_id: int = None, mode: str = "userbot"):
+async def get_help_menu(return_all: bool = False, user_id: int = None, chat_id: int = None, mode: str = "userbot", tapped_by: "pyrogram.types.User" = None):
     global cache_help_menu, multi_pages
     ub_plugins, bot_plugins = get_total_plugins()
     from pyrogram.enums import ParseMode
@@ -100,13 +126,15 @@ async def get_help_menu(return_all: bool = False, user_id: int = None, chat_id: 
     session_index = -1
     client = None
 
+    me = None # For mention resolving
     if user_id:
         # Find session index and client
         for i, cl in enumerate(Altruix.clients):
-            me = getattr(cl, "me", None) or getattr(cl, "myself", None) or (await cl.get_me() if cl.is_initialized else None)
-            if me and me.id == user_id:
+            c_me = getattr(cl, "me", None) or getattr(cl, "myself", None) or (await cl.get_me() if cl.is_initialized else None)
+            if c_me and c_me.id == user_id:
                 session_index = i
                 client = cl
+                me = c_me
                 break
         
         if session_index != -1 and client:
@@ -129,28 +157,41 @@ async def get_help_menu(return_all: bool = False, user_id: int = None, chat_id: 
                 if custom_msg:
                     custom_help, parse_mode = await Altruix.resolve_placeholders(custom_msg, index=session_index, client=client)
 
-    if custom_help:
-        help_msg = custom_help
+    # ✅ Check for Design Preference
+    design_apply_type = await Altruix.config.get_env("HELP_MENU_DESIGN_APPLY_TYPE", default="global") or "global"
+    if design_apply_type == "global":
+        help_design = await Altruix.config.get_env("HELP_MENU_DESIGN_GLOBAL", default="1") or "1"
     else:
-        if mode == "userbot":
-            title = Altruix.get_string("userbot_plugins")
-        elif mode == "bot":
-            title = Altruix.get_string("bot_plugins")
-        else:
-            title = Altruix.get_string("extra_plugins")
-            
-        help_msg = f"<b><u>❇️ {html.escape(title)}</u></b>\n\n" \
-                   f"{Altruix.get_string('help_tabs_desc')}\n\n" \
-                   f"<b>⚡ Userbot Version :</b> <code>V{html.escape(str(Altruix.__version__))}</code>\n" \
-                   f"<b>📦 Total Plugins :</b> <code>{ub_plugins + bot_plugins}</code>\n" \
-                   f"<b>🛠️ Total Commands :</b> <code>{Altruix.total_commands}</code>"
+        help_design = await Altruix.config.get_env(f"HELP_MENU_DESIGN_{user_id}", default="1") or "1" if user_id else "1"
+    
+    help_design = str(help_design)
 
+    # ✅ Check for Compact Text Settings
+    compact_apply_type = await Altruix.config.get_env("HELP_COMPACT_APPLY_TYPE", default="global")
+    if compact_apply_type == "global":
+        compact_status = await Altruix.config.get_env("HELP_COMPACT_STATUS_GLOBAL", default="off")
+        res_g = await Altruix.config.get_env("HELP_COMPACT_MAX_LEN_GLOBAL", default=13)
+        compact_max = int(res_g if res_g is not None else 13)
+    else:
+        compact_status = await Altruix.config.get_env(f"HELP_COMPACT_STATUS_{user_id}", default="off") if user_id else "off"
+        res = await Altruix.config.get_env(f"HELP_COMPACT_MAX_LEN_{user_id}", default=13)
+        compact_max = int(res if res is not None else 13) if user_id else 13
 
-    # Filter plugins based on mode
+    # Filter plugins based on mode and calculate counts
     all_plugins = sorted(list(Altruix._command_help_message_data.keys()))
+    counts = {"userbot": 0, "bot": 0, "extra": 0, "ultroid": 0}
     plugins = []
+    
     for p in all_plugins:
         p_cat = Altruix.plugin_categories.get(p, "userbot")
+        
+        # Increment category counts
+        if p_cat == "userbot": counts["userbot"] += 1
+        elif p_cat == "bot": counts["bot"] += 1
+        elif p_cat in ["extra", "other"]: counts["extra"] += 1
+        elif p_cat == "ultroid": counts["ultroid"] += 1
+        
+        # Filter for current mode display
         if mode == "userbot" and p_cat == "userbot":
             plugins.append(p)
         elif mode == "bot" and p_cat == "bot":
@@ -159,6 +200,49 @@ async def get_help_menu(return_all: bool = False, user_id: int = None, chat_id: 
             plugins.append(p)
         elif mode == "ultroid" and p_cat == "ultroid":
             plugins.append(p)
+
+    ver = html.escape(str(Altruix.__version__))
+    total_pl = sum(counts.values()) # Sum of all categories
+    total_cmd = Altruix.total_commands
+    
+    # Resolve account mention
+    acc_display = "Unknown"
+    if me:
+        acc_display = f"<a href='tg://user?id={me.id}'>{html.escape(me.first_name)}</a>"
+        
+    tapped_by_text = "none"
+    if tapped_by:
+        fname = tapped_by.first_name if tapped_by.first_name else "user"
+        if len(fname) > 11:
+            fname = fname[:11] + "..."
+        fname = html.escape(fname)
+        tapped_by_text = f"<a href='tg://user?id={tapped_by.id}'>{fname}</a>"
+
+    if custom_help:
+        if "{tapped_by}" in custom_help: custom_help = custom_help.replace("{tapped_by}", tapped_by_text)
+        if "{total_plugins}" in custom_help: custom_help = custom_help.replace("{total_plugins}", str(total_pl))
+        if "{rank}" in custom_help: custom_help = custom_help.replace("{rank}", "Maximum Unlocked")
+        if "{skills}" in custom_help: custom_help = custom_help.replace("{skills}", "Unlimited Unlocked")
+        if "{account}" in custom_help: custom_help = custom_help.replace("{account}", acc_display)
+        if "{total_cmd}" in custom_help: custom_help = custom_help.replace("{total_cmd}", str(total_cmd))
+        if "{version}" in custom_help: custom_help = custom_help.replace("{version}", str(ver))
+        
+        help_msg = custom_help
+    else:
+        help_msg = (
+            "<blockquote expandable>"
+            "───⇌• <b>ᴀʟᴘʜᴀ-x ᴘʀᴇᴍɪᴜᴍ ᴜsᴇʀʙᴏᴛ</b> •⇋───\n\n"
+            "────────── <b>ᴇʟɪᴛᴇ sᴛᴀᴛs</b> ──────────\n"
+            f"<b>✦ ᴀᴄᴄᴏᴜɴᴛ :</b> <b>{acc_display}</b>\n"
+            f"<b>✦ ᴠᴇʀsɪᴏɴ :</b> <code>V{ver}</code>\n"
+            f"<b>✦ ᴘʟᴜɢɪɴs :</b> <code>{total_pl} Premium Unlocked</code>\n"
+            f"<b>✦ ᴄᴏᴍᴍᴀɴᴅs :</b> <code>{total_cmd} God-Tier</code>\n"
+            "──────────── <b>ᴇxᴛʀᴀ</b> ───────────\n"
+            f"<b>✦ ʀᴀɴᴋ:</b> <code>Maximum Unlocked</code>\n"
+            f"<b>✦ sᴋɪʟʟs:</b> <code>Unlimited Unlocked</code>\n"
+            f"<b>✦ ᴛᴀᴘᴘᴇᴅ ʙʏ:</b> <b>{tapped_by_text}</b>\n"
+            "</blockquote>"
+        )
 
     # 🔗 Build base callback data string
     si_str = f"?page=0&si={session_index}" if session_index != -1 else f"?page=0&si=-1"
@@ -171,9 +255,14 @@ async def get_help_menu(return_all: bool = False, user_id: int = None, chat_id: 
     for plugin in plugins:
         full_data = f"help#{plugin}{si_str}"
         short_id = await create_callback_id(full_data)
+        
+        display_name = plugin.replace("_", " ").title()
+        if compact_status == "on" and len(display_name) > compact_max:
+            display_name = display_name[:max(0, compact_max - 3)].strip() + "..."
+
         ikb.append(
             InlineKeyboardButton(
-                plugin.replace("_", " ").title(), 
+                display_name, 
                 callback_data=f"h#{short_id}",
                 style=user_style
             )
@@ -201,8 +290,38 @@ async def get_help_menu(return_all: bool = False, user_id: int = None, chat_id: 
         ]
     ]
 
+    # Design 2 Tab Layout (Single Toggle Button: [Plugins: (XX) Userbot/Bot/Extra/Ultroid])
+    if help_design == "2":
+        # Cycle: Userbot -> Bot -> Extra -> Ultroid -> Userbot
+        cycle = {
+            "userbot": ("Bot", bot_data),
+            "bot": ("Extra", extra_data),
+            "extra": ("Ultroid", ultroid_data),
+            "ultroid": ("Userbot", ub_data)
+        }
+        
+        # Current displays its own name with "Plugins:" prefix, but clicks to the NEXT one
+        display_name = mode.title()
+        current_count = counts.get(mode, 0)
+        _, next_cb_data = cycle.get(mode, ("Userbot", ub_data))
+        
+        # Category indices for header (1/4, 2/4, etc)
+        cat_indices = {"userbot": 1, "bot": 2, "extra": 3, "ultroid": 4}
+        c_idx = cat_indices.get(mode, 1)
+        
+        design2_tabs = [
+            [
+                InlineKeyboardButton(
+                    f"({c_idx}/4) Category: ({current_count}) {display_name}", 
+                    callback_data=f"ht#{await create_callback_id(next_cb_data)}", 
+                    style=user_style
+                )
+            ]
+        ]
+        tabs = design2_tabs
+
     rows = Altruix.config.HELP_MENU_ROWS
-    columns = Altruix.config.HELP_MENU_COLUMNS
+    columns = 2 if help_design == "2" else Altruix.config.HELP_MENU_COLUMNS
     buttons = [ikb[i : i + columns] for i in range(0, len(ikb), columns)]
     
     multi_pages = False
@@ -213,42 +332,54 @@ async def get_help_menu(return_all: bool = False, user_id: int = None, chat_id: 
     close_data = f"close_help_{session_index}" if session_index != -1 else "close_help"
     
     if multi_pages:
-        for page in buttons:
-            index = buttons.index(page)
-            # No need to update callback_data since we're using hash IDs
-            
+        total_pages = len(buttons)
+        for index, page in enumerate(buttons):
             # Insert Tabs at the top of each page
+            # Page-progress is handled by the bottom nav, header shows Category progress
             for row in reversed(tabs):
                 page.insert(0, row)
             
             # Page navigation buttons with compressed data
-            page_buttons = []
-            for i in range(len(buttons)):
-                pg_data = f"help#_page?page={i}&si={session_index}{f'&cid={chat_id}' if chat_id else ''}&mode={mode}"
-                page_buttons.append(
-                    InlineKeyboardButton(str(i + 1), callback_data=f"h#{await create_callback_id(pg_data)}")
-                )
-            
-            for i in page_buttons:
-                if i.text == str(index + 1):
-                    i.text = f"> {i.text} <"
-                    i.style = user_style
-                else:
-                    i.style = user_style
-            
-            # 🛑 Telegram API limit: Max 8 buttons per row.
-            # We chunk them into rows of 6 for better UI balance.
-            chunked_page_buttons = [page_buttons[i : i + 6] for i in range(0, len(page_buttons), 6)]
-            for chunk in chunked_page_buttons:
-                page.append(chunk)
+            if help_design == "2":
+                prev_idx = (index - 1) % total_pages
+                next_idx = (index + 1) % total_pages
+                
+                prev_data = f"help#_page?page={prev_idx}&si={session_index}{f'&cid={chat_id}' if chat_id else ''}&mode={mode}"
+                next_data = f"help#_page?page={next_idx}&si={session_index}{f'&cid={chat_id}' if chat_id else ''}&mode={mode}"
+                
+                nav_row = [
+                    InlineKeyboardButton("«", callback_data=f"h#{await create_callback_id(prev_data)}", style=user_style),
+                    InlineKeyboardButton(f"{index + 1}/{total_pages}", callback_data="none", style=user_style),
+                    InlineKeyboardButton("»", callback_data=f"h#{await create_callback_id(next_data)}", style=user_style)
+                ]
+                page.append(nav_row)
+            else:
+                page_buttons = []
+                for i in range(len(buttons)):
+                    pg_data = f"help#_page?page={i}&si={session_index}{f'&cid={chat_id}' if chat_id else ''}&mode={mode}"
+                    page_buttons.append(
+                        InlineKeyboardButton(str(i + 1), callback_data=f"h#{await create_callback_id(pg_data)}")
+                    )
+                
+                for i in page_buttons:
+                    if i.text == str(index + 1):
+                        i.text = f"> {i.text} <"
+                        i.style = user_style
+                    else:
+                        i.style = user_style
+                
+                # 🛑 Telegram API limit: Max 8 buttons per row.
+                # We chunk them into rows of 6 for better UI balance.
+                chunked_page_buttons = [page_buttons[i : i + 6] for i in range(0, len(page_buttons), 6)]
+                for chunk in chunked_page_buttons:
+                    page.append(chunk)
 
             page.append([
                 InlineKeyboardButton("Settings", "settings_menu", style=user_style),
                 InlineKeyboardButton("Close", close_data, style=user_style)
             ])
     else:
-        # Wrap buttons to ensure it's a list of lists if not already (for non-multipaged)
-        # Actually it's already a list of lists from [ikb[i : i + columns] ...]
+        # Single page handling
         for row in reversed(tabs):
             buttons.insert(0, row)
         buttons.append([
@@ -265,7 +396,22 @@ async def get_help_menu(return_all: bool = False, user_id: int = None, chat_id: 
 @log_errors
 async def get_plugin_data(plugin: str, number: int = 0, sub_page: int = 0, user_id: int = None, chat_id: int = None, mode: str = "userbot"):
     full_text = Altruix._command_help_message_data[plugin.lower()].strip()
-    pages = split_help_text(full_text)
+    
+    # Resolve dynamic max_chars from user config
+    page_max_chars = 900  # default
+    try:
+        page_chars_apply_type = await Altruix.config.get_env("HELP_PAGE_CHARS_APPLY_TYPE", default="global")
+        if page_chars_apply_type == "global":
+            res = await Altruix.config.get_env("HELP_PAGE_MAX_CHARS_GLOBAL", default=900)
+        elif user_id:
+            res = await Altruix.config.get_env(f"HELP_PAGE_MAX_CHARS_{user_id}", default=900)
+        else:
+            res = 900
+        page_max_chars = int(res if res is not None else 900)
+    except Exception:
+        page_max_chars = 900
+    
+    pages = split_help_text(full_text, max_chars=page_max_chars)
     
     # Ensure sub_page is within bounds
     if sub_page >= len(pages):
@@ -295,11 +441,11 @@ async def get_plugin_data(plugin: str, number: int = 0, sub_page: int = 0, user_
 
     text = f"<b>❇️ Help for</b> <code>{html.escape(plugin.title())}</code>\n"
     text += f"<b>🏷️ Version:</b> <code>v{html.escape(str(version))}</code>\n"
-    text += f"<b>ℹ️ Cmd:</b> <code>{total_cmd_count}</code> cmds\n"
+    header_info = f"<b>ℹ️ Cmd:</b> <code>{total_cmd_count}</code> cmds"
     if total_arg_count > 0:
-        text += f"<b>〽️ Arg:</b> <code>{total_arg_count}</code> args\n"
-    if len(pages) > 1:
-        text += f" [Page {sub_page + 1}/{len(pages)}]"
+        header_info += f"\n<b>〽️ Arg:</b> <code>{total_arg_count}</code> args"
+    text += header_info
+    # [FIX] Page indicator removed from header text as it's already in the buttons
     
     session_index = -1
     if user_id:
@@ -341,20 +487,38 @@ async def get_plugin_data(plugin: str, number: int = 0, sub_page: int = 0, user_
     from Main.utils.file_helpers import get_user_button_style
     user_style = get_user_button_style(user_id) if user_id else enums.ButtonStyle.SUCCESS
 
+    # Get prefix for session
+    prefix = Altruix._prefix_cache.get("prefix_owner_user", ".")
+    if session_index != -1:
+        cl = Altruix.clients[session_index]
+        me = getattr(cl, "me", None) or getattr(cl, "myself", None)
+        u_id = me.id if me else None
+        if u_id and u_id in Altruix._prefix_cache.get("per_account", {}):
+            prefix = Altruix._prefix_cache["per_account"][u_id].get("u", prefix)
+    elif hasattr(Altruix, "prefix_owner_user"):
+        prefix = Altruix.prefix_owner_user
+
     buttons = []
     
     # 📤 Relocate Send Plugin button to be above navigation/back buttons
     send_data = f"send_plugin#{plugin}?page={number}{si_suffix}"
-    buttons.append([InlineKeyboardButton("📤 Send Plugin", callback_data=f"sp#{await create_callback_id(send_data)}", style=user_style)])
+    buttons.append([
+        InlineKeyboardButton("Send Plugin", callback_data=f"sp#{await create_callback_id(send_data)}", style=user_style),
+        InlineKeyboardButton(f"Copy Prefix: {prefix}", copy_text=prefix, style=user_style)
+    ])
 
     nav_buttons = []
     if len(pages) > 1:
         if sub_page > 0:
             prev_data = f"help#{plugin}?page={number}&sub={sub_page-1}{si_suffix}"
-            nav_buttons.append(InlineKeyboardButton(Altruix.get_string("prev"), callback_data=f"h#{await create_callback_id(prev_data)}", style=user_style))
+            nav_buttons.append(InlineKeyboardButton("«", callback_data=f"h#{await create_callback_id(prev_data)}", style=user_style))
+        
+        # Explicit Page Indicator
+        nav_buttons.append(InlineKeyboardButton(f"{sub_page + 1}/{len(pages)}", callback_data="none", style=user_style))
+            
         if sub_page < len(pages) - 1:
             next_data = f"help#{plugin}?page={number}&sub={sub_page+1}{si_suffix}"
-            nav_buttons.append(InlineKeyboardButton(Altruix.get_string("next"), callback_data=f"h#{await create_callback_id(next_data)}", style=user_style))
+            nav_buttons.append(InlineKeyboardButton("»", callback_data=f"h#{await create_callback_id(next_data)}", style=user_style))
     
     if nav_buttons:
         buttons.append(nav_buttons)
@@ -370,11 +534,24 @@ async def get_plugin_data(plugin: str, number: int = 0, sub_page: int = 0, user_
 @iuser_check
 async def close_help(c: Client, cq: CallbackQuery):
     session_index = cq.matches[0].group(1)
+    user_id = cq.from_user.id
+    
+    # Resolve user_id if session_index is provided to get correct style
+    if session_index and int(session_index) != -1:
+        idx = int(session_index)
+        if 0 <= idx < len(Altruix.clients):
+            cl = Altruix.clients[idx]
+            me = getattr(cl, "myself", None) or await cl.get_me()
+            user_id = me.id
+            
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(user_id)
+    
     re_open_data = f"re_open_{session_index}" if session_index else "re_open"
     await cq.edit_message_text(
         "<b>Help Menu Closed 🔐</b>",
         reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton("Re-Open", re_open_data, style=enums.ButtonStyle.PRIMARY)]]
+            [[InlineKeyboardButton("Re-Open", re_open_data, style=user_style)]]
         ),
         parse_mode=enums.ParseMode.HTML
     )
@@ -418,10 +595,10 @@ async def change_lang(c: Client, cb: CallbackQuery):
             Altruix.get_string("INVALID_LANG_SELECTED"), cache_time=0, show_alert=True
         )
     if lang == Altruix.selected_lang:
-        return await cb.answer(Altruix.get_string("LANG_IN_USE"))
+        return await cb.answer(Altruix.get_string("LANG_IN_USE"), show_alert=True)
     Altruix.selected_lang = lang
     await Altruix.config.add_env_to_db("UB_LANG", lang)
-    return await cb.answer(Altruix.get_string("LANG_SELECTED"))
+    return await cb.answer(Altruix.get_string("LANG_SELECTED"), show_alert=True)
 
 
 @Altruix.bot.on_chosen_inline_result(filters.regex(r"^help(_plugin_[^_]+)?(?:_(-?\d+))?", flags=re.IGNORECASE))
@@ -445,13 +622,28 @@ async def help_chosen_handler(c: Client, cir: ChosenInlineResult):
                 chat_id = q_match.group(1)
         if chat_id == "None": chat_id = "N/A"
         
+        chat_title = None
+        if chat_id != "N/A":
+            try:
+                for cl in Altruix.clients:
+                    try:
+                        chat_obj = await cl.get_chat(int(chat_id))
+                        chat_title = chat_obj.title or chat_obj.first_name
+                        if chat_title: break
+                    except Exception: continue
+            except Exception: pass
+            
+        update_data = {
+            "_id": inline_msg_id,
+            "chat_id": chat_id,
+            "timestamp": datetime.now().timestamp()
+        }
+        if chat_title:
+            update_data["chat_title"] = chat_title
+            
         await Altruix.local_db.inline_col.find_one_and_update(
             {"_id": inline_msg_id},
-            {"$set": {
-                "_id": inline_msg_id,
-                "chat_id": chat_id,
-                "timestamp": datetime.now().timestamp()
-            }},
+            {"$set": update_data},
             upsert=True
         )
     except Exception as e:
@@ -475,7 +667,7 @@ async def help(_: Client, iq: InlineQuery):
          plugin_or_tab = None
 
     if not plugin_or_tab:
-        help_msg, buttons, parse_mode = await get_help_menu(user_id=iq.from_user.id, chat_id=cid, mode=default_mode)
+        help_msg, buttons, parse_mode = await get_help_menu(user_id=iq.from_user.id, chat_id=cid, mode=default_mode, tapped_by=iq.from_user)
         
         # Ensure result_id ends with chat_id for precise ChosenInlineResult matching
         r_id = f"help_tab_{default_mode}_{chat_id}" if chat_id else f"help_tab_{default_mode}_Inline"
@@ -551,8 +743,13 @@ async def re_help(c: Client, cq: CallbackQuery):
             me = getattr(cl, "myself", None) or await cl.get_me()
             user_id = me.id
 
-    help_msg, buttons, parse_mode = await get_help_menu(user_id=user_id)
-    await cq.edit_message_text(help_msg, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=parse_mode)
+    help_msg, buttons, parse_mode = await get_help_menu(user_id=user_id, tapped_by=cq.from_user)
+    await cq.edit_message_text(
+        help_msg, 
+        reply_markup=InlineKeyboardMarkup(buttons), 
+        parse_mode=parse_mode,
+        disable_web_page_preview=True
+    )
 
 
 @Altruix.bot.on_callback_query(filters.regex(r"^ht#([a-f0-9]{12})$"))
@@ -583,8 +780,14 @@ async def help_tab_compressed(_: Client, cq: CallbackQuery):
             me = getattr(cl, "myself", None) or await cl.get_me()
             user_id = me.id
 
-    help_msg, buttons, parse_mode = await get_help_menu(user_id=user_id, chat_id=cid, mode=mode)
-    await cq.edit_message_text(help_msg, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=parse_mode)
+    help_msg, buttons, parse_mode = await get_help_menu(user_id=user_id, chat_id=cid, mode=mode, tapped_by=cq.from_user)
+    await cq.edit_message_text(
+        help_msg, 
+        reply_markup=InlineKeyboardMarkup(buttons), 
+        parse_mode=parse_mode,
+        disable_web_page_preview=True
+    )
+
 
 
 @Altruix.bot.on_callback_query(filters.regex(r"^h#([a-f0-9]{12})$"))
@@ -620,7 +823,7 @@ async def help_compressed(_: Client, cq: CallbackQuery):
             user_id = me.id
 
     if text_type == "_page":
-        res = await get_help_menu(return_all=True, user_id=user_id, chat_id=cid, mode=mode)
+        res = await get_help_menu(return_all=True, user_id=user_id, chat_id=cid, mode=mode, tapped_by=cq.from_user)
         if not res: return
         help_msg, buttons, parse_mode = res
         # Handle both multi-page (list of pages) and single-page (single page) structures
@@ -636,7 +839,10 @@ async def help_compressed(_: Client, cq: CallbackQuery):
             button_markup = buttons
             
         return await cq.edit_message_text(
-            Essentials.fix_html(help_msg), reply_markup=InlineKeyboardMarkup(button_markup), parse_mode=parse_mode
+            Essentials.fix_html(help_msg), 
+            reply_markup=InlineKeyboardMarkup(button_markup), 
+            parse_mode=parse_mode,
+            disable_web_page_preview=True
         )
 
     res = await get_plugin_data(text_type, number, sub_page, user_id=user_id, chat_id=cid, mode=mode)
@@ -644,7 +850,12 @@ async def help_compressed(_: Client, cq: CallbackQuery):
     text, buttons = res
     # Ensure finalized text is HTML-fixed even if it was already fixed in get_plugin_data
     fixed_text = Essentials.fix_html(text)
-    await cq.edit_message_text(fixed_text, reply_markup=buttons, parse_mode=enums.ParseMode.HTML)
+    await cq.edit_message_text(
+        fixed_text, 
+        reply_markup=buttons, 
+        parse_mode=enums.ParseMode.HTML,
+        disable_web_page_preview=True
+    )
 
 
 @Altruix.bot.on_callback_query(filters.regex(r"^help_tab#(userbot|bot|extra|ultroid)\?si=(-?\d+)(?:&cid=(-?\d+))?"))
@@ -652,7 +863,7 @@ async def help_compressed(_: Client, cq: CallbackQuery):
 @iuser_check
 async def help_tab_callback(_: Client, cq: CallbackQuery):
     """Legacy handler for uncompressed tab callbacks."""
-    await cq.answer()  # Instant feedback
+    await cq.answer(show_alert=True)  # Instant feedback
     
     mode = cq.matches[0].group(1)
     session_idx = cq.matches[0].group(2)
@@ -666,8 +877,14 @@ async def help_tab_callback(_: Client, cq: CallbackQuery):
             me = getattr(cl, "myself", None) or await cl.get_me()
             user_id = me.id
 
-    help_msg, buttons, parse_mode = await get_help_menu(user_id=user_id, chat_id=cid, mode=mode)
-    await cq.edit_message_text(help_msg, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=parse_mode)
+    help_msg, buttons, parse_mode = await get_help_menu(user_id=user_id, chat_id=cid, mode=mode, tapped_by=cq.from_user)
+    await cq.edit_message_text(
+        help_msg, 
+        reply_markup=InlineKeyboardMarkup(buttons), 
+        parse_mode=parse_mode,
+        disable_web_page_preview=True
+    )
+
 
 
 @Altruix.bot.on_callback_query(filters.regex(r"^help(?:#(\w+)\?page=(\d+)(?:&sub=(\d+))?(?:&si=(-?\d+))?(?:&cid=(-?\d+))?(?:&mode=(\w+))?)?$"))
@@ -675,7 +892,7 @@ async def help_tab_callback(_: Client, cq: CallbackQuery):
 @iuser_check
 async def help_callback(_: Client, cq: CallbackQuery):
     """Legacy handler for uncompressed help callbacks."""
-    await cq.answer()  # Instant feedback
+    await cq.answer(show_alert=True)  # Instant feedback
     
     data = cq.matches[0]
     num_groups = len(data.groups())
@@ -701,11 +918,14 @@ async def help_callback(_: Client, cq: CallbackQuery):
             user_id = me.id
 
     if not get_group(1):
-        res = await get_help_menu(user_id=user_id, chat_id=cid, mode=mode)
+        res = await get_help_menu(user_id=user_id, chat_id=cid, mode=mode, tapped_by=cq.from_user)
         if not res: return
         help_msg, buttons, parse_mode = res
         return await cq.edit_message_text(
-            help_msg, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=parse_mode
+            help_msg, 
+            reply_markup=InlineKeyboardMarkup(buttons), 
+            parse_mode=parse_mode,
+            disable_web_page_preview=True
         )
     
     text_type = get_group(1)
@@ -713,7 +933,7 @@ async def help_callback(_: Client, cq: CallbackQuery):
     sub_page = int(get_group(3)) if get_group(3) else 0
 
     if text_type == "_page":
-        res = await get_help_menu(return_all=True, user_id=user_id, chat_id=cid, mode=mode)
+        res = await get_help_menu(return_all=True, user_id=user_id, chat_id=cid, mode=mode, tapped_by=cq.from_user)
         if not res: return
         help_msg, buttons, parse_mode = res
         # Handle both multi-page (list of pages) and single-page (single page) structures
@@ -729,13 +949,21 @@ async def help_callback(_: Client, cq: CallbackQuery):
             button_markup = buttons
             
         return await cq.edit_message_text(
-            help_msg, reply_markup=InlineKeyboardMarkup(button_markup), parse_mode=parse_mode
+            help_msg, 
+            reply_markup=InlineKeyboardMarkup(button_markup), 
+            parse_mode=parse_mode,
+            disable_web_page_preview=True
         )
 
     res = await get_plugin_data(text_type, number, sub_page, user_id=user_id, chat_id=cid, mode=mode)
     if not res: return
     text, buttons = res
-    await cq.edit_message_text(text, reply_markup=buttons, parse_mode=enums.ParseMode.HTML)
+    await cq.edit_message_text(
+        text, 
+        reply_markup=buttons, 
+        parse_mode=enums.ParseMode.HTML,
+        disable_web_page_preview=True
+    )
 
 
 @Altruix.bot.on_message(filters.command("help", Altruix.bot_handler))
@@ -743,8 +971,13 @@ async def help_callback(_: Client, cq: CallbackQuery):
 @iuser_check
 async def bot_help_handler(c: Client, m: pyrogram.types.Message):
     """Handler for bot help command (/help or .help)"""
-    help_msg, buttons, parse_mode = await get_help_menu(user_id=m.from_user.id, chat_id=m.chat.id, mode="userbot")
-    await m.reply(help_msg, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=parse_mode)
+    help_msg, buttons, parse_mode = await get_help_menu(user_id=m.from_user.id, chat_id=m.chat.id, mode="userbot", tapped_by=m.from_user)
+    await m.reply(
+        help_msg, 
+        reply_markup=InlineKeyboardMarkup(buttons), 
+        parse_mode=parse_mode,
+        disable_web_page_preview=True
+    )
 
 
 @Altruix.bot.on_callback_query(filters.regex(r"^sp#([a-f0-9]{12})$"))
@@ -793,7 +1026,13 @@ async def send_plugin_compressed(c: Client, cb: CallbackQuery):
         ]
     ]
     
-    await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=enums.ParseMode.HTML)
+    await cb.edit_message_text(
+        text, 
+        reply_markup=InlineKeyboardMarkup(buttons), 
+        parse_mode=enums.ParseMode.HTML,
+        disable_web_page_preview=True
+    )
+
 
 
 @Altruix.bot.on_callback_query(filters.regex(r"^send_plugin#([\w_ ]+)\?page=(\d+)(?:&si=(-?\d+))?(?:&cid=(-?\d+))?(?:&mode=(\w+))?"))
@@ -801,7 +1040,7 @@ async def send_plugin_compressed(c: Client, cb: CallbackQuery):
 @iuser_check
 async def send_plugin_confirm(c: Client, cb: CallbackQuery):
     """Legacy handler for uncompressed send plugin callbacks."""
-    await cb.answer()  # Instant feedback
+    await cb.answer(show_alert=True)  # Instant feedback
     
     plugin = cb.matches[0].group(1)
     page = cb.matches[0].group(2)
@@ -829,7 +1068,13 @@ async def send_plugin_confirm(c: Client, cb: CallbackQuery):
         ]
     ]
     
-    await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=enums.ParseMode.HTML)
+    await cb.edit_message_text(
+        text, 
+        reply_markup=InlineKeyboardMarkup(buttons), 
+        parse_mode=enums.ParseMode.HTML,
+        disable_web_page_preview=True
+    )
+
 
 
 @Altruix.bot.on_callback_query(filters.regex(r"^csp#([a-f0-9]{12})$"))
@@ -837,7 +1082,7 @@ async def send_plugin_confirm(c: Client, cb: CallbackQuery):
 @iuser_check
 async def send_plugin_execute_compressed(c: Client, cb: CallbackQuery):
     """Handle compressed confirmation send plugin callbacks."""
-    await cb.answer()  # Instant feedback
+    await cb.answer(show_alert=True)  # Instant feedback
     
     hash_id = cb.matches[0].group(1)
     original_data = await get_callback_data(hash_id)  # ✅ Fixed: Added await
@@ -860,7 +1105,12 @@ async def send_plugin_execute_compressed(c: Client, cb: CallbackQuery):
     if answer == "no":
         # Return to plugin help with user_id persistence
         text, buttons = await get_plugin_data(plugin, page, user_id=cb.from_user.id, chat_id=cid, mode=mode)
-        return await cb.edit_message_text(text, reply_markup=buttons, parse_mode=enums.ParseMode.HTML)
+        return await cb.edit_message_text(
+            text, 
+            reply_markup=buttons, 
+            parse_mode=enums.ParseMode.HTML,
+            disable_web_page_preview=True
+        )
     
     # Continue with existing send logic...
     await cb.answer("🔍 Mencari file plugin...", show_alert=False)
@@ -963,7 +1213,13 @@ async def send_plugin_execute_compressed(c: Client, cb: CallbackQuery):
                 
         # Return to plugin help page
         text, buttons = await get_plugin_data(plugin, page, user_id=cb.from_user.id, chat_id=cid, mode=mode)
-        await cb.edit_message_text(text, reply_markup=buttons, parse_mode=enums.ParseMode.HTML)
+        await cb.edit_message_text(
+            text, 
+            reply_markup=buttons, 
+            parse_mode=enums.ParseMode.HTML,
+            disable_web_page_preview=True
+        )
+
 
     except Exception as e:
         await cb.answer(f"❌ Error: {str(e)[:100]}", show_alert=True)
@@ -974,7 +1230,7 @@ async def send_plugin_execute_compressed(c: Client, cb: CallbackQuery):
 @iuser_check
 async def send_plugin_execute(c: Client, cb: CallbackQuery):
     """Legacy handler for uncompressed confirmation callbacks."""
-    await cb.answer()  # Instant feedback
+    await cb.answer(show_alert=True)  # Instant feedback
     
     plugin = cb.matches[0].group(1)
     answer = cb.matches[0].group(2)
@@ -986,7 +1242,12 @@ async def send_plugin_execute(c: Client, cb: CallbackQuery):
     if answer == "no":
         # Return to plugin help with user_id persistence
         text, buttons = await get_plugin_data(plugin, page, user_id=cb.from_user.id, chat_id=cid, mode=mode)
-        return await cb.edit_message_text(text, reply_markup=buttons, parse_mode=enums.ParseMode.HTML)
+        return await cb.edit_message_text(
+            text, 
+            reply_markup=buttons, 
+            parse_mode=enums.ParseMode.HTML,
+            disable_web_page_preview=True
+        )
         
     await cb.answer("🔍 Mencari file plugin...", show_alert=False)
     
@@ -1092,7 +1353,13 @@ async def send_plugin_execute(c: Client, cb: CallbackQuery):
         # Return to plugin help with user_id persistence
 
         text, buttons = await get_plugin_data(plugin, page, user_id=cb.from_user.id, chat_id=cid, mode=mode)
-        await cb.edit_message_text(text, reply_markup=buttons, parse_mode=enums.ParseMode.HTML)
+        await cb.edit_message_text(
+            text, 
+            reply_markup=buttons, 
+            parse_mode=enums.ParseMode.HTML,
+            disable_web_page_preview=True
+        )
+
         
     except Exception as e:
         Altruix.log(f"Failed to send plugin {plugin}: {e}", level=40)

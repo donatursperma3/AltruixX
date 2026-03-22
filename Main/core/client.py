@@ -40,7 +40,7 @@ from pyrogram.session import Session
 from .config import Config, BaseConfig
 from ..utils.essentials import Essentials
 from .database import MongoDB, LocalDatabase
-from pyrogram.handlers import MessageHandler, EditedMessageHandler, DeletedMessagesHandler, CallbackQueryHandler
+from pyrogram.handlers import MessageHandler, EditedMessageHandler, DeletedMessagesHandler, CallbackQueryHandler, ChatMemberUpdatedHandler
 from ..utils.custom_filters import user_filters
 from ..utils.startup_helpers import concatenate
 from Main.utils.heroku_ import prepare_heroku_url
@@ -177,7 +177,7 @@ class AltruixClient:
         self.clients: List[Client] = []
         self.cmd_list = {}
         self.all_lang_strings = {}
-        self.__version__ = "0.0.10.0891H" # ✅ Global Inline Fix & Reg Fix
+        self.__version__ = "0.0.10.0959H" # ✅ Global Inline Fix & Reg Fix
         self.upm = UPM(self)
         self.selected_lang = "english"
         self.local_lang_file = "./Main/localization"
@@ -282,16 +282,16 @@ class AltruixClient:
                 try:
                     import winloop
                     asyncio.set_event_loop_policy(winloop.EventLoopPolicy())
-                    logger.info("🚀 Using event loop policy: winloop.EventLoopPolicy")
+                    self.log("🚀 Using event loop policy: winloop.EventLoopPolicy")
                 except ImportError:
-                    logger.info(f"🚀 Using event loop policy: {type(policy).__name__}")
+                    self.log(f"🚀 Using event loop policy: {type(policy).__name__}")
             else:
                 try:
                     import uvloop
                     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-                    logger.info("🚀 Using event loop policy: uvloop.EventLoopPolicy")
+                    self.log("🚀 Using event loop policy: uvloop.EventLoopPolicy")
                 except ImportError:
-                    logger.info(f"🚀 Using event loop policy: {type(policy).__name__}")
+                    self.log(f"🚀 Using event loop policy: {type(policy).__name__}")
 
         self.loop.run_until_complete(self._db_setup())
         self.executor = ThreadPoolExecutor(max_workers=multiprocessing.cpu_count() * 5)
@@ -305,6 +305,7 @@ class AltruixClient:
         self.REPLY_AS_MENTIONED_WAITING = {}
         # Daily limit tracking: user_id -> date_str -> count
         self.USER_REPLY_COUNTS = defaultdict(lambda: defaultdict(int))
+        self.BLOCK_STATUS_CACHE = {}
         self.BUTTON_STATS = {"react": 0, "reply": 0, "reply_all": 0, "confirm": 0, "cancel": 0, "save": 0, "unsend": 0}
         
         # State mapping for different plugins
@@ -656,7 +657,9 @@ class AltruixClient:
         async with self.db_sudo_sync_lock:
             # ✅ REFACTOR: Use the robust config method that aggregates everything
             all_sudo = await self.config.get_sudo()
-            new_sudo_set = set(all_sudo)
+            all_owners = await self.config.get_owners()
+            
+            new_sudo_set = set(all_sudo).union(set(all_owners))
             
             # 2. Include Per-Account Sudo Users (for per-account logic)
             for client in self.clients:
@@ -798,6 +801,7 @@ class AltruixClient:
         else:
             msg = str(message)
             
+        temp_func_name = None
         # ✅ ENHANCEMENT: Add Caller Info (Module & Function)
         # Identify Caller (Plugin/Function) - Highly Optimized using sys._getframe
         debug_mode = getattr(self.config, "DEBUG", False)
@@ -827,6 +831,7 @@ class AltruixClient:
                         depth += 1
                         continue
     
+                    temp_func_name = func_name
                     parts = module_name.split(".")
                     mod_display = ".".join(parts[-2:]) if len(parts) > 1 else module_name
                     caller_info = f" [📍 {mod_display}.{func_name}]"
@@ -835,7 +840,7 @@ class AltruixClient:
             except Exception:
                 pass
                 
-        if caller_info:
+        if caller_info and not debug_mode: # If not in debug, just append module info
             msg += caller_info
 
 
@@ -853,18 +858,22 @@ class AltruixClient:
         if target_client:
             try:
                 from Main.core.exception_handler import get_session_info
-                session_info = f"{get_session_info(target_client)} | "
+                session_info = f"{get_session_info(target_client)}"
             except: pass
         elif target_uid:
-            session_info = f"[ID: {target_uid}] | "
+            session_info = f"[ID: {target_uid}]"
 
-        if session_info:
-            msg = f"{session_info}{msg}"
-
-        # ✅ FINAL: Apply DEBUG prefix at the VERY start if mode is True
+        # ✅ FINAL: Apply DEBUG prefix & format if mode is True
         if debug_mode:
-            if not msg.startswith("[DEBUG]: »"):
-                msg = f"[DEBUG]: » {msg}"
+            func_prefix = f"📬 [{temp_func_name}] " if temp_func_name else ""
+            session_sep = f"{session_info} | " if session_info else ""
+            
+            # Combine into requested format: [DEBUG]: » session_info | 📬 [func] message [📍 mod.func]
+            msg = f"[DEBUG]: » {session_sep}{func_prefix}{msg}{caller_info}"
+
+        elif session_info:
+            # Traditional format for non-debug logs
+            msg = f"{session_info} | {msg}"
 
         # Suppress DEBUG level logs unless config.DEBUG is True
         if level <= logging.DEBUG and not debug_mode:
@@ -876,16 +885,23 @@ class AltruixClient:
     def _init_logger(self) -> None:
         if sys.platform == "win32":
             # Force UTF-8 for Windows console to handle emojis
-            if sys.stdout.encoding.lower() != "utf-8":
-                sys.stdout.reconfigure(encoding="utf-8")
-            if sys.stderr.encoding.lower() != "utf-8":
-                sys.stderr.reconfigure(encoding="utf-8")
+            # ✅ RESILIENCE: Handle cases where stdout/stderr might be redirected (None encoding or no reconfigure)
+            for stream_name in ["stdout", "stderr"]:
+                stream = getattr(sys, stream_name)
+                if stream:
+                    encoding = getattr(stream, "encoding", None)
+                    if encoding and isinstance(encoding, str) and encoding.lower() != "utf-8":
+                        if hasattr(stream, "reconfigure"):
+                            try:
+                                stream.reconfigure(encoding="utf-8")
+                            except Exception:
+                                pass
 
         logging.getLogger("pyrogram").setLevel(logging.ERROR)
         
         # Define format
-        log_format = "%(asctime)s - [Altroid-X] >> %(levelname)s << %(message)s"
-        date_format = "[%d/%m/%Y %H:%M:%S]"
+        log_format = "[%(asctime)s.%(msecs)03d] - [Altroid-X] >> %(levelname)s << %(message)s"
+        date_format = "%d/%m/%Y %H:%M:%S"
         
         # Setup handlers
         file_handler = logging.FileHandler("altruix.log", encoding="utf-8", mode="w")
@@ -903,7 +919,7 @@ class AltruixClient:
         
         # Get root logger
         root_logger = logging.getLogger()
-        root_logger.setLevel(logging.INFO)
+        root_logger.setLevel(logging.DEBUG if self.config.DEBUG else logging.INFO)
         
         # Remove existing handlers if any
         for h in root_logger.handlers[:]:
@@ -924,14 +940,14 @@ class AltruixClient:
 
     async def resolve_dns(self):
         import dns.resolver
-        self.log("DNS resolution check...", level=logging.INFO)
+        self.log("DNS resolution check...")
         try:
             # Run DNS resolution in executor to avoid blocking the event loop
             await asyncio.wait_for(
                 self.loop.run_in_executor(None, lambda: dns.resolver.resolve("www.google.com")),
                 timeout=5.0
             )
-            self.log("DNS resolution: OK", level=logging.INFO)
+            self.log("DNS resolution: OK")
         except asyncio.TimeoutError:
             self.log("DNS resolution timeout. Setting to: 8.8.8.8", level=logging.WARNING)
             dns.resolver.default_resolver = dns.resolver.Resolver(configure=False)
@@ -942,36 +958,36 @@ class AltruixClient:
             dns.resolver.default_resolver.nameservers = ["8.8.8.8"]
 
     async def _db_setup(self):
-        self.log("Initializing Database Setup...", level=logging.INFO)
+        self.log("Initializing Database Setup...")
         with contextlib.suppress(Exception):
             await self.update_on_startup()
         
         await self.resolve_dns()
         
         if self.config.DB_URI:
-            self.log("Connecting to MongoDB...", level=logging.INFO)
+            self.log("Connecting to MongoDB...")
             self.db = MongoDB(self.config.DB_URI)
-            self.log("Initialized Mongo successfully!", level=logging.INFO)
+            self.log("Initialized Mongo successfully!")
         else:
-            self.log("DB_URI not found. Using LocalDatabase.", level=logging.INFO)
+            self.log("DB_URI not found. Using LocalDatabase.")
             self.db = LocalDatabase()
-            self.log("Initialized LocalDatabase successfully!", level=logging.INFO)
+            self.log("Initialized LocalDatabase successfully!")
             # Start background saver for debounced writing
             self.loop.create_task(self.db.start_background_saver())
-            self.log("Started LocalDatabase background saver.", level=logging.INFO)
+            self.log("Started LocalDatabase background saver.")
             
-        self.log("Pinging Database...", level=logging.INFO)
+        self.log("Pinging Database...")
         try:
             await asyncio.wait_for(self.db.ping(), timeout=10.0)
-            self.log("Pinged Database successfully!", level=logging.INFO)
+            self.log("Pinged Database successfully!")
         except asyncio.TimeoutError:
             self.log("Database ping timeout! Check your connection.", level=logging.ERROR)
         except Exception as e:
             self.log(f"Database ping failed: {e}", level=logging.ERROR)
             
-        self.log("Preparing App URL...", level=logging.INFO)
+        self.log("Preparing App URL...")
         self.app_url_ = await prepare_heroku_url()
-        self.log("Database Setup Complete.", level=logging.INFO)
+        self.log("Database Setup Complete.")
 
     def run_in_exc(self, func_):
         @wraps(func_)
@@ -1025,6 +1041,30 @@ class AltruixClient:
             return format_string
         except Exception:
             return keyword
+    def on_chat_member_updated(self, custom_filters=None, group=1, bot_mode_unsupported=False):
+        def decorator(func):
+            async def wrapper(client, chat_member_updated):
+                # ✅ Check if session is disabled
+                if client.me.id in self.disabled_sessions:
+                    return
+                try:
+                    await func(client, chat_member_updated)
+                except StopPropagation as e:
+                    raise StopPropagation from e
+                except ContinuePropagation as e:
+                    raise ContinuePropagation from e
+                    
+            self.custom_add_handler(
+                cmd=None,
+                func_=wrapper,
+                filter_s=custom_filters,
+                group=group,
+                handler_type=ChatMemberUpdatedHandler,
+                bot_mode_unsupported=bot_mode_unsupported,
+            )
+            return wrapper
+        return decorator
+
     def on_message(self, custom_filters, group=1, bot_mode_unsupported=False, allow_commands=False):
         if not allow_commands:
             custom_filters &= ~filters.command(
@@ -1184,6 +1224,10 @@ class AltruixClient:
         self,
         cmd: Union[str, List[str]],
         cmd_help: dict = {},
+        description: str = None,
+        note: str = None,
+        utility: str = None,
+        category_ovr: str = None,
         pm_only: bool = False,
         group_only: bool = False,
         channel_only: bool = False,
@@ -1263,6 +1307,10 @@ class AltruixClient:
             channel_only=channel_only,
             private_only=pm_only,
             version=plugin_version,
+            description=cmd_help.get("description"),
+            note=cmd_help.get("note"),
+            utility=cmd_help.get("utility"),
+            category_ovr=cmd_help.get("category") or (cmd_help.get("categories")[0] if cmd_help.get("categories") else None),
         )
         def decorator(func):
             async def wrapper(client, message: Message):
@@ -1487,6 +1535,10 @@ class AltruixClient:
         channel_only: bool,
         private_only: bool,
         version: str = "unknown",
+        description: str = None,
+        note: str = None,
+        utility: str = None,
+        category_ovr: str = None,
     ):
         example = html.escape(help_map.get("example", "No example available"))
         help_text = html.escape(
@@ -1514,6 +1566,10 @@ class AltruixClient:
                     "private_only": private_only,
                     "detail": detail,
                     "version": version,
+                    "description": description,
+                    "note": note,
+                    "utility": utility,
+                    "category": category_ovr,
                 }
             ]
         elif commands[0] not in [
@@ -1533,6 +1589,10 @@ class AltruixClient:
                     "private_only": private_only,
                     "detail": detail,
                     "version": version,
+                    "description": description,
+                    "note": note,
+                    "utility": utility,
+                    "category": category_ovr,
                 }
             )
 
@@ -1610,7 +1670,7 @@ class AltruixClient:
 
     async def _resource_monitor_loop(self):
         """Background loop to monitor system resources (CPU/RAM) and alert if > 90%."""
-        self.log("🚀 Resource monitor loop started.", level=logging.INFO)
+        self.log("🚀 Resource monitor loop started.")
         alert_sent = False
         while True:
             try:
@@ -1623,16 +1683,15 @@ class AltruixClient:
                 is_high_ram = isinstance(ram, (int, float)) and ram > 90
                 
                 if is_high_cpu or is_high_ram:
-                    if not alert_sent:
-                        usage_info = ""
-                        if is_high_cpu: usage_info += f"🖥 <b>CPU Usage:</b> <code>{cpu}%</code>\n"
-                        if is_high_ram: usage_info += f"💾 <b>RAM Usage:</b> <code>{ram}%</code>\n"
-                        
+                    if not alert_sent and getattr(self.config, "RESOURCE_NOTIF_ENABLED", "off") == "on":
                         alert_msg = (
-                            "⚠️ <b>USERBOT RESOURCE WARNING</b>\n\n"
-                            f"{usage_info}\n"
-                            "‼️ <b>Tindakan diperlukan:</b>\n"
-                            "Server Anda hampir mencapai kapasitas maksimal. Mohon periksa proses yang berjalan untuk menghindari crash atau restart tak terduga."
+                            "<blockquote expandable>"
+                            "⚠️ <b>USERBOT SYSTEM OVERLOAD ALERT</b>\n\n"
+                            f"• <b>CPU Usage:</b> <code>{cpu}%</code>\n"
+                            f"• <b>RAM Usage:</b> <code>{ram}%</code>\n\n"
+                            "‼️ <b>Action required:</b>\n"
+                            "Your server is nearing maximum capacity.\nPlease check running processes to avoid unexpected crashes or restarts."
+                            "</blockquote>"
                         )
                         
                         # Kirim ke log group menggunakan bot client
@@ -1640,7 +1699,7 @@ class AltruixClient:
                             try:
                                 await self.bot.send_message(
                                     chat_id=self.log_chat,
-                                    text=f"<blockquote expandable>{alert_msg}</blockquote>",
+                                    text=f"{alert_msg}",
                                     parse_mode=enums.ParseMode.HTML
                                 )
                                 alert_sent = True
@@ -2197,7 +2256,7 @@ class AltruixClient:
 
     async def _auto_backup_loop(self):
         """Background loop for automatic database backups."""
-        self.log("🚀 Auto-backup loop started.", level=logging.INFO)
+        self.log("🚀 Auto-backup loop started.")
         while True:
             try:
                 # Get settings
@@ -2448,7 +2507,8 @@ class AltruixClient:
                                 parse_mode=parse_mode,
                                 link_preview_options=LinkPreviewOptions(is_disabled=True)
                             )
-                            await asyncio.sleep(3)
+                            # delay 0.5 second
+                            await asyncio.sleep(0.5)
                             success_count += 1
                             if client == self.bot:
                                 # Bot logic: [1/1]
@@ -3154,7 +3214,7 @@ class AltruixClient:
 
 
     async def load_all_modules(self):
-        self.log("Starting to load all modules...", level=logging.INFO)
+        self.log("Starting to load all modules...")
         try:
             # ✅ PERFORMANCE FIX: Cache LOAD_ULTROID_ADDONS check once
             ultroid_addons_enabled = await self.config.get_env("LOAD_ULTROID_ADDONS", default="off")
@@ -3324,6 +3384,10 @@ class AltruixClient:
                     usage_text = each_command_data.get("usage")
                     example_text = each_command_data.get("example")
                     user_args = each_command_data.get("user_args")
+                    description_text = each_command_data.get("description")
+                    note_text = each_command_data.get("note")
+                    utility_text = each_command_data.get("utility")
+                    category_text = each_command_data.get("category")
                     if usage_text:
                         usage_text = usage_text.replace("{i}", display_pfx).replace("{prefix}", display_pfx).replace("{ultroid_prefix}", display_pfx)
                     if example_text:
@@ -3337,14 +3401,55 @@ class AltruixClient:
                     self._command_help_message_data[plugin_name] = (
                         self._command_help_message_data[plugin_name][:-3] + "\n"
                     )
-                    import html
-                    e_help = html.escape(str(help_text))
+                    
+                    def smart_escape(text):
+                        if not text:
+                            return ""
+                        # Common allowed tags in Telegram BOT API HTML
+                        allowed_tags = ["b", "i", "u", "s", "a", "code", "pre", "blockquote"]
+                        # We want to escape everything except these tags.
+                        # This is a bit complex for a simple regex, so we'll do a basic version:
+                        # 1. Escape & first
+                        text = str(text).replace("&", "&amp;")
+                        # 2. Find all tags like <b>, </b>, <a href="...">, etc.
+                        import re
+                        tag_pattern = r"(</?(" + "|".join(allowed_tags) + r")(?:\s+[^>]+)?>)"
+                        placeholders = []
+                        def replace_tag(match):
+                            placeholders.append(match.group(1))
+                            return f"__HTML_TAG_PLACEHOLDER_{len(placeholders)-1}__"
+                        
+                        text = re.sub(tag_pattern, replace_tag, text, flags=re.IGNORECASE)
+                        # 3. Escape < and >
+                        text = text.replace("<", "&lt;").replace(">", "&gt;")
+                        # 4. Restore tags
+                        for i, tag in enumerate(placeholders):
+                            text = text.replace(f"__HTML_TAG_PLACEHOLDER_{i}__", tag)
+                        return text
+
+                    if category_text:
+                        e_cat = smart_escape(category_text)
+                        self._command_help_message_data[
+                            plugin_name
+                        ] += f"\n<b>➥ Category :</b>  <code>{e_cat}</code>\n"
+                    e_help = smart_escape(help_text)
                     self._command_help_message_data[
                         plugin_name
                     ] += f"\n<b>➥ Help :</b>  <i>{e_help}</i>\n"
+                    
+                    if description_text:
+                        e_desc = smart_escape(description_text)
+                        self._command_help_message_data[
+                            plugin_name
+                        ] += f"\n<b>➥ Description :</b>\n<i>{e_desc}</i>\n"
+                    
+                    if utility_text:
+                        e_util = smart_escape(utility_text)
+                        self._command_help_message_data[
+                            plugin_name
+                        ] += f"\n<b>➥ Utility :</b>  <code>{e_util}</code>\n"
                     if usage_text:
-                        import html
-                        e_usage = html.escape(str(usage_text))
+                        e_usage = smart_escape(usage_text)
                         self._command_help_message_data[
                             plugin_name
                         ] += f"\n<b>➥ Usage :</b>  <code>{e_usage}</code>\n"
@@ -3355,11 +3460,16 @@ class AltruixClient:
                         
                         # Add the correct placeholder prefix
                         example_render = f"{display_pfx}{example_render}"
-                        import html
-                        e_example = html.escape(str(example_render))
+                        e_example = smart_escape(example_render)
                         self._command_help_message_data[
                             plugin_name
                         ] += f"\n<b>➥ Example :</b>  <code>{e_example}</code>\n"
+                    
+                    if note_text:
+                        e_note = smart_escape(note_text)
+                        self._command_help_message_data[
+                            plugin_name
+                        ] += f"\n<b>📍 Note :</b>\n<i>{e_note}</i>\n"
                     
                     # ✅ Support for 'detail' key
                     if detail_text := each_command_data.get("detail"):
@@ -3375,9 +3485,8 @@ class AltruixClient:
                         if isinstance(user_args, list):
                             for arg_data in user_args:
                                 if isinstance(arg_data, dict):
-                                    import html
-                                    arg_name = html.escape(str(arg_data.get("arg", "")))
-                                    help_txt = html.escape(str(arg_data.get("help", "")))
+                                    arg_name = smart_escape(arg_data.get("arg", ""))
+                                    help_txt = smart_escape(arg_data.get("help", ""))
                                     requires_input = arg_data.get("requires_input", False)
                                     self._command_help_message_data[
                                         plugin_name
@@ -3385,19 +3494,16 @@ class AltruixClient:
                                 else:
                                     self._command_help_message_data[
                                         plugin_name
-                                    ] += f" <code>{arg_data}</code>\n"
+                                    ] += f" <code>{smart_escape(arg_data)}</code>\n"
                         elif isinstance(user_args, dict):
                             for arg_flag, arg_help in user_args.items():
-                                # Escape arg_flag and arg_help for safety
-                                e_flag = html.escape(str(arg_flag))
-                                e_help = html.escape(str(arg_help))
                                 self._command_help_message_data[
                                     plugin_name
-                                ] += f" <code>{e_flag}</code> - {e_help}\n"
+                                ] += f" <code>{smart_escape(arg_flag)}</code> - {smart_escape(arg_help)}\n"
                         else:
                             self._command_help_message_data[
                                 plugin_name
-                            ] += f" <i>{str(user_args)}</i>\n"
+                            ] += f" <i>{smart_escape(str(user_args))}</i>\n"
                 
             except Exception as e:
                 self.log(

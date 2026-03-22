@@ -8,11 +8,12 @@ import asyncio
 # Plugin Metadata
 def _get_plugin_name():
     import os
+    import re
     return os.path.basename(__file__)
 
 plugin_name = _get_plugin_name()
 __plugin_name__ = "xreplyfrom"
-PLUGIN_VERSION = "0.0.197"
+PLUGIN_VERSION = "0.0.219-D"
 
 # Database Helpers
 async def get_rf_logging_setting(user_id: int):
@@ -82,18 +83,32 @@ def create_progress_task(status_msg):
     cmd_help={
         "categories": ["Utility"],
         "help": "Balas pesan dari chat/ID pesan lain (Teks/Media) dengan proxy/format aesthetic.",
-        "description": "Balas pesan target menggunakan konten (Text/Media) dari chat atau ID pesan lain (Mendukung link).\n\n"
-                       "**Perbedaan CMD:**\n"
-                       "• `.replyfrom` : Mengambil media TANPA caption asli.\n"
-                       "• `.replyfromcap` : Mengambil media DENGAN caption asli.\n"
-                       "• `.replyfromcustom` : Mengambil media dengan CUSTOM caption.",
+        "description": "Balas pesan target menggunakan konten (Text/Media) dari chat atau ID pesan lain.\n\n"
+                       "<b>📌 Perbedaan CMD:</b>\n"
+                       "• <code>.replyfrom</code> → Mengambil media <b>TANPA</b> caption asli.\n"
+                       "• <code>.replyfromcap</code> → Mengambil media <b>DENGAN</b> caption asli.\n"
+                       "• <code>.replyfromcust</code> → Mengambil media dengan <b>CUSTOM</b> caption.\n\n"
+                       "<b>🔗 Format Link yang Didukung:</b>\n"
+                       "• Link standar : <code>https://t.me/username/123</code>\n"
+                       "• Link private : <code>https://t.me/c/123456789/123</code>\n"
+                       "• Link telegram.me : <code>https://telegram.me/username/123</code>\n"
+                       "• Link internal : <code>tg://openmessage?user_id=ID&message_id=ID</code>\n\n"
+                       "<b>❗ Cara Pakai:</b> Reply ke pesan target, lalu ketik command + link sumber.",
         "usage": ".replyfrom <link>\n"
                  ".replyfromcap <link>\n"
-                 ".replyfromcustom <link> | <custom_caption>",
-        "example": ".replyfrom https://t.me/username/123\n"
+                 ".replyfromcust <link> | <custom_caption>",
+        "example": "📦 Tanpa caption (media only):\n"
+                   ".replyfrom https://t.me/username/123\n"
+                   ".replyfrom tg://openmessage?user_id=6180883991&message_id=205956\n\n"
+                   "📝 Dengan caption asli:\n"
                    ".replyfromcap https://t.me/username/123\n"
-                   ".replyfromcust https://t.me/username/123 | Ini caption kustom aesthetic!",
-        "note": "✨ Auto-logs to Log Group. Bypass method supports thumbnails. Caption otomatis menggunakan format <blockquote expandable>."
+                   ".replyfromcap tg://openmessage?user_id=6180883991&message_id=205956\n\n"
+                   "✏️ Dengan caption custom:\n"
+                   ".replyfromcust https://t.me/username/123 | Ini caption kustom!\n"
+                   ".replyfromcust tg://openmessage?user_id=6180883991&message_id=205956 | Caption custom via tg link!",
+        "note": "✨ Auto-logs ke Log Group. Bypass method mendukung thumbnail.\n"
+                "Caption otomatis menggunakan format blockquote expandable.\n"
+                "Support link: HTTPS (t.me / telegram.me) & Telegram Internal (tg://)."
     },
     requires_input=True,
     bot_mode_unsupported=True
@@ -111,41 +126,86 @@ async def reply_from_handler(client: Client, message: RawMessage):
     from pyrogram import enums
     import os
     
-    cmd_name = message.command[0].lower() if message.command else "replyfrom"
+    # Early Debug Log
+    Altruix.log(f"📌 [RF DEBUG] Handler Entry. Command object: {repr(message.command)}, Raw text snippet: {repr(message.text[:30])}", level=20)
+    
+    if message.command:
+        cmd_name = message.command[0].lower()
+    else:
+        # Fallback: Parse first word from text
+        try:
+            raw_text = message.text or message.caption or ""
+            first_word = raw_text.split()[0].lower()
+            cmd_name = first_word
+        except Exception:
+            cmd_name = "replyfrom"
+
+    # ✅ FIX: Strip prefix symbols if they are still part of the command name
+    cmd_name = re.sub(r'^[^a-zA-Z0-9]+', '', cmd_name)
     
     mode_cap = "none"
     if cmd_name == "replyfromcap":
         mode_cap = "default"
-    elif cmd_name in ["replyfromcustom", "replyfromcust"]:
+    elif cmd_name in ("replyfromcustom", "replyfromcust"):
         mode_cap = "custom"
         
-    custom_text = ""
-    raw_text = message.text or ""
-    cmd_len = len(message.command[0]) + 1 if message.command else 10
-    args_text = raw_text[cmd_len:].strip()
+    Altruix.log(f"📌 [RF DEBUG] Extracted Cmd: {repr(cmd_name)}, Final Mode: {repr(mode_cap)}", level=20)
     
+    RF_CUSTOM_CAPTION = None
+    args_text = ""
+    
+    # ✅ Robust Parsing: Use HTML for custom captions to preserve <b>/<i> tags
+    # Use plain text for link parsing to avoid <a> tag interference
+    htxt = message.html or message.text or ""
+    ptxt = message.text or ""
+    
+    # [DEBUG LOG] Split long logs to avoid 222-char truncation
+    for i in range(0, len(htxt), 200):
+        Altruix.log(f"📌 [RF DEBUG] Full HTML ({i}): {repr(htxt[i:i+200])}", level=20)
+    for i in range(0, len(ptxt), 200):
+        Altruix.log(f"📌 [RF DEBUG] Full PTXT ({i}): {repr(ptxt[i:i+200])}", level=20)
+    
+    # Identify caption part by finding the pipe symbol
     if mode_cap == "custom":
-        if "|" in args_text:
-            split_parts = args_text.split("|", 1)
-            args_text = split_parts[0].strip()
-            custom_text = split_parts[1].strip()
-            if custom_text:
-                custom_text = f"<blockquote expandable>{custom_text}</blockquote>"
+        # Regex to find everything after the FIRST pipe
+        cap_match = re.search(r'\|\s*(.*)', htxt, re.DOTALL)
+        if cap_match:
+            RF_CUSTOM_CAPTION = cap_match.group(1).strip()
+            # The link part is everything before the FIRST pipe, minus the command
+            pre_pipe = ptxt.split("|", 1)[0].strip()
+            p_parts = re.split(r'\s+', pre_pipe, 1)
+            args_text = p_parts[1].strip() if len(p_parts) > 1 else ""
+            
+            Altruix.log(f"📌 [RF DEBUG] Custom Mode [REGEX] Identified.", level=20)
+            Altruix.log(f"📌 [RF DEBUG] RF_CUSTOM_CAPTION (repr): {repr(RF_CUSTOM_CAPTION)}", level=20)
+            Altruix.log(f"📌 [RF DEBUG] args_text (repr): {repr(args_text)}", level=20)
         else:
+            Altruix.log(f"📌 [RF DEBUG] Custom Mode [REGEX] FAIL: Pipe '|' not found.", level=20)
             await message.edit("❌ <b>Usage:</b> <code>.replyfromcustom &lt;link&gt; | &lt;teks caption kustom&gt;</code>")
             return
+    else:
+        # Standard mode: just remove the command
+        p_parts = re.split(r'\s+', ptxt, 1)
+        args_text = p_parts[1].strip() if len(p_parts) > 1 else ""
+        Altruix.log(f"📌 [RF DEBUG] Standard Mode. args_text (repr): {repr(args_text)}", level=20)
 
     target_chat = None
     message_id = None
     
     # 1. Parse Link
     link_pattern = r"(?:https?://)?(?:t\.me/|telegram\.me/)(?:c/)?([\w.-]+)/(?:(\d+)/)?(\d+)"
+    tg_pattern = r"tg://openmessage\?(?:user_id|chat_id)=([\d]+)&message_id=(\d+)"
+    
+    tg_match = re.search(tg_pattern, args_text)
     match = re.search(link_pattern, args_text)
     
-    if match:
+    if tg_match:
+        target_chat = int(tg_match.group(1))
+        message_id = int(tg_match.group(2))
+    elif match:
         chat_val = match.group(1)
         msg_id_val = match.group(3)
-        if "/c/" in args_text or "t.me/c/" in args_text:
+        if "/c/" in args_text or "t.me/c/" in args_text or "telegram.me/c/" in args_text:
             target_chat = int(f"-100{chat_val}")
         else:
             target_chat = f"@{chat_val}" if not chat_val.startswith("@") else chat_val
@@ -180,6 +240,8 @@ async def reply_from_handler(client: Client, message: RawMessage):
             )
             return
 
+    Altruix.log(f"📌 [RF DEBUG] Resolved: Chat={target_chat}, MsgID={message_id}", level=20)
+
     if not message.reply_to_message:
         await message.edit("❌ <b>Error:</b> Gunakan command ini sebagai balasan (reply) ke pesan target.")
         return
@@ -189,8 +251,15 @@ async def reply_from_handler(client: Client, message: RawMessage):
     try:
         source_msg = await client.get_messages(target_chat, message_id)
         if not source_msg or source_msg.empty:
+            Altruix.log(f"📌 [RF DEBUG] Source Message EMPTY or NOT FOUND.", level=20)
             await status_msg.edit("❌ <b>Error:</b> Source message not found or is empty.")
             return
+            
+        # Log media info
+        m_type = "TEXT" if source_msg.text else "MEDIA"
+        if source_msg.media:
+            m_type = str(source_msg.media)
+        Altruix.log(f"📌 [RF DEBUG] Source Type: {m_type}", level=20)
 
         # Auto Forward to Log Group
         uid = message.from_user.id
@@ -208,30 +277,45 @@ async def reply_from_handler(client: Client, message: RawMessage):
                 Altruix.log(f"RF Auto-forward failed: {e}")
 
         # Format Aesthetics (Blockquote)
+        Altruix.log(f"📌 [RF DEBUG] Pre-Assignment: mode={mode_cap}, RF_CAP={repr(RF_CUSTOM_CAPTION)}", level=20)
         final_caption = ""
         final_text = ""
         
         if mode_cap == "custom":
-            final_caption = custom_text
-            final_text = custom_text
+            final_caption = RF_CUSTOM_CAPTION or ""
+            final_text = RF_CUSTOM_CAPTION or ""
+            Altruix.log(f"📌 [RF DEBUG] Applied Custom Mode. final_caption={repr(final_caption)}", level=20)
         elif mode_cap == "none":
             final_caption = ""
             if source_msg.text:
                 try:
-                    final_text = f"<blockquote expandable>{source_msg.text.html}</blockquote>"
+                    final_text = source_msg.text.html
                 except Exception:
-                    final_text = f"<blockquote expandable>{source_msg.text}</blockquote>"
+                    final_text = source_msg.text
         elif mode_cap == "default":
             if source_msg.media and source_msg.caption:
                 try:
-                    final_caption = f"<blockquote expandable>{source_msg.caption.html}</blockquote>"
+                    final_caption = source_msg.caption.html
                 except Exception:
-                    final_caption = f"<blockquote expandable>{source_msg.caption}</blockquote>"
-            if source_msg.text:
-                try:
-                    final_text = f"<blockquote expandable>{source_msg.text.html}</blockquote>"
-                except Exception:
-                    final_text = f"<blockquote expandable>{source_msg.text}</blockquote>"
+                    final_caption = source_msg.caption
+        
+        # Robust Force: ensure custom text is preserved regardless of media type logic
+        if mode_cap == "custom" and RF_CUSTOM_CAPTION:
+             final_caption = RF_CUSTOM_CAPTION
+             final_text = RF_CUSTOM_CAPTION
+             Altruix.log(f"📌 [RF DEBUG] Force Custom applied.", level=20)
+                    
+        Altruix.log(f"📌 [RF DEBUG] PRE-Wrap Caption: {final_caption}", level=20)
+        Altruix.log(f"📌 [RF DEBUG] PRE-Wrap Text: {final_text}", level=20)
+                    
+        # Wrap all captions/text in blockquote expandable
+        if final_caption:
+            final_caption = f"<blockquote expandable>{final_caption}</blockquote>"
+        if final_text:
+            final_text = f"<blockquote expandable>{final_text}</blockquote>"
+            
+        Altruix.log(f"📌 [RF DEBUG] POST-Wrap Caption: {final_caption}", level=20)
+        Altruix.log(f"📌 [RF DEBUG] POST-Wrap Text: {final_text}", level=20)
 
         reply_id = message.reply_to_message.id
 
@@ -247,37 +331,90 @@ async def reply_from_handler(client: Client, message: RawMessage):
             await status_msg.delete()
             return
 
-        # Attempt Method 1: standard Copy (Bypass Forward Restriction)
+        # Logic Flow Control: If Method 1 is skipped or fails, proceed to Method 2.
+        method_1_done = False
+        
+        # Attempt Method 1: Instant File-ID Send (High Performance)
+        # ✅ SPECIAL FIX: copy_message often ignores caption overrides.
+        # Instead, we use direct send_photo/send_video with the source file_id.
         try:
+            # Use specific send methods to force caption override on raw file_id
             kwargs = {
+                "chat_id": message.chat.id,
                 "caption": final_caption,
-                "parse_mode": enums.ParseMode.HTML
+                "parse_mode": enums.ParseMode.HTML,
+                "reply_to_message_id": reply_id
             }
-                
-            await source_msg.copy(
-                chat_id=message.chat.id,
-                reply_to_message_id=reply_id,
-                **kwargs
-            )
-            await status_msg.delete()
-            return
-        except Exception as copy_e:
-            error_msg = str(copy_e)
+            
+            Altruix.log(f"📌 [RF DEBUG] Method 1 (FileID Send) START. Mode: {mode_cap}", level=20)
+            
+            if source_msg.photo:
+                await client.send_photo(photo=source_msg.photo.file_id, **kwargs)
+                method_1_done = True
+            elif source_msg.video:
+                v_dur = getattr(source_msg.video, "duration", 0)
+                v_w = getattr(source_msg.video, "width", 0)
+                v_h = getattr(source_msg.video, "height", 0)
+                await client.send_video(video=source_msg.video.file_id, duration=v_dur, width=v_w, height=v_h, supports_streaming=True, **kwargs)
+                method_1_done = True
+            elif source_msg.animation:
+                await client.send_animation(animation=source_msg.animation.file_id, **kwargs)
+                method_1_done = True
+            elif source_msg.document:
+                await client.send_document(document=source_msg.document.file_id, **kwargs)
+                method_1_done = True
+            elif source_msg.audio:
+                await client.send_audio(audio=source_msg.audio.file_id, **kwargs)
+                method_1_done = True
+            elif source_msg.voice:
+                await client.send_voice(voice=source_msg.voice.file_id, **kwargs)
+                method_1_done = True
+            elif source_msg.sticker:
+                await client.send_sticker(sticker=source_msg.sticker.file_id, chat_id=message.chat.id, reply_to_message_id=reply_id)
+                method_1_done = True
+            elif source_msg.video_note:
+                await client.send_video_note(video_note=source_msg.video_note.file_id, chat_id=message.chat.id, reply_to_message_id=reply_id)
+                method_1_done = True
+            else:
+                 # Standard copy for weird types
+                 Altruix.log(f"📌 [RF DEBUG] Method 1: Falling back to Copy for unknown type.", level=20)
+                 await client.copy_message(
+                    chat_id=message.chat.id,
+                    from_chat_id=source_msg.chat.id,
+                    message_id=source_msg.id,
+                    reply_to_message_id=reply_id,
+                    caption=final_caption,
+                    parse_mode=enums.ParseMode.HTML
+                 )
+                 method_1_done = True
+            
+            if method_1_done:
+                Altruix.log(f"📌 [RF DEBUG] Method 1 (FileID/Copy) SUCCESS.", level=20)
+                await status_msg.delete()
+                return
+
+        except Exception as method1_e:
+            Altruix.log(f"📌 [RF DEBUG] Method 1 (Instant) FAILED: {method1_e}", level=20)
+            error_msg = str(method1_e)
             is_restricted = "CHAT_FORWARDS_RESTRICTED" in error_msg
-            status_text = "🧨 <b>Copy restricted (Protected).</b> Attempting robust bypass..." if is_restricted else f"⚠️ <b>Copy failed:</b> {error_msg[:50]}... Attempting bypass..."
+            status_text = "🧨 <b>Protected content.</b> Attempting robust bypass..." if is_restricted else "⚠️ <b>Instant send failed.</b> Attempting bypass..."
             try:
                 await status_msg.edit(status_text)
             except Exception:
                 pass
 
         # Attempt Method 2: Download & Upload Bypass (with Thumbnail fix)
-        if source_msg.media:
+        if not method_1_done and source_msg.media:
+            Altruix.log(f"📌 [RF DEBUG] Method 2 (Bypass) START.", level=20)
             progress_task = create_progress_task(status_msg)
             temp_path = await client.download_media(source_msg)
             progress_task.cancel()
             if not temp_path:
-                await status_msg.edit("❌ <b>Bypass Failed:</b> Could not download restricted media.")
+                Altruix.log(f"📌 [RF DEBUG] Method 2: Download FAILED.", level=20)
+                await status_msg.edit("❌ <b>Error:</b> Gagal mengunduh media untuk bypass.")
                 return
+                
+            Altruix.log(f"📌 [RF DEBUG] Method 2: Downloaded to {temp_path}", level=20)
 
             thumb_path = None
             try:
@@ -296,17 +433,23 @@ async def reply_from_handler(client: Client, message: RawMessage):
             try:
                 # Identify media type and send accordingly with thumbnails
                 if source_msg.photo:
+                    Altruix.log(f"📌 [RF DEBUG] Method 2: Sending PHOTO with caption: {final_caption}", level=20)
                     await client.send_photo(message.chat.id, temp_path, caption=final_caption, reply_to_message_id=reply_id, parse_mode=enums.ParseMode.HTML)
                 elif source_msg.video:
+                    Altruix.log(f"📌 [RF DEBUG] Method 2: Sending VIDEO with caption: {final_caption}", level=20)
                     await client.send_video(message.chat.id, temp_path, caption=final_caption, reply_to_message_id=reply_id, parse_mode=enums.ParseMode.HTML, thumb=thumb_path, duration=v_duration, width=v_width, height=v_height, supports_streaming=True)
                 elif source_msg.audio:
+                    Altruix.log(f"📌 [RF DEBUG] Method 2: Sending AUDIO with caption: {final_caption}", level=20)
                     await client.send_audio(message.chat.id, temp_path, caption=final_caption, reply_to_message_id=reply_id, parse_mode=enums.ParseMode.HTML, thumb=thumb_path)
                 elif source_msg.voice:
+                    Altruix.log(f"📌 [RF DEBUG] Method 2: Sending VOICE with caption: {final_caption}", level=20)
                     await client.send_voice(message.chat.id, temp_path, caption=final_caption, reply_to_message_id=reply_id, parse_mode=enums.ParseMode.HTML)
                 elif source_msg.document:
+                    Altruix.log(f"📌 [RF DEBUG] Method 2: Sending DOCUMENT with caption: {final_caption}", level=20)
                     await client.send_document(message.chat.id, temp_path, caption=final_caption, reply_to_message_id=reply_id, parse_mode=enums.ParseMode.HTML, thumb=thumb_path)
                 elif source_msg.animation:
-                    await client.send_animation(message.chat.id, temp_path, caption=final_caption, reply_to_message_id=reply_id, parse_mode=enums.ParseMode.HTML, thumb=thumb_path)
+                    Altruix.log(f"📌 [RF DEBUG] Method 2: Sending ANIMATION with caption: {final_caption}", level=20)
+                    await client.send_animation(message.chat.id, temp_path, caption=final_caption, reply_to_message_id=reply_id, parse_mode=enums.ParseMode.HTML, thumb=thumb_path, width=v_width, height=v_height)
                 elif source_msg.video_note:
                     await client.send_video_note(message.chat.id, temp_path, reply_to_message_id=reply_id, thumb=thumb_path)
                 elif source_msg.sticker:
@@ -352,19 +495,31 @@ async def reply_from_handler(client: Client, message: RawMessage):
     cmd_help={
         "categories": ["Utility"],
         "help": "Balas pesan menggunakan konten dari Story Telegram via proxy.",
-        "description": "Balas pesan target menggunakan konten dari Story Telegram (Mendukung link story).\n\n"
-                       "**Perbedaan CMD:**\n"
-                       "• `.replyfroms` : Mengambil story TANPA caption asli (opsional noc/nocredit).\n"
-                       "• `.replyfromscap` : Mengambil story DENGAN caption asli.\n"
-                       "• `.replyfromscustom` : Mengambil story dengan CUSTOM caption.",
+        "description": "Balas pesan target menggunakan konten dari Story Telegram.\n\n"
+                       "<b>📌 Perbedaan CMD:</b>\n"
+                       "• <code>.replyfroms</code> → Mengambil story <b>TANPA</b> caption asli.\n"
+                       "• <code>.replyfroms noc</code> → Mengambil story <b>TANPA</b> caption &amp; <b>TANPA</b> credit.\n"
+                       "• <code>.replyfromscap</code> → Mengambil story <b>DENGAN</b> caption asli.\n"
+                       "• <code>.replyfromscust</code> → Mengambil story dengan <b>CUSTOM</b> caption.\n\n"
+                       "<b>🔗 Format Story Link:</b>\n"
+                       "• Public : <code>https://t.me/username/s/123</code>\n"
+                       "• Private : <code>https://t.me/c/123456789/s/123</code>\n"
+                       "• telegram.me : <code>https://telegram.me/username/s/123</code>\n\n"
+                       "<b>❗ Cara Pakai :</b> Reply ke pesan target, lalu ketik command + story link.",
         "usage": ".replyfroms [noc] <story_link>\n"
                  ".replyfromscap <story_link>\n"
-                 ".replyfromscustom <story_link> | <custom_caption>",
-        "example": ".replyfroms https://t.me/username/s/123\n"
-                   ".replyfroms noc https://t.me/username/s/123\n"
-                   ".replyfromscap https://t.me/username/s/123\n"
+                 ".replyfromscust <story_link> | <custom_caption>",
+        "example": "📦 Story tanpa caption (dengan credit):\n"
+                   ".replyfroms https://t.me/username/s/123\n\n"
+                   "🚫 Story tanpa caption & tanpa credit:\n"
+                   ".replyfroms noc https://t.me/username/s/123\n\n"
+                   "📝 Story dengan caption asli:\n"
+                   ".replyfromscap https://t.me/username/s/123\n\n"
+                   "✏️ Story dengan caption custom:\n"
                    ".replyfromscust https://t.me/username/s/123 | Ini caption story aesthetic!",
-        "note": "✨ Auto-logs to Log Group. Bypass method supports thumbnails. Caption otomatis menggunakan format <blockquote expandable>."
+        "note": "✨ Auto-logs ke Log Group. Bypass method mendukung thumbnail.\n"
+                "Caption otomatis menggunakan format blockquote expandable.\n"
+                "Gunakan 'noc' atau 'nocredit' untuk menghilangkan credit source."
     },
     requires_input=True,
     bot_mode_unsupported=True
@@ -375,42 +530,102 @@ async def reply_from_story_handler(client: Client, message: RawMessage):
     """Fetch content from a story link and reply to the target msg with advanced caption & thumbnail support."""
     if not client or not client.me or client.me.is_bot:
         return
+    import re
     from pyrogram import enums
     import os
     story = None 
     
-    cmd_name = message.command[0].lower() if message.command else "replyfroms"
+    # Early Debug Log
+    Altruix.log(f"📌 [Story DEBUG] Handler Entry. Command object: {repr(message.command)}, Raw text snippet: {repr(message.text[:30] if message.text else 'No Text')}", level=20)
+    
+    if message.command:
+        cmd_name = message.command[0].lower()
+    else:
+        # Fallback: Parse first word from text
+        try:
+            raw_text = message.text or message.caption or ""
+            first_word = raw_text.split()[0].lower()
+            cmd_name = first_word
+        except Exception:
+            cmd_name = "replyfroms"
+
+    # ✅ FIX: Strip prefix symbols if they are still part of the command name
+    cmd_name = re.sub(r'^[^a-zA-Z0-9]+', '', cmd_name)
     
     mode_cap = "none"
     if cmd_name == "replyfromscap":
         mode_cap = "default"
-    elif cmd_name in ["replyfromscustom", "replyfromscust"]:
+    elif cmd_name in ("replyfromscustom", "replyfromscust"):
         mode_cap = "custom"
         
-    custom_text = ""
-    raw_text = message.text or ""
-    cmd_len = len(message.command[0]) + 1 if message.command else 11
-    args_text = raw_text[cmd_len:].strip()
+    Altruix.log(f"📌 [Story DEBUG] Extracted Cmd: {repr(cmd_name)}, Final Mode: {repr(mode_cap)}", level=20)
+    
+    RF_CUSTOM_CAPTION = None
+    args_text = ""
+    
+    # ✅ Robust Parsing: Use HTML for custom captions to preserve <b>/<i> tags
+    htxt = message.html or message.text or ""
+    ptxt = message.text or ""
+    args_text = message.raw_user_input.strip() if hasattr(message, "raw_user_input") and message.raw_user_input else ""
+    
+    if not args_text:
+        await message.edit(
+            "❌ <b>Usage:</b>\n"
+            "<code>.replyfroms [noc] &lt;story_link&gt;</code>\n"
+            "<code>.replyfromscap &lt;story_link&gt;</code>\n"
+            "<code>.replyfromscust &lt;story_link&gt; | &lt;caption&gt;</code>"
+        )
+        return
+
+    # [DEBUG LOG] Split long logs to avoid 222-char truncation
+    for i in range(0, len(htxt), 200):
+        Altruix.log(f"📌 [Story DEBUG] Full HTML ({i}): {repr(htxt[i:i+200])}", level=20)
+    for i in range(0, len(ptxt), 200):
+        Altruix.log(f"📌 [Story DEBUG] Full PTXT ({i}): {repr(ptxt[i:i+200])}", level=20)
     
     if mode_cap == "custom":
-        if "|" in args_text:
-            split_parts = args_text.split("|", 1)
-            args_text = split_parts[0].strip()
-            custom_text = split_parts[1].strip()
+        # Search for pipe in HTML to preserve tags
+        pipe_match = re.search(r'\|\s*(.*)', htxt, re.DOTALL)
+        if pipe_match:
+            RF_CUSTOM_CAPTION = pipe_match.group(1).strip()
+            
+            # Extract link from pre-pipe part using plain text
+            pre_pipe = ptxt.split("|", 1)[0].strip()
+            # Remove command from pre_pipe
+            p_parts = re.split(r'\s+', pre_pipe, 1)
+            args_text = p_parts[1].strip() if len(p_parts) > 1 else ""
+            
+            Altruix.log(f"📌 [Story DEBUG] Custom Mode [REGEX] Identified.", level=20)
+            Altruix.log(f"📌 [Story DEBUG] RF_CUSTOM_CAPTION (repr): {repr(RF_CUSTOM_CAPTION)}", level=20)
+            Altruix.log(f"📌 [Story DEBUG] args_text (repr): {repr(args_text)}", level=20)
         else:
-            await message.edit("❌ <b>Usage:</b> <code>.replyfromscustom &lt;link&gt; | &lt;teks caption kustom&gt;</code>")
+            Altruix.log(f"📌 [Story DEBUG] Custom Mode [REGEX] FAIL: Pipe '|' not found.", level=20)
+            await message.edit("❌ <b>Usage:</b> <code>.replyfromscust &lt;link&gt; | &lt;teks caption kustom&gt;</code>")
             return
+    else:
+        # Standard mode: remove command
+        p_parts = re.split(r'\s+', ptxt, 1)
+        args_text = p_parts[1].strip() if len(p_parts) > 1 else ""
+        Altruix.log(f"📌 [Story DEBUG] Standard Mode. args_text (repr): {repr(args_text)}", level=20)
             
     no_credit = False
-    parts = args_text.split()
-    
-    if len(parts) >= 2 and parts[0].lower() in ["noc", "nocredit"]:
+    link = args_text
+    if args_text.lower().startswith("noc "):
         no_credit = True
-        link = parts[1]
+        link = args_text[4:].strip()
+    elif args_text.lower().startswith("nocredit "):
+        no_credit = True
+        link = args_text[9:].strip()
     else:
-        link = parts[0] if parts else ""
+        link = args_text
 
-    if "t.me/" not in link or "/s/" not in link:
+    # Robust Story Link Pattern
+    # t.me/username/s/123
+    # t.me/c/12345/s/678 (private)
+    story_pattern = r"(?:https?://)?(?:t\.me/|telegram\.me/)(?:c/)?([\w.-]+)/s/(\d+)"
+    match = re.search(story_pattern, link)
+
+    if not match:
         await message.edit("❌ <b>Invalid Story Link!</b> format: <code>https://t.me/user/s/ID</code>")
         return
 
@@ -421,11 +636,10 @@ async def reply_from_story_handler(client: Client, message: RawMessage):
     status_msg = await message.edit("🔄 <b>Processing story...</b>")
     
     try:
-        parts = link.rstrip("/").split("/")
-        story_id = int(parts[-1])
-        target_raw = parts[-3]
+        target_raw = match.group(1)
+        story_id = int(match.group(2))
         
-        if "t.me/c/" in link:
+        if "/c/" in link or "t.me/c/" in link:
             target = int(f"-100{target_raw}")
         else:
             target = target_raw
@@ -467,16 +681,18 @@ async def reply_from_story_handler(client: Client, message: RawMessage):
                             await client.send_video(Altruix.log_chat, file_path, caption=caption_log, thumb=thumb_path)
                         else:
                             await client.send_photo(Altruix.log_chat, file_path, caption=caption_log)
+                        Altruix.log(f"📌 [RF Story] Story {story_id} from {target_raw} sent as media backup to log chat.", level=20)
                     except Exception as e:
                         try:
                             await client.copy_media_group(Altruix.log_chat, target, [story_id])
+                            Altruix.log(f"📌 [RF Story] Story {story_id} from {target_raw} copied as media group backup to log chat.", level=20)
                         except:
                             Altruix.log(f"RF Story auto-forward failed: {e}")
         
         final_caption = ""
         
         if mode_cap == "custom":
-            final_caption = custom_text
+            final_caption = RF_CUSTOM_CAPTION or ""
         elif mode_cap == "default":
             cap, _ = clean_premium_caption(story.caption or "", story.caption_entities, is_premium)
             final_caption = cap
@@ -488,6 +704,8 @@ async def reply_from_story_handler(client: Client, message: RawMessage):
 
         if final_caption:
             final_caption = f"<blockquote expandable>{final_caption}</blockquote>"
+        
+        Altruix.log(f"📌 [Story DEBUG] Final Caption to Send (repr): {repr(final_caption)}", level=20)
         
         try:
             if story.video:

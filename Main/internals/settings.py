@@ -140,7 +140,8 @@ async def get_settings_home_text():
     
     # Bots Calculation
     custom_bots_count = len(Altruix.bot_manager.custom_bots) if hasattr(Altruix, 'bot_manager') else 0
-    total_bots = 1 + custom_bots_count # Default Bot + Custom Bots
+    default_bots = 1 if hasattr(Altruix, 'bot') and Altruix.bot.is_connected else 0
+    total_bots = default_bots + custom_bots_count # Default Bot + Custom Bots
     
     # Module Breakdown
     ub_mod = len([x for x in Altruix.plugin_categories.values() if x == 'userbot'])
@@ -161,23 +162,46 @@ async def get_settings_home_text():
     if not template or template == "settings_stats":
         # Fallback to hardcoded template if string missing
         template = (
-            "<b>🛠️ Userbot Settings</b>\n\n"
-            "• Total Sessions: <code>{}</code>\n"
-            "• Total Bots: <code>{}</code> (Default: 1, Custom: {})\n"
-            "• Xtra-Module: <code>{}</code>\n"
-            "• Modules: <code>{}</code> (UB {}, Bot {}, Xtra {}, Addons {})\n"
-            "• Commands: <code>{}</code>\n"
-            "• Version: <code>{}</code>"
+            "<blockquote expandable>"
+            "❇️ <b>Userbot Settings – Premium Edition</b>\n"
+            "<i>Experience complete control at the highest level</i>\n\n"
+            "──────────── <b>Elite Overview</b> ──────────────\n"
+            "<b>• Sessions:</b> <code>{} active</code>\n"
+            "<b>• Bots:</b> <code>{} (Default {} • Custom {})</code>\n"
+            "<b>• Extra-Features:</b> <code>{}</code>\n"
+            "<b>• Modules:</b> <code>{} (UB {} • Bot {} • Extra {})</code>\n"
+            "<b>• Commands:</b> <code>{}</code>\n"
+            "<b>• Version:</b> <code>{}</code>\n"
+            "─────────────────────────────────────\n\n"
+            "Select a category to organize your exclusive userbot.</blockquote>"
         )
         return template.format(
-            total_sessions, total_bots, custom_bots_count, xtra_features_count,
-            total_mod, ub_mod, bot_mod, xtra_mod, addons_mod, total_cmds, Altruix.__version__
-        ) + "\n\nSelect a category below to configure your userbot."
+            total_sessions,
+            total_bots,
+            default_bots,
+            custom_bots_count,
+            xtra_features_count,
+            total_mod,
+            ub_mod,
+            bot_mod,
+            (xtra_mod + addons_mod),
+            total_cmds,
+            Altruix.__version__
+        )
 
     return template.format(
-        total_sessions, total_bots, custom_bots_count, xtra_features_count,
-        total_mod, ub_mod, bot_mod, xtra_mod, addons_mod, total_cmds, Altruix.__version__
-    ) + "\n\nSelect a category below to configure your userbot."
+        total_sessions,
+        total_bots,
+        default_bots,
+        custom_bots_count,
+        xtra_features_count,
+        total_mod,
+        ub_mod,
+        bot_mod,
+        (xtra_mod + addons_mod),
+        total_cmds,
+        Altruix.__version__
+    )
 
 def get_settings_buttons(user_id=None):
     custom_data = get_user_custom_link(user_id) if user_id else get_custom_link_data()["global"]
@@ -185,15 +209,18 @@ def get_settings_buttons(user_id=None):
     user_style = get_user_button_style(user_id) if user_id else enums.ButtonStyle.PRIMARY
     return [
         [
-            InlineKeyboardButton("📱 Sessions", callback_data="sessions_list_1", style=user_style),
-            InlineKeyboardButton("🤖 Bot Controls", callback_data="bot_controls_menu", style=user_style),
+            InlineKeyboardButton("Sessions", callback_data="sessions_list_1", style=user_style),
+            InlineKeyboardButton("Bot Controls", callback_data="bot_controls_menu", style=user_style),
         ],
         [
-            InlineKeyboardButton("⚙️ Configs", callback_data="configs_home", style=user_style),
-            InlineKeyboardButton("⌨️ Cmd Settings", callback_data="cmd_settings_menu", style=user_style),
+            InlineKeyboardButton("Configs", callback_data="configs_home", style=user_style),
+            InlineKeyboardButton("Cmd Settings", callback_data="cmd_settings_menu", style=user_style),
         ],
         [
-            InlineKeyboardButton("❇️ Help Menu", callback_data="re_open", style=user_style),
+            InlineKeyboardButton("Help Menu", callback_data="re_open", style=user_style),
+            InlineKeyboardButton("Bulk Controls", callback_data="bulk_controls_menu", style=user_style),
+        ],
+        [
             InlineKeyboardButton(custom_data.get("text", "Repo"), url=custom_data.get("link", "https://t.me/AlphaXProject"), style=user_style),
         ],
     ]
@@ -289,7 +316,7 @@ async def settings_menu_cb_handler(c: Client, cb: CallbackQuery):
     text = await get_settings_home_text()
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(get_settings_buttons(cb.from_user.id)))
 
-@Altruix.bot.on_callback_query(filters.regex(r"^configs_home$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^(configs_home|configs_menu)$"))
 @iuser_check
 @log_errors
 async def configs_menu_cb_handler(c: Client, cb: CallbackQuery):
@@ -298,11 +325,55 @@ async def configs_menu_cb_handler(c: Client, cb: CallbackQuery):
     user_style = get_user_button_style(cb.from_user.id)
 
     text = "<b>⚙️ Configuration Manager</b>\n\nManage environment variables and bot configs."
+    
     buttons = [
         [InlineKeyboardButton("🔧 ENV Manager", callback_data="env_manager_list_1", style=user_style)],
         [InlineKeyboardButton("📦 Database Manager", callback_data="backup_manager", style=user_style)],
+        [InlineKeyboardButton("🗃️ Cache Manager", callback_data="cache_manager_picker", style=user_style)],
         [InlineKeyboardButton("🔙 Back to Settings", callback_data="settings_menu", style=user_style)]
     ]
+    await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
+
+@Altruix.bot.on_callback_query(filters.regex(r"^peer_notif_toggle$"))
+@iuser_check
+@log_errors
+async def peer_notif_toggle_cb(c: Client, cb: CallbackQuery):
+    """Toggle the Invalid Peer Notification setting."""
+    current = str(await Altruix.config.get_env("PEER_NOTIF_ENABLED", default="on")).lower()
+    new_state = "off" if current == "on" else "on"
+    
+    # Update Config (Syncs to DB & Cache)
+    await Altruix.config.set_env("PEER_NOTIF_ENABLED", new_state)
+    
+    await cb.answer(f"✅ Peer Notif: {new_state.upper()}", show_alert=False)
+    # Refresh the Bot Controls menu
+    await bot_controls_menu_handler(c, cb)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^cache_manager_picker$"))
+@iuser_check
+@log_errors
+async def cache_manager_picker_handler(c: Client, cb: CallbackQuery):
+    """Show session picker for cache manager access."""
+    await cb.answer()
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
+
+    buttons = []
+    for client in Altruix.clients:
+        if client.me:
+            name = client.me.first_name or "Session"
+            cid = client.me.id
+            buttons.append([
+                InlineKeyboardButton(f"📟 {name} - PM Cache", callback_data=f"pmlu_cache_menu_{cid}", style=user_style),
+                InlineKeyboardButton(f"🔔 {name} - Mention Cache", callback_data=f"mnt_cache_menu_{cid}", style=user_style),
+            ])
+    
+    if not buttons:
+        buttons.append([InlineKeyboardButton("⚠️ No active sessions", callback_data="configs_menu", style=user_style)])
+    
+    buttons.append([InlineKeyboardButton("🔙 Back", callback_data="configs_menu", style=user_style)])
+    
+    text = "<b>🗃️ Cache Manager</b>\n\nSelect a session and cache type to manage:"
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
 
 @Altruix.bot.on_callback_query(filters.regex(r"^bot_controls_menu$"))
@@ -312,6 +383,12 @@ async def bot_controls_menu_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
     from Main.utils.file_helpers import get_user_button_style
     user_style = get_user_button_style(cb.from_user.id)
+
+    curr_res = getattr(Altruix.config, "RESOURCE_NOTIF_ENABLED", "off")
+    res_btn = "🔔 Resource Notif: ON" if curr_res == "on" else "🔕 Resource Notif: OFF"
+
+    peer_notif = str(await Altruix.config.get_env("PEER_NOTIF_ENABLED", default="on")).lower()
+    peer_btn = "🔔 Peer Notif: ON" if peer_notif == "on" else "🔕 Peer Notif: OFF"
 
     text = "<b>🤖 Bot Controls</b>\n\nManage Bot Assistant behaviors globally."
     buttons = [
@@ -325,10 +402,14 @@ async def bot_controls_menu_handler(c: Client, cb: CallbackQuery):
         ],
         [
             InlineKeyboardButton("🚪 Join Logger Global", callback_data="joinl_menu_global", style=user_style),
-            InlineKeyboardButton("🔗 Group Log Link", callback_data="get_log_group_link", style=user_style),
+            InlineKeyboardButton(res_btn, callback_data="toggle_resource_notif", style=user_style),
         ],
         [
+            InlineKeyboardButton(peer_btn, callback_data="peer_notif_toggle", style=user_style),
             InlineKeyboardButton("👤 Custom Bot Manager", callback_data="custom_bot_manager", style=user_style),
+        ],
+        [
+            InlineKeyboardButton("🔗 Group Log Link", callback_data="get_log_group_link", style=user_style),
             InlineKeyboardButton("♻️ Cache Cleaner Log", callback_data="cache_cleaner_settings", style=user_style),
         ],
         [
@@ -337,6 +418,17 @@ async def bot_controls_menu_handler(c: Client, cb: CallbackQuery):
         ]
     ]
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
+
+@Altruix.bot.on_callback_query(filters.regex(r"^toggle_resource_notif$"))
+@iuser_check
+@log_errors
+async def toggle_resource_notif_handler(c: Client, cb: CallbackQuery):
+    curr_res = getattr(Altruix.config, "RESOURCE_NOTIF_ENABLED", "off")
+    new_state = "off" if curr_res == "on" else "on"
+    
+    await Altruix.config.set_env("RESOURCE_NOTIF_ENABLED", new_state)
+    await cb.answer(f"✅ Resource Notif: {new_state.upper()}", show_alert=False)
+    await bot_controls_menu_handler(c, cb)
 
 # ====================== SHARED UTILS ======================
 async def send_log_notification(*args, **kwargs):

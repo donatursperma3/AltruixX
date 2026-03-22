@@ -12,7 +12,7 @@ import glob
 import asyncio
 import contextlib
 from Main import Altruix
-from pyrogram import filters
+from pyrogram import filters, enums
 from Main.core.decorators import log_errors
 from pyrogram.types import (
     Message, ForceReply, CallbackQuery, KeyboardButton, ReplyKeyboardMarkup,
@@ -23,17 +23,64 @@ from pyrogram.types import (
 @log_errors
 async def start_command_handler(_, m: Message):
     payload = m.text.replace("/start", "").strip()
+    if payload == "debug":
+        uid = m.from_user.id
+        try:
+            is_sudo_result = await Altruix.is_sudo(uid)
+        except Exception as e:
+            is_sudo_result = f"ERROR: {e}"
+        
+        in_owner = uid in Altruix.config.OWNER_USERS_ID
+        in_db_sudo = uid in Altruix.db_sudo_users
+        in_auth_cache = uid in Altruix._auth_users_cache
+        owner_count = len(Altruix.config.OWNER_USERS_ID)
+        sudo_count = len(Altruix.db_sudo_users)
+        auth_count = len(Altruix._auth_users_cache)
+        
+        # Check env parsing
+        from os import getenv
+        raw_env = getenv("OWNER_USERS_ID", "NOT SET")
+        
+        return await m.reply(
+            f"**🔍 COMPREHENSIVE DEBUG:**\n\n"
+            f"**Your Info:**\n"
+            f"• ID: `{uid}`\n"
+            f"• is_sudo(): `{is_sudo_result}`\n\n"
+            f"**Membership Check:**\n"
+            f"• In OWNER_USERS_ID: `{in_owner}`\n"
+            f"• In db_sudo_users: `{in_db_sudo}`\n"
+            f"• In _auth_users_cache: `{in_auth_cache}`\n\n"
+            f"**List Sizes:**\n"
+            f"• OWNER_USERS_ID: `{owner_count}` entries\n"
+            f"• db_sudo_users: `{sudo_count}` entries\n"
+            f"• _auth_users_cache: `{auth_count}` entries\n\n"
+            f"**Raw .env OWNER_USERS_ID:**\n"
+            f"`{raw_env[:200]}`\n\n"
+            f"**First 5 OWNER_USERS_ID:**\n"
+            f"`{Altruix.config.OWNER_USERS_ID[:5]}`\n\n"
+            f"**Bot handlers count:** `{len(Altruix.bot.dispatcher.groups)}`"
+        )
     if not payload:
         path_ = "./cache/bot_st_media.*"
         file = (
             glob.glob(path_)[0] if glob.glob(path_) else "./Main/assets/images/logo.jpg"
         )
+        from Main.utils.file_helpers import get_user_button_style
+        user_style = get_user_button_style(m.from_user.id)
         await m.reply_file(
             file,
             caption=Altruix.get_string("BOT_ST_MSG").format(
                 m.from_user.mention, Altruix.config.CUSTOM_BT_START_MSG or ""
             ),
-            reply_markup=ReplyKeyboardRemove(),
+            parse_mode=enums.ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton("Altroid", url="https://t.me/AltroidUserbot", style=user_style),
+                        InlineKeyboardButton("Alpha-X", url="https://t.me/AlphaXProject", style=user_style)
+                    ]
+                ]
+            ),
             send_msg_if_file_invalid=True,
         )
         if Altruix.training_wheels_protocol and await Altruix.is_sudo(m.from_user.id):
@@ -139,10 +186,58 @@ async def add_session_cb_handler(_, cb: CallbackQuery):
     if not new_session:
         return # add_session already handled the error message/logging
 
+    me = await new_session.get_me()
+    full_name = f"{me.first_name or ''} {me.last_name or ''}".strip() or "N/A"
+    username = f"@{me.username}" if me.username else "N/A"
+    dc_id = getattr(me, "dc_id", "N/A")
+    session_idx = len(Altruix.clients)
+    
     await new_session.send_message(
         Altruix.bot.me.id,
         "<b>🎉 Account Successfully added!</b>\n\n"
+        "<blockquote expandable>"
+        f"•  <b>Name:</b> {full_name}\n"
+        f"•  <b>User ID:</b> <code>{me.id}</code>\n"
+        f"•  <b>Username:</b> {username}\n"
+        f"•  <b>DC ID:</b> <code>{dc_id}</code>\n"
+        f"•  <b>Session:</b> #{session_idx}\n"
+        f"{'🤖' if me.is_bot else '👤'} <b>Type:</b> {'Bot' if me.is_bot else 'User'}\n"
+        "</blockquote>\n"
         "Your account has been successfully linked to <b>AltruixX</b>. "
         "You can now manage your sessions and use enhanced features via the bot settings.\n\n"
-        "Support: @AltruixUB",
+        "Support: @AltroidUserbot",
     )
+
+
+# # ============================================================================
+# # 🔧 TEMPORARY DEBUG: Fallback handler for /add and /settings
+# # This catches commands when is_sudo_filter blocks them (group=99 = lowest priority)
+# # REMOVE THIS AFTER DEBUGGING
+# # ============================================================================
+# @Altruix.bot.on_message(filters.command(["add", "settings"], "/") & filters.private, group=99)
+# @log_errors
+# async def debug_fallback_handler(_, m: Message):
+#     """Temporary: Catches /add and /settings when is_sudo_filter returns False."""
+#     uid = m.from_user.id
+#     try:
+#         is_sudo_result = await Altruix.is_sudo(uid)
+#     except Exception as e:
+#         is_sudo_result = f"EXCEPTION: {type(e).__name__}: {e}"
+    
+#     in_owner = uid in Altruix.config.OWNER_USERS_ID
+#     in_db_sudo = uid in Altruix.db_sudo_users
+#     in_auth_cache = uid in Altruix._auth_users_cache
+    
+#     await m.reply(
+#         f"⚠️ **FILTER BLOCKED YOUR COMMAND**\n\n"
+#         f"Command `{m.text}` was blocked by `is_sudo_filter`.\n\n"
+#         f"**Your ID:** `{uid}`\n"
+#         f"**is_sudo():** `{is_sudo_result}`\n"
+#         f"**In OWNER_USERS_ID:** `{in_owner}`\n"
+#         f"**In db_sudo_users:** `{in_db_sudo}`\n"
+#         f"**In _auth_users_cache:** `{in_auth_cache}`\n"
+#         f"**OWNER_USERS_ID[:3]:** `{Altruix.config.OWNER_USERS_ID[:3]}`\n"
+#         f"**OWNER_USERS_ID type:** `{type(Altruix.config.OWNER_USERS_ID)}`"
+#     )
+
+# end of file

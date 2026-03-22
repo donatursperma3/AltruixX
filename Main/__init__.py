@@ -8,6 +8,19 @@
 import sys
 import asyncio
 
+import os
+
+import contextlib
+import io
+
+# ✅ SILENCE EXTERNAL LOGS: Masking noisy startup messages from pyromod/pyrogram
+# Only silence if DEBUG mode is OFF to allow full visibility for developers
+is_debug = os.getenv("DEBUG", "false").lower() == "true"
+if not is_debug:
+    os.environ["PYROMOD_LOG_LEVEL"] = "ERROR"
+    os.environ["PYROMOD_SILENT"] = "1"
+    os.environ["PYROGRAM_LOGGER_LEVEL"] = "ERROR"
+
 # ✅ PERFORMANCE OPTIMIZATION: Set loop policy at absolute entry point
 # Only import if not already set to avoid redundant imports
 if not isinstance(asyncio.get_event_loop_policy(), (asyncio.DefaultEventLoopPolicy if sys.platform != "win32" else asyncio.WindowsProactorEventLoopPolicy)):
@@ -23,11 +36,20 @@ if not isinstance(asyncio.get_event_loop_policy(), (asyncio.DefaultEventLoopPoli
             asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 # ✅ PERFORMANCE: Lazy import pyromod - only imported when needed by client
-# This saves ~0.5-1s on startup
-try:
-    from pyromod import listen
-except ImportError:
-    pass  # Will be imported by client if needed
+# Mask stdout during noisy imports (silences "Pyromod is working!" and TgCrypto warnings)
+# Skip redirection if DEBUG is True to reveal hidden startup details
+if not is_debug:
+    dummy_out = io.StringIO()
+    with contextlib.redirect_stdout(dummy_out), contextlib.redirect_stderr(dummy_out):
+        try:
+            from pyromod import listen
+        except ImportError:
+            pass
+else:
+    try:
+        from pyromod import listen
+    except ImportError:
+        pass
 
 from .core.client import AltruixClient, Altruix
 # Ensure subpackages are exposed for test imports

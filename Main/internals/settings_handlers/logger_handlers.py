@@ -75,14 +75,16 @@ async def logger_menu_handler(c: Client, cb: CallbackQuery):
     # Add advanced filter buttons for PM Logger and Mention Logger
     if log_type == "pml":
         buttons.append([InlineKeyboardButton(await Essentials.get_user_button_style(user_id_key, "🔍 PM Logger Filters"), f"pmlf_menu_user_{index}_{page}")])
+        buttons.append([InlineKeyboardButton(await Essentials.get_user_button_style(user_id_key, "🗃️ Cache Manager"), f"pmlu_cache_menu_{user_id_key}")])
     elif log_type == "mnt":
         buttons.append([
             InlineKeyboardButton(await Essentials.get_user_button_style(user_id_key, "🔍 Mention Filters"), f"mntf_menu_{index}_{page}"),
             InlineKeyboardButton(await Essentials.get_user_button_style(user_id_key, "🔔 View Mentions"), f"view_mentions_menu_{index}_{page}")
         ])
+        buttons.append([InlineKeyboardButton(await Essentials.get_user_button_style(user_id_key, "🗃️ Cache Manager"), f"mnt_cache_menu_{user_id_key}")])
         
         c_id = index
-        buttons.append([InlineKeyboardButton(await Essentials.get_user_button_style(user_id_key, "🚫 Haters Detector Dashboard"), f"haters_menu_{c_id}")])
+        buttons.append([InlineKeyboardButton(await Essentials.get_user_button_style(user_id_key, "🚫 Haters Detector Dashboard"), f"haters_menu_{user_id_key}")])
     
     # Add Bot Assist toggle for PML and MNT
     if log_type in ["pml", "mnt"]:

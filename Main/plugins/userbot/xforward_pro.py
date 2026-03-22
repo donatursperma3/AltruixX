@@ -31,7 +31,7 @@ from Main.utils.file_helpers import get_db_path, get_user_button_style
 # Plugin Metadata
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xforward_pro"
-PLUGIN_VERSION = "1.0.191"
+PLUGIN_VERSION = "1.0.193"
 
 logger = logging.getLogger("altruix.xforward_pro")
 logger.setLevel(logging.INFO)
@@ -197,7 +197,7 @@ async def init_db():
                 
                 await db.commit()
             _db_initialized = True
-            logger.info("[ForwardPro] Database initialized successfully")
+            logger.debug("[ForwardPro] Database initialized successfully")
         except Exception as e:
             logger.error(f"[ForwardPro] Database init failed: {e}")
 
@@ -654,34 +654,36 @@ def build_main_menu_kb(user_id: int, gsettings: dict = None) -> InlineKeyboardMa
     uid = user_id
     
     # Toggle labels
-    tr_label = "🌍 TR: ON" if gs.get("default_is_translate") else "🌍 TR: OFF"
-    wm_label = "🖼 WM: ON" if gs.get("default_is_watermark") else "🖼 WM: OFF"
-    cpy_label = "📂 CPY: ON" if gs.get("default_forward_as_copy", 1) else "📂 CPY: OFF"
-    lnk_label = "🔗 LNK: ON" if gs.get("default_clean_links") else "🔗 LNK: OFF"
-    usr_label = "👤 USR: ON" if gs.get("default_clean_usernames") else "👤 USR: OFF"
-    ads_label = "🚫 ADS: ON" if gs.get("default_is_ads_filter") else "🚫 ADS: OFF"
-    bps_label = "🛡 BPS: ON" if gs.get("default_bypass_protected") else "🛡 BPS: OFF"
+    tr_label = "TR: ON" if gs.get("default_is_translate") else "TR: OFF"
+    wm_label = "WM: ON" if gs.get("default_is_watermark") else "WM: OFF"
+    cpy_label = "COPY: ON" if gs.get("default_forward_as_copy", 1) else "COPY: OFF"
+    lnk_label = "LINK: ON" if gs.get("default_clean_links") else "LINK: OFF"
+    usr_label = "Username: ON" if gs.get("default_clean_usernames") else "Username: OFF"
+    ads_label = "ADS: ON" if gs.get("default_is_ads_filter") else "ADS: OFF"
+    bps_label = "Bypass: ON" if gs.get("default_bypass_protected") else "Bypass: OFF"
     
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("📡 List Tasks", callback_data=f"fwd_list_{uid}", style=btn_style),
-            InlineKeyboardButton("📊 General Stats", callback_data=f"fwd_stats_{uid}", style=btn_style)
+            InlineKeyboardButton("List Tasks", callback_data=f"fwd_list_{uid}", style=btn_style),
+            InlineKeyboardButton("General Stats", callback_data=f"fwd_stats_{uid}", style=btn_style)
         ],
         [
-            InlineKeyboardButton("➕ Add Task (Step)", callback_data=f"fwd_add_start_{uid}", style=btn_style),
-            InlineKeyboardButton("📖 Help", callback_data=f"fwd_help_0_{uid}", style=btn_style)
+            InlineKeyboardButton("Add Task (Step)", callback_data=f"fwd_add_start_{uid}", style=btn_style),
+            InlineKeyboardButton("Help", callback_data=f"fwd_help_0_{uid}", style=btn_style)
         ],
         [
-            InlineKeyboardButton("🌍 Global Filter", callback_data=f"fwd_gfilter_{uid}", style=btn_style),
-            InlineKeyboardButton("🛡 Global Adv Opts", callback_data=f"fwd_gadvopts_{uid}", style=btn_style)
+            InlineKeyboardButton("Global Filter", callback_data=f"fwd_gfilter_{uid}", style=btn_style),
+            InlineKeyboardButton("Global Adv Opts", callback_data=f"fwd_gadvopts_{uid}", style=btn_style)
         ],
         [
-            InlineKeyboardButton("🧹 Global Ads", callback_data=f"fwd_gadsset_{uid}", style=btn_style),
-            InlineKeyboardButton("🖼 Global WM", callback_data=f"fwd_gwmset_{uid}", style=btn_style)
+            InlineKeyboardButton("Global Ads", callback_data=f"fwd_gadsset_{uid}", style=btn_style),
+            InlineKeyboardButton("Global WM", callback_data=f"fwd_gwmset_{uid}", style=btn_style)
         ],
         [
             InlineKeyboardButton(tr_label, callback_data=f"fwd_gtoggle_default_is_translate_{uid}", style=btn_style),
-            InlineKeyboardButton(wm_label, callback_data=f"fwd_gtoggle_default_is_watermark_{uid}", style=btn_style),
+            InlineKeyboardButton(wm_label, callback_data=f"fwd_gtoggle_default_is_watermark_{uid}", style=btn_style)
+        ],
+        [
             InlineKeyboardButton(cpy_label, callback_data=f"fwd_gtoggle_default_forward_as_copy_{uid}", style=btn_style)
         ],
         [
@@ -693,8 +695,8 @@ def build_main_menu_kb(user_id: int, gsettings: dict = None) -> InlineKeyboardMa
             InlineKeyboardButton(ads_label, callback_data=f"fwd_gtoggle_default_is_ads_filter_{uid}", style=btn_style)
         ],
         [
-            InlineKeyboardButton("📢 Log Channel", callback_data=f"fwd_glog_{uid}", style=btn_style),
-            InlineKeyboardButton("❌ Close Dashboard", callback_data=f"fwd_close_{uid}", style=btn_style)
+            InlineKeyboardButton("Log Channel", callback_data=f"fwd_glog_{uid}", style=btn_style),
+            InlineKeyboardButton("Close Dashboard", callback_data=f"fwd_close_{uid}", style=btn_style)
         ]
     ])
 
@@ -719,14 +721,14 @@ async def build_main_menu_text(user_id: int, client=None) -> str:
         keywords_list = json.loads(ads_keywords)
     except:
         keywords_list = []
-    keywords_display = ", ".join(keywords_list) if keywords_list else "<i>None</i>"
+    keywords_display = ", ".join(keywords_list) if keywords_list else "None"
 
     text = (
         f"<blockquote expandable>"
         f"📡 <b>Forward Pro Dashboard</b>\n"
         f"{'━' * 18}\n"
-        f"👤 <b>Account:</b> {html.escape(account_name)}\n"
-        f"🆔 <b>User ID:</b> <code>{user_id}</code>\n"
+        f"<b> • Account:</b> {html.escape(account_name)}\n"
+        f"<b> • User ID:</b> <code>{user_id}</code>\n"
         f"{'━' * 18}\n"
         f"📊 <b>Statistics:</b>\n"
         f"  • Total Tasks: <b>{total_count}</b>\n"
@@ -734,15 +736,15 @@ async def build_main_menu_text(user_id: int, client=None) -> str:
         f"{'━' * 18}\n"
         f"⚙️ <b>Global Default Settings:</b>\n"
         f"  • Delay: <b>{gsettings.get('default_delay', 1.5)}s</b>\n"
-        f"  • Translate: <b>{'✅' if gsettings.get('default_is_translate') else '❌'}</b> | "
-        f"WM: <b>{'✅' if gsettings.get('default_is_watermark') else '❌'}</b>\n"
-        f"  • Clean Links: <b>{'✅' if gsettings.get('default_clean_links') else '❌'}</b> | "
-        f"Users: <b>{'✅' if gsettings.get('default_clean_usernames') else '❌'}</b>\n"
-        f"  • Ads Filter: <b>{'✅' if gsettings.get('default_is_ads_filter') else '❌'}</b> | "
-        f"Bypass: <b>{'✅' if gsettings.get('default_bypass_protected') else '❌'}</b>\n"
+        f"  • Translate: <b>{'ON' if gsettings.get('default_is_translate') else 'OFF'}</b> | "
+        f"WM: <b>{'ON' if gsettings.get('default_is_watermark') else 'OFF'}</b>\n"
+        f"  • Clean Links: <b>{'ON' if gsettings.get('default_clean_links') else 'OFF'}</b> | "
+        f"Usernames: <b>{'ON' if gsettings.get('default_clean_usernames') else 'OFF'}</b>\n"
+        f"  • Ads Filter: <b>{'ON' if gsettings.get('default_is_ads_filter') else 'OFF'}</b> | "
+        f"Bypass: <b>{'ON' if gsettings.get('default_bypass_protected') else 'OFF'}</b>\n"
         f"  • Global Ads: <code>{html.escape(keywords_display)}</code>\n"
-        f"  • Global WM: <code>{html.escape(gsettings.get('default_watermark_text', 'Altruix'))}</code>\n"
-        f"  • Regex Pro: <b>{'✅' if gsettings.get('default_use_regex_pro') else '❌'}</b> | "
+        f"  • Global WM: <code>{html.escape(gsettings.get('default_watermark_text', 'Alpha-X'))}</code>\n"
+        f"  • Regex Pro: <b>{'ON' if gsettings.get('default_use_regex_pro') else 'OFF'}</b> | "
         f"Order: <b>{gsettings.get('default_batch_order', 'oldest').title()}</b>\n"
         f"  • Log Channel: <b>{'Set' if gsettings.get('log_channel') else 'Not Set'}</b>\n"
         f"{'━' * 18}\n"
@@ -879,21 +881,21 @@ def build_task_detail_kb(task: dict, user_id: int) -> InlineKeyboardMarkup:
     btn_style = get_user_button_style(user_id)
     tid = task["id"]
     
-    start_stop_text = "⏹ Stop" if task["is_active"] else "▶️ Start"
+    start_stop_text = "Stop" if task["is_active"] else "Start"
     start_stop_data = f"fwd_stop_{tid}_{user_id}" if task["is_active"] else f"fwd_start_{tid}_{user_id}"
     
-    mode_text = f"🔀 Mode: {task['mode'].title()}"
-    bypass_text = f"🛡 Bypass: {'ON' if task.get('bypass_protected') else 'OFF'}"
-    wm_text = f"🖼 WM: {'ON' if task.get('is_watermark') else 'OFF'}"
-    tr_text = f"🌍 TR: {'ON' if task.get('is_translate') else 'OFF'}"
+    mode_text = f"Mode: {task['mode'].title()}"
+    bypass_text = f"Bypass: {'ON' if task.get('bypass_protected') else 'OFF'}"
+    wm_text = f"WM: {'ON' if task.get('is_watermark') else 'OFF'}"
+    tr_text = f"TR: {'ON' if task.get('is_translate') else 'OFF'}"
     
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton(start_stop_text, callback_data=start_stop_data, style=btn_style),
-            InlineKeyboardButton("🔍 Filter Media", callback_data=f"fwd_filter_{tid}_{user_id}", style=btn_style)
+            InlineKeyboardButton("Filter Media", callback_data=f"fwd_filter_{tid}_{user_id}", style=btn_style)
         ],
         [
-            InlineKeyboardButton("🛡 Advanced Options", callback_data=f"fwd_advopts_{tid}_{user_id}", style=btn_style)
+            InlineKeyboardButton("Advanced Options", callback_data=f"fwd_advopts_{tid}_{user_id}", style=btn_style)
         ],
         [
             InlineKeyboardButton(bypass_text, callback_data=f"fwd_bypass_{tid}_{user_id}", style=btn_style),
@@ -904,15 +906,15 @@ def build_task_detail_kb(task: dict, user_id: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton(tr_text, callback_data=f"fwd_trtoggle_{tid}_{user_id}", style=btn_style)
         ],
         [
-            InlineKeyboardButton("🚀 START BATCH", callback_data=f"fwd_btchrange_{tid}_{user_id}", style=btn_style)
+            InlineKeyboardButton("START BATCH", callback_data=f"fwd_btchrange_{tid}_{user_id}", style=btn_style)
         ],
         [
-            InlineKeyboardButton("🖼 Set WM Text", callback_data=f"fwd_wmset_{tid}_{user_id}", style=btn_style),
-            InlineKeyboardButton("🚫 Set Ads Filter", callback_data=f"fwd_adsset_{tid}_{user_id}", style=btn_style)
+            InlineKeyboardButton("Set WM Text", callback_data=f"fwd_wmset_{tid}_{user_id}", style=btn_style),
+            InlineKeyboardButton("Set Ads Filter", callback_data=f"fwd_adsset_{tid}_{user_id}", style=btn_style)
         ],
         [
-            InlineKeyboardButton("🗑 Delete", callback_data=f"fwd_delconf_{tid}_{user_id}", style=btn_style),
-            InlineKeyboardButton("🔙 Back", callback_data=f"fwd_list_{user_id}", style=btn_style)
+            InlineKeyboardButton("Delete", callback_data=f"fwd_delconf_{tid}_{user_id}", style=btn_style),
+            InlineKeyboardButton("Back", callback_data=f"fwd_list_{user_id}", style=btn_style)
         ]
     ])
 
@@ -922,16 +924,16 @@ def build_advanced_options_kb(task: dict, user_id: int) -> InlineKeyboardMarkup:
     btn_style = get_user_button_style(user_id)
     tid = task["id"]
     
-    clean_l = "✅ Links" if task.get("clean_links") else "❌ Links"
-    clean_u = "✅ Users" if task.get("clean_usernames") else "❌ Users"
-    ads_f = "✅ Ads" if task.get("is_ads_filter") else "❌ Ads"
-    rex_p = "✅ Regex Pro" if task.get("use_regex_pro") else "❌ Regex Pro"
-    cpy_f = "✅ Copy" if task.get("forward_as_copy", 1) else "❌ Copy"
-    bps_f = "✅ Bypass" if task.get("bypass_protected") else "❌ Bypass"
+    clean_l = "Links: ON" if task.get("clean_links") else "Links: OFF"
+    clean_u = "Users: ON" if task.get("clean_usernames") else "Users: OFF"
+    ads_f = "Ads: ON" if task.get("is_ads_filter") else "Ads: OFF"
+    rex_p = "Regex Pro: ON" if task.get("use_regex_pro") else "Regex Pro: OFF"
+    cpy_f = "Copy: ON" if task.get("forward_as_copy", 1) else "Copy: OFF"
+    bps_f = "Bypass: ON" if task.get("bypass_protected") else "Bypass: OFF"
     
-    order_label = "⬇️ Order: Oldest First" if task.get("batch_order") == "oldest" else "⬆️ Order: Newest First"
+    order_label = "Order: Oldest First" if task.get("batch_order") == "oldest" else "Order: Newest First"
     
-    tr_text = "🌐 Set Language"
+    tr_text = "Set Language"
     
     return InlineKeyboardMarkup([
         [
@@ -945,19 +947,19 @@ def build_advanced_options_kb(task: dict, user_id: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton(bps_f, callback_data=f"fwd_atoggle_{tid}_bypass_protected_{user_id}", style=btn_style)
         ],
         [
-            InlineKeyboardButton("📝 Config Regex", callback_data=f"fwd_rexset_{tid}_{user_id}", style=btn_style),
+            InlineKeyboardButton("Config Regex", callback_data=f"fwd_rexset_{tid}_{user_id}", style=btn_style),
             InlineKeyboardButton(tr_text, callback_data=f"fwd_trlang_{tid}_{user_id}", style=btn_style)
         ],
         [
-            InlineKeyboardButton("⏱ Delay -", callback_data=f"fwd_bdel_{tid}_dec_{user_id}", style=btn_style),
+            InlineKeyboardButton("Delay -", callback_data=f"fwd_bdel_{tid}_dec_{user_id}", style=btn_style),
             InlineKeyboardButton(f"Delay: {task.get('batch_delay', 1.5)}s", callback_data="noop", style=btn_style),
-            InlineKeyboardButton("⏱ Delay +", callback_data=f"fwd_bdel_{tid}_inc_{user_id}", style=btn_style)
+            InlineKeyboardButton("Delay +", callback_data=f"fwd_bdel_{tid}_inc_{user_id}", style=btn_style)
         ],
         [
             InlineKeyboardButton(order_label, callback_data=f"fwd_border_{tid}_{user_id}", style=btn_style)
         ],
         [
-            InlineKeyboardButton("🔙 Back", callback_data=f"fwd_detail_{tid}_{user_id}", style=btn_style)
+            InlineKeyboardButton("Back", callback_data=f"fwd_detail_{tid}_{user_id}", style=btn_style)
         ]
     ])
 
@@ -974,24 +976,24 @@ async def build_advanced_options_text(task: dict) -> str:
     
     text = (
         f"<blockquote expandable>"
-        f"🛡 <b>Advanced Options — Task #{task['id']}</b>\n"
+        f"Advanced Options — Task #{task['id']}\n"
         f"{'━' * 18}\n"
-        f"🧹 <b>Caption Cleaning:</b>\n"
+        f"Caption Cleaning:\n"
         f"  • Remove Links: <b>{clean_links}</b>\n"
         f"  • Remove Usernames: <b>{clean_users}</b>\n"
         f"  • Ads Word Filter: <b>{ads_filter}</b>\n"
         f"  • Regex Pro: <b>{regex_pro}</b>\n\n"
-        f"📦 <b>Batch Controls:</b>\n"
+        f"Batch Controls:\n"
         f"  • Custom Delay: <b>{task.get('batch_delay', 1.5)}s</b>\n"
         f"  • Process Order: <b>{order}</b>\n"
         f"  • Forward as Copy: <b>{as_copy}</b>\n"
         f"  • Bypass Protected: <b>{bypass}</b>\n\n"
-        f"📖 <b>Glossary:</b>\n"
-        f"  • <b>LNK</b>: Remove web links from caption.\n"
-        f"  • <b>USR</b>: Remove @usernames from caption.\n"
+        f"Glossary:\n"
+        f"  • <b>LINK</b>: Remove web links from caption.\n"
+        f"  • <b>USER</b>: Remove @usernames from caption.\n"
         f"  • <b>ADS</b>: Filter out defined advertisement keywords.\n"
-        f"  • <b>BPS</b>: Bypass restricted content (re-upload logic).\n"
-        f"  • <b>CPY</b>: Forward as Copy (Hide Sender Name).\n"
+        f"  • <b>BYPASS</b>: Bypass restricted content (re-upload logic).\n"
+        f"  • <b>COPY</b>: Forward as Copy (Hide Sender Name).\n"
         f"  • <b>TR</b>: Automatic translation to target language.\n"
         f"{'━' * 18}"
         f"</blockquote>"
@@ -1013,10 +1015,10 @@ def build_filter_kb(task: dict, user_id: int, is_global: bool = False) -> Inline
         filt = {}
     
     media_types = [
-        ("photo", "🖼 Photo"), ("video", "🎬 Video"),
-        ("audio", "🎵 Audio"), ("document", "📄 Document"),
-        ("sticker", "🎨 Sticker"), ("voice", "🎤 Voice"),
-        ("text", "✏️ Text"),
+        ("photo", "Photo"), ("video", "Video"),
+        ("audio", "Audio"), ("document", "Document"),
+        ("sticker", "Sticker"), ("voice", "Voice"),
+        ("text", "Text"),
     ]
     
     rows = []
@@ -1024,13 +1026,13 @@ def build_filter_kb(task: dict, user_id: int, is_global: bool = False) -> Inline
         row = []
         for key, label in media_types[i:i+2]:
             is_on = filt.get(key, True)
-            emoji = "✅" if is_on else "❌"
+            status = "ON" if is_on else "OFF"
             cbd = f"fwd_gftoggle_{key}_{user_id}" if is_global else f"fwd_ftoggle_{tid}_{key}_{user_id}"
-            row.append(InlineKeyboardButton(f"{emoji} {label}", callback_data=cbd, style=btn_style))
+            row.append(InlineKeyboardButton(f"{label}: {status}", callback_data=cbd, style=btn_style))
         rows.append(row)
     
     back_cbd = f"fwd_back_{user_id}" if is_global else f"fwd_advopts_{tid}_{user_id}"
-    rows.append([InlineKeyboardButton("🔙 Back", callback_data=back_cbd, style=btn_style)])
+    rows.append([InlineKeyboardButton("Back", callback_data=back_cbd, style=btn_style)])
     
     return InlineKeyboardMarkup(rows)
 
@@ -1039,13 +1041,13 @@ def build_global_adv_opts_kb(gs: dict, user_id: int) -> InlineKeyboardMarkup:
     """Build keyboard for global advanced defaults."""
     btn_style = get_user_button_style(user_id)
     
-    order_label = "⬇️ Order: Oldest First" if gs.get("default_batch_order") == "oldest" else "⬆️ Order: Newest First"
-    rex_p = "✅ Regex Pro" if gs.get("default_use_regex_pro") else "❌ Regex Pro"
+    order_label = "Order: Oldest First" if gs.get("default_batch_order") == "oldest" else "Order: Newest First"
+    rex_p = "Regex Pro: ON" if gs.get("default_use_regex_pro") else "Regex Pro: OFF"
     
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton(rex_p, callback_data=f"fwd_gtoggle_default_use_regex_pro_{user_id}", style=btn_style),
-            InlineKeyboardButton("📝 Config Global Regex", callback_data=f"fwd_grexset_{user_id}", style=btn_style)
+            InlineKeyboardButton("Config Global Regex", callback_data=f"fwd_grexset_{user_id}", style=btn_style)
         ],
         [
             InlineKeyboardButton("-0.5s", callback_data=f"fwd_gdel_dec_{user_id}", style=btn_style),
@@ -1060,7 +1062,7 @@ def build_global_adv_opts_kb(gs: dict, user_id: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton(order_label, callback_data=f"fwd_gborder_{user_id}", style=btn_style)
         ],
         [
-            InlineKeyboardButton("🔙 Back", callback_data=f"fwd_back_{user_id}", style=btn_style)
+            InlineKeyboardButton("Back", callback_data=f"fwd_back_{user_id}", style=btn_style)
         ]
     ])
 
@@ -1168,7 +1170,9 @@ async def fwd_command_handler(c: Client, m: AltruixMessage):
                 return await m.reply("❌ <b>Task not found or access denied.</b>")
             
             # Start batch background task
-            asyncio.create_task(start_batch_fwd(c, user_id, tid, start_id, end_id))
+            from Main.plugins.userbot.xcanceltask import generate_task_id
+            reg_tid = generate_task_id("FPB")
+            asyncio.create_task(start_batch_fwd(c, user_id, tid, start_id, end_id, reg_tid=reg_tid))
             await m.reply(f"🚀 <b>Batch Forward Task #{tid} Started!</b>\nRange: <code>{start_id}</code> - <code>{end_id}</code>\nMonitoring progress in Log Group...")
             return
         
@@ -1365,7 +1369,7 @@ def build_info_text(page: int = 0) -> str:
             "• <b>📦 Batch Mode</b>: Bot fetches history in a range.\n\n"
             "<b>CONCRETE MANUAL COMMANDS:</b>\n"
             "  1. <i>Start/Add Task (Live):</i>\n"
-            "     <code>.fwd add -1001234 -1005678 live</code>\n"
+            "     <code>.fwd add -100123 -100456 live</code>\n"
             "  2. <i>Cek Status Task #1:</i>\n"
             "     <code>.fwd status 1</code>\n"
             "  3. <i>Hentikan Automasi Task #1:</i>\n"
@@ -2143,7 +2147,9 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
         
         # If live mode, register the listener
         if task["mode"] == "live" and ub_client:
-            asyncio.create_task(_register_live_listener(ub_client, task, uid))
+            from Main.plugins.userbot.xcanceltask import generate_task_id
+            reg_tid = generate_task_id("FPL")
+            asyncio.create_task(_register_live_listener(ub_client, task, uid, reg_tid=reg_tid))
         
         await safe_cb_answer(cb, f"▶️ Task #{tid} started!", show_alert=True)
         
@@ -2243,7 +2249,9 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
         if task["is_active"]:
             _unregister_live_listener(tid)
             if new_mode == "live" and ub_client:
-                asyncio.create_task(_register_live_listener(ub_client, task, uid))
+                from Main.plugins.userbot.xcanceltask import generate_task_id
+                reg_tid = generate_task_id("FPL")
+                asyncio.create_task(_register_live_listener(ub_client, task, uid, reg_tid=reg_tid))
         
         mode_icon = "📡 Live" if new_mode == "live" else "📦 Batch"
         await safe_cb_answer(cb, f"🔀 Mode: {mode_icon}", show_alert=False)
@@ -2705,256 +2713,264 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
 # ==================== LIVE FORWARDING ENGINE ====================
 
 @log_errors
-async def start_batch_fwd(client: Client, user_id: int, task_id: int, start_id: int, end_id: int):
+async def start_batch_fwd(client: Client, user_id: int, task_id: int, start_id: int, end_id: int, reg_tid: str = None):
     """Process a batch of messages for forwarding."""
     # Re-check session ownership
     if client.me.id != user_id:
         return
 
-    task = await get_task(task_id)
-    if not task:
-        return
-    
-    source_id = task["source_id"]
-    target_id = task["target_id"]
-    bypass = bool(task.get("bypass_protected", False))
-    
-    filters = await _safe_json_loads(task.get("filters"))
+    if reg_tid:
+        from Main.plugins.userbot.xcanceltask import register_task
+        register_task(reg_tid, asyncio.current_task(), "Forward Pro Batch", "xforward_pro", user_id, f"Task #{task_id}: {start_id}-{end_id}")
 
-    # Use task-specific delay or global default
-    gs = await get_global_settings(user_id)
-    base_delay = task.get("batch_delay") if task.get("batch_delay") is not None else gs.get("default_delay", 1.5)
-
-    stats = {"success": 0, "failed": 0, "skipped": 0, "total": 0}
-    
-    # Determine order and message list
-    msg_ids = list(range(start_id, end_id + 1))
-    if task.get("batch_order") == "newest":
-        msg_ids.reverse()
-    stats["total"] = len(msg_ids)
-    
-    # Initialize control state
-    FWD_BATCH_CONTROL[task_id] = "running"
-    
-    processed = 0
-    media_found = set()
-    btn_style = get_user_button_style(user_id)
-    
-    # 🔗 Generate URL Links
-    src_link = await get_chat_link(client, source_id)
-    tgt_link = await get_chat_link(client, target_id)
-
-    # 🛡 Proactive Content Protection Check
-    if not bypass:
-        try:
-            # Check chat object directly for protection setting
-            chat_info = await client.get_chat(source_id)
-            if chat_info and chat_info.has_protected_content:
-                confirm_kb = InlineKeyboardMarkup([
-                    [
-                        InlineKeyboardButton("🛡 Yes, Bypass", callback_data=f"fwd_bpsconfirm_{task_id}_{start_id}_{end_id}_{user_id}", style=btn_style),
-                        InlineKeyboardButton("❌ Cancel", callback_data=f"fwd_bstop_{task_id}_{user_id}", style=btn_style)
-                    ]
-                ])
-                await send_log(
-                    f"⚠️ <b>Content Protection Detected — Task #{task_id}</b>\n"
-                    f"This chat (<code>{source_id}</code>) has content protection enabled.\n"
-                    f"Messages cannot be forwarded normally. Do you want to use **Bypass Forward**?",
-                    client=client,
-                    reply_markup=confirm_kb,
-                    user_id=user_id
-                )
-                # Halt batch until confirmed
-                FWD_BATCH_CONTROL[task_id] = "paused"
-                # Fallthrough to start log, but loop will wait
-        except Exception as e:
-            logger.error(f"[ForwardPro] Protection check error: {e}")
-
-    ctrl_kb = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("📥 Source", url=src_link, style=btn_style),
-            InlineKeyboardButton("📤 Target", url=tgt_link, style=btn_style)
-        ],
-        [
-            InlineKeyboardButton("⏸ Pause", callback_data=f"fwd_bpause_{task_id}_{user_id}", style=btn_style),
-            InlineKeyboardButton("▶️ Resume", callback_data=f"fwd_bresume_{task_id}_{user_id}", style=btn_style),
-            InlineKeyboardButton("⏹ Stop", callback_data=f"fwd_bstop_{task_id}_{user_id}", style=btn_style)
-        ]
-    ])
-
-    # Build clickable message links for range
-    src_cid = str(source_id)[4:] if str(source_id).startswith("-100") else str(source_id)
-    start_msg_link = f"https://t.me/c/{src_cid}/{start_id}"
-    end_msg_link = f"https://t.me/c/{src_cid}/{end_id}"
-
-    # Resolve chat titles for started log
-    _src_title = await resolve_chat_title(client, source_id)
-    _tgt_title = await resolve_chat_title(client, target_id)
-
-    await send_log(
-        f"<blockquote expandable>"
-        f"📦 <b>Batch Started — Task #{task_id}</b>\n"
-        f"{'━' * 18}\n"
-        f"📥 Source: <code>{source_id}</code>\n"
-        f"    ├ Chat: <b>{_src_title}</b>\n"
-        f"📤 Target: <code>{target_id}</code>\n"
-        f"    ├ Chat: <b>{_tgt_title}</b>\n"
-        f"📊 Range: <a href='{start_msg_link}'>{start_id}</a> to <a href='{end_msg_link}'>{end_id}</a>\n"
-        f"{'━' * 18}"
-        f"</blockquote>",
-        client=client,
-        reply_markup=ctrl_kb,
-        user_id=user_id
-    )
-
-    # ── Live Log State ──
-    log_entries = []       # List of (icon, mid, m_type, reason_short)
-    live_log_msg = None    # Current editable log message
-    log_part = 1           # Current part number
-    MAX_LOG_CHARS = 3800   # Leave room for header/footer within 4096 limit
-    UPDATE_EVERY = 3       # Edit log every N messages to avoid flood
-
-    def _build_live_log_text(entries, part, stats, total, ctrl_active=True):
-        """Render the live updating batch log report."""
-        header = (
-            f"<blockquote expandable>"
-            f"📋 <b>Batch Log — Task #{task_id}</b>"
-        )
-        if part > 1:
-            header += f" <code>(Part {part})</code>"
-        header += (
-            f"\n{'━' * 18}\n"
-            f"📊 <b>{stats['success'] + stats['failed'] + stats['skipped']}</b>/{total} "
-            f"│ ✅ {stats['success']} │ ❌ {stats['failed']} │ ⏭ {stats['skipped']}\n"
-            f"{'━' * 18}\n"
-        )
-        
-        # Compact table of entries
-        lines = ""
-        for icon, eid, etype, ereason in entries:
-            _link = f"https://t.me/c/{src_cid}/{eid}"
-            short_reason = (ereason[:25] + "…") if len(ereason) > 26 else ereason
-            lines += f"{icon} <a href='{_link}'>{eid}</a> │ {etype or '?'} │ <code>{short_reason}</code>\n"
-        
-        status_line = "🔄 <i>Processing...</i>" if ctrl_active else "🏁 <i>Completed</i>"
-        footer = f"{'━' * 18}\n{status_line}</blockquote>"
-        
-        return header + lines + footer
-
-    for mid in msg_ids:
-        # Check control state
-        while FWD_BATCH_CONTROL.get(task_id) == "paused":
-            await asyncio.sleep(2)
-        
-        if FWD_BATCH_CONTROL.get(task_id) == "stopped":
-            break
-
-        # Re-fetch task config to catch 'Bypass Confirmation' or user setting changes
+    try:
         task = await get_task(task_id)
-        if not task: break
+        if not task:
+            return
+        
+        source_id = task["source_id"]
+        target_id = task["target_id"]
         bypass = bool(task.get("bypass_protected", False))
+        
         filters = await _safe_json_loads(task.get("filters"))
 
-        m_type = None  # Reset per iteration
+        # Use task-specific delay or global default
+        gs = await get_global_settings(user_id)
+        base_delay = task.get("batch_delay") if task.get("batch_delay") is not None else gs.get("default_delay", 1.5)
 
-        try:
-            msg = await client.get_messages(source_id, mid)
-            if not msg or msg.empty:
-                stats["skipped"] += 1
-                log_entries.append(("⏭", mid, "empty", "Deleted/Empty"))
-            else:
-                m_type = _get_message_type(msg)
-                # Execute the forward logic
-                success, reason = await _handle_fwd(client, msg, target_id, bypass, filters, task_cfg=task)
-                
-                if success:
-                    stats["success"] += 1
-                    if m_type:
-                        media_found.add(m_type)
-                    log_entries.append(("✅", mid, m_type or "?", reason))
-                elif reason == "Filtered":
-                    stats["skipped"] += 1
-                    log_entries.append(("⏭", mid, m_type or "?", reason))
-                elif reason == "Restricted content (Bypass OFF)":
-                    stats["failed"] += 1
-                    log_entries.append(("🛡", mid, m_type or "?", "Protected (BPS OFF)"))
-                    # Reactive prompt for individual protected messages
-                    if FWD_BATCH_CONTROL.get(task_id) != "paused":
-                        FWD_BATCH_CONTROL[task_id] = "paused"
-                        confirm_kb = InlineKeyboardMarkup([
-                            [
-                                InlineKeyboardButton("🛡 Yes, Bypass", callback_data=f"fwd_bpsconfirm_{task_id}_{start_id}_{end_id}_{user_id}", style=btn_style),
-                                InlineKeyboardButton("❌ Cancel", callback_data=f"fwd_bstop_{task_id}_{user_id}", style=btn_style)
-                            ]
-                        ])
-                        await send_log(
-                            f"⚠️ <b>Content Protection Detected — Task #{task_id}</b>\n"
-                            f"Msg <code>{mid}</code> in <code>{source_id}</code> is protected.\n"
-                            f"Enable Bypass to resume?",
-                            client=client,
-                            reply_markup=confirm_kb,
-                            user_id=user_id
-                        )
-                else:
-                    stats["failed"] += 1
-                    log_entries.append(("❌", mid, m_type or "?", reason))
+        stats = {"success": 0, "failed": 0, "skipped": 0, "total": 0}
+        
+        # Determine order and message list
+        msg_ids = list(range(start_id, end_id + 1))
+        if task.get("batch_order") == "newest":
+            msg_ids.reverse()
+        stats["total"] = len(msg_ids)
+        
+        # Initialize control state
+        FWD_BATCH_CONTROL[task_id] = "running"
+        
+        processed = 0
+        media_found = set()
+        btn_style = get_user_button_style(user_id)
+        
+        # 🔗 Generate URL Links
+        src_link = await get_chat_link(client, source_id)
+        tgt_link = await get_chat_link(client, target_id)
+
+        # 🛡 Proactive Content Protection Check
+        if not bypass:
+            try:
+                # Check chat object directly for protection setting
+                chat_info = await client.get_chat(source_id)
+                if chat_info and chat_info.has_protected_content:
+                    confirm_kb = InlineKeyboardMarkup([
+                        [
+                            InlineKeyboardButton("🛡 Yes, Bypass", callback_data=f"fwd_bpsconfirm_{task_id}_{start_id}_{end_id}_{user_id}", style=btn_style),
+                            InlineKeyboardButton("❌ Cancel", callback_data=f"fwd_bstop_{task_id}_{user_id}", style=btn_style)
+                        ]
+                    ])
+                    await send_log(
+                        f"⚠️ <b>Content Protection Detected — Task #{task_id}</b>\n"
+                        f"This chat (<code>{source_id}</code>) has content protection enabled.\n"
+                        f"Messages cannot be forwarded normally. Do you want to use **Bypass Forward**?",
+                        client=client,
+                        reply_markup=confirm_kb,
+                        user_id=user_id
+                    )
+                    # Halt batch until confirmed
+                    FWD_BATCH_CONTROL[task_id] = "paused"
+                    # Fallthrough to start log, but loop will wait
+            except Exception as e:
+                logger.error(f"[ForwardPro] Protection check error: {e}")
+
+        ctrl_kb = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("📥 Source", url=src_link, style=btn_style),
+                InlineKeyboardButton("📤 Target", url=tgt_link, style=btn_style)
+            ],
+            [
+                InlineKeyboardButton("⏸ Pause", callback_data=f"fwd_bpause_{task_id}_{user_id}", style=btn_style),
+                InlineKeyboardButton("▶️ Resume", callback_data=f"fwd_bresume_{task_id}_{user_id}", style=btn_style),
+                InlineKeyboardButton("⏹ Stop", callback_data=f"fwd_bstop_{task_id}_{user_id}", style=btn_style)
+            ]
+        ])
+
+        # Build clickable message links for range
+        src_cid = str(source_id)[4:] if str(source_id).startswith("-100") else str(source_id)
+        start_msg_link = f"https://t.me/c/{src_cid}/{start_id}"
+        end_msg_link = f"https://t.me/c/{src_cid}/{end_id}"
+
+        # Resolve chat titles for started log
+        _src_title = await resolve_chat_title(client, source_id)
+        _tgt_title = await resolve_chat_title(client, target_id)
+
+        await send_log(
+            f"<blockquote expandable>"
+            f"📦 <b>Batch Started — Task #{task_id}</b>\n"
+            f"{'━' * 18}\n"
+            f"📥 Source: <code>{source_id}</code>\n"
+            f"    ├ Chat: <b>{_src_title}</b>\n"
+            f"📤 Target: <code>{target_id}</code>\n"
+            f"    ├ Chat: <b>{_tgt_title}</b>\n"
+            f"📊 Range: <a href='{start_msg_link}'>{start_id}</a> to <a href='{end_msg_link}'>{end_id}</a>\n"
+            f"{'━' * 18}"
+            f"</blockquote>",
+            client=client,
+            reply_markup=ctrl_kb,
+            user_id=user_id
+        )
+
+        # ── Live Log State ──
+        log_entries = []       # List of (icon, mid, m_type, reason_short)
+        live_log_msg = None    # Current editable log message
+        log_part = 1           # Current part number
+        MAX_LOG_CHARS = 3800   # Leave room for header/footer within 4096 limit
+        UPDATE_EVERY = 3       # Edit log every N messages to avoid flood
+
+        def _build_live_log_text(entries, part, stats, total, ctrl_active=True):
+            """Render the live updating batch log report."""
+            header = (
+                f"<blockquote expandable>"
+                f"📋 <b>Batch Log — Task #{task_id}</b>"
+            )
+            if part > 1:
+                header += f" <code>(Part {part})</code>"
+            header += (
+                f"\n{'━' * 18}\n"
+                f"📊 <b>{stats['success'] + stats['failed'] + stats['skipped']}</b>/{total} "
+                f"│ ✅ {stats['success']} │ ❌ {stats['failed']} │ ⏭ {stats['skipped']}\n"
+                f"{'━' * 18}\n"
+            )
             
-        except FloodWait as e:
-            await asyncio.sleep(e.value + 1)
+            # Compact table of entries
+            lines = ""
+            for icon, eid, etype, ereason in entries:
+                _link = f"https://t.me/c/{src_cid}/{eid}"
+                short_reason = (ereason[:25] + "…") if len(ereason) > 26 else ereason
+                lines += f"{icon} <a href='{_link}'>{eid}</a> │ {etype or '?'} │ <code>{short_reason}</code>\n"
+            
+            status_line = "🔄 <i>Processing...</i>" if ctrl_active else "🏁 <i>Completed</i>"
+            footer = f"{'━' * 18}\n{status_line}</blockquote>"
+            
+            return header + lines + footer
+
+        for mid in msg_ids:
+            # Check control state
+            while FWD_BATCH_CONTROL.get(task_id) == "paused":
+                await asyncio.sleep(2)
+            
+            if FWD_BATCH_CONTROL.get(task_id) == "stopped":
+                break
+
+            # Re-fetch task config to catch 'Bypass Confirmation' or user setting changes
+            task = await get_task(task_id)
+            if not task: break
+            bypass = bool(task.get("bypass_protected", False))
+            filters = await _safe_json_loads(task.get("filters"))
+
+            m_type = None  # Reset per iteration
+
             try:
                 msg = await client.get_messages(source_id, mid)
-                success, reason = await _handle_fwd(client, msg, target_id, bypass, filters, task_cfg=task)
-                if success: 
-                    stats["success"] += 1
-                    log_entries.append(("✅", mid, m_type or "?", reason or "Retry OK"))
-                else: 
-                    stats["failed"] += 1
-                    log_entries.append(("❌", mid, m_type or "?", reason or "Retry Fail"))
-            except Exception as retry_err:
-                stats["failed"] += 1
-                log_entries.append(("❌", mid, "?", f"Retry: {str(retry_err)[:20]}"))
-        except Exception as e:
-            logger.error(f"[ForwardPro] Batch task #{task_id} msg {mid} err: {e}")
-            stats["failed"] += 1
-            log_entries.append(("❌", mid, "?", str(e)[:25]))
-
-        # ── Update Live Log ──
-        processed += 1
-        if processed % UPDATE_EVERY == 0 or processed >= stats["total"]:
-            log_text = _build_live_log_text(log_entries, log_part, stats, stats["total"])
-            
-            # Check if text is too long → start new part
-            if len(log_text) > MAX_LOG_CHARS:
-                # Finalize current part
-                if live_log_msg:
-                    final_text = _build_live_log_text(log_entries[:-1], log_part, stats, stats["total"], ctrl_active=False)
-                    await edit_log(live_log_msg, final_text, client=client, reply_markup=ctrl_kb)
+                if not msg or msg.empty:
+                    stats["skipped"] += 1
+                    log_entries.append(("⏭", mid, "empty", "Deleted/Empty"))
+                else:
+                    m_type = _get_message_type(msg)
+                    # Execute the forward logic
+                    success, reason = await _handle_fwd(client, msg, target_id, bypass, filters, task_cfg=task)
+                    
+                    if success:
+                        stats["success"] += 1
+                        if m_type:
+                            media_found.add(m_type)
+                        log_entries.append(("✅", mid, m_type or "?", reason))
+                    elif reason == "Filtered":
+                        stats["skipped"] += 1
+                        log_entries.append(("⏭", mid, m_type or "?", reason))
+                    elif reason == "Restricted content (Bypass OFF)":
+                        stats["failed"] += 1
+                        log_entries.append(("🛡", mid, m_type or "?", "Protected (BPS OFF)"))
+                        # Reactive prompt for individual protected messages
+                        if FWD_BATCH_CONTROL.get(task_id) != "paused":
+                            FWD_BATCH_CONTROL[task_id] = "paused"
+                            confirm_kb = InlineKeyboardMarkup([
+                                [
+                                    InlineKeyboardButton("🛡 Yes, Bypass", callback_data=f"fwd_bpsconfirm_{task_id}_{start_id}_{end_id}_{user_id}", style=btn_style),
+                                    InlineKeyboardButton("❌ Cancel", callback_data=f"fwd_bstop_{task_id}_{user_id}", style=btn_style)
+                                ]
+                            ])
+                            await send_log(
+                                f"⚠️ <b>Content Protection Detected — Task #{task_id}</b>\n"
+                                f"Msg <code>{mid}</code> in <code>{source_id}</code> is protected.\n"
+                                f"Diteruskan live gagal because Bypass OFF. Enable Bypass to resume?",
+                                client=client,
+                                reply_markup=confirm_kb,
+                                user_id=user_id
+                            )
+                    else:
+                        stats["failed"] += 1
+                        log_entries.append(("❌", mid, m_type or "?", reason))
                 
-                # Start new part
-                log_part += 1
-                log_entries = log_entries[-1:]  # Keep only the latest entry
-                live_log_msg = None
-            
-            log_text = _build_live_log_text(log_entries, log_part, stats, stats["total"])
-            
-            if live_log_msg:
-                await edit_log(live_log_msg, log_text, client=client, reply_markup=ctrl_kb)
-            else:
-                live_log_msg = await send_log(log_text, client=client, reply_markup=ctrl_kb, user_id=user_id)
+            except FloodWait as e:
+                await asyncio.sleep(e.value + 1)
+                try:
+                    msg = await client.get_messages(source_id, mid)
+                    success, reason = await _handle_fwd(client, msg, target_id, bypass, filters, task_cfg=task)
+                    if success: 
+                        stats["success"] += 1
+                        log_entries.append(("✅", mid, m_type or "?", reason or "Retry OK"))
+                    else: 
+                        stats["failed"] += 1
+                        log_entries.append(("❌", mid, m_type or "?", reason or "Retry Fail"))
+                except Exception as retry_err:
+                    stats["failed"] += 1
+                    log_entries.append(("❌", mid, "?", f"Retry: {str(retry_err)[:20]}"))
+            except Exception as e:
+                logger.error(f"[ForwardPro] Batch task #{task_id} msg {mid} err: {e}")
+                stats["failed"] += 1
+                log_entries.append(("❌", mid, "?", str(e)[:25]))
 
-        # Batch Delay: user-configured delay + small jitter to avoid flood
-        await asyncio.sleep(base_delay + random.uniform(0.5, 1.5))
+            # ── Update Live Log ──
+            processed += 1
+            if processed % UPDATE_EVERY == 0 or processed >= stats["total"]:
+                log_text = _build_live_log_text(log_entries, log_part, stats, stats["total"])
+                
+                # Check if text is too long → start new part
+                if len(log_text) > MAX_LOG_CHARS:
+                    # Finalize current part
+                    if live_log_msg:
+                        final_text = _build_live_log_text(log_entries[:-1], log_part, stats, stats["total"], ctrl_active=False)
+                        await edit_log(live_log_msg, final_text, client=client, reply_markup=ctrl_kb)
+                    
+                    # Start new part
+                    log_part += 1
+                    log_entries = log_entries[-1:]  # Keep only the latest entry
+                    live_log_msg = None
+                
+                log_text = _build_live_log_text(log_entries, log_part, stats, stats["total"])
+                
+                if live_log_msg:
+                    await edit_log(live_log_msg, log_text, client=client, reply_markup=ctrl_kb)
+                else:
+                    live_log_msg = await send_log(log_text, client=client, reply_markup=ctrl_kb, user_id=user_id)
 
-    # ── Final update of live log ──
-    if log_entries and live_log_msg:
-        final_text = _build_live_log_text(log_entries, log_part, stats, stats["total"], ctrl_active=False)
-        await edit_log(live_log_msg, final_text, client=client, reply_markup=ctrl_kb)
-    elif log_entries and not live_log_msg:
-        final_text = _build_live_log_text(log_entries, log_part, stats, stats["total"], ctrl_active=False)
-        await send_log(final_text, client=client, reply_markup=ctrl_kb, user_id=user_id)
+            # Batch Delay: user-configured delay + small jitter to avoid flood
+            await asyncio.sleep(base_delay + random.uniform(0.5, 1.5))
 
-    # Cleanup control state
-    FWD_BATCH_CONTROL.pop(task_id, None)
+        # ── Final update of live log ──
+        if log_entries and live_log_msg:
+            final_text = _build_live_log_text(log_entries, log_part, stats, stats["total"], ctrl_active=False)
+            await edit_log(live_log_msg, final_text, client=client, reply_markup=ctrl_kb)
+        elif log_entries and not live_log_msg:
+            final_text = _build_live_log_text(log_entries, log_part, stats, stats["total"], ctrl_active=False)
+            await send_log(final_text, client=client, reply_markup=ctrl_kb, user_id=user_id)
+
+    finally:
+        if reg_tid:
+            from Main.plugins.userbot.xcanceltask import unregister_task
+            unregister_task(reg_tid)
+        FWD_BATCH_CONTROL.pop(task_id, None)
 
     # Resolve Titles for enhanced summary
     source_title = await resolve_chat_title(client, source_id)
@@ -2996,13 +3012,17 @@ async def start_batch_fwd(client: Client, user_id: int, task_id: int, start_id: 
     await send_log(summary, client=client, reply_markup=end_kb, user_id=user_id)
 
 
-async def _register_live_listener(client: Client, task: dict, user_id: int):
+async def _register_live_listener(client: Client, task: dict, user_id: int, reg_tid: str = None):
     """Register a live message handler for a forwarding task."""
     tid = task["id"]
     source_id = task["source_id"]
     
-    # Remove existing listener if any
     _unregister_live_listener(tid)
+    
+    if reg_tid:
+        from Main.plugins.userbot.xcanceltask import register_task
+        # Note: This is an event listener, not a polling task, but we record it for visibility.
+        register_task(reg_tid, asyncio.current_task(), "Forward Pro Live", "xforward_pro", user_id, f"Task #{tid}: {source_id} -> {task['target_id']}")
     
     async def _live_forwarder(c: Client, msg: RawMessage):
         """Handle incoming messages from source chat and forward via central logic."""
@@ -3092,6 +3112,7 @@ async def _register_live_listener(client: Client, task: dict, user_id: int):
             "handler": _live_forwarder,
             "group": handler_group,
             "task": task,
+            "reg_tid": reg_tid
         }
         logger.info(f"[ForwardPro] Live listener registered for task #{tid} (source: {source_id})")
     except Exception as e:
@@ -3102,6 +3123,9 @@ def _unregister_live_listener(task_id: int):
     """Remove a live listener for a task."""
     info = FWD_LIVE_TASKS.pop(task_id, None)
     if info:
+        if info.get("reg_tid"):
+            from Main.plugins.userbot.xcanceltask import unregister_task
+            unregister_task(info["reg_tid"])
         try:
             client = info["client"]
             group = info["group"]
@@ -3309,7 +3333,9 @@ async def _restore_active_tasks():
                 logger.warning(f"[ForwardPro] No client for uid {uid}, skipping task #{task['id']}")
                 continue
             
-            await _register_live_listener(ub_client, task, uid)
+            from Main.plugins.userbot.xcanceltask import generate_task_id
+            reg_tid = generate_task_id("FPL")
+            await _register_live_listener(ub_client, task, uid, reg_tid=reg_tid)
         
         logger.info(f"[ForwardPro] Task restoration complete")
         
@@ -3338,7 +3364,7 @@ async def auto_clear_temp():
             path = os.path.join(temp_dir, f)
             if os.path.isfile(path):
                 os.remove(path)
-        logger.info("[ForwardPro] Temp folder cleared.")
+        logger.debug("[ForwardPro] Temp folder cleared.")
     except Exception as e:
         logger.error(f"[ForwardPro] auto_clear_temp failed: {e}")
 

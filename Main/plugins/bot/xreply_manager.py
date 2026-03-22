@@ -56,7 +56,7 @@ async def handle_reply_input(c: Client, m: RawMessage):
         
     do_log = await should_log()
     if do_log:
-        logger.info(f"ReplyManager: Detected reply in log chat {m.chat.id} from {m.from_user.id if m.from_user else 'None'}. Altruix.log_chat={Altruix.log_chat}")
+        logger.debug(f"ReplyManager: Detected reply in log chat {m.chat.id} from {m.from_user.id if m.from_user else 'None'}. Altruix.log_chat={Altruix.log_chat}")
 
     # ✅ Manual Auth Check: SILENT for unauthorized users to prevent noise in log chat
     from Main.utils.access_control import is_authorized_user
@@ -73,7 +73,7 @@ async def handle_reply_input(c: Client, m: RawMessage):
     xpm_logger_user.SessionManager.load()
     
     if do_log:
-        logger.info(f"ReplyManager: Current items after forced load: {len(REPLY_AS_MENTIONED_WAITING)}")
+        logger.debug(f"ReplyManager: Current items after forced load: {len(REPLY_AS_MENTIONED_WAITING)}")
         if len(REPLY_AS_MENTIONED_WAITING) > 0:
             logger.debug(f"ReplyManager: Current waiting IDs: {list(REPLY_AS_MENTIONED_WAITING.keys())}")
 
@@ -101,7 +101,7 @@ async def handle_reply_input(c: Client, m: RawMessage):
     # Force reload if empty
     if not REPLY_AS_MENTIONED_WAITING:
         xpm_logger_user.SessionManager.load()
-        logger.info(f"ReplyManager: Reloaded sessions, current count: {len(REPLY_AS_MENTIONED_WAITING)}")
+        logger.debug(f"ReplyManager: Reloaded sessions, current count: {len(REPLY_AS_MENTIONED_WAITING)}")
 
     # Priority Match 1: Direct ID Match (Notification, Instructions, or Forwarded)
     for wid, data in list(REPLY_AS_MENTIONED_WAITING.items()):
@@ -112,12 +112,12 @@ async def handle_reply_input(c: Client, m: RawMessage):
         
         if current_id in [saved_instr_id, saved_log_id, saved_fwd_id]:
             waiting_id = wid
-            logger.info(f"ReplyManager: Direct ID Match found: {wid} (matched ID {current_id})")
+            logger.debug(f"ReplyManager: Direct ID Match found: {wid} (matched ID {current_id})")
             break
             
     # Priority Match 2: Thread/Topic ID Match (Fallback for Forum)
     if not waiting_id and thread_id is not None:
-        logger.info(f"ReplyManager: Direct match failed, attempting Thread ID fallback for thread {thread_id}")
+        logger.debug(f"ReplyManager: Direct match failed, attempting Thread ID fallback for thread {thread_id}")
         candidates = []
         is_topic_head_reply = (str(reply_to_id) == str(thread_id))
         
@@ -131,11 +131,11 @@ async def handle_reply_input(c: Client, m: RawMessage):
             # Sort by instruction_msg_id descending to get the MOST RECENT session in this thread
             candidates.sort(key=lambda x: x[1], reverse=True)
             waiting_id = candidates[0][0]
-            logger.info(f"ReplyManager: Fallback Match found (Thread: {thread_id}, Head: {is_topic_head_reply}): {waiting_id}")
+            logger.debug(f"ReplyManager: Fallback Match found (Thread: {thread_id}, Head: {is_topic_head_reply}): {waiting_id}")
         else:
             # No candidates found - try reloading sessions one more time
             # This handles the case where a session was just created
-            logger.info(f"ReplyManager: No candidates in current sessions, forcing reload...")
+            logger.debug(f"ReplyManager: No candidates in current sessions, forcing reload...")
             xpm_logger_user.SessionManager.load()
             
             # Try again after reload
@@ -147,7 +147,7 @@ async def handle_reply_input(c: Client, m: RawMessage):
             if candidates:
                 candidates.sort(key=lambda x: x[1], reverse=True)
                 waiting_id = candidates[0][0]
-                logger.info(f"ReplyManager: Found after reload (Thread: {thread_id}): {waiting_id}")
+                logger.debug(f"ReplyManager: Found after reload (Thread: {thread_id}): {waiting_id}")
 
     if not waiting_id:
         active_ids = []
@@ -155,9 +155,10 @@ async def handle_reply_input(c: Client, m: RawMessage):
             active_ids.append(f"{wid} -> instr:{d.get('instruction_msg_id')}|log:{d.get('log_msg_id')}|fwd:{d.get('fwd_msg_id')}|thread:{d.get('thread_id')}")
         
         if do_log:
-            logger.warning(
+            session_details = "\n".join([f"  - {aid}" for aid in active_ids])
+            logger.debug(
                 f"ReplyManager: No active session for message_id {reply_to_id}.\n"
-                f"  - Checked {len(REPLY_AS_MENTIONED_WAITING)} sessions: {active_ids}"
+                f"  - Checked {len(REPLY_AS_MENTIONED_WAITING)} sessions:\n{session_details}"
             )
         
         # ✅ Check for Error notification toggle (REPLY_ERR_NOTIF_GLOBAL)
@@ -175,14 +176,14 @@ async def handle_reply_input(c: Client, m: RawMessage):
                     quote=True
                 )
         else:
-             logger.info(f"ReplyManager: Notification suppressed for missing session (REPLY_ERR_NOTIF_GLOBAL=off)")
+             logger.debug(f"ReplyManager: Notification suppressed for missing session (REPLY_ERR_NOTIF_GLOBAL=off)")
         return
     
     session_user_id = str(REPLY_AS_MENTIONED_WAITING[waiting_id].get("user_id", "None"))
     current_user_id = str(m.from_user.id)
     data = REPLY_AS_MENTIONED_WAITING[waiting_id]
     
-    logger.info(f"ReplyManager: Validated session {waiting_id} (Session User: {session_user_id}, Current: {current_user_id}). Preparing confirmation.")
+    logger.debug(f"ReplyManager: Validated session {waiting_id} (Session User: {session_user_id}, Current: {current_user_id}). Preparing confirmation.")
     
     # Store the admin's reply message ID
     REPLY_AS_MENTIONED_WAITING[waiting_id]["admin_reply_msg_id"] = m.id
@@ -280,7 +281,7 @@ async def pmlu_confirm_send_callback(c: Client, cb: CallbackQuery):
         
         do_log = await should_log()
         if do_log:
-            logger.info(f"ReplyManager: Starting delivery for session {waiting_id}. Target User: {chat_id}, ReplyMsg ID: {msg_id}, AdminReply ID: {admin_reply_id}, ClientID: {client_id}")
+            logger.debug(f"ReplyManager: Starting delivery for session {waiting_id}. Target User: {chat_id}, ReplyMsg ID: {msg_id}, AdminReply ID: {admin_reply_id}, ClientID: {client_id}")
 
         if not admin_reply_id:
             return await cb.answer("❌ Admin reply message not found.", show_alert=True)
@@ -299,7 +300,7 @@ async def pmlu_confirm_send_callback(c: Client, cb: CallbackQuery):
 
         if data.get("is_reply_all"):
             # Send from all userbots
-            logger.info(f"ReplyManager: Attempting Reply-All from {len(Altruix.clients)} clients.")
+            logger.debug(f"ReplyManager: Attempting Reply-All from {len(Altruix.clients)} clients.")
             for client in Altruix.clients:
                 if client.is_connected:
                     try:
@@ -312,7 +313,7 @@ async def pmlu_confirm_send_callback(c: Client, cb: CallbackQuery):
                         )
                         sent_count += 1
                         PM_LOG_CACHE[msg_key]["last_replies"].append((client.me.id, sent.id))
-                        logger.info(f"ReplyManager: Reply-All Successful for client {client.me.id}")
+                        logger.debug(f"ReplyManager: Reply-All Successful for client {client.me.id}")
                     except Exception as e:
                         logger.error(f"ReplyManager: Reply-All Failed for client {client.me.id if client.me else 'unknown'}: {e}")
                         errors.append(f"{client.me.first_name if client.me else 'Client'}: {str(e)}")
@@ -332,7 +333,7 @@ async def pmlu_confirm_send_callback(c: Client, cb: CallbackQuery):
             
             if target_client:
                 if do_log:
-                    logger.info(f"ReplyManager: Sending via target client {target_client.me.id if target_client.me else 'Bot'}")
+                    logger.debug(f"ReplyManager: Sending via target client {target_client.me.id if target_client.me else 'Bot'}")
                 try:
                     sent = await target_client.copy_message(
                         chat_id=chat_id, 
@@ -341,11 +342,11 @@ async def pmlu_confirm_send_callback(c: Client, cb: CallbackQuery):
                         reply_to_message_id=msg_id
                     )
                     if do_log:
-                        logger.info(f"ReplyManager: Copy successful. Sent ID {sent.id} to user {chat_id}")
+                        logger.debug(f"ReplyManager: Copy successful. Sent ID {sent.id} to user {chat_id}")
                     sent_count = 1
                     PM_LOG_CACHE[msg_key]["last_replies"].append((target_client.me.id, sent.id))
                 except Exception as e:
-                     logger.warning(f"ReplyManager: copy_message failed ({e}). Trying fallback.")
+                     logger.debug(f"ReplyManager: copy_message failed ({e}). Trying fallback.")
                      try:
                         # Fallback: Get message from bot and send via target client
                         msg = await Altruix.bot.get_messages(Altruix.log_chat, admin_reply_id)
@@ -358,7 +359,7 @@ async def pmlu_confirm_send_callback(c: Client, cb: CallbackQuery):
                         if sent:
                             sent_count = 1
                             PM_LOG_CACHE[msg_key]["last_replies"].append((target_client.me.id, getattr(sent, "id", 0)))
-                            logger.info(f"ReplyManager: Fallback successful. Sent ID {getattr(sent, 'id', 0)}")
+                            logger.debug(f"ReplyManager: Fallback successful. Sent ID {getattr(sent, 'id', 0)}")
                         else:
                              errors.append(f"Fallback failed: No return message")
                      except Exception as fallback_err:

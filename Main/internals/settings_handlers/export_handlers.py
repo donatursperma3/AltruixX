@@ -69,8 +69,9 @@ async def export_all_sessions_cancel_handler(c: Client, cb: CallbackQuery):
     if user_id in user_confirmation_state:
         del user_confirmation_state[user_id]
     
-    from .sessions_list import sessions_menu_cb_handler
-    await sessions_menu_cb_handler(c, cb)
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(user_id)
+    await edit_cb(cb, "❌ Operation cancelled.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", "bulk_controls_menu", style=user_style)]]))
 
 @Altruix.bot.on_callback_query(filters.regex(r"^export_all_sessions_confirm_yes$"))
 @log_errors
@@ -148,8 +149,9 @@ async def export_all_phones_cancel_handler(c: Client, cb: CallbackQuery):
     if user_id in user_confirmation_state:
         del user_confirmation_state[user_id]
     
-    from .sessions_list import sessions_menu_cb_handler
-    await sessions_menu_cb_handler(c, cb)
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(user_id)
+    await edit_cb(cb, "❌ Operation cancelled.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", "bulk_controls_menu", style=user_style)]]))
 
 @Altruix.bot.on_callback_query(filters.regex(r"^export_all_phones_confirm_yes$"))
 @log_errors

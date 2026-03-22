@@ -55,7 +55,7 @@ async def restart_command_handler(_, m: Message):
     reload_only = m.command[0] == "reload"
     user_style = get_user_button_style(m.from_user.id)
     await m.reply(
-        f"<b>Are you sure about {'reloading' if reload_only else 'restarting'} Altruix?</b>\n\n<i>This will stop all the ongoing processes and the {'reload' if reload_only else 'restart'} will take some time.</i>",
+        f"<blockquote expandable><b>Are you sure about {'reloading' if reload_only else 'restarting'} Altroid-X?</b>\n\n<i>This will stop all the ongoing processes and the {'reload' if reload_only else 'restart'} will take some time.</i></blockquote>",
         reply_markup=InlineKeyboardMarkup(
             [
                 [
@@ -85,7 +85,7 @@ async def ping_inline_handler(_, iq: InlineQuery):
                     "INTERNAL_FUNCTION", args=pf["ping_emoji2"]
                 ),
                 input_message_content=InputTextMessageContent(
-                    f"<b>Are you sure about {'reloading' if soft else 'restarting'} Altruix?</b>\n\n<i>This will stop all the ongoing processes and the restart will take some time.</i>",
+                    f"<blockquote expandable><b>Are you sure about {'reloading' if soft else 'restarting'} Altroid-X?</b>\n\n<i>This will stop all the ongoing processes and the restart will take some time.</i></blockquote>",
                 ),
                 reply_markup=InlineKeyboardMarkup(
                     [

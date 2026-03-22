@@ -478,6 +478,11 @@ async def gp_global_purgeme_task(unique_id):
     state["stop_event"].clear()
     state["pause_event"].set()
     
+    # Task Registration
+    from Main.plugins.userbot.xcanceltask import register_task, unregister_task, generate_task_id
+    tid = generate_task_id("GP")
+    register_task(tid, asyncio.current_task(), "Global Purgeme", "xgpurgeme", client.me.id, f"Target: {target_type}")
+    
     asyncio.create_task(update_gp_dashboard(unique_id))
     
     try:
@@ -533,6 +538,9 @@ async def gp_global_purgeme_task(unique_id):
         Altruix.log(f"GPurgeme Global Task Error: {e}")
         state["status"] = "idle"
         asyncio.create_task(update_gp_dashboard(unique_id))
+    finally:
+        if 'tid' in locals():
+            unregister_task(tid)
 
 # Handle Inline Dashboard Requests
 @Altruix.bot.on_inline_query(filters.regex(r"^gp_menu_gp_(?P<uid>\d+)"))

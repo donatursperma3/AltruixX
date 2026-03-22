@@ -141,6 +141,8 @@ class BaseConfig(object):
         raise EnvVariableTypeError(Exception)
 
     ALIVE_MEDIA = getenv("ALIVE_MEDIA")
+    PEER_NOTIF_ENABLED = getenv("PEER_NOTIF_ENABLED", "on")
+    RESOURCE_NOTIF_ENABLED = getenv("RESOURCE_NOTIF_ENABLED", "off")
 
     def pop_session(self, index: int) -> Optional[str]:
         if len(self.SESSIONS) == 0:
@@ -355,7 +357,10 @@ class Config(BaseConfig):
         
         # Priority 1: Cache (Fastest)
         if env_key in self._env_cache:
-            return self._env_cache[env_key]
+            cached_val = self._env_cache[env_key]
+            if cached_val is not None:
+                return cached_val
+            # If cached as None (missing), fall through to getattr/default check below
         
         # Priority 2: Database
         db_val = await self.get_env_from_db(env_key)
@@ -432,7 +437,7 @@ class Config(BaseConfig):
         Updates an environment variable in the database and local cache.
         """
         if self.DEBUG and not isinstance(update, dict):
-             logging.info(f"DEBUG mode: Syncing {env_name} to database despite flag.")
+             logging.debug(f"DEBUG mode: Syncing {env_name} to database despite flag.")
              
         if isinstance(update, dict):
             # Special case for SUDO_USERS updates which often use $push/$pull
@@ -563,9 +568,17 @@ class Config(BaseConfig):
                     elif isinstance(env_val, (int, str)) and str(env_val).isdigit():
                         users.append(int(env_val))
 
-        if local_var := getattr(self, "SUDO_USERS_ID", []):
-            users.extend(local_var)
-            users = list(set(users))
+        # ✅ FIX: Always merge with ORIGINAL .env value (not self.SUDO_USERS_ID which
+        # gets overwritten by load_vars_from_db). This ensures .env sudo users are NEVER lost.
+        raw_env = getenv("SUDO_USERS_ID") or getenv("SUDO_USERS") or ""
+        env_sudos = [int(i) for i in raw_env.split() if i.isdigit()]
+        if env_sudos:
+            users.extend(env_sudos)
+
+        users = list(set(users))
+        
+        # Sync merged list back to DB
+        if users:
             await self.add_env_to_db("SUDO_USERS_ID", users)
         self.SUDO_USERS_ID = users
         return users
@@ -613,14 +626,17 @@ class Config(BaseConfig):
                     elif isinstance(env_val, (int, str)) and str(env_val).isdigit():
                         owners.append(int(env_val))
 
-        # Merge with local config
-        local_owners = getattr(self, "OWNER_USERS_ID", [])
-        if isinstance(local_owners, int):
-            local_owners = [local_owners]
+        # ✅ FIX: Always merge with ORIGINAL .env value (not self.OWNER_USERS_ID which 
+        # gets overwritten by load_vars_from_db). This ensures .env owners are NEVER lost.
+        raw_env = getenv("OWNER_USERS_ID") or getenv("OWNER_ID") or ""
+        env_owners = [int(i) for i in raw_env.split() if i.isdigit()]
+        if env_owners:
+            owners.extend(env_owners)
             
-        if local_owners:
-            owners.extend(local_owners)
-            owners = list(set(owners))
+        owners = list(set(owners))
+        
+        # Sync merged list back to DB
+        if owners:
             await self.add_env_to_db("OWNER_USERS_ID", owners)
             
         self.OWNER_USERS_ID = owners

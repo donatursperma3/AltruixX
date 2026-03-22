@@ -111,7 +111,7 @@ def cancel_task_by_id(task_id: str) -> tuple:
     registry.pop(task_id, None)
     
     Altruix.log(f"[TaskRegistry] Cancelled task {task_id}: {task_name} ({plugin})", level=30)
-    return True, f"✅ Task `{task_id}` ({task_name}) from `{plugin}` has been cancelled."
+    return True, f"<blockquote expandable>✅ Task <b>{task_id}</b> ({task_name}) from <b>{plugin}</b> has been cancelled.</blockquote>"
 
 
 # ==================== CLEANUP STALE TASKS ====================
@@ -159,7 +159,7 @@ async def canceltask_cmd(client: Client, message: Message):
     success, result_msg = cancel_task_by_id(task_id)
     
     if success:
-        await message.edit(result_msg)
+        await message.reply_msg(result_msg)
         # Log to LOG_CHAT_ID
         try:
             log_chat = await Altruix.config.get_env("LOG_CHAT_ID")
@@ -168,14 +168,16 @@ async def canceltask_cmd(client: Client, message: Message):
                 if bot:
                     await bot.send_message(
                         int(log_chat),
+                        "<blockquote expandable>\n"
                         f"🛑 <b>Task Cancelled</b>\n"
                         f"Task ID: <code>{task_id}</code>\n"
                         f"By: {client.me.first_name} (ID: {client.me.id})"
+                        "</blockquote>"
                     )
         except Exception:
             pass
     else:
-        await message.edit(f"⚠️ {result_msg}")
+        await message.reply_msg(f"⚠️ {result_msg}")
 
 
 # ==================== COMMAND: .tasklist ====================

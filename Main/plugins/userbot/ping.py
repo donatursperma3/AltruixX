@@ -8,7 +8,7 @@
 # All rights reserved.
 
 
-PLUGIN_VERSION = "0.0.16"
+PLUGIN_VERSION = "0.0.17"
 import time
 from Main import Altruix
 from pyrogram import Client
@@ -46,7 +46,7 @@ async def ping_ub_cmd(c: Client, m: Message):
         rm = m.reply_to_message
         try:
             bot_username = Altruix.bot_manager.get_bot_username(c.me.id)
-            results = await c.get_inline_bot_results(bot_username, "ping")
+            results = await c.get_inline_bot_results(bot_username, f"ping_{c.me.id}")
             await c.send_inline_bot_result(
                 chat_id=m.chat.id,
                 query_id=results.query_id,
@@ -121,9 +121,9 @@ async def pink_ub_cmd(c: Client, m: Message):
         
         text = f"""<blockquote expandable>─────────────────
 ⚡️ <b>PONG!</b>  [● System OK]
-  ├─ • 🕹 <b>Latency:</b> {ms} ms 
-  ├─ • 🧟 <b>Uptime:</b> {uptime}  [● Online]
-  └─ • 🙊 <b>React:</b> not allowed
+  ├─ • <b>Latency:</b> {ms} ms 
+  ├─ • <b>Uptime:</b> {uptime}  [● Online]
+  └─ • <b>React:</b> not allowed
   ─────────────────</blockquote>
   
 <i>⚠️ Inline buttons / Bot mode disabled in this chat.</i>"""

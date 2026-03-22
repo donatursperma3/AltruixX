@@ -400,9 +400,19 @@ async def start_relayspam(client: Client, destination: str, start_delay: float, 
         if not delays_possible:
             raise ValueError("Tidak ada nilai delay yang mungkin dalam rentang yang diberikan.")
 
+        # Generate Task ID for Monitoring
+        from Main.plugins.userbot.xcanceltask import register_task, generate_task_id
+        tid = generate_task_id("RS")
+        
         task = asyncio.create_task(spam_loop(client, target_chat, chat_id, msg_list, delays_possible,
-                                            count, start_delay, stop_delay, step, x_msg, emot_react, is_batch, react_enabled))
+                                            count, start_delay, stop_delay, step, x_msg, emot_react, is_batch, react_enabled, tid))
+        
+        # Register the task for .tasklist
+        details = f"Target: {chat_id} | Count: {count}"
+        register_task(tid, task, "Relay Spam", "xspamxr", client.me.id, details)
+        
         TELAYSPAM_TASKS[chat_id]["task"] = task
+        TELAYSPAM_TASKS[chat_id]["tid"] = tid
         return True
     except Exception as u:
         Altruix.log(f"[CRITICAL] Error in start_relayspam: {u}", level=50, client=client)
@@ -414,7 +424,7 @@ async def start_relayspam(client: Client, destination: str, start_delay: float, 
 # ==================== SPAM LOOP ====================
 async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_possible,
                     count: int, start_delay: float, stop_delay: float, step: float,
-                    x_msg: Message, emot_react: str, is_batch: bool, react_enabled: bool = True):
+                    x_msg: Message, emot_react: str, is_batch: bool, react_enabled: bool = True, tid=None):
     try:
         sent_count = 0
         total_del_suk = 0
@@ -644,6 +654,9 @@ async def spam_loop(client: Client, target_chat, chat_id: str, msg_list, delays_
         Altruix.log(f"[CRITICAL] Error in spam_loop: {u}", level=50, client=client)
         await send_log_message(f"__Error in spam_loop: {u}__", client=client)
     finally:
+        if tid:
+            from Main.plugins.userbot.xcanceltask import unregister_task
+            unregister_task(tid)
         if chat_id in TELAYSPAM_TASKS:
             config = TELAYSPAM_TASKS[chat_id].pop('config', None)
             if config:

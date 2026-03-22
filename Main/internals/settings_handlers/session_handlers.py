@@ -29,7 +29,7 @@ async def test_ping_all_handler(c: Client, cb: CallbackQuery):
     
     total = len(Altruix.clients)
     if total == 0:
-        return await edit_cb(cb, "❌ No active sessions to test.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", "sessions_list_1", style=user_style)]]))
+        return await edit_cb(cb, "❌ No active sessions to test.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", "bulk_controls_menu", style=user_style)]]))
 
     await edit_cb(cb, f"⏳ Testing ping for {total} sessions...")
     
@@ -46,7 +46,7 @@ async def test_ping_all_handler(c: Client, cb: CallbackQuery):
             results.append(f"• Session {i+1}: ❌ Offline")
             
     txt = "<b>🏓 Global Ping Test Results</b>\n\n" + "\n".join(results)
-    await edit_cb(cb, txt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", "sessions_list_1", style=user_style)]]))
+    await edit_cb(cb, txt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", "bulk_controls_menu", style=user_style)]]))
 
 # ====================== GROUP & MESSAGE HANDLERS ======================
 

@@ -4,7 +4,7 @@ import os
 import asyncio
 import logging
 from pyrogram import Client, filters, raw
-from pyrogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, Message
+from pyrogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, Message, LinkPreviewOptions
 from Main.core.decorators import log_errors, iuser_check
 from Main.core.client import Altruix
 from pyrogram.enums import ParseMode
@@ -400,40 +400,133 @@ async def prefix_info_handler(c: Client, cb: CallbackQuery):
 @iuser_check
 @log_errors
 async def feature_status_handler(c: Client, cb: CallbackQuery):
-    """Display ON/OFF status of major userbot features"""
+    """Display ON/OFF status of major userbot features with detailed stats"""
     index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2))
     button_page = int(cb.matches[0].group(3)) if len(cb.matches[0].groups()) >= 3 and cb.matches[0].group(3) else 1
     await cb.answer()
     
-    # Fetch statuses
+    if index >= len(Altruix.clients):
+        return await cb.answer("❌ Session not found.", show_alert=True)
+        
+    client = Altruix.clients[index]
+    me = getattr(client, 'myself', None) or await client.get_me()
+    client.myself = me
+    
+    # 1. User Profile Data
+    try:
+        chat_info = await client.get_chat(me.id)
+        bio = chat_info.bio or "-"
+    except: bio = "-"
+    
+    is_disabled = Altruix.is_session_disabled(me.id)
+    status_icon = "DISABLED" if is_disabled else "ACTIVE"
+    status_emoji = "🔴" if is_disabled else "🟢"
+    
+    # Prefix Handling
+    prefix_apply_type = await Altruix.config.get_env("PREFIX_APPLY_TYPE") or "global"
+    u_key = "PREFIX_OWNER_USER" if prefix_apply_type == "global" else f"PREFIX_OWNER_USER_{me.id}"
+    s_key = "PREFIX_SUDO_USERS" if prefix_apply_type == "global" else f"PREFIX_SUDO_USERS_{me.id}"
+    u_prefix = await Altruix.config.get_env(u_key) or "."
+    s_prefix = await Altruix.config.get_env(s_key) or ","
+
+    # Addons Prefix
+    addons_prefix_apply = await Altruix.config.get_env("ULTROID_PREFIX_APPLY_TYPE") or "global"
+    if addons_prefix_apply == "global":
+        addons_u_prefix = await Altruix.config.get_env("ULTROID_PREFIX_OWNER") or ","
+        addons_s_prefix = await Altruix.config.get_env("ULTROID_PREFIX_SUDO") or "?"
+    else:
+        addons_u_prefix = await Altruix.config.get_env(f"ULTROID_PREFIX_OWNER_{me.id}") or ","
+        addons_s_prefix = await Altruix.config.get_env(f"ULTROID_PREFIX_SUDO_{me.id}") or "?"
+
+    # Sudo Status
+    sudo_apply_type = await Altruix.config.get_env("SUDO_APPLY_TYPE") or "global"
+    sudo_key = "SUDO_ENABLED_GLOBAL" if sudo_apply_type == "global" else f"SUDO_ENABLED_{me.id}"
+    sudo_enabled_raw = await Altruix.config.get_env(sudo_key)
+    sudo_enabled = (sudo_enabled_raw != "false") if sudo_enabled_raw else True
+    sudo_status = "✅ ON" if sudo_enabled else "❌ OFF"
+
+    # 2. Logger Status
     async def get_s(k, default="off"):
         val = await Altruix.config.get_env(f"{k}_{index}") or "off"
         return "✅ ON" if val == "on" else "❌ OFF"
         
     pml = await get_s("PML_LOGGER")
     mnt = await get_s("MNT_LOGGER")
-    joinl = await get_s("JOINL_LOGGER")
-    cmdl = await get_s("CMDL_LOGGER")
+    addons_current = await Altruix.config.get_env("LOAD_ULTROID_ADDONS", default="off")
+    addons_s = "✅ ON" if str(addons_current).lower() in ("on", "true", "1", "yes") else "❌ OFF"
+
+    # 3. Privacy Settings
+    auto_delete_status = await Altruix.config.get_env(f"AUTO_DELETE_CMD_STATUS_{index}") or "off"
+    auto_delete_mode = await Altruix.config.get_env(f"AUTO_DELETE_CMD_TYPE_{index}") or "per_account"
+    auto_delete_delay = await Altruix.config.get_env(f"AUTO_DELETE_CMD_DELAY_{index}") or "2"
+    ad_status = "✅ ON" if auto_delete_status == "on" else "❌ OFF"
+
+    # 4. Bot & Modules
+    custom_bot_username = "None"
+    if hasattr(Altruix, 'bot_manager'):
+        custom_bot_username = Altruix.bot_manager.get_bot_username(me.id) or "None"
     
-    startup = await Altruix.config.get_env(f"STARTUP_MSG_{index}") or "default"
-    startup_s = "✅ ON" if startup != "off" else "❌ OFF"
-    
+    total_active_bots = 1
+    if hasattr(Altruix, 'bot_manager'):
+        total_active_bots += len(Altruix.bot_manager.custom_bots)
+        
+    # Count active loggers/features (Xtra-Modules)
+    xtra_count = 0
+    feat_keys = [
+        f"PM_LOGGER_STATUS_{index}", f"MENTION_LOGGER_STATUS_{index}", 
+        f"JOIN_LOGGER_STATUS_{index}", f"CMDL_LOGGER_{index}",
+        f"GPURGEME_STATUS_{index}", f"AUTO_DELETE_CMD_STATUS_{index}"
+    ]
+    for k in feat_keys:
+        if (await Altruix.config.get_env(k)) == "on":
+            xtra_count += 1
+            
+    # Module Breakdowns
+    ub_mod = len([x for x in Altruix.plugin_categories.values() if x == 'userbot'])
+    bot_mod = len([x for x in Altruix.plugin_categories.values() if x == 'bot'])
+    xtra_mod = len([x for x in Altruix.plugin_categories.values() if x == 'other'])
+    addons_mod = len([x for x in Altruix.plugin_categories.values() if x == 'addons']) if hasattr(Altruix, 'plugin_categories') else 0
+    total_mod = len(Altruix.plugin_categories)
+
     text = (
         f"<b>🚀 Feature Status (Session {index+1})</b>\n\n"
-        f"• <b>PM Logger:</b> {pml}\n"
-        f"• <b>Mention Logger:</b> {mnt}\n"
-        f"• <b>Join Logger:</b> {joinl}\n"
-        f"• <b>Command Logger:</b> {cmdl}\n"
-        f"• <b>Startup Msg:</b> {startup_s}\n\n"
-        f"<i>Status ini menunjukkan fitur mana yang aktif untuk sesi ini.</i>"
+        f"<blockquote expandable>"
+        f"▫️ <b>𝐔𝐬𝐞𝐫 𝐏𝐫𝐨𝐟𝐢𝐥𝐞</b>\n"
+        f"   ├─ Name       : <b><a href='tg://user?id={me.id}'>{html.escape(me.first_name)} {html.escape(me.last_name or '')}</a></b>\n"
+        f"   ├─ ID         : <code>{me.id}</code>\n"
+        f"   ├─ Username   : @{me.username or 'None'}\n"
+        f"   ├─ Premium    : {'✅ YES' if me.is_premium else '❌ NO'}\n"
+        f"   ├─ Bio        : {html.escape(bio)}\n"
+        f"   ├─ Status     : {status_emoji} {status_icon}\n"
+        f"   ├─ Sudo       : {sudo_status}\n"
+        f"   └─ Prefix     :\n"
+        f"       ├─ Main   : UB ( {u_prefix} ) | Sudo ( {s_prefix} )\n"
+        f"       └─ Addons : UB ( {addons_u_prefix} ) | Sudo ( {addons_s_prefix} )\n\n"
+        f"▫️ <b>𝐋𝐨𝐠𝐠𝐞𝐫 𝐒𝐭𝐚𝐭𝐮𝐬</b>\n"
+        f"   ├─ PM Logger        : {pml}\n"
+        f"   ├─ Mention Logger   : {mnt}\n"
+        f"   └─ Altruix Addons   : {addons_s}\n\n"
+        f"▫️ <b>𝐏𝐫𝐢𝐯𝐚𝐜𝐲 𝐒𝐞𝐭𝐭𝐢𝐧𝐠𝐬</b>\n"
+        f"   └─ Auto-Delete Input : {ad_status}\n"
+        f"      ├─ Mode  : {auto_delete_mode.upper().replace('_', ' ')}\n"
+        f"      └─ Delay : {auto_delete_delay}s\n\n"
+        f"▫️ <b>𝐁𝐨𝐭 & 𝐌𝐨𝐝𝐮𝐥𝐞𝐬</b>\n"
+        f"   ├─ Assistant    : {custom_bot_username} (Active: {total_active_bots})\n"
+        f"   ├─ Xtra-Modules : {xtra_count}\n"
+        f"   └─ Total Modules: {total_mod + addons_mod}\n"
+        f"      └─ Breakdown : UB {ub_mod} | Bot {bot_mod} | Xtra {xtra_mod} | Addons {addons_mod}\n\n"
+        f"▫️ <b>𝐍𝐚𝐯𝐢𝐠𝐚𝐭𝐢𝐨𝐧</b>\n"
+        f"   ├─ Total Buttons : 53\n"
+        f"   └─ Page          : {button_page}/5\n"
+        f"</blockquote>"
     )
     
     from Main.utils.file_helpers import get_user_button_style
     session_id = Altruix.clients[index].me.id if index < len(Altruix.clients) and hasattr(Altruix.clients[index], 'me') and Altruix.clients[index].me else cb.from_user.id
     user_style = get_user_button_style(session_id)
     
-    await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}_{button_page}", style=user_style)]]), parse_mode=ParseMode.HTML)
+    await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}_{button_page}", style=user_style)]]), parse_mode=ParseMode.HTML, link_preview_options=LinkPreviewOptions(is_disabled=True))
 
 # ====================== TWO-STEP VERIFICATION HANDLER ======================
 @Altruix.bot.on_callback_query(filters.regex(r"^gen_conf_2fa_info_(\d+)_(\d+)(?:_(\d+))?$"))

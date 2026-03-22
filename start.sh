@@ -235,63 +235,64 @@ if [ -f ".env" ]; then
 fi
 
 # =============================================================================
-# Clean Up Existing Processes & Stale Locks
+# Clean Up Existing Processes & Stale Locks (DISABLED - Allows Multi-Instance)
 # =============================================================================
 echo ""
-log_msg "${RED}" "🧹 Process: Cleaning up existing instances & stale locks..."
-has_killed=false
+log_msg "${CYAN}" "ℹ️  Multi-instance support enabled (Cleanup disabled)."
+# log_msg "${RED}" "🧹 Process: Cleaning up existing instances & stale locks..."
+# has_killed=false
+#
+# # 1. Kill existing Python processes (Kill FIRST to release file locks)
+# if [[ "$PLATFORM" == "windows" ]]; then
+#     # Native Windows
+#     if taskkill //F //IM python.exe //T 2>/dev/null; then
+#         has_killed=true
+#     fi
+# elif [[ "$PLATFORM" == "wsl" ]]; then
+#     # WSL: Kill both WSL processes and Windows processes (Windows processes can lock NTFS files)
+#     if pkill -9 -f "python.* -m Main" 2>/dev/null; then
+#         has_killed=true
+#     fi
+#     # Also attempt to kill Windows python processes if they are locking the F: drive files
+#     if command -v taskkill.exe >/dev/null 2>&1; then
+#         if taskkill.exe /F /IM python.exe /T 2>/dev/null; then
+#             has_killed=true
+#         fi
+#     fi
+# elif [[ "$PLATFORM" == "heroku" || "$PLATFORM" == "sevalla" ]]; then
+#     # Cloud platforms
+#     echo -e "${CYAN}⏩ Skipping process cleanup (Cloud platform)${NC}"
+# else
+#     # Linux / VPS / macOS / Termux
+#     if pkill -9 -f "python.* -m Main" 2>/dev/null; then
+#         has_killed=true
+#     fi
+#     
+#     # Fallback: kill processes locking session files
+#     if command -v fuser >/dev/null 2>&1; then
+#         if fuser -k cache/*.session 2>/dev/null; then
+#             has_killed=true
+#         fi
+#     fi
+# fi
+#
+# # 2. Wait for handles to release & then clean stale SQLite journal/WAL files
+# if [ "$has_killed" = true ]; then
+#     echo -e "${YELLOW}⏳ Waiting 3 seconds for file handles to be released...${NC}"
+#     sleep 3
+# fi
 
-# 1. Kill existing Python processes (Kill FIRST to release file locks)
-if [[ "$PLATFORM" == "windows" ]]; then
-    # Native Windows
-    if taskkill //F //IM python.exe //T 2>/dev/null; then
-        has_killed=true
-    fi
-elif [[ "$PLATFORM" == "wsl" ]]; then
-    # WSL: Kill both WSL processes and Windows processes (Windows processes can lock NTFS files)
-    if pkill -9 -f "python.* -m Main" 2>/dev/null; then
-        has_killed=true
-    fi
-    # Also attempt to kill Windows python processes if they are locking the F: drive files
-    if command -v taskkill.exe >/dev/null 2>&1; then
-        if taskkill.exe /F /IM python.exe /T 2>/dev/null; then
-            has_killed=true
-        fi
-    fi
-elif [[ "$PLATFORM" == "heroku" || "$PLATFORM" == "sevalla" ]]; then
-    # Cloud platforms
-    echo -e "${CYAN}⏩ Skipping process cleanup (Cloud platform)${NC}"
-else
-    # Linux / VPS / macOS / Termux
-    if pkill -9 -f "python.* -m Main" 2>/dev/null; then
-        has_killed=true
-    fi
-    
-    # Fallback: kill processes locking session files
-    if command -v fuser >/dev/null 2>&1; then
-        if fuser -k cache/*.session 2>/dev/null; then
-            has_killed=true
-        fi
-    fi
-fi
-
-# 2. Wait for handles to release & then clean stale SQLite journal/WAL files
-if [ "$has_killed" = true ]; then
-    echo -e "${YELLOW}⏳ Waiting 3 seconds for file handles to be released...${NC}"
-    sleep 3
-fi
-
-# 3. Clean up stale journal files AFTER killing processes
+# 3. Clean up stale journal files safely
 if ls cache/*.session-journal >/dev/null 2>&1 || ls cache/*.session-wal >/dev/null 2>&1; then
     log_msg "${CYAN}" "🧹 Cache: Removing stale journal/WAL files..."
     rm -f cache/*.session-journal cache/*.session-wal
 fi
 
-if [ "$has_killed" = true ]; then
-    echo -e "${GREEN}✅ Cleanup complete!${NC}"
-else
-    echo -e "${CYAN}ℹ️  No existing processes found.${NC}"
-fi
+# if [ "$has_killed" = true ]; then
+#     echo -e "${GREEN}✅ Cleanup complete!${NC}"
+# else
+#     echo -e "${CYAN}ℹ️  No existing processes found.${NC}"
+# fi
 
 # =============================================================================
 # Launch the Bot

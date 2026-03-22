@@ -30,7 +30,7 @@ from Main.utils.file_helpers import make_file_from_text # ✅ Added
 
 
 # ─── UTIL: KIRIM PESAN KE GRUP LOG (AMAN DARI ERROR) ────────────────────
-async def send_log_message(text: str, filename: str = "log_error.txt"):
+async def send_log_message(text: str, filename: str = "log_error.txt", reply_markup=None):
     """
     Kirim pesan ke LOG_CHAT_ID (dari .env) atau fallback ke OWNER_ID.
     Digunakan untuk logging error & aktivitas penting.
@@ -43,7 +43,8 @@ async def send_log_message(text: str, filename: str = "log_error.txt"):
             log_chat_id,
             text,
             parse_mode=ParseMode.HTML,
-            link_preview_options=LinkPreviewOptions(is_disabled=True)
+            link_preview_options=LinkPreviewOptions(is_disabled=True),
+            reply_markup=reply_markup
         )
     except MessageTooLong:
         # ✅ FIX: Handle text that exceeds Telegram limit by sending as file
@@ -53,7 +54,8 @@ async def send_log_message(text: str, filename: str = "log_error.txt"):
                 log_chat_id,
                 file_path,
                 caption=f"📄 <b>Log message too long</b>\nTime: <code>{datetime.now().strftime('%H:%M:%S')}</code>",
-                parse_mode=ParseMode.HTML
+                parse_mode=ParseMode.HTML,
+                reply_markup=reply_markup
             )
             if os.path.exists(file_path):
                 os.remove(file_path)
@@ -67,7 +69,8 @@ async def send_log_message(text: str, filename: str = "log_error.txt"):
                 Altruix.config.OWNER_ID,
                 f"⚠️ [FALLBACK LOG]\n{text}",
                 parse_mode=ParseMode.HTML,
-                link_preview_options=LinkPreviewOptions(is_disabled=True)
+                link_preview_options=LinkPreviewOptions(is_disabled=True),
+                reply_markup=reply_markup
             )
         except Exception:
             pass
@@ -207,6 +210,7 @@ def iuser_check(func):
                             chat_id = "Inline"
                             
                             resolved_chat_id = None
+                            chat_title = None
                             
                             if hasattr(update, "inline_message_id") and update.inline_message_id:
                                 Altruix.log(f"[CB LOGGER] Found inline_message_id: {update.inline_message_id} in CallbackQuery", level=20)
@@ -214,6 +218,8 @@ def iuser_check(func):
                                     cache = await Altruix.local_db.inline_col.find_one({"_id": update.inline_message_id})
                                     if cache:
                                         Altruix.log(f"[CB LOGGER] Cache HIT for {update.inline_message_id}: {cache}", level=20)
+                                        if "chat_title" in cache:
+                                            chat_title = cache["chat_title"]
                                         raw_chat_id = cache.get("chat_id", "Inline")
                                         if raw_chat_id not in ["Inline", "N/A", "None", None]:
                                             resolved_chat_id = raw_chat_id
@@ -222,20 +228,28 @@ def iuser_check(func):
                                 except Exception as e:
                                     Altruix.log(f"[CB LOGGER] Cache fetch err: {e}", level=40)
 
-                            # Fallback: Extraction from callback_data (e.g. cid=... or _cid...)
-                            if not resolved_chat_id:
-                                import re
-                                from Main.core.ext.callback_helpers import get_callback_data
-                                
-                                actual_data = cb_data
-                                if "#" in cb_data:
-                                    parts = cb_data.split("#")
-                                    if len(parts) > 1 and len(parts[1]) == 12: # Potential hash
+                            import re
+                            from Main.core.ext.callback_helpers import get_callback_data
+                            
+                            actual_data = cb_data
+                            if "#" in cb_data:
+                                parts = cb_data.split("#")
+                                if len(parts) > 1 and len(parts[1]) == 12: # Potential hash
+                                    try:
                                         unhashed = await get_callback_data(parts[1])
                                         if unhashed:
                                             actual_data = unhashed
                                             Altruix.log(f"[CB LOGGER] Unhashed data: {actual_data}", level=20)
-
+                                    except Exception: pass
+                                    
+                            # Extract Session Index for Userbot Info
+                            session_idx = -1
+                            si_match = re.search(r"[\?&]si=(-?\d+)", actual_data)
+                            if si_match:
+                                session_idx = int(si_match.group(1))
+                                
+                            # Fallback: Extraction from callback_data (e.g. cid=... or _cid...)
+                            if not resolved_chat_id:
                                 # Check cid=... (query param format)
                                 if cid_match := re.search(r"cid=(-?\d+)", actual_data):
                                     resolved_chat_id = cid_match.group(1)
@@ -253,19 +267,32 @@ def iuser_check(func):
                             # Real-time Title Resolution
                             if resolved_chat_id:
                                 chat_id = str(resolved_chat_id)
-                                chat_title = "Group/Chat"
-                                try:
-                                    chat = await client.get_chat(int(chat_id))
-                                    chat_title = chat.title or chat.first_name or "Chat"
-                                except Exception:
-                                    for ubot in Altruix.clients:
-                                        try:
-                                            chat = await ubot.get_chat(int(chat_id))
-                                            chat_title = chat.title or chat.first_name or "Chat"
-                                            break
-                                        except Exception: continue
+                                chat_title = chat_title or "Group/Chat"
                                 
-                                chat_info = f"📱 {chat_title} (<code>{chat_id}</code>)"
+                                if chat_title == "Group/Chat":
+                                    try:
+                                        chat = await client.get_chat(int(chat_id))
+                                        chat_title = chat.title or chat.first_name or "Chat"
+                                    except Exception:
+                                        for ubot in Altruix.clients:
+                                            try:
+                                                chat = await ubot.get_chat(int(chat_id))
+                                                chat_title = chat.title or chat.first_name or "Chat"
+                                                break
+                                            except Exception: continue
+                                            
+                                    # ✅ Save to DB on first successful fetch to prevent future network spam
+                                    if chat_title and chat_title != "Group/Chat" and hasattr(update, "inline_message_id") and update.inline_message_id:
+                                        try:
+                                            from Main import Altruix as Ax
+                                            await Ax.local_db.inline_col.find_one_and_update(
+                                                {"_id": update.inline_message_id},
+                                                {"$set": {"_id": update.inline_message_id, "chat_title": chat_title, "chat_id": chat_id}},
+                                                upsert=True
+                                            )
+                                        except Exception: pass
+                                
+                                chat_info = f"📱 {html.escape(chat_title)}"
                             else:
                                 chat_info = "📱 Inline Interface"
                                 chat_id = "Inline"
@@ -320,26 +347,61 @@ def iuser_check(func):
                         except Exception:
                             pass
                         
+                        result_text = Altruix.get_string('AUTHORIZED')
+                        if len(result_text) > 11:
+                            result_text = result_text[:11] + "..."
+
                         log_message = (
                             f"{Altruix.get_string('LOGGER_CALLBACK_TITLE')}\n"
                             f"<blockquote expandable>"
                             f"━━━━━━━━━━━━━━━━━━━━\n"
                             f"{Altruix.get_string('LOGGER_CALLBACK_BOT').format(html.escape(me.username) if me and me.username else 'bot', html.escape(bot_username))}\n"
+                            f"{Altruix.get_string('LOGGER_CALLBACK_USERBOT').format(html.escape(ubot_session_name)) if 'ubot_session_name' in locals() else ''}\n"
                             f"{Altruix.get_string('LOGGER_CALLBACK_USER').format(user_id, final_name)}\n"
                             f"{Altruix.get_string('LOGGER_CALLBACK_USERNAME').format(username_display)}\n"
                             f"{Altruix.get_string('LOGGER_CALLBACK_USER_ID').format(user_id)}\n"
                             f"{Altruix.get_string('LOGGER_CALLBACK_CHAT').format(chat_info)}\n"
                             f"{Altruix.get_string('LOGGER_CALLBACK_CHAT_ID').format(chat_id)}\n"
                             f"{Altruix.get_string('LOGGER_CALLBACK_DATA').format(html.escape(cb_data))}\n"
-                            f"{Altruix.get_string('LOGGER_CALLBACK_RESULT').format(html.escape(Altruix.get_string('AUTHORIZED')))}\n"
+                            f"{Altruix.get_string('LOGGER_CALLBACK_RESULT').format(html.escape(result_text))}\n"
+                            f"{Altruix.get_string('LOGGER_CALLBACK_TIME').format(time_now)}\n"
                             f"{task_id_line}"
                             f"{Altruix.get_string('LOGGER_CALLBACK_MSG_HEADER')}\n"
-                            f"<blockquote>{html.escape(str(msg_text)[:1000])}</blockquote>\n"
-                            f"{Altruix.get_string('LOGGER_CALLBACK_TIME').format(time_now)}\n"
-                            f"</blockquote>\n"
-                            f"{Altruix.get_string('LOGGER_CALLBACK_PRIVATE_LINK').format(user_id)}"
+                            f"{html.escape(str(msg_text)[:1000])}"
+                            f"</blockquote>"
                         )
-                        await send_log_message(log_message)
+                        
+                        link_url = ""
+                        if hasattr(update, "message") and update.message and update.message.link:
+                            link_url = update.message.link
+                        elif chat_id and str(chat_id) not in ["Inline", "N/A", "None", None, ""]:
+                            c_id_str = str(chat_id)
+                            if c_id_str.startswith("-100"):
+                                link_url = f"https://t.me/c/{c_id_str[4:]}/999999999"
+                            elif not c_id_str.startswith("-"):
+                                link_url = f"tg://openmessage?user_id={c_id_str}"
+                                
+                        from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+                        from Main.utils.file_helpers import get_user_button_style as _gubs
+                        
+                        # Resolve userbot user ID for button style
+                        _style_uid = 0
+                        if 'session_idx' in locals() and session_idx != -1 and 0 <= session_idx < len(Altruix.clients):
+                            _sc = Altruix.clients[session_idx]
+                            if hasattr(_sc, 'me') and _sc.me:
+                                _style_uid = _sc.me.id
+                        _btn_style = _gubs(_style_uid) if _style_uid else None
+                        
+                        buttons = [InlineKeyboardButton("👤 Chat to User", url=f"tg://user?id={user_id}")]
+                        if link_url:
+                            buttons.append(InlineKeyboardButton("➡️ Goto Msg", url=link_url))
+                        
+                        if _btn_style:
+                            for _b in buttons:
+                                _b.style = _btn_style
+                            
+                        kbd = InlineKeyboardMarkup([buttons])
+                        await send_log_message(log_message, reply_markup=kbd)
                     except Exception:
                         import traceback
                         _err_txt = f"❌ <b>Error in _log_and_auth:</b>\n\n<pre>{html.escape(traceback.format_exc())}</pre>\n\n#LOG_ERROR"
@@ -362,9 +424,11 @@ def iuser_check(func):
                 
                 error_text = (
                     f"💥 <b>ERROR SAAT MENANGANI CALLBACK</b>\n"
+                    f"<blockquote expandable>"
                     f"• User: {full_name} ({user_id})\n"
                     f"• Fungsi: <code>{func.__name__}</code>\n"
-                    f"• Error: <code>{str(e)}</code>"
+                    f"• Error: <code>{html.escape(str(e))}</code>"
+                    f"</blockquote>"
                 )
                 import asyncio as _asyncio
                 _asyncio.create_task(send_log_message(error_text))
@@ -395,44 +459,90 @@ def iuser_check(func):
                         chat_id = chat.id
                         msg_text = update.message.text or update.message.caption or "[No Text/Media]"
                     elif isinstance(update, CallbackQuery) and not update.message:
-                        # ✅ Inline mode: resolve chat from callback data (_cid or cid=)
+                        # ✅ Inline mode: prioritize cache, fallback to resolve chat from callback data (_cid or cid=)
+                        chat_title = None
+                        resolved_chat_id = None
+                        
+                        try:
+                            if hasattr(update, "inline_message_id") and update.inline_message_id:
+                                from Main import Altruix as Ax
+                                cached_doc = await Ax.local_db.inline_col.find_one({"_id": update.inline_message_id})
+                                if cached_doc:
+                                    if "chat_title" in cached_doc:
+                                        chat_title = cached_doc["chat_title"]
+                                    if "chat_id" in cached_doc and cached_doc["chat_id"] not in ["Inline", "N/A", "None", None]:
+                                        resolved_chat_id = cached_doc["chat_id"]
+                        except Exception: pass
+                        
                         import re
                         from Main.core.ext.callback_helpers import get_callback_data
-                        resolved_chat_id = None
                         actual_data = cb_data
                         
-                        # ✅ Unhash compressed callback data (e.g. h#6a3c40aeb50b → help#plugin?page=0&cid=-100123)
+                        # ✅ Unhash compressed callback data globally
                         if "#" in cb_data:
                             parts = cb_data.split("#")
                             if len(parts) > 1 and len(parts[1]) == 12:
-                                unhashed = await get_callback_data(parts[1])
-                                if unhashed:
-                                    actual_data = unhashed
+                                try:
+                                    unhashed = await get_callback_data(parts[1])
+                                    if unhashed:
+                                        actual_data = unhashed
+                                except Exception: pass
+                                
+                        # Extract Session Index for Userbot Info
+                        session_idx = -1
+                        si_match = re.search(r"[\?&]si=(-?\d+)", actual_data)
+                        if si_match:
+                            session_idx = int(si_match.group(1))
                         
-                        # Check cid=... (query param format)
-                        if cid_match := re.search(r"cid=(-?\d+)", actual_data):
-                            resolved_chat_id = cid_match.group(1)
-                        # Check _cid... (embedded format)
-                        elif cid_match := re.search(r"_cid(-?\d+)", actual_data):
-                            resolved_chat_id = cid_match.group(1)
+                        if not resolved_chat_id:
+                            # Check cid=... (query param format)
+                            if cid_match := re.search(r"cid=(-?\d+)", actual_data):
+                                resolved_chat_id = cid_match.group(1)
+                            # Check _cid... (embedded format)
+                            elif cid_match := re.search(r"_cid(-?\d+)", actual_data):
+                                resolved_chat_id = cid_match.group(1)
                         
                         if resolved_chat_id:
                             chat_id = str(resolved_chat_id)
-                            chat_title = "Group/Chat"
-                            try:
-                                _c = args[0] if args and isinstance(args[0], Client) else None
-                                if _c:
-                                    chat_obj = await _c.get_chat(int(chat_id))
-                                    chat_title = chat_obj.title or chat_obj.first_name or "Chat"
-                            except Exception:
-                                for ubot in Altruix.clients:
-                                    try:
-                                        chat_obj = await ubot.get_chat(int(chat_id))
+                            chat_title = chat_title or "Group/Chat"
+                            
+                            if chat_title == "Group/Chat":
+                                try:
+                                    _c = args[0] if args and isinstance(args[0], Client) else None
+                                    if _c:
+                                        chat_obj = await _c.get_chat(int(chat_id))
                                         chat_title = chat_obj.title or chat_obj.first_name or "Chat"
-                                        break
-                                    except Exception: continue
-                            chat_info = f"📱 {chat_title} (<code>{chat_id}</code>)"
+                                except Exception:
+                                    for ubot in Altruix.clients:
+                                        try:
+                                            chat_obj = await ubot.get_chat(int(chat_id))
+                                            chat_title = chat_obj.title or chat_obj.first_name or "Chat"
+                                            break
+                                        except Exception: continue
+                                        
+                                # ✅ Save to DB on first successful fetch to prevent future network spam
+                                if chat_title and chat_title != "Group/Chat" and hasattr(update, "inline_message_id") and update.inline_message_id:
+                                    try:
+                                        from Main import Altruix as Ax
+                                        await Ax.local_db.inline_col.find_one_and_update(
+                                            {"_id": update.inline_message_id},
+                                            {"$set": {"_id": update.inline_message_id, "chat_title": chat_title, "chat_id": chat_id}},
+                                            upsert=True
+                                        )
+                                    except Exception: pass
+                                        
+                            chat_info = f"📱 {html.escape(chat_title)}"
                     
+                    ubot_session_name = "Unknown Session"
+                    if 'session_idx' in locals() and session_idx != -1 and 0 <= session_idx < len(Altruix.clients):
+                        _c = Altruix.clients[session_idx]
+                        if hasattr(_c, 'me') and _c.me:
+                            ubot_session_name = _c.me.first_name or _c.me.username or str(_c.me.id)
+                    elif len(Altruix.clients) > 0:
+                        _c = Altruix.clients[0]
+                        if hasattr(_c, 'me') and _c.me:
+                            ubot_session_name = _c.me.first_name or _c.me.username or str(_c.me.id)
+                            
                     me = None
                     for arg in args:
                         if isinstance(arg, Client):
@@ -457,39 +567,125 @@ def iuser_check(func):
                         elif isinstance(update, InlineQuery):
                             title = "🎯 <b>Inline Access Denied</b>"
                             
+                        disp_result = result_status
+                        if len(disp_result) > 11:
+                            disp_result = disp_result[:11] + "..."
+                            
                         log_message = (
                             f"{title}\n"
                             f"<blockquote expandable>"
                             f"━━━━━━━━━━━━━━━━━━━━\n"
                             f"{Altruix.get_string('LOGGER_CALLBACK_BOT').format(html.escape(me.username) if me and me.username else 'bot', html.escape(bot_username))}\n"
+                            f"{Altruix.get_string('LOGGER_CALLBACK_USERBOT').format(html.escape(ubot_session_name)) if 'ubot_session_name' in locals() else ''}\n"
                             f"{Altruix.get_string('LOGGER_CALLBACK_USER').format(user_id, final_name)}\n"
                             f"{Altruix.get_string('LOGGER_CALLBACK_USERNAME').format(username_display)}\n"
                             f"{Altruix.get_string('LOGGER_CALLBACK_USER_ID').format(user_id)}\n"
                             f"{Altruix.get_string('LOGGER_CALLBACK_CHAT').format(chat_info)}\n"
                             f"{Altruix.get_string('LOGGER_CALLBACK_CHAT_ID').format(chat_id)}\n"
                             f"{Altruix.get_string('LOGGER_CALLBACK_DATA').format(html.escape(cb_data))}\n"
-                            f"{Altruix.get_string('LOGGER_CALLBACK_RESULT').format(html.escape(result_status))}\n"
-                            f"{Altruix.get_string('LOGGER_CALLBACK_MSG_HEADER')}\n"
-                            f"<blockquote>{html.escape(str(msg_text)[:1000])}</blockquote>\n"
+                            f"{Altruix.get_string('LOGGER_CALLBACK_RESULT').format(html.escape(disp_result))}\n"
                             f"{Altruix.get_string('LOGGER_CALLBACK_TIME').format(time_now)}\n"
-                            f"</blockquote>\n"
-                            f"{Altruix.get_string('LOGGER_CALLBACK_PRIVATE_LINK').format(user_id)}"
+                            f"{Altruix.get_string('LOGGER_CALLBACK_MSG_HEADER')}\n"
+                            f"{html.escape(str(msg_text)[:1000])}"
+                            f"</blockquote>"
                         )
-                        await send_log_message(log_message)
+                        link_url = ""
+                        if hasattr(update, "message") and update.message and update.message.link:
+                            link_url = update.message.link
+                        elif chat_id and str(chat_id) not in ["Inline", "N/A", "None", None, ""]:
+                            c_id_str = str(chat_id)
+                            if c_id_str.startswith("-100"):
+                                link_url = f"https://t.me/c/{c_id_str[4:]}/999999999"
+                            elif not c_id_str.startswith("-"):
+                                link_url = f"tg://openmessage?user_id={c_id_str}"
+                                
+                        from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+                        from Main.utils.file_helpers import get_user_button_style as _gubs
+                        
+                        # Resolve userbot user ID for button style
+                        _style_uid = 0
+                        if 'session_idx' in locals() and session_idx != -1 and 0 <= session_idx < len(Altruix.clients):
+                            _sc = Altruix.clients[session_idx]
+                            if hasattr(_sc, 'me') and _sc.me:
+                                _style_uid = _sc.me.id
+                        _btn_style = _gubs(_style_uid) if _style_uid else None
+                        
+                        buttons = [InlineKeyboardButton("👤 Chat to User", url=f"tg://user?id={user_id}")]
+                        if link_url:
+                            buttons.append(InlineKeyboardButton("➡️ Goto Msg", url=link_url))
+                        
+                        if _btn_style:
+                            for _b in buttons:
+                                _b.style = _btn_style
+                            
+                        kbd = InlineKeyboardMarkup([buttons])
+                        await send_log_message(log_message, reply_markup=kbd)
                     except Exception:
                         import traceback
                         _err_txt = f"❌ <b>Error in _log_denied:</b>\n\n<pre>{html.escape(traceback.format_exc())}</pre>\n\n#LOG_ERROR"
                         await send_log_message(_err_txt)
+                        
+                    # ✅ SPECIAL CASE FOR HELP MENU TAPPED_BY
+                    # Handle both normal messages and inline messages
+                    if isinstance(update, CallbackQuery) and 'actual_data' in locals() and actual_data:
+                        if actual_data.startswith("h#") or actual_data.startswith("ht#") or actual_data.startswith("help"):
+                            try:
+                                from Main.plugins.bot.help import get_help_menu
+                                import re
+                                
+                                session_idx = None
+                                si_match = re.search(r"[\?&]si=(-?\d+)", actual_data)
+                                if si_match:
+                                    session_idx = int(si_match.group(1))
+                                
+                                owner_id = None # ✅ Default to None to prevent primary account leak 
+                                if session_idx is not None and session_idx != -1:
+                                    if 0 <= session_idx < len(Altruix.clients):
+                                        cl = Altruix.clients[session_idx]
+                                        if hasattr(cl, 'me') and cl.me:
+                                            owner_id = cl.me.id
+                                
+                                view_mode = "userbot"
+                                mode_match = re.search(r"[\?&]mode=(\w+)", actual_data)
+                                if mode_match:
+                                    view_mode = mode_match.group(1)
+                                else:
+                                    # Reverse-engineer current tab state based on cyclical button targets
+                                    reverse_cycle = {
+                                        "bot": "userbot",
+                                        "extra": "bot",
+                                        "ultroid": "extra",
+                                        "userbot": "ultroid"
+                                    }
+                                    tab_match = re.search(r"^help_tab#([a-zA-Z0-9_]+)", actual_data)
+                                    if tab_match:
+                                        target_tab = tab_match.group(1)
+                                        view_mode = reverse_cycle.get(target_tab, "userbot")
+                                
+                                help_msg, buttons, parse_mode = await get_help_menu(user_id=owner_id, mode=view_mode, tapped_by=update.from_user)
+                                
+                                # Use existing markup if possible, else use main menu buttons
+                                from pyrogram.types import InlineKeyboardMarkup
+                                rm = update.message.reply_markup if update.message and update.message.reply_markup else InlineKeyboardMarkup(buttons)
+                                
+                                await update.edit_message_text(
+                                    help_msg,
+                                    reply_markup=rm,
+                                    parse_mode=parse_mode,
+                                    disable_web_page_preview=True
+                                )
+                            except Exception as e:
+                                Altruix.log(f"Failed to update tapped_by for unauthorized user: {e}", level=30)
 
                 import asyncio as _asyncio
                 _asyncio.create_task(_log_denied())
 
             if isinstance(update, CallbackQuery):
                 try:
-                    show_alert = (alert_mode == "popup")
+                    # ✅ FIX: Always use show_alert=True for unauthorized access popups
                     await update.answer(
                         result_status if 'result_status' in locals() else Altruix.get_string("AUTH_BUTTON_DENIED"),
-                        show_alert=show_alert,
+                        show_alert=True,
                         cache_time=5
                     )
                 except QueryIdInvalid:
@@ -589,7 +785,7 @@ def log_errors(func):
                 if user:
                     user_id = user.id
                     full_name = f"{user.first_name or ''} {user.last_name or ''}".strip() or "User"
-                    status = "Owner (Self)" if user_id in Altruix.config.OWNER_USERS_ID else ("Sudo" if user_id in Altruix.auth_users else "User")
+                    status = "Owner (Self)" if user_id in Altruix.config.OWNER_USERS_ID else ("Sudo" if user_id in Altruix._auth_users_cache else "User")
                     user_info = f"<a href='tg://user?id={user_id}'>{html.escape(full_name)}</a> [<code>{user_id}</code>] (<b>{status}</b>)"
                 
                 # Command
@@ -628,7 +824,7 @@ def log_errors(func):
 
             error_detail = (
                 f"<b>⚠️ #LOG_ERROR</b>\n"
-                f"<blockquote expandable>\n"
+                f"<blockquote expandable>"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"• <b>CMD:</b> <code>{html.escape(str(msg_info)[:500])}</code>\n"
                 f"• <b>CMD BY:</b> {user_info}\n"
@@ -639,11 +835,12 @@ def log_errors(func):
                 f"• <b>PLUGIN VER:</b> <code>{plugin_ver}</code>\n"
                 f"• <b>USERBOT VER:</b> <code>{Altruix.__version__}</code>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"</blockquote>\n\n"
-                f"<blockquote expandable>\n"
-                f"💥 <b>ERROR:</b> <code>{_be}</code>\n"
-                f"📍 <b>IN:</b> <code>{module_name}.{func.__name__}</code>\n"
-                f"</blockquote>\n\n"
+                f"</blockquote>\n"
+                f"📍 <b>METHOD:</b>\n"
+                f"<blockquote expandable>"
+                f"• <b>Error:</b> <code>{_be}</code>\n"
+                f"• <b>In:</b> <code>{module_name}.{func.__name__}</code>\n"
+                f"</blockquote>\n"
                 f"📑 <b>TRACEBACK:</b>\n"
                 f"<pre>{html.escape(traceback.format_exc())}</pre>"
             )

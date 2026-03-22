@@ -49,7 +49,7 @@ class CacheManager:
         self.memory_cache = {}
         self.memory_ttl = {}
         
-        logger.info(f"Cache manager initialized with backend: {self.backend}")
+        logger.debug(f"Cache manager initialized with backend: {self.backend}")
     
     async def initialize(self):
         """Initialize the selected backend."""
@@ -78,7 +78,7 @@ class CacheManager:
                 if not self.json_file.exists():
                     async with aiofiles.open(self.json_file, 'w', encoding='utf-8') as f:
                         await f.write('{"cache": {}, "meta": {"created": "' + datetime.now().isoformat() + '"}}')
-                logger.info(f"✅ JSON cache ready: {self.json_file}")
+                logger.debug(f"✅ JSON cache ready: {self.json_file}")
                 
             else:
                 logger.info("✅ Using in-memory cache (no persistence)")

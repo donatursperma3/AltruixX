@@ -51,9 +51,9 @@ def save_settings():
 # Load settings on startup
 load_settings()
 
-@Altruix.on_message(filters.new_chat_members, group=-1, bot_mode_unsupported=True)
+@Altruix.on_chat_member_updated(group=-1, bot_mode_unsupported=True)
 @log_errors
-async def join_logger_handler(c: Client, m: Message):
+async def join_logger_handler(c: Client, u):
     """Log when userbot joins or is invited to groups/channels."""
     try:
         # Dynamic Reload
@@ -74,62 +74,82 @@ async def join_logger_handler(c: Client, m: Message):
         if not is_enabled:
             return
 
+        # Check if new_chat_member exists
+        if getattr(u, "new_chat_member", None) is None: return
+
+        # 🛑 Ensure it only logs events involving the current userbot session
+        new_user_id = getattr(u.new_chat_member.user, "id", None)
+        if new_user_id != c.me.id:
+            return
+
         # ✅ Refresh 'me' to ensure nickname is up-to-date
         me = await c.get_me()
             
-        # Check if this is about the current userbot
-        for new_member in m.new_chat_members:
-            if new_member.id == me.id:
-                chat = m.chat
-                invited_by = m.from_user
-                
-                # Determine chat type
-                chat_type = "Channel" if chat.type == enums.ChatType.CHANNEL else "Group"
-                
-                # Generate Chat Link
-                if chat.username:
-                    chat_link = f"https://t.me/{chat.username}/{m.id}"
-                    group_link = f"https://t.me/{chat.username}"
+        new_status = getattr(u.new_chat_member, "status", None)
+        
+        old_status = enums.ChatMemberStatus.LEFT
+        if getattr(u, "old_chat_member", None):
+            old_status = getattr(u.old_chat_member, "status", enums.ChatMemberStatus.LEFT)
+        
+        joined_statuses = [
+            enums.ChatMemberStatus.MEMBER,
+            enums.ChatMemberStatus.ADMINISTRATOR,
+            enums.ChatMemberStatus.RESTRICTED
+        ]
+        left_statuses = [
+            enums.ChatMemberStatus.LEFT,
+            enums.ChatMemberStatus.BANNED
+        ]
+        
+        if new_status in joined_statuses and old_status in left_statuses:
+            chat = u.chat
+            invited_by = u.from_user
+            
+            # Determine chat type
+            chat_type = "Channel" if chat.type == enums.ChatType.CHANNEL else "Group"
+            
+            # Generate Chat Link
+            if chat.username:
+                chat_link = f"https://t.me/{chat.username}"
+                group_link = chat_link
+            else:
+                # Private chat: t.me/c/123456789/999999999
+                # Strip -100 prefix if present
+                chat_id_str = str(chat.id)
+                if chat_id_str.startswith("-100"):
+                    real_id = chat_id_str[4:]
                 else:
-                    # Private chat: t.me/c/123456789/msg_id
-                    # Strip -100 prefix if present
-                    chat_id_str = str(chat.id)
-                    if chat_id_str.startswith("-100"):
-                        real_id = chat_id_str[4:]
-                    else:
-                        real_id = chat_id_str.replace("-", "")
-                    
-                    chat_link = f"https://t.me/c/{real_id}/{m.id}"
-                    # Cannot link to private group title easily without invite link, 
-                    # but we can try making the name a text link to the message for now
-                    group_link = chat_link 
+                    real_id = chat_id_str.replace("-", "")
+                
+                chat_link = f"https://t.me/c/{real_id}/999999999"
+                # Cannot link to private group title easily without invite link
+                group_link = chat_link 
 
-                # Build log message
-                log_message = (
-                    f"🔔 <b>Join Event Detected</b>\n\n"
-                    f"👤 <b>Account:</b> {me.mention(style=enums.ParseMode.HTML)} (<code>{me.id}</code>)\n"
-                    f"💬 <b>{chat_type}:</b> <a href='{group_link}'>{chat.title}</a> (<code>{chat.id}</code>)\n"
-                )
+            # Build log message
+            log_message = (
+                f"🔔 <b>Join Event Detected</b>\n\n"
+                f"👤 <b>Account:</b> {me.mention(style=enums.ParseMode.HTML)} (<code>{me.id}</code>)\n"
+                f"💬 <b>{chat_type}:</b> <a href='{group_link}'>{chat.title}</a> (<code>{chat.id}</code>)\n"
+            )
+            
+            if invited_by and invited_by.id != me.id:
+                log_message += f"👥 <b>Invited By:</b> {invited_by.mention(style=enums.ParseMode.HTML)} (<code>{invited_by.id}</code>)\n"
+            else:
+                log_message += f"✅ <b>Action:</b> Joined via link or naturally\n"
                 
-                if invited_by:
-                    log_message += f"👥 <b>Invited By:</b> {invited_by.mention(style=enums.ParseMode.HTML)} (<code>{invited_by.id}</code>)\n"
-                else:
-                    log_message += f"✅ <b>Action:</b> Joined via link\n"
-                    
-                log_message += f"🕒 <b>Time:</b> <code>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</code>"
-                
-                # Send to log chat
-                bot = Altruix.bot_manager.get_bot(c.me.id)
-                from Main.utils.essentials import Essentials
-                await bot.send_message(
-                    Altruix.log_chat,
-                    log_message,
-                    parse_mode=enums.ParseMode.HTML,
-                    reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, "Go to Chat ↗️"), url=chat_link)]
-                    ])
-                )
-                break  # Only log once per join event
+            log_message += f"🕒 <b>Time:</b> <code>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</code>"
+            
+            # Send to log chat
+            bot = Altruix.bot_manager.get_bot(c.me.id)
+            from Main.utils.essentials import Essentials
+            await bot.send_message(
+                Altruix.log_chat,
+                log_message,
+                parse_mode=enums.ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, "Go to Chat ↗️"), url=chat_link)]
+                ])
+            )
             
     except Exception as e:
         print(f"Join logger error: {e}")

@@ -125,10 +125,9 @@ async def session_info_back_handler(c: Client, cb: CallbackQuery):
     if index == -1:
         return await cb.answer("❌ Session not found.", show_alert=True)
         
-    # Return to page 5 where Auto GP button is
     text, reply_markup = await get_session_info_data(index, 1, 5)
     args = {
-        "text": f"╭━━━━━━━━━━━━━━━━━━━━━╮\n   <b>𝐒𝐄𝐒𝐒𝐈𝐎𝐍 𝐌𝐀𝐍𝐀𝐆𝐄𝐑</b>\n╰━━━━━━━━━━━━━━━━━━━━━╯\n\n<blockquote expandable>{text}</blockquote>",
+        "text": f"<b> 𝐒𝐄𝐒𝐒𝐈𝐎𝐍 𝐌𝐀𝐍𝐀𝐆𝐄𝐑</b>\n\n<blockquote expandable>{text}</blockquote>",
         "reply_markup": reply_markup,
         "parse_mode": ParseMode.HTML,
         "link_preview_options": LinkPreviewOptions(is_disabled=True)
@@ -164,10 +163,13 @@ async def get_session_info_data(index: int, page: int = 1, button_page: int = 1,
     
     client = Altruix.clients[index]
     me = getattr(client, 'myself', None)
-    if not me:
+    if not me or refresh:
         try:
             me = await client.get_me()
             client.myself = me
+            # Clear bio cache on refresh
+            if hasattr(client, 'bio_cache'):
+                delattr(client, 'bio_cache')
         except Exception:
             return "❌ Gagal mengambil informasi akun.", None
 
@@ -233,7 +235,7 @@ async def get_session_info_data(index: int, page: int = 1, button_page: int = 1,
         sudo_enabled_raw = await Altruix.config.get_env(f"SUDO_ENABLED_{me.id}")
         sudo_enabled = (sudo_enabled_raw != "false") if sudo_enabled_raw else True
     
-    sudo_status_icon = "✅ ON" if sudo_enabled else "❌ OFF"
+    sudo_status_icon = "ON" if sudo_enabled else "OFF"
 
     # Total Active Bots
     total_active_bots = 1 # Main Bot Assistant
@@ -340,42 +342,19 @@ async def get_session_info_data(index: int, page: int = 1, button_page: int = 1,
     addons_mod = len([x for x in Altruix.plugin_categories.values() if x == 'addons']) if hasattr(Altruix, 'plugin_categories') else 0
 
     # Bot assistant display
-    bot_display = (
-        f"<a href=\"tg://user?id={custom_bot_id}\">{custom_bot_username}</a>" if custom_bot_id 
-        else (f"{custom_bot_username}" if custom_bot_username != "None" else "None")
-    )
-
     text = (
         f"▫️ <b>𝐔𝐬𝐞𝐫 𝐏𝐫𝐨𝐟𝐢𝐥𝐞</b>\n"
-        f"   ├─ <b>Name</b>       : <b><a href='tg://user?id={me.id}'>{html.escape(me.first_name)} {html.escape(me.last_name or '')}</a></b>\n"
-        f"   ├─ <b>ID</b>         : <spoiler>{me.id}</spoiler>\n"
-        f"   ├─ <b>Username</b>   : <spoiler>@{me.username or 'None'}</spoiler>\n"
-        f"   ├─ <b>Premium</b>    : {'✅ YES' if me.is_premium else '❌ NO'}\n"
-        f"   ├─ <b>Bio</b>        : {html.escape(bio)}\n"
-        f"   ├─ <b>Status</b>     : {status_emoji} {status_icon}\n"
-        f"   ├─ <b>Sudo</b>       : {sudo_status_icon}\n"
-        f"   └─ <b>Prefix</b>     :\n"
-        f"       ├─ Main   : UB ( <code>{u_prefix}</code> ) | Sudo ( <code>{s_prefix}</code> )\n"
-        f"       └─ Addons : UB ( <code>{addons_u_prefix}</code> ) | Sudo ( <code>{addons_s_prefix}</code> )\n\n"
-        f"▫️ <b>𝐋𝐨𝐠𝐠𝐞𝐫 𝐒𝐭𝐚𝐭𝐮𝐬</b>\n"
-        f"   ├─ <b>PM Logger</b>        : {pm_logger_status}\n"
-        f"   ├─ <b>Mention Logger</b>   : {mention_logger_status}\n"
-        f"   └─ <b>Altruix Addons</b>   : {addons_status_icon}\n\n"
-        f"▫️ <b>𝐏𝐫𝐢𝐯𝐚𝐜𝐲 𝐒𝐞𝐭𝐭𝐢𝐧𝐠𝐬</b>\n"
-        f"   └─ <b>Auto-Delete Input</b> : {auto_delete_status_icon}\n"
-        f"      ├─ Mode  : <code>{auto_delete_mode_display}</code>\n"
-        f"      └─ Delay : <code>{auto_delete_delay}s</code>\n\n"
-        f"▫️ <b>𝐁𝐨𝐭 & 𝐌𝐨𝐝𝐮𝐥𝐞𝐬</b>\n"
-        f"   ├─ <b>Assistant</b>    : <spoiler>{bot_display}</spoiler> (Active: {total_active_bots})\n"
-        f"   ├─ <b>Xtra-Modules</b> : {xtra_count}\n"
-        f"   └─ <b>Total Modules</b>: {total_mod + addons_mod}\n"
-        f"      └─ Breakdown : UB {ub_mod} | Bot {bot_mod} | Xtra {xtra_mod} | Addons {addons_mod}\n\n"
+        f"   ├─ <b>Name</b>\t\t\t\t\t: <spoiler><b><a href='tg://user?id={me.id}'>{html.escape(me.first_name)} {html.escape(me.last_name or '')}</a></b></spoiler>\n"
+        f"   ├─ <b>ID</b>\t\t\t\t\t\t\t: <spoiler>{me.id}</spoiler>\n"
+        f"   ├─ <b>Username</b>\t: <spoiler>@{me.username or 'None'}</spoiler>\n"
+        f"   ├─ <b>Status</b>\t\t\t: {status_icon}\n"
+        f"   ├─ <b>Sudo</b>\t\t\t\t\t: {sudo_status_icon}\n"
+        f"   └─ <b>Prefix</b>\t\t\t:\n"
+        f"       ├─ Main\t\t\t: UB ( <code>{u_prefix}</code> ) | Sudo ( <code>{s_prefix}</code> )\n"
+        f"       └─ Addons\t: UB ( <code>{addons_u_prefix}</code> ) | Sudo ( <code>{addons_s_prefix}</code> )\n\n"
         f"▫️ <b>𝐍𝐚𝐯𝐢𝐠𝐚𝐭𝐢𝐨𝐧</b>\n"
-        f"   ├─ <b>Total Buttons</b> : 57\n"
-        f"   └─ <b>Page</b>          : {button_page}/5\n\n"
-        f"╭─────────────────────╮\n"
-        f" <b>𝐌𝐚𝐧𝐚𝐠𝐞 𝐭𝐡𝐢𝐬 𝐬𝐞𝐬𝐬𝐢𝐨𝐧:</b>\n"
-        f"╰─────────────────────╯"
+        f"   ├─ <b>Total Buttons</b>\t: 53\n"
+        f"   └─ <b>Page</b>\t\t\t\t\t\t\t\t\t: {button_page}/5"
     )
 
     # Resolve button style for this account
@@ -383,7 +362,7 @@ async def get_session_info_data(index: int, page: int = 1, button_page: int = 1,
     user_style = get_user_button_style(me.id)
 
     def btn(idx, key, data):
-        return InlineKeyboardButton(f"[{idx}] {Altruix.get_string(key)}", data, style=user_style)
+        return InlineKeyboardButton(f"{Altruix.get_string(key)}", data, style=user_style)
 
     buttons = []
     if button_page == 1:
@@ -394,53 +373,71 @@ async def get_session_info_data(index: int, page: int = 1, button_page: int = 1,
             [btn(7, "upload_photo", f"gen_conf_send_profile_photo_{index}_{page}"), btn(8, "delete_all_photos", f"gen_conf_delete_all_profile_photos_{index}_{page}")],
             [btn(9, "backup_profile", f"gen_conf_backup_profile_{index}_{page}"), btn(10, "check_limit", f"check_limit_confirm_{index}_{page}")],
             [btn(11, "view_sessions", f"gen_conf_view_all_sessions_{index}_{page}"), btn(12, "join_log_group", f"join_log_group_{index}_{page}")],
-            [btn(13, "toggle_session_status", f"toggle_session_confirm_{index}_{page}")],
-            [InlineKeyboardButton(Altruix.get_string("next"), f"session_info_{index}_{page}_2", style=user_style)]
+            [
+                InlineKeyboardButton("1/5", f"session_info_{index}_{page}_1", style=user_style),
+                InlineKeyboardButton("»", f"session_info_{index}_{page}_2", style=user_style)
+            ]
         ]
     elif button_page == 2:
         buttons = [
-            [btn(14, "download_story", f"gen_conf_dlstory_session_input_{index}_{page}"), btn(15, "download_content", f"gen_conf_dl_content_input_{index}_{page}")],
-            [btn(16, "download_user_photo", f"gen_conf_dl_uphoto_start_{index}_{page}"), btn(17, "purge_my_msg", f"purge_msg_start_{index}_{page}")],
-            [btn(18, "send_message", f"gen_conf_send_message_input_{index}_{page}"), btn(19, "join_group", f"gen_conf_join_chat_input_{index}_{page}")],
-            [btn(20, "leave_group", f"gen_conf_leave_chat_input_{index}_{page}"), btn(21, "track_profile", f"gen_conf_track_profile_{index}_{page}")],
-            [btn(22, "chat_stats", f"gen_conf_chat_stats_scan_{index}_{page}"), btn(23, "creategroup_menu", f"creategroup_menu_{index}_{page}")],
-            [btn(24, "recent_messages", f"recent_msgs_menu_{index}_{page}"), btn(25, "view_mentions", f"view_mnt_menu_{index}_{page}")],
-            [InlineKeyboardButton(Altruix.get_string("prev"), f"session_info_{index}_{page}_1", style=user_style), InlineKeyboardButton(Altruix.get_string("next"), f"session_info_{index}_{page}_3", style=user_style)]
+            [btn(13, "toggle_session_status", f"toggle_session_confirm_{index}_{page}"), btn(14, "download_story", f"gen_conf_dlstory_session_input_{index}_{page}")],
+            [btn(15, "download_content", f"gen_conf_dl_content_input_{index}_{page}"), btn(16, "download_user_photo", f"gen_conf_dl_uphoto_start_{index}_{page}")],
+            [btn(17, "purge_my_msg", f"purge_msg_start_{index}_{page}"), btn(18, "send_message", f"gen_conf_send_message_input_{index}_{page}")],
+            [btn(19, "join_group", f"gen_conf_join_chat_input_{index}_{page}"), btn(20, "leave_group", f"gen_conf_leave_chat_input_{index}_{page}")],
+            [btn(21, "track_profile", f"gen_conf_track_profile_{index}_{page}"), btn(22, "chat_stats", f"gen_conf_chat_stats_scan_{index}_{page}")],
+            [btn(23, "creategroup_menu", f"creategroup_menu_{index}_{page}"), btn(24, "recent_messages", f"recent_msgs_menu_{index}_{page}")],
+            [
+                InlineKeyboardButton("«", f"session_info_{index}_{page}_1", style=user_style),
+                InlineKeyboardButton("2/5", f"session_info_{index}_{page}_2", style=user_style),
+                InlineKeyboardButton("»", f"session_info_{index}_{page}_3", style=user_style)
+            ]
         ]
     elif button_page == 3:
         buttons = [
-            [btn(26, "pm_logger_control", f"pml_menu_{index}_{page}"), btn(27, "mention_control", f"view_mnt_menu_{index}_{page}")],
-            [btn(28, "join_logger_control", f"joinl_menu_{index}_{page}"), btn(29, "cmd_logger_control", f"cmdl_menu_{index}_{page}")],
-            [btn(30, "privacy_security", f"privacy_menu_{index}_{page}"), btn(31, "startup_settings_title", f"startup_menu_{index}_{page}")],
-            [btn(32, "cmd_settings", f"cmd_settings_menu_{index}_{page}"), btn(33, "sudo_settings", f"sudo_menu_{index}_{page}")],
-            [btn(34, "prefix_settings", f"prefix_menu_{index}_{page}"), btn(35, "2fa_info", f"gen_conf_2fa_info_{index}_{page}")],
-            [btn(36, "prefix_info", f"prefix_info_{index}_{page}"), btn(37, "feature_status", f"feature_status_{index}_{page}")],
-            [InlineKeyboardButton(Altruix.get_string("prev"), f"session_info_{index}_{page}_2", style=user_style), InlineKeyboardButton(Altruix.get_string("next"), f"session_info_{index}_{page}_4", style=user_style)]
+            [btn(25, "view_mentions", f"view_mnt_menu_{index}_{page}"), btn(26, "pm_logger_control", f"pml_menu_{index}_{page}")],
+            [btn(27, "mention_control", f"mnt_menu_{index}_{page}"), btn(28, "join_logger_control", f"joinl_menu_{index}_{page}")],
+            [btn(29, "cmd_logger_control", f"cmdl_menu_{index}_{page}"), btn(30, "privacy_security", f"privacy_menu_{index}_{page}")],
+            [btn(31, "startup_settings_title", f"startup_menu_{index}_{page}"), btn(32, "cmd_settings", f"cmd_settings_menu_{index}_{page}")],
+            [btn(33, "sudo_settings", f"sudo_menu_{index}_{page}"), btn(34, "prefix_settings", f"prefix_menu_{index}_{page}")],
+            [btn(35, "prefix_info", f"prefix_info_{index}_{page}"), btn(36, "feature_status", f"feature_status_{index}_{page}")],
+            [
+                InlineKeyboardButton("«", f"session_info_{index}_{page}_2", style=user_style),
+                InlineKeyboardButton("3/5", f"session_info_{index}_{page}_3", style=user_style),
+                InlineKeyboardButton("»", f"session_info_{index}_{page}_4", style=user_style)
+            ]
         ]
     elif button_page == 4:
         buttons = [
-            [btn(38, "export_session", f"gen_conf_export_session_{index}_{page}"), btn(39, "export_phone", f"gen_conf_export_phone_{index}_{page}")],
-            [btn(40, "eval_python", f"gen_conf_eval_exec_{index}_{page}"), btn(41, "exec_terminal", f"gen_conf_exec_term_{index}_{page}")],
-            [btn(42, "env_manager", f"env_manager_list_1"), btn(43, "change_login_email", f"change_login_email_{index}_{page}")],
-            [btn(44, "custom_bot", f"custom_bot_menu_{index}_{page}_1")],
+            [btn(37, "export_session", f"gen_conf_export_session_{index}_{page}"), btn(38, "export_phone", f"gen_conf_export_phone_{index}_{page}")],
+            [btn(39, "eval_python", f"gen_conf_eval_exec_{index}_{page}"), btn(40, "exec_terminal", f"gen_conf_exec_term_{index}_{page}")],
+            [btn(41, "env_manager", f"env_manager_list_1"), btn(42, "change_login_email", f"change_login_email_{index}_{page}")],
+            [btn(43, "custom_bot", f"custom_bot_menu_{index}_{page}_1"), InlineKeyboardButton(f"Auto GP", f"auto_gp_menu_{index}_{page}", style=user_style)],
             [
-                InlineKeyboardButton(f"[45] {Altruix.get_string('btn_gcast_user')}", callback_data=f"gcast_user_{index}_{page}", style=user_style),
-                InlineKeyboardButton(f"[46] {Altruix.get_string('global_purgeme')}", callback_data=f"global_purgeme_{index}_{page}", style=user_style)
+                InlineKeyboardButton(f"{Altruix.get_string('btn_gcast_user')}", callback_data=f"gcast_user_{index}_{page}", style=user_style),
+                InlineKeyboardButton(f"{Altruix.get_string('global_purgeme')}", callback_data=f"global_purgeme_{index}_{page}", style=user_style)
             ],
-            [InlineKeyboardButton(Altruix.get_string("prev"), f"session_info_{index}_{page}_3", style=user_style), InlineKeyboardButton(Altruix.get_string("next"), f"session_info_{index}_{page}_5", style=user_style)]
+            [
+                InlineKeyboardButton(f"{Altruix.get_string('sys_ctrl_restart')}", f"sys_ctrl_restart", style=user_style),
+                InlineKeyboardButton(f"{Altruix.get_string('sys_ctrl_shutdown')}", f"sys_ctrl_shutdown", style=user_style)
+            ],
+            [
+                InlineKeyboardButton("«", f"session_info_{index}_{page}_3", style=user_style),
+                InlineKeyboardButton("4/5", f"session_info_{index}_{page}_4", style=user_style),
+                InlineKeyboardButton("»", f"session_info_{index}_{page}_5", style=user_style)
+            ]
         ]
     elif button_page == 5:
         buttons = [
-            [InlineKeyboardButton(f"[47] {Altruix.get_string('bulk_join_menu')}", f"bulk_join_menu_{index}", style=user_style), InlineKeyboardButton(f"[48] {Altruix.get_string('bulk_leave_menu')}", f"bulk_leave_menu_{index}", style=user_style)],
-            [InlineKeyboardButton(f"[49] {Altruix.get_string('bulk_report_menu')}", f"bulk_report_menu_{index}", style=user_style), InlineKeyboardButton(f"[50] {Altruix.get_string('sys_ctrl_restart')}", f"sys_ctrl_restart", style=user_style)],
-            [InlineKeyboardButton(f"[51] {Altruix.get_string('sys_ctrl_shutdown')}", f"sys_ctrl_shutdown", style=user_style), InlineKeyboardButton(f"[52] Auto GP", f"auto_gp_menu_{index}_{page}", style=user_style)],
-            [InlineKeyboardButton(f"[53] Custom Help", callback_data=f"help_settings_menu_{index}_{page}", style=user_style), InlineKeyboardButton(f"[54] Custom Alert", callback_data=f"custom_alert_menu_{index}_{page}", style=user_style)],
-            [InlineKeyboardButton(f"[55] {Altruix.get_string('load_ultroid_addons')}", callback_data=f"toggle_addons_confirm_{index}_{page}", style=user_style), InlineKeyboardButton(f"[56] 🎨 Button Style", callback_data=f"btn_style_menu_{index}_{page}", style=user_style)],
-            [InlineKeyboardButton(f"[57] 🎤 Rap Manager", callback_data=f"rapmgr_dashboard_{index}_{page}", style=user_style)],
-            [InlineKeyboardButton(f"{Altruix.get_string('prev')} (4/5)", f"session_info_{index}_{page}_4", style=user_style)]
+            [InlineKeyboardButton(f"Custom Help", callback_data=f"help_settings_menu_{index}_{page}", style=user_style), InlineKeyboardButton(f"Custom Alert", callback_data=f"custom_alert_menu_{index}_{page}", style=user_style)],
+            [InlineKeyboardButton(f"{Altruix.get_string('load_ultroid_addons')}", callback_data=f"toggle_addons_confirm_{index}_{page}", style=user_style), InlineKeyboardButton(f"Button Style", callback_data=f"btn_style_menu_{index}_{page}", style=user_style)],
+            [InlineKeyboardButton(f"Rap Manager", callback_data=f"rapmgr_dashboard_{index}_{page}", style=user_style)],
+            [
+                InlineKeyboardButton("«", f"session_info_{index}_{page}_4", style=user_style),
+                InlineKeyboardButton("5/5", f"session_info_{index}_{page}_5", style=user_style)
+            ]
         ]
     
-    buttons.append([InlineKeyboardButton(Altruix.get_string("back"), callback_data=f"sessions_list_{page}", style=user_style)])
+    buttons.append([InlineKeyboardButton("Back Home", callback_data=f"sessions_list_{page}", style=user_style)])
     return text, InlineKeyboardMarkup(buttons)
 
 @Altruix.bot.on_callback_query(filters.regex(r"session_info_(\d+)_(\d+)(?:_(\d+))?$"))
@@ -481,7 +478,7 @@ async def sessions_info_cb_handler(c: Client, cb: CallbackQuery, index: int = No
     
     try:
         await cb.edit_message_text(
-            text=f"╭━━━━━━━━━━━━━━━━━━━━━╮\n   <b>𝐒𝐄𝐒𝐒𝐈𝐎𝐍 𝐌𝐀𝐍𝐀𝐆𝐄𝐑</b>\n╰━━━━━━━━━━━━━━━━━━━━━╯\n\n<blockquote expandable>{text}</blockquote>",
+            text=f"<b> 𝐒𝐄𝐒𝐒𝐈𝐎𝐍 𝐌𝐀𝐍𝐀𝐆𝐄𝐑</b>\n\n<blockquote expandable>{text}</blockquote>",
             reply_markup=reply_markup,
             parse_mode=ParseMode.HTML,
             link_preview_options=LinkPreviewOptions(is_disabled=True)
@@ -538,7 +535,7 @@ async def session_info_inline_handler(c: Client, iq: InlineQuery):
             title=f"Session Info #{index}",
             description=f"Manage dashboard for {chat_title if chat_title != 'N/A' else 'this session'}",
             input_message_content=InputTextMessageContent(
-                message_text=f"╭━━━━━━━━━━━━━━━━━━━━━╮\n   <b>𝐒𝐄𝐒𝐒𝐈𝐎𝐍 𝐌𝐀𝐍𝐀𝐆𝐄𝐑</b>\n╰━━━━━━━━━━━━━━━━━━━━━╯\n\n<blockquote expandable>{text}</blockquote>",
+                message_text=f"<b> 𝐒𝐄𝐒𝐒𝐈𝐎𝐍 𝐌𝐀𝐍𝐀𝐆𝐄𝐑</b>\n\n<blockquote expandable>{text}</blockquote>",
                 parse_mode=ParseMode.HTML,
                 link_preview_options=LinkPreviewOptions(is_disabled=True)
             ),
@@ -651,6 +648,12 @@ async def sessions_info_msg_handler(c: Client, m: Message):
                 photo_path = await m.download()
                 session_client = Altruix.clients[index]
                 await session_client.set_profile_photo(photo=photo_path)
+                
+                # ✅ Refresh session info cache
+                try:
+                    session_client.myself = await session_client.get_me()
+                except Exception: pass
+
                 await m.reply(
                             "✅ <b>Profile photo updated!</b>", 
                             reply_markup=InlineKeyboardMarkup(

@@ -49,7 +49,8 @@ if %errorlevel% neq 0 (
     )
 )
 
-echo %WHITE%[%TIME%]%NC% %CYAN%🐍 Python Command: %PYTHON_CMD%%NC%
+set "CUR_TIME=%TIME: =0%" & set "CUR_TIME=!CUR_TIME!0"
+echo %WHITE%[!CUR_TIME!]%NC% %CYAN%🐍 Python Command: %PYTHON_CMD%%NC%
 echo.
 
 REM =============================================================================
@@ -68,24 +69,28 @@ if not exist "venv\" (
     echo %GREEN%✅ Virtual environment found: venv%NC%
 )
 
+set "CUR_TIME=%TIME: =0%" & set "CUR_TIME=!CUR_TIME!0"
 set "VENV_PYTHON=venv\Scripts\python.exe"
-echo %WHITE%[%TIME%]%NC% %CYAN%🐍 Using Python: %VENV_PYTHON%%NC%
+echo %WHITE%[!CUR_TIME!]%NC% %CYAN%🐍 Using Python: %VENV_PYTHON%%NC%
 echo.
 
 REM =============================================================================
 REM Install Dependencies
 REM =============================================================================
-echo %WHITE%[%TIME%]%NC% %YELLOW%📦 Installing/Updating dependencies...%NC%
+set "CUR_TIME=%TIME: =0%" & set "CUR_TIME=!CUR_TIME!0"
+echo %WHITE%[!CUR_TIME!]%NC% %YELLOW%📦 Installing/Updating dependencies...%NC%
 %VENV_PYTHON% -m pip install --upgrade pip --quiet
 %VENV_PYTHON% -m pip install -r requirements.txt --quiet
-echo %WHITE%[%TIME%]%NC% %GREEN%✅ Dependencies installed!%NC%
+set "CUR_TIME=%TIME: =0%" & set "CUR_TIME=!CUR_TIME!0"
+echo %WHITE%[!CUR_TIME!]%NC% %GREEN%✅ Dependencies installed!%NC%
 echo.
 
 REM =============================================================================
 REM Load Environment Variables from .env
 REM =============================================================================
 if exist ".env" (
-    echo %WHITE%[%TIME%]%NC% %YELLOW%⏳ Loading environment variables from .env...%NC%
+    set "CUR_TIME=%TIME: =0%" & set "CUR_TIME=!CUR_TIME!0"
+    echo %WHITE%[!CUR_TIME!]%NC% %YELLOW%⏳ Loading environment variables from .env...%NC%
     for /f "usebackq tokens=1,* delims==" %%a in (".env") do (
         set "line=%%a"
         if not "!line:~0,1!"=="#" (
@@ -94,25 +99,29 @@ if exist ".env" (
             )
         )
     )
-    echo %WHITE%[%TIME%]%NC% %GREEN%✅ Environment variables loaded!%NC%
+    set "CUR_TIME=%TIME: =0%" & set "CUR_TIME=!CUR_TIME!0"
+    echo %WHITE%[!CUR_TIME!]%NC% %GREEN%✅ Environment variables loaded!%NC%
 ) else (
-    echo %WHITE%[%TIME%]%NC% %YELLOW%⚠️  Warning: .env file not found!%NC%
+    set "CUR_TIME=%TIME: =0%" & set "CUR_TIME=!CUR_TIME!0"
+    echo %WHITE%[!CUR_TIME!]%NC% %YELLOW%⚠️  Warning: .env file not found!%NC%
     echo %YELLOW%   Copy .env.sample to .env and configure it.%NC%
 )
 echo.
 
 REM =============================================================================
-REM Clean Up Existing Processes
+REM Clean Up Existing Processes (DISABLED - Allows Multi-Instance)
 REM =============================================================================
-echo %WHITE%[%TIME%]%NC% %YELLOW%🧹 Cleaning up existing Python processes...%NC%
-taskkill /F /IM python.exe /T >nul 2>&1
-if %errorlevel% equ 0 (
-    echo %WHITE%[%TIME%]%NC% %GREEN%✅ Cleanup complete!%NC%
-    echo %WHITE%[%TIME%]%NC% %YELLOW%⏳ Waiting 3 seconds for release...%NC%
-    timeout /t 3 /nobreak >nul
-) else (
-    echo %WHITE%[%TIME%]%NC% %CYAN%ℹ️  No existing processes found.%NC%
-)
+set "CUR_TIME=%TIME: =0%" & set "CUR_TIME=!CUR_TIME!0"
+echo %WHITE%[!CUR_TIME!]%NC% %CYAN%ℹ️  Multi-instance support enabled (Cleanup disabled).%NC%
+REM echo %WHITE%[%TIME%]%NC% %YELLOW%🧹 Cleaning up existing Python processes...%NC%
+REM taskkill /F /IM python.exe /T >nul 2>&1
+REM if %errorlevel% equ 0 (
+REM     echo %WHITE%[%TIME%]%NC% %GREEN%✅ Cleanup complete!%NC%
+REM     echo %WHITE%[%TIME%]%NC% %YELLOW%⏳ Waiting 3 seconds for release...%NC%
+REM     timeout /t 3 /nobreak >nul
+REM ) else (
+REM     echo %WHITE%[%TIME%]%NC% %CYAN%ℹ️  No existing processes found.%NC%
+REM )
 echo.
 
 REM =============================================================================
@@ -122,10 +131,13 @@ echo %GREEN%╔═════════════════════�
 echo %GREEN%║        🚀 STARTING ALTROID-X BOT          ║%NC%
 echo %GREEN%╚═══════════════════════════════════════════╝%NC%
 echo.
-echo %WHITE%[%TIME%]%NC% %CYAN%Platform: Windows (Native)%NC%
-echo %WHITE%[%TIME%]%NC% %CYAN%Python: %VENV_PYTHON%%NC%
+set "CUR_TIME=%TIME: =0%" & set "CUR_TIME=!CUR_TIME!0"
+echo %WHITE%[!CUR_TIME!]%NC% %CYAN%Platform: Windows (Native)%NC%
+set "CUR_TIME=%TIME: =0%" & set "CUR_TIME=!CUR_TIME!0"
+echo %WHITE%[!CUR_TIME!]%NC% %CYAN%Python: %VENV_PYTHON%%NC%
 echo.
-echo %WHITE%[%TIME%]%NC% %YELLOW%⏳ Launching Altroid-X engine...%NC%
+set "CUR_TIME=%TIME: =0%" & set "CUR_TIME=!CUR_TIME!0"
+echo %WHITE%[!CUR_TIME!]%NC% %YELLOW%⏳ Launching Altroid-X engine...%NC%
 echo.
 
 REM Run the bot

@@ -266,61 +266,61 @@ def get_auto_gp_kb(user_id, settings, current_chat_id=None):
     trigger_mode = settings.get("trigger_mode", "outgoing").title()
     user_style = get_user_button_style(user_id)
     
-    # 🎯 Row 1: Target & Cycle Sub-menus
+    # Row 1: Target & Cycle Sub-menus
     kb.append([
-        InlineKeyboardButton(f"🎯 Target: {target}", f"autogp_menu_target_{user_id}", style=user_style),
-        InlineKeyboardButton(f"🔄 Cycle: {cycle}", f"autogp_menu_cycle_{user_id}", style=user_style)
+        InlineKeyboardButton(f"Target: {target}", f"autogp_menu_target_{user_id}", style=user_style),
+        InlineKeyboardButton(f"Cycle: {cycle}", f"autogp_menu_cycle_{user_id}", style=user_style)
     ])
 
-    # 🎛 Row 2: Trigger Sub-menu & Force Start
-    force_btn_text = "🚀 Force Start"
+    # Row 2: Trigger Sub-menu & Force Start
+    force_btn_text = "Force Start"
     force_btn_callback = f"autogp_forceconfirm_prompt_{user_id}"
     if not current_chat_id and settings.get("cycle", "global") != "global":
-        force_btn_text = "⚠️ Switch & Start"
+        force_btn_text = "Switch & Start"
         force_btn_callback = f"autogp_forceconfirm_switchglobal_{user_id}"
     
     kb.append([
-        InlineKeyboardButton(f"🎛 Trigger: {trigger_mode}", f"autogp_menu_trigger_{user_id}", style=user_style),
+        InlineKeyboardButton(f"Trigger: {trigger_mode}", f"autogp_menu_trigger_{user_id}", style=user_style),
         InlineKeyboardButton(force_btn_text, force_btn_callback, style=user_style)
     ])
 
-    # 🛑 Task Control Row: Stop Active Purge (Dynamic)
+    # Task Control Row: Stop Active Purge (Dynamic)
     active_task = ACTIVE_PURGE_TASKS.get(user_id)
     if active_task and not active_task.done():
         kb.append([
-            InlineKeyboardButton("🛑 Stop Active Purge Cycle", f"autogp_stopcycle_{user_id}", style=user_style)
+            InlineKeyboardButton("Stop Active Purge Cycle", f"autogp_stopcycle_{user_id}", style=user_style)
         ])
     
-    # 🔢 Row 3: Limit & Mode Sub-menus
+    # Row 3: Limit & Mode Sub-menus
     kb.append([
-        InlineKeyboardButton(f"📊 Limit: {settings['limit']}", f"autogp_menu_limit_{user_id}", style=user_style),
-        InlineKeyboardButton(f"⚙️ Mode: {mode}", f"autogp_menu_mode_{user_id}", style=user_style)
+        InlineKeyboardButton(f"Limit: {settings['limit']}", f"autogp_menu_limit_{user_id}", style=user_style),
+        InlineKeyboardButton(f"Mode: {mode}", f"autogp_menu_mode_{user_id}", style=user_style)
     ])
     
-    # ⏱ Row 4: Delay Settings Sub-menus
+    # Row 4: Delay Settings Sub-menus
     kb.append([
-        InlineKeyboardButton(f"⏱ Delay/Chat: {settings['delay']}s", f"autogp_menu_delaychat_{user_id}", style=user_style),
-        InlineKeyboardButton(f"⏳ Delay/Msg: {settings.get('delay_msg', 1.0)}s", f"autogp_menu_delaymsg_{user_id}", style=user_style)
+        InlineKeyboardButton(f"Delay/Chat: {settings['delay']}s", f"autogp_menu_delaychat_{user_id}", style=user_style),
+        InlineKeyboardButton(f"Delay/Msg: {settings.get('delay_msg', 1.0)}s", f"autogp_menu_delaymsg_{user_id}", style=user_style)
     ])
 
-    # 📦 Row: Batch Configuration (NEW)
-    batch_text = f"📦 Batch: {settings.get('batch_size', 20)}chats / {settings.get('batch_msg_size', 40)}msgs"
+    # Row: Batch Configuration (NEW)
+    batch_text = f"Batch: {settings.get('batch_size', 20)}chats / {settings.get('batch_msg_size', 40)}msgs"
     kb.append([
         InlineKeyboardButton(batch_text, f"autogp_menu_batch_{user_id}", style=user_style)
     ])
 
-    # 📏 Row 5: Offset & Keep Recent Sub-menus
+    # Row 5: Offset & Keep Recent Sub-menus
     kb.append([
-        InlineKeyboardButton(f"📏 Offset: {settings.get('offset', 0)}", f"autogp_menu_offset_{user_id}", style=user_style),
-        InlineKeyboardButton(f"🛡 Keep Recent: {settings.get('keep_recent', 6)}msgs", f"autogp_menu_keeprecent_{user_id}", style=user_style)
+        InlineKeyboardButton(f"Offset: {settings.get('offset', 0)}", f"autogp_menu_offset_{user_id}", style=user_style),
+        InlineKeyboardButton(f"Keep Recent: {settings.get('keep_recent', 6)}msgs", f"autogp_menu_keeprecent_{user_id}", style=user_style)
     ])
 
-    # 🔔 Row: Notification Toggle
+    # Row: Notification Toggle
     kb.append([
-        InlineKeyboardButton(("Notif: ✅ ON" if settings.get("notify", True) else "Notif: ❌ OFF"), f"autogp_notif_{user_id}", style=user_style)
+        InlineKeyboardButton(("Notif: ON" if settings.get("notify", True) else "Notif: OFF"), f"autogp_notif_{user_id}", style=user_style)
     ])
 
-    # 🧹 Row: Message Filter & Administrative Access Filter
+    # Row: Message Filter & Administrative Access Filter
     f_list = settings.get("filters", ["all"])
     active_count = len(f_list)
     filter_preview = "All Types" if "all" in f_list else f"{active_count} selected"
@@ -328,41 +328,41 @@ def get_auto_gp_kb(user_id, settings, current_chat_id=None):
     admin_filter_active = loc(f"GP_BTN_ADMIN_FILTER_{settings.get('admin_filter', 'all').upper()}")
     
     kb.append([
-        InlineKeyboardButton(f"🧹 Msg Filter: {filter_preview}", f"autogp_filtermenu_{user_id}", style=user_style),
-        InlineKeyboardButton(f"👑 Adm Filter: {admin_filter_active}", f"autogp_toggleadmin_{user_id}", style=user_style)
+        InlineKeyboardButton(f"Msg Filter: {filter_preview}", f"autogp_filtermenu_{user_id}", style=user_style),
+        InlineKeyboardButton(f"Adm Filter: {admin_filter_active}", f"autogp_toggleadmin_{user_id}", style=user_style)
     ])
 
-    # 🧠 Row: Respect Blacklist + Skip Commands
-    respect_bl_btn = "🚫 Respect BL: ON" if settings.get("respect_bl", True) else "🚫 Respect BL: OFF"
-    skip_cmds_btn = "⌨️ Skip CMD: ON" if settings.get("skip_cmds", True) else "⌨️ Skip CMD: OFF"
+    # Row: Respect Blacklist + Skip Commands
+    respect_bl_btn = "Respect BL: ON" if settings.get("respect_bl", True) else "Respect BL: OFF"
+    skip_cmds_btn = "Skip CMD: ON" if settings.get("skip_cmds", True) else "Skip CMD: OFF"
     kb.append([
         InlineKeyboardButton(respect_bl_btn, f"autogp_respectbl_{user_id}", style=user_style),
         InlineKeyboardButton(skip_cmds_btn, f"autogp_skipcmds_{user_id}", style=user_style)
     ])
     
-    # 🚫 Row: Interactive Blacklist for current chat
+    # Blacklist for current chat
     if current_chat_id:
         is_bl = current_chat_id in settings.get("blacklist", [])
-        btn_text = "✅ Active (Whitelist)" if is_bl else "🚫 Blacklist This Chat"
+        btn_text = "Active (Whitelist)" if is_bl else "Blacklist This Chat"
         kb.append([InlineKeyboardButton(btn_text, f"autogp_bl_togglecid_{user_id}", style=user_style)])
 
-    # 📋 Row: List Blacklist + List Chats (combined)
+    # Row: List Blacklist + List Chats (combined)
     kb.append([
-        InlineKeyboardButton(f"🚫 List Blacklist: ({len(settings.get('blacklist', []))})", f"autogp_bl_list_{user_id}", style=user_style),
+        InlineKeyboardButton(f"List Blacklist: ({len(settings.get('blacklist', []))})", f"autogp_bl_list_{user_id}", style=user_style),
         InlineKeyboardButton(loc("GP_BTN_LIST_CHATS"), f"autogp_list_target_{user_id}", style=user_style)
     ])
     
-    # 🔄 Row: Refresh + Info
+    # Row: Refresh + Info
     kb.append([
-        InlineKeyboardButton("🔄 Refresh", f"autogp_refresh_{user_id}", style=user_style),
+        InlineKeyboardButton("Refresh", f"autogp_refresh_{user_id}", style=user_style),
         InlineKeyboardButton(loc("GP_BTN_INFO"), f"autogp_info_{user_id}", style=user_style)
     ])
     
-    # 🟢/🔴 Row: Enable/Disable + Close Menu
-    status_btn = "🔴 Disable Auto-GP" if settings.get("status", True) else "🟢 Enable Auto-GP"
+    # Row: Enable/Disable + Close Menu
+    status_btn = "Disable Auto-GP" if settings.get("status", True) else "Enable Auto-GP"
     kb.append([
         InlineKeyboardButton(status_btn, f"autogp_toggle_{user_id}", style=user_style),
-        InlineKeyboardButton("❌ Close Menu", f"autogp_close_{user_id}", style=user_style)
+        InlineKeyboardButton("Close Menu", f"autogp_close_{user_id}", style=user_style)
     ])
     
     return InlineKeyboardMarkup(kb)
@@ -370,19 +370,19 @@ def get_auto_gp_kb(user_id, settings, current_chat_id=None):
 def get_autogp_submenu_text(settings, menu_type):
     """Generates the descriptive text for a specific submenu."""
     titles = {
-        "target": "🎯 Target Chat Settings",
-        "cycle": "🔄 Cycle Mode Settings",
-        "trigger": "🎛 Trigger Mode Settings",
-        "limit": "📊 Deletion Limit Settings",
-        "delaychat": "⏱ Inter-Chat Delay Settings",
-        "delaymsg": "⏳ Inter-Msg Delay Settings",
-        "mode": "⚙️ Deletion Search Mode Settings",
-        "offset": "📏 Skip Offset Settings",
-        "keeprecent": "🛡 Keep Recent Settings",
-        "batch": "📦 Dual Batching & Anti-Flood Settings"
+        "target": "Target Chat Settings",
+        "cycle": "Cycle Mode Settings",
+        "trigger": "Trigger Mode Settings",
+        "limit": "Deletion Limit Settings",
+        "delaychat": "Inter-Chat Delay Settings",
+        "delaymsg": "Inter-Msg Delay Settings",
+        "mode": "Deletion Search Mode Settings",
+        "offset": "Skip Offset Settings",
+        "keeprecent": "Keep Recent Settings",
+        "batch": "Dual Batching & Anti-Flood Settings"
     }
     
-    title = titles.get(menu_type, "⚙️ Submenu Settings")
+    title = titles.get(menu_type, "Submenu Settings")
     return (
         f"<blockquote expandable><b>{title}</b>\n\n"
         f"<i>Adjust the configuration below.\n"
@@ -397,23 +397,23 @@ def get_autogp_submenu_kb(user_id, settings, menu_type, current_chat_id=None):
     if menu_type == "target":
         target = settings.get("target", "all")
         kb.append([
-            InlineKeyboardButton(("✅ " if target == "all" else "") + loc("GP_BTN_TARGET_ALL"), f"autogp_target_all_{user_id}", style=user_style),
-            InlineKeyboardButton(("✅ " if target == "groups" else "") + loc("GP_BTN_TARGET_GROUPS"), f"autogp_target_groups_{user_id}", style=user_style),
-            InlineKeyboardButton(("✅ " if target == "personal" else "") + loc("GP_BTN_TARGET_PERSONAL"), f"autogp_target_personal_{user_id}", style=user_style)
+            InlineKeyboardButton(loc("GP_BTN_TARGET_ALL"), f"autogp_target_all_{user_id}", style=user_style),
+            InlineKeyboardButton(loc("GP_BTN_TARGET_GROUPS"), f"autogp_target_groups_{user_id}", style=user_style),
+            InlineKeyboardButton(loc("GP_BTN_TARGET_PERSONAL"), f"autogp_target_personal_{user_id}", style=user_style)
         ])
     elif menu_type == "cycle":
         cycle = settings.get("cycle", "global")
         cycle_row = [
-            InlineKeyboardButton(("✅ " if cycle == "global" else "") + "Global", f"autogp_cycle_global_{user_id}", style=user_style),
-            InlineKeyboardButton(("✅ " if cycle == "current_smart" else "") + "C-Smart", f"autogp_cycle_current_smart_{user_id}", style=user_style),
-            InlineKeyboardButton(("✅ " if cycle == "current_force" else "") + "C-Force", f"autogp_cycle_current_force_{user_id}", style=user_style)
+            InlineKeyboardButton("Global", f"autogp_cycle_global_{user_id}", style=user_style),
+            InlineKeyboardButton("C-Smart", f"autogp_cycle_current_smart_{user_id}", style=user_style),
+            InlineKeyboardButton("C-Force", f"autogp_cycle_current_force_{user_id}", style=user_style)
         ]
         kb.append(cycle_row)
     elif menu_type == "trigger":
         trigger_mode = settings.get("trigger_mode", "outgoing")
         kb.append([
-            InlineKeyboardButton(("✅ " if trigger_mode == "outgoing" else "") + "📤 Outgoing", f"autogp_trigmode_outgoing_{user_id}", style=user_style),
-            InlineKeyboardButton(("✅ " if trigger_mode == "manual" else "") + "🖐 Manual", f"autogp_trigmode_manual_{user_id}", style=user_style)
+            InlineKeyboardButton("Outgoing", f"autogp_trigmode_outgoing_{user_id}", style=user_style),
+            InlineKeyboardButton("Manual", f"autogp_trigmode_manual_{user_id}", style=user_style)
         ])
     elif menu_type == "limit":
         kb.append([InlineKeyboardButton(f"Limit: {settings['limit']} msg", "autogp_noop", style=user_style)])
@@ -436,8 +436,8 @@ def get_autogp_submenu_kb(user_id, settings, menu_type, current_chat_id=None):
     elif menu_type == "mode":
         mode = settings.get("mode", "newest")
         kb.append([
-            InlineKeyboardButton(("✅ " if mode == "newest" else "") + loc("GP_BTN_MODE_NEWEST"), f"autogp_mode_newest_{user_id}", style=user_style),
-            InlineKeyboardButton(("✅ " if mode == "oldest" else "") + loc("GP_BTN_MODE_OLDEST"), f"autogp_mode_oldest_{user_id}", style=user_style)
+            InlineKeyboardButton(loc("GP_BTN_MODE_NEWEST"), f"autogp_mode_newest_{user_id}", style=user_style),
+            InlineKeyboardButton(loc("GP_BTN_MODE_OLDEST"), f"autogp_mode_oldest_{user_id}", style=user_style)
         ])
     elif menu_type == "offset":
         kb.append([InlineKeyboardButton(f"Offset: {settings.get('offset', 0)}", "autogp_noop", style=user_style)])
@@ -474,7 +474,7 @@ def get_autogp_submenu_kb(user_id, settings, menu_type, current_chat_id=None):
             InlineKeyboardButton("+1 min", f"autogp_bmsgdelay_p60_{user_id}", style=user_style)
         ])
         
-    kb.append([InlineKeyboardButton("⬅️ Back to Dashboard", f"autogp_refresh_{user_id}", style=user_style)])
+    kb.append([InlineKeyboardButton("Back to Dashboard", f"autogp_refresh_{user_id}", style=user_style)])
     return InlineKeyboardMarkup(kb)
 
 def get_autogp_info_text():
@@ -482,35 +482,35 @@ def get_autogp_info_text():
     Returns the detailed help/info text for Auto-GP.
     """
     return (
-        "<b>🤖 AUTO GLOBAL PURGEME - COMPREHENSIVE GUIDE</b>\n\n"
-        "<b>🔄 CYCLE MODES (Trigger Logic):</b>\n"
-        "• <b>Global 🌍:</b> Memproses SEMUA chat yang sesuai target. Aman & menyeluruh.\n"
-        "• <b>Current Smart 🔆:</b> Hanya proses chat saat ini & <b>Hormati</b> Blacklist/Admin Filter.\n"
-        "• <b>Current Force ⚠️:</b> Paksa hapus chat saat ini, <b>ABAIKAN</b> semua batasan (Use with Caution!).\n\n"
-        "<b>🎯 TARGETS & ACCESS:</b>\n"
+        "<b>AUTO GLOBAL PURGEME - COMPREHENSIVE GUIDE</b>\n\n"
+        "<b>CYCLE MODES (Trigger Logic):</b>\n"
+        "• <b>Global:</b> Memproses SEMUA chat yang sesuai target. Aman & menyeluruh.\n"
+        "• <b>Current Smart:</b> Hanya proses chat saat ini & <b>Hormati</b> Blacklist/Admin Filter.\n"
+        "• <b>Current Force:</b> Paksa hapus chat saat ini, <b>ABAIKAN</b> semua batasan (Use with Caution!).\n\n"
+        "<b>TARGETS & ACCESS:</b>\n"
         "• <b>Groups/Personal/All:</b> Jenis chat yang akan diproses pada mode Global.\n"
         "• <b>Admin Filter:</b> Pilih untuk hapus hanya di grup di mana Anda Admin, Non-Admin, atau keduanya.\n"
         "• <b>Blacklist Manager:</b> Daftar chat yang akan dilewati secara otomatis.\n\n"
-        "<b>📊 DELETION SETTINGS:</b>\n"
+        "<b>DELETION SETTINGS:</b>\n"
         "• <b>Limit:</b> Jumlah maksimal pesan yang dihapus per chat dalam satu siklus.\n"
         "• <b>Mode Search:</b> <i>Newest</i> (hapus dari terbaru) or <i>Oldest</i> (hapus dari terlama).\n"
         "• <b>Skip Offset:</b> Melewati <code>N</code> pesan teratas dalam pencarian (misal sisakan 5 pesan teratas).\n\n"
-        "<b>⏱ DELAY CONTROL:</b>\n"
+        "<b>DELAY CONTROL:</b>\n"
         f"• <b>Delay/Chat:</b> Jeda waktu antar pemrosesan chat pada mode Global.\n"
         f"• <b>Delay/Msg:</b> Jeda waktu antar penghapusan pesan (mencegah FloodWait).\n\n"
-        f"<b>📦 BATCHING (Anti-Flood):</b>\n"
+        f"<b>BATCHING (Anti-Flood):</b>\n"
         f"• <b>Batch Chats:</b> Jeda extra setelah memproses <code>N</code> chat.\n"
         f"• <b>Batch Msg:</b> Jeda extra setelah menghapus <code>N</code> total pesan.\n"
         f"• <i>Fitur ini sangat disarankan untuk menjaga akun Anda tetap aman dari limit/floodwait Telegram.</i>\n\n"
-        f"<b>🧠 ADVANCED LOGIC:</b>\n"
+        f"<b>ADVANCED LOGIC:</b>\n"
         "• <b>Respect Blacklist:</b> Jika ON, pesan di chat blacklist tidak akan memicu siklus Auto-GP.\n"
         "• <b>Cmd Bypass:</b> Lewati pesan Command (.ping, dll) & BALASANnya agar tidak terhapus.\n"
         "• <b>Keep Recent:</b> Safety buffer untuk menjaga <code>N</code> pesan terbaru tetap aman.\n\n"
-        "<b>🎛 TRIGGER MODE:</b>\n"
-        "• <b>Outgoing 📤:</b> Auto-GP otomatis jalan setiap kali Anda mengirim pesan baru (Default).\n"
-        "• <b>Manual 🖐:</b> Auto-GP TIDAK jalan otomatis. Hanya bisa dijalankan lewat tombol [🚀 Force Start] di dashboard.\n"
-        "• <b>Force Start 🚀:</b> Tombol untuk menjalankan siklus penghapusan SEKARANG JUGA (dengan konfirmasi [Yes]/[No]).\n\n"
-        "<b>🔔 OTHER:</b>\n"
+        "<b>TRIGGER MODE:</b>\n"
+        "• <b>Outgoing:</b> Auto-GP otomatis jalan setiap kali Anda mengirim pesan baru (Default).\n"
+        "• <b>Manual:</b> Auto-GP TIDAK jalan otomatis. Hanya bisa dijalankan lewat tombol [Force Start] di dashboard.\n"
+        "• <b>Force Start:</b> Tombol untuk menjalankan siklus penghapusan SEKARANG JUGA (dengan konfirmasi [Yes]/[No]).\n\n"
+        "<b>OTHER:</b>\n"
         "• <b>Logs/Notif:</b> Kirim notifikasi hasil pembersihan ke log chat.\n"
         "• <b>Master Switch:</b> Aktifkan/Matikan seluruh sistem Auto-GP secara instan."
     )
@@ -535,11 +535,11 @@ def get_autogp_filter_submenu_text(settings):
     # Build live preview
     preview_lines = []
     for f_type, f_name, f_icon in ALL_FILTER_TYPES:
-        status = "✅" if f_type in f_list else "☑️"
-        preview_lines.append(f"{status} {f_icon} {f_name}")
+        status = "Active" if f_type in f_list else "Inactive"
+        preview_lines.append(f"{status} | {f_name}")
     
     text = (
-        "<b>🧹 MESSAGE TYPE FILTERS</b>\n\n"
+        "<b>MESSAGE TYPE FILTERS</b>\n\n"
         "<b>Live Preview:</b>\n"
         + "\n".join(preview_lines) + "\n\n"
         "<i>Tap buttons below to toggle each filter type.\n"
@@ -558,8 +558,8 @@ def get_autogp_filter_submenu_kb(user_id, settings):
     
     def get_f_btn(f_type, label_key, def_label):
         label = loc(label_key) or def_label
-        active = "✅" if f_type in f_list else "☑️"
-        return InlineKeyboardButton(f"{active} {label}", f"autogp_filter_{f_type}_{user_id}", style=user_style)
+        active = "ON" if f_type in f_list else "OFF"
+        return InlineKeyboardButton(f"{active} | {label}", f"autogp_filter_{f_type}_{user_id}", style=user_style)
     
     # Row 1: All
     kb.append([get_f_btn("all", "GP_BTN_ALL", "All Types")])
@@ -572,7 +572,7 @@ def get_autogp_filter_submenu_kb(user_id, settings):
     # Row 6: Misc
     kb.append([get_f_btn("game", "GP_BTN_GAME", "Game"), get_f_btn("poll", "GP_BTN_POLL", "Poll"), get_f_btn("dice", "GP_BTN_DICE", "Dice")])
     # Back button
-    kb.append([InlineKeyboardButton("⬅️ Back to Dashboard", f"autogp_back_{user_id}", style=user_style)])
+    kb.append([InlineKeyboardButton("Back to Dashboard", f"autogp_back_{user_id}", style=user_style)])
     
     return InlineKeyboardMarkup(kb)
 
@@ -582,7 +582,7 @@ def get_autogp_cmd_help_text(plugin_version="unknown"):
     xauto_gpurgeme_userbot.py with their descriptions.
     """
     return (
-        f"<b>📋 AUTO GLOBAL PURGEME - COMMANDS</b>\n"
+        f"<b>AUTO GLOBAL PURGEME - COMMANDS</b>\n"
         f"<code>Plugin v{plugin_version}</code>\n\n"
         "<b>Available Commands:</b>\n\n"
         "• <code>.autogp</code>\n"
@@ -708,7 +708,7 @@ async def get_autogp_bl_text(client, settings, page=0):
     text += f"Total: {len(bl)} restricted chats\n\n"
     
     if not chunk:
-        text += "<i>Blacklist is empty.</i>"
+        text += "Blacklist is empty."
         return text
 
     # Determine the best client for resolving chats
@@ -827,7 +827,7 @@ async def auto_gp_callback_handler(c: Client, cb: CallbackQuery):
     # Access Security Check
     from Main.utils.access_control import is_authorized_user
     if not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
-        await cb.answer("⛔ Access Denied: Authorized accounts only.", show_alert=True)
+        await cb.answer("Access Denied: Authorized accounts only.", show_alert=True)
         return
 
     settings = await get_auto_gp_settings(user_id)
@@ -850,7 +850,7 @@ async def auto_gp_callback_handler(c: Client, cb: CallbackQuery):
     # ⚙️ LOGIC: Master Killswitch (with alert)
     elif action == "toggle":
         settings["status"] = not settings["status"]
-        status_str = " ✅ ENABLED" if settings["status"] else "🔴 DISABLED "
+        status_str = "ENABLED" if settings["status"] else "DISABLED"
         await cb.answer(
             f"AUTO GLOBAL PURGEME: {status_str}\n\n"
             f"{'Automated purging is ACTIVE. Messages will be purged on every outgoing message.' if settings['status'] else 'Automated purging is STOPPED. No messages will be purged.'}",
@@ -991,10 +991,10 @@ async def auto_gp_callback_handler(c: Client, cb: CallbackQuery):
             try:
                 prompt_msg = await bot.send_message(
                     log_chat_id,
-                    "<b>➕ Add Chat to Auto-GP Blacklist</b>\n\n"
+                    "<b>Add Chat to Auto-GP Blacklist</b>\n\n"
                     "Reply to this message with:\n"
-                    "• <b>Chat ID</b> (e.g., <code>-1001234567890</code>)\n"
-                    "• <b>@username</b> (e.g., <code>@groupname</code>)\n\n"
+                    "• Chat ID (e.g., <code>-1001234567890</code>)\n"
+                    "• @username (e.g., <code>@groupname</code>)\n\n"
                     "<i>Or use command: <code>.autogpbl &lt;chat_id&gt;</code></i>",
                     reply_markup=InlineKeyboardMarkup([
                         [InlineKeyboardButton("Cancel", f"autogp_bl_canceladd_{user_id}", style=get_user_button_style(user_id))]
@@ -1014,7 +1014,7 @@ async def auto_gp_callback_handler(c: Client, cb: CallbackQuery):
                 
                 # Show alert with clear instruction
                 await cb.answer(
-                    "📝 Check your LOG chat!\n\n"
+                    "Check your LOG chat!\n\n"
                     "Reply to the message there with:\n"
                     "• Chat ID (e.g., -1001234567890)\n"
                     "• @username (e.g., @groupname)",
@@ -1023,7 +1023,7 @@ async def auto_gp_callback_handler(c: Client, cb: CallbackQuery):
             except Exception as e:
                 logger.error(f"Failed to send addchat prompt: {e}")
                 await cb.answer(
-                    "❌ Failed to send prompt to LOG chat.\n\n"
+                    "Failed to send prompt to LOG chat.\n\n"
                     "Use command instead:\n"
                     ".autogpbl <chat_id>",
                     show_alert=True
@@ -1061,7 +1061,7 @@ async def auto_gp_callback_handler(c: Client, cb: CallbackQuery):
             target_id = int(sub_action.split("_")[1])
             if target_id in settings["blacklist"]:
                 settings["blacklist"].remove(target_id)
-                await cb.answer(f"🗑 ID {target_id} has been removed.")
+                await cb.answer(f"ID {target_id} has been removed.")
             await save_auto_gp_settings(user_id, settings)
             kb = get_autogp_bl_kb(user_id, settings, 0)
             text = await get_autogp_bl_text(c, settings, 0)
@@ -1101,10 +1101,10 @@ async def auto_gp_callback_handler(c: Client, cb: CallbackQuery):
         nav_buttons = []
         user_style = get_user_button_style(user_id)
         if page > 0:
-            nav_buttons.append(InlineKeyboardButton(f"⬅️ Prev", f"autogp_list_target_{page-1}_{user_id}", style=user_style))
-        nav_buttons.append(InlineKeyboardButton(loc("GP_BTN_BACK") or "🔙 Back", f"autogp_back_{user_id}", style=user_style))
+            nav_buttons.append(InlineKeyboardButton(f"Prev", f"autogp_list_target_{page-1}_{user_id}", style=user_style))
+        nav_buttons.append(InlineKeyboardButton(loc("GP_BTN_BACK") or "Back", f"autogp_back_{user_id}", style=user_style))
         if end_idx < len(chats):
-            nav_buttons.append(InlineKeyboardButton(f"Next ➡️", f"autogp_list_target_{page+1}_{user_id}", style=user_style))
+            nav_buttons.append(InlineKeyboardButton(f"Next", f"autogp_list_target_{page+1}_{user_id}", style=user_style))
             
         kb = InlineKeyboardMarkup([nav_buttons])
         try:
@@ -1118,10 +1118,10 @@ async def auto_gp_callback_handler(c: Client, cb: CallbackQuery):
         if task and not task.done():
             task.cancel()
             ACTIVE_PURGE_TASKS.pop(user_id, None)
-            await cb.answer("🛑 Purge cycle cancelled successfully.", show_alert=True)
-            Altruix.log(f"🛑 Auto-GP | Purge cycle STOPPED via Dashboard by {cb.from_user.id}", level=20)
+            await cb.answer("Purge cycle cancelled successfully.", show_alert=True)
+            Altruix.log(f"Auto-GP | Purge cycle STOPPED via Dashboard by {cb.from_user.id}", level=20)
         else:
-            await cb.answer("ℹ️ No active purge cycle found.", show_alert=False)
+            await cb.answer("No active purge cycle found.", show_alert=False)
         
         # Re-render dashboard
         settings = await get_auto_gp_settings(user_id)
@@ -1203,9 +1203,9 @@ async def auto_gp_callback_handler(c: Client, cb: CallbackQuery):
             cycle_str = cycle_map.get(current_cycle, "Global")
 
             confirm_text = (
-                f"<b>🚀 FORCE START — Konfirmasi</b>\n"
+                f"<b>FORCE START — Konfirmasi</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"⚠️ <b>Apakah Anda yakin ingin menjalankan siklus penghapusan SEKARANG?</b>\n\n"
+                f"<b>Apakah Anda yakin ingin menjalankan siklus penghapusan SEKARANG?</b>\n\n"
                 f"<blockquote expandable>"
                 f"<b>Cycle:</b> <code>{cycle_str}</code>\n"
                 f"<b>Target:</b> <code>{settings.get('target', 'all').capitalize()}</code>\n"
@@ -1215,13 +1215,13 @@ async def auto_gp_callback_handler(c: Client, cb: CallbackQuery):
                 f"<b>Delay/Msg:</b> <code>{settings.get('delay_msg', 1.0)}s</code>\n"
                 f"<b>Blacklisted:</b> <code>{len(settings['blacklist'])} chats</code>\n"
                 f"</blockquote>\n\n"
-                f"<i>Tekan [✅ Yes] untuk memulai atau [❌ No] untuk kembali ke dashboard.</i>"
+                f"<i>Tekan [Yes] untuk memulai atau [No] untuk kembali ke dashboard.</i>"
             )
             user_style = get_user_button_style(user_id)
             confirm_kb = InlineKeyboardMarkup([
                 [
-                    InlineKeyboardButton("✅ Yes, Start Now!", f"autogp_forceconfirm_yes_{user_id}", style=user_style),
-                    InlineKeyboardButton("❌ No, Go Back", f"autogp_back_{user_id}", style=user_style)
+                    InlineKeyboardButton("Yes, Start Now!", f"autogp_forceconfirm_yes_{user_id}", style=user_style),
+                    InlineKeyboardButton("No, Go Back", f"autogp_back_{user_id}", style=user_style)
                 ]
             ])
             try:
@@ -1234,12 +1234,12 @@ async def auto_gp_callback_handler(c: Client, cb: CallbackQuery):
             # Execute Force Start
             # Provide IMMEDIATE feedback by editing the message to show start progress
             try:
-                confirm_txt = "🚀 <b>Siklus Manual Dimulai!</b>\n━━━━━━━━━━━━━━━━━━━━\n<i>Memulai pemindaian target... Harap cek grup log untuk detail progres.</i>"
+                confirm_txt = "<b>Siklus Manual Dimulai!</b>\n━━━━━━━━━━━━━━━━━━━━\n<i>Memulai pemindaian target... Harap cek grup log untuk detail progres.</i>"
                 await cb.edit_message_text(confirm_txt, parse_mode=enums.ParseMode.HTML)
             except: pass
             
             # Answer only ONCE
-            await cb.answer("🚀 Auto-GP: Siklus manual telah dipicu!", show_alert=False)
+            await cb.answer("Auto-GP: Siklus manual telah dipicu!", show_alert=False)
             
             # Find the userbot client for this user_id
             target_client = next((cl for cl in Altruix.clients if cl.me and cl.me.id == user_id), None)
@@ -1297,10 +1297,10 @@ async def auto_gp_callback_handler(c: Client, cb: CallbackQuery):
                 log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID or 0))
                 
                 log_text = (
-                    f"<blockquote expandable>⚠️ <b>AUTO GLOBAL PURGEME - MANUAL START</b>\n\n"
+                    f"<blockquote expandable><b>AUTO GLOBAL PURGEME - MANUAL START</b>\n\n"
                     f"👤 <b>Account:</b> <a href='tg://user?id={target_client.me.id}'>{html.escape(target_client.me.first_name)}</a>\n"
                     f"🔄 <b>Cycle:</b> <code>{cycle_label}</code>\n"
-                    f"🚀 <b>Status:</b> Force Start Triggered via Dashboard confirmation.</blockquote>"
+                    f"<b>Status:</b> Force Start Triggered via Dashboard confirmation.</blockquote>"
                 )
                 
                 await bot_sender.send_message(
@@ -1421,7 +1421,7 @@ async def autogp_inline_handler(client: Client, query: InlineQuery):
         logger.error(f"Auto-GP Inline Handler Critical Error: {e}")
 
 @log_errors
-async def auto_gp_perform_purge(client: Client, chat_id: int, trigger_msg_id: int = None, message: Message = None, bypass_guards: bool = False, force: bool = False, suppress_log: bool = False):
+async def auto_gp_perform_purge(client: Client, chat_id: int, trigger_msg_id: int = None, message: Message = None, bypass_guards: bool = False, force: bool = False, suppress_log: bool = False, tid: str = None):
     """
     The background engine that performs the deletions.
     Triggered for every outgoing message when Auto-GP is ON.
@@ -1432,267 +1432,278 @@ async def auto_gp_perform_purge(client: Client, chat_id: int, trigger_msg_id: in
     chat_lock = await get_chat_lock(user_id, chat_id)
     
     if chat_lock.locked():
-        Altruix.log(f"🕵️ Auto-GP | Purge already in progress for chat {chat_id}. Skipping redundant call.", level=20)
+        Altruix.log(f"Auto-GP | Purge already in progress for chat {chat_id}. Skipping redundant call.", level=20)
         return 0
 
     async with chat_lock:
-        settings = await get_auto_gp_settings(user_id)
+        if tid:
+            from Main.plugins.userbot.xcanceltask import register_task
+            register_task(tid, asyncio.current_task(), "Auto-GP Purge", "xautogp", client.me.id, f"Chat: {chat_id}")
         
-        # 🛑 Master Switch Check (Bypassed if force=True)
-        if not force and not settings["status"]:
-            Altruix.log(f"💤 Auto-GP | Status is OFF for user {user_id}. Skipping.", level=20)
-            return 0
-        
-        # 🛑 Blacklist & Trigger Guard (Feature 1: Respect Blacklist)
-        if not bypass_guards:
-            respect_bl = settings.get("respect_bl", True)
-            if respect_bl and chat_id in settings["blacklist"]:
-                Altruix.log(f"🕵️ Auto-GP | Respecting Blacklist for chat {chat_id}. Trigger Skipped.", level=20)
-                return 0
-            elif chat_id in settings["blacklist"] and not respect_bl:
-                Altruix.log(f"⚠️ Auto-GP | Chat {chat_id} is blacklisted but 'Respect Blacklist' is OFF. Proceeding.", level=20)
-                # We don't return here if respect_bl is OFF, allowing it to proceed (useful for specific configs)
-                pass
-            elif chat_id in settings["blacklist"]: 
-                Altruix.log(f"🕵️ Auto-GP | Chat {chat_id} is blacklisted. Skipping.", level=20)
-                return 0
-
-        # ⌨️ Feature 2: Command Response Bypass (Skip CMDs)
-        if not bypass_guards and settings.get("skip_cmds", True):
-            # 1. Skip if the trigger message itself is a command
-            if message and message.text:
-                prefixes = [Altruix.config.PREFIX_OWNER_USER or ".", Altruix.config.PREFIX_SUDO_USERS or "!", "/"]
-                if any(message.text.startswith(p) for p in prefixes):
-                    Altruix.log(f"⌨️ Auto-GP | Trigger message is a command. Skipping cycle.", level=20)
-                    return 0
-            # 2. Skip if the trigger message is an edited message (often a command response update)
-            if message and message.edit_date:
-                 Altruix.log(f"⌨️ Auto-GP | Trigger message is an EDIT. Skipping cycle.", level=20)
-                 return 0
-            # 3. Skip if the trigger message is sent via a bot (Feature: via_bot bypass)
-            if message and message.via_bot:
-                 Altruix.log(f"⌨️ Auto-GP | Trigger message is sent VIA BOT (@{message.via_bot.username}). Skipping cycle.", level=20)
-                 return 0
-        
-        # 🎯 Get Chat context (avoid redundant API call if message is provided)
-        chat = None
-        if message and message.chat:
-            chat = message.chat
-        else:
-            try:
-                # Set a timeout for get_chat to prevent hanging
-                chat = await asyncio.wait_for(client.get_chat(chat_id), timeout=5.0)
-            except Exception as e:
-                Altruix.log(f"💥 Auto-GP | Failed to get chat {chat_id} (Timeout/Error): {e}", level=30)
-                return 0
-
-        if not chat:
-            return 0
-
-        # Use message.id as trigger if provided
-        current_trigger_id = trigger_msg_id or (message.id if message else None)
-
-        # 🔧 Configuration extraction (Moved up for logging)
-        limit = settings["limit"]
-        target_filters = settings["filters"]
-        mode = settings.get("mode", "newest")
-        offset = settings.get("offset", 0)
-        delay_msg = settings.get("delay_msg", 1.0)
-        delay_chat = settings.get("delay", 1.0)
-
-        # 🔗 Construct Chat Hyperlink
-        chat_title = chat.title or "Private"
-        chat_hyperlink = html.escape(chat_title)
-        if message and message.link:
-            chat_hyperlink = f"<a href='{message.link}'>{html.escape(chat_title)}</a>"
-        elif chat.username:
-            chat_hyperlink = f"<a href='https://t.me/{chat.username}'>{html.escape(chat_title)}</a>"
-        elif str(chat_id).startswith("-100"):
-            stripped_id = str(chat_id)[4:]
-            chat_hyperlink = f"<a href='https://t.me/c/{stripped_id}/999999999'>{html.escape(chat_title)}</a>"
-        else:
-            chat_hyperlink = f"<a href='tg://user?id={chat_id}'>{html.escape(chat_title)}</a>"
-
-        # 🎯 Target Type Check (Bypassed in Current Mode)
-        if not bypass_guards:
-            target = settings.get("target", "all")
-            # Normalize chat type to string for consistent comparison
-            c_type = str(chat.type).lower()
-            if c_type.startswith("chattype."): c_type = c_type.split("chattype.")[1]
+        deleted_count = 0 # Initialize here to ensure it's always defined
+        try:
+            settings = await get_auto_gp_settings(user_id)
             
-            if target == "groups" and c_type not in ["group", "supergroup"]:
-                Altruix.log(f"🕵️ Auto-GP | Chat {chat_id} type {c_type} mismatch (Target: groups). Skipping.", level=20, client=client)
+            # Master Switch Check (Bypassed if force=True)
+            if not force and not settings["status"]:
+                Altruix.log(f"Auto-GP | Status is OFF for user {user_id}. Skipping.", level=20)
                 return 0
-            if target == "personal" and c_type != "private":
-                Altruix.log(f"🕵️ Auto-GP | Chat {chat_id} type {c_type} mismatch (Target: personal). Skipping.", level=20, client=client)
-                return 0
+            
+            # Blacklist & Trigger Guard (Feature 1: Respect Blacklist)
+            if not bypass_guards:
+                respect_bl = settings.get("respect_bl", True)
+                if respect_bl and chat_id in settings["blacklist"]:
+                    Altruix.log(f"Auto-GP | Respecting Blacklist for chat {chat_id}. Trigger Skipped.", level=20)
+                    return 0
+                elif chat_id in settings["blacklist"] and not respect_bl:
+                    Altruix.log(f"Auto-GP | Chat {chat_id} is blacklisted but 'Respect Blacklist' is OFF. Proceeding.", level=20)
+                    # We don't return here if respect_bl is OFF, allowing it to proceed (useful for specific configs)
+                    pass
+                elif chat_id in settings["blacklist"]: 
+                    Altruix.log(f"Auto-GP | Chat {chat_id} is blacklisted. Skipping.", level=20)
+                    return 0
 
-        # 👑 GUARD: Admin Rights Filter (Bypassed in Current Mode)
-        if not bypass_guards:
-            if settings["admin_filter"] != "all":
+            # Feature 2: Command Response Bypass (Skip CMDs)
+            if not bypass_guards and settings.get("skip_cmds", True):
+                # 1. Skip if the trigger message itself is a command
+                if message and message.text:
+                    prefixes = [Altruix.config.PREFIX_OWNER_USER or ".", Altruix.config.PREFIX_SUDO_USERS or "!", "/"]
+                    if any(message.text.startswith(p) for p in prefixes):
+                        Altruix.log(f"Auto-GP | Trigger message is a command. Skipping cycle.", level=20)
+                        return 0
+                # 2. Skip if the trigger message is an edited message (often a command response update)
+                if message and message.edit_date:
+                    Altruix.log(f"Auto-GP | Trigger message is an EDIT. Skipping cycle.", level=20)
+                    return 0
+                # 3. Skip if the trigger message is sent via a bot (Feature: via_bot bypass)
+                if message and message.via_bot:
+                    Altruix.log(f"Auto-GP | Trigger message is sent VIA BOT (@{message.via_bot.username}). Skipping cycle.", level=20)
+                    return 0
+            
+            # 🎯 Get Chat context (avoid redundant API call if message is provided)
+            chat = None
+            if message and message.chat:
+                chat = message.chat
+            else:
                 try:
-                    if c_type in ["group", "supergroup"]:
-                        me = await chat.get_member("me")
-                        is_admin = me.status in [enums.ChatMemberStatus.ADMINISTRATOR, enums.ChatMemberStatus.OWNER]
-                        if settings["admin_filter"] == "admin" and not is_admin: return 0
-                        if settings["admin_filter"] == "non_admin" and is_admin: return 0
+                    # Set a timeout for get_chat to prevent hanging
+                    chat = await asyncio.wait_for(client.get_chat(chat_id), timeout=5.0)
                 except Exception as e:
-                    logger.debug(f"Admin Check Failed for {chat_id}: {e}")
-                    if settings["admin_filter"] == "admin": return 0
+                    Altruix.log(f"💥 Auto-GP | Failed to get chat {chat_id} (Timeout/Error): {e}", level=30)
+                    return 0
 
-        # 📢 STEP 0: Initial Progress Notification (Sent ONLY if all guards pass)
-        log_msg = None
-        if settings.get("notify", True):
-            try:
-                target_idx = -1
-                for i, c in enumerate(Altruix.clients):
-                    if c.me.id == user_id:
-                        target_idx = i; break
+            if not chat:
+                return 0
+
+            # Use message.id as trigger if provided
+            current_trigger_id = trigger_msg_id or (message.id if message else None)
+
+            # 🔧 Configuration extraction (Moved up for logging)
+            limit = settings["limit"]
+            target_filters = settings["filters"]
+            mode = settings.get("mode", "newest")
+            offset = settings.get("offset", 0)
+            delay_msg = settings.get("delay_msg", 1.0)
+            delay_chat = settings.get("delay", 1.0)
+
+            # 🔗 Construct Chat Hyperlink
+            chat_title = chat.title or "Private"
+            chat_hyperlink = html.escape(chat_title)
+            if message and message.link:
+                chat_hyperlink = f"<a href='{message.link}'>{html.escape(chat_title)}</a>"
+            elif chat.username:
+                chat_hyperlink = f"<a href='https://t.me/{chat.username}'>{html.escape(chat_title)}</a>"
+            elif str(chat_id).startswith("-100"):
+                stripped_id = str(chat_id)[4:]
+                chat_hyperlink = f"<a href='https://t.me/c/{stripped_id}/999999999'>{html.escape(chat_title)}</a>"
+            else:
+                chat_hyperlink = f"<a href='tg://user?id={chat_id}'>{html.escape(chat_title)}</a>"
+
+            # Target Type Check (Bypassed in Current Mode)
+            if not bypass_guards:
+                target = settings.get("target", "all")
+                # Normalize chat type to string for consistent comparison
+                c_type = str(chat.type).lower()
+                if c_type.startswith("chattype."): c_type = c_type.split("chattype.")[1]
                 
-                if target_idx != -1:
-                    Altruix.log(f"📡 Auto-GP | Sending 'Processing' log for chat {chat_id}...", level=20, client=client)
-                    log_msg = await send_log_notification(
-                        client, "auto_global_purgeme", target_idx, client.me, True, 
-                        additional_info={
-                            "Type": "🤖 Auto-GP Processing...",
+                if target == "groups" and c_type not in ["group", "supergroup"]:
+                    Altruix.log(f"Auto-GP | Chat {chat_id} type {c_type} mismatch (Target: groups). Skipping.", level=20, client=client)
+                    return 0
+                if target == "personal" and c_type != "private":
+                    Altruix.log(f"Auto-GP | Chat {chat_id} type {c_type} mismatch (Target: personal). Skipping.", level=20, client=client)
+                    return 0
+
+            # 👑 GUARD: Admin Rights Filter (Bypassed in Current Mode)
+            if not bypass_guards:
+                if settings["admin_filter"] != "all":
+                    try:
+                        if c_type in ["group", "supergroup"]:
+                            me = await chat.get_member("me")
+                            is_admin = me.status in [enums.ChatMemberStatus.ADMINISTRATOR, enums.ChatMemberStatus.OWNER]
+                            if settings["admin_filter"] == "admin" and not is_admin: return 0
+                            if settings["admin_filter"] == "non_admin" and is_admin: return 0
+                    except Exception as e:
+                        logger.debug(f"Admin Check Failed for {chat_id}: {e}")
+                        if settings["admin_filter"] == "admin": return 0
+
+            # STEP 0: Initial Progress Notification (Sent ONLY if all guards pass)
+            log_msg = None
+            if settings.get("notify", True):
+                try:
+                    target_idx = -1
+                    for i, c in enumerate(Altruix.clients):
+                        if c.me.id == user_id:
+                            target_idx = i; break
+                    
+                    if target_idx != -1:
+                        Altruix.log(f"Auto-GP | Sending 'Processing' log for chat {chat_id}...", level=20, client=client)
+                        log_msg = await send_log_notification(
+                            client, "auto_global_purgeme", target_idx, client.me, True, 
+                            additional_info={
+                                "Type": "Auto-GP Processing...",
+                                "Chat": chat_hyperlink,
+                                "ChatID": f"{chat_id}",
+                                "Status": "Scanning/Cleaning...",
+                                "Delay/Msg": f"{delay_msg}s",
+                                "Delay/Chat": f"{delay_chat}s"
+                            }
+                        )
+                except Exception as e:
+                    Altruix.log(f"⚠️ Auto-GP Initial Log Error: {e}", level=30, client=client)
+            
+            # 🔍 STEP 1: Search and Match messages
+            collected_ids = []
+            keep_recent = settings.get("keep_recent", 6)
+            skip_cmds = settings.get("skip_cmds", True)
+            prefixes = [Altruix.config.PREFIX_OWNER_USER or ".", Altruix.config.PREFIX_SUDO_USERS or "!"]
+            
+            Altruix.log(f"🔎 Auto-GP | Scanning chat {chat_id} (Limit: {limit}, Offset: {offset}, Keep: {keep_recent})...", level=20, client=client)
+            
+            # Fetch Logic: Scan deep enough to find filtered messages buried under noise.
+            max_scan = max(limit * 4 + offset + keep_recent, 100) 
+            match_count = 0 # Sequential count of 'me' messages for keep_recent logic
+            scanned_count = 0 # Total messages processed from search
+            
+            try:
+                log_depth = f"(Target: {limit}, Max Depth: {max_scan})"
+                Altruix.log(f"🔎 Auto-GP | Scanning {chat_id} {log_depth}...", level=20, client=client)
+                
+                async for msg in client.search_messages(chat_id, from_user="me"):
+                    scanned_count += 1
+                    if scanned_count > max_scan:
+                        Altruix.log(f"⏹ Auto-GP | Depth reached ({max_scan}). Stopping search for {chat_id}.", level=20, client=client)
+                        break
+                        
+                    if current_trigger_id and msg.id == current_trigger_id: continue 
+                        
+                    # ⏳ Feature 3: Keep Recent Messages Buffer
+                    match_count += 1
+                    if (not force) and match_count <= keep_recent:
+                        continue
+
+                    # ⌨️ Feature 2: Skip Commands in scan
+                    if skip_cmds:
+                        if msg.text and any(msg.text.startswith(p) for p in prefixes):
+                            continue
+                        if msg.via_bot:
+                            continue
+                    should_include = False
+                    if "all" in target_filters: should_include = True
+                    else:
+                        try:
+                        # Media Type Validation Logic
+                            if msg.text and "text" in target_filters: should_include = True
+                            elif msg.photo and ("photo" in target_filters or "image" in target_filters): should_include = True
+                            elif msg.video and "video" in target_filters: should_include = True
+                            elif (msg.voice or msg.audio) and "audio" in target_filters: should_include = True
+                            elif msg.sticker and "sticker" in target_filters: should_include = True
+                            elif msg.animation and ("animation" in target_filters or "gif" in target_filters): should_include = True
+                            elif msg.document and ("document" in target_filters or "file" in target_filters): should_include = True
+                            elif msg.video_note and ("video_note" in target_filters or "vnote" in target_filters): should_include = True
+                            elif msg.voice and "voice" in target_filters: should_include = True
+                            elif msg.contact and "contact" in target_filters: should_include = True
+                            elif msg.location and "location" in target_filters: should_include = True
+                            elif msg.venue and "venue" in target_filters: should_include = True
+                            elif msg.game and "game" in target_filters: should_include = True
+                            elif msg.poll and "poll" in target_filters: should_include = True
+                            elif msg.dice and "dice" in target_filters: should_include = True
+                        except: pass
+                    if should_include:
+                        collected_ids.append(msg.id)
+                        Altruix.log(f"✅ Auto-GP | Collected message {msg.id} ({len(collected_ids)}/{limit+offset})", level=20, client=client)
+            except FloodWait as e:
+                wait_time = getattr(e, "value", 10)
+                Altruix.log(f"Auto-GP | FloodWait during message scan in {chat_id}, tidur {wait_time}s...", level=30, client=client)
+                await asyncio.sleep(wait_time + 1)
+                return 0
+            except Exception as e:
+                Altruix.log(f"💥 Auto-GP | Error during message scan in chat {chat_id}: {e}", level=30, client=client)
+                return 0
+
+            Altruix.log(f"📊 Auto-GP | Scan complete. Collected: {len(collected_ids)} items.", level=20, client=client)
+            if not collected_ids:
+                Altruix.log(f"💤 Auto-GP | No messages collected after scanning {scanned_count} messages.", level=20, client=client)
+                return 0
+                
+            # 📏 STEP 2: Application of Search Mode & Offset
+            if mode == "oldest": collected_ids.reverse() 
+            if offset > 0: collected_ids = collected_ids[offset:] 
+            collected_ids = collected_ids[:limit] 
+            
+            if not collected_ids: return 0
+
+            # 🗑 STEP 3: Execution of Batched Deletions
+            deleted_count = 0
+            total_matched = len(collected_ids)
+            Altruix.log(f"🗑 Auto-GP | Deleting {total_matched} matched messages in chat {chat_id}...", level=20, client=client)
+            for i in range(0, total_matched, 100): 
+                batch = collected_ids[i:i+100]
+                try:
+                    deleted = await client.delete_messages(chat_id, batch, revoke=True)
+                    deleted_count += deleted
+                    if delay_msg > 0: await asyncio.sleep(delay_msg) 
+                except FloodWait as e: 
+                    await asyncio.sleep(e.value + 3)
+                except Exception as e: 
+                    Altruix.log(f"Purge Logic Batch Error (Chat {chat_id}): {e}", level=30, client=client)
+            
+            # 🔔 STEP 4: Reporting to Telegram Log Group
+            if settings.get("notify", True) and deleted_count > 0:
+                try:
+                # Resolve account index if not already present
+                    idx = -1
+                    for i, c in enumerate(Altruix.clients):
+                        if c.me.id == user_id:
+                            idx = i; break
+                    
+                    if idx != -1:
+                        final_info = {
+                            "Type": "Auto-GP Cycle Complete",
                             "Chat": chat_hyperlink,
                             "ChatID": f"{chat_id}",
-                            "Status": "🔍 Scanning/Cleaning...",
+                            "Deleted": f"{deleted_count} messages purged",
+                            "Limit": f"{limit} items configured",
+                            "Filters": f"{', '.join(target_filters)} active",
                             "Delay/Msg": f"{delay_msg}s",
                             "Delay/Chat": f"{delay_chat}s"
                         }
-                    )
-            except Exception as e:
-                Altruix.log(f"⚠️ Auto-GP Initial Log Error: {e}", level=30, client=client)
-        
-        # 🔍 STEP 1: Search and Match messages
-        collected_ids = []
-        keep_recent = settings.get("keep_recent", 6)
-        skip_cmds = settings.get("skip_cmds", True)
-        prefixes = [Altruix.config.PREFIX_OWNER_USER or ".", Altruix.config.PREFIX_SUDO_USERS or "!"]
-        
-        Altruix.log(f"🔎 Auto-GP | Scanning chat {chat_id} (Limit: {limit}, Offset: {offset}, Keep: {keep_recent})...", level=20, client=client)
-        
-        # Fetch Logic: Scan deep enough to find filtered messages buried under noise.
-        max_scan = max(limit * 4 + offset + keep_recent, 100) 
-        match_count = 0 # Sequential count of 'me' messages for keep_recent logic
-        scanned_count = 0 # Total messages processed from search
-        
-        try:
-            log_depth = f"(Target: {limit}, Max Depth: {max_scan})"
-            Altruix.log(f"🔎 Auto-GP | Scanning {chat_id} {log_depth}...", level=20, client=client)
+                        
+                        Altruix.log(f"Auto-GP | Cycle Complete for {chat_id}. Deleted: {deleted_count}", level=20, client=client)
+                        if not suppress_log:
+                            await send_log_notification(
+                                client, "auto_global_purgeme", idx, client.me, True, 
+                                additional_info=final_info,
+                                edit_message=log_msg
+                            )
+                except Exception as e:
+                    Altruix.log(f"Auto-GP Log Dispatch Error: {e}", level=30, client=client)
             
-            async for msg in client.search_messages(chat_id, from_user="me"):
-                scanned_count += 1
-                if scanned_count > max_scan:
-                    Altruix.log(f"⏹ Auto-GP | Depth reached ({max_scan}). Stopping search for {chat_id}.", level=20, client=client)
-                    break
-                    
-                if current_trigger_id and msg.id == current_trigger_id: continue 
-                    
-                # ⏳ Feature 3: Keep Recent Messages Buffer
-                match_count += 1
-                if (not force) and match_count <= keep_recent:
-                    continue
-
-                # ⌨️ Feature 2: Skip Commands in scan
-                if skip_cmds:
-                    if msg.text and any(msg.text.startswith(p) for p in prefixes):
-                        continue
-                    if msg.via_bot:
-                        continue
-                should_include = False
-                if "all" in target_filters: should_include = True
-                else:
-                    try:
-                    # Media Type Validation Logic
-                        if msg.text and "text" in target_filters: should_include = True
-                        elif msg.photo and ("photo" in target_filters or "image" in target_filters): should_include = True
-                        elif msg.video and "video" in target_filters: should_include = True
-                        elif (msg.voice or msg.audio) and "audio" in target_filters: should_include = True
-                        elif msg.sticker and "sticker" in target_filters: should_include = True
-                        elif msg.animation and ("animation" in target_filters or "gif" in target_filters): should_include = True
-                        elif msg.document and ("document" in target_filters or "file" in target_filters): should_include = True
-                        elif msg.video_note and ("video_note" in target_filters or "vnote" in target_filters): should_include = True
-                        elif msg.voice and "voice" in target_filters: should_include = True
-                        elif msg.contact and "contact" in target_filters: should_include = True
-                        elif msg.location and "location" in target_filters: should_include = True
-                        elif msg.venue and "venue" in target_filters: should_include = True
-                        elif msg.game and "game" in target_filters: should_include = True
-                        elif msg.poll and "poll" in target_filters: should_include = True
-                        elif msg.dice and "dice" in target_filters: should_include = True
-                    except: pass
-                if should_include:
-                    collected_ids.append(msg.id)
-                    Altruix.log(f"✅ Auto-GP | Collected message {msg.id} ({len(collected_ids)}/{limit+offset})", level=20, client=client)
-        except FloodWait as e:
-            wait_time = getattr(e, "value", 10)
-            Altruix.log(f"⚠️ Auto-GP | FloodWait during message scan in {chat_id}, tidur {wait_time}s...", level=30, client=client)
-            await asyncio.sleep(wait_time + 1)
-            return 0
-        except Exception as e:
-            Altruix.log(f"💥 Auto-GP | Error during message scan in chat {chat_id}: {e}", level=30, client=client)
-            return 0
-
-        Altruix.log(f"📊 Auto-GP | Scan complete. Collected: {len(collected_ids)} items.", level=20, client=client)
-        if not collected_ids:
-            Altruix.log(f"💤 Auto-GP | No messages collected after scanning {scanned_count} messages.", level=20, client=client)
-            return 0
-            
-        # 📏 STEP 2: Application of Search Mode & Offset
-        if mode == "oldest": collected_ids.reverse() 
-        if offset > 0: collected_ids = collected_ids[offset:] 
-        collected_ids = collected_ids[:limit] 
-        
-        if not collected_ids: return 0
-
-        # 🗑 STEP 3: Execution of Batched Deletions
-        deleted_count = 0
-        total_matched = len(collected_ids)
-        Altruix.log(f"🗑 Auto-GP | Deleting {total_matched} matched messages in chat {chat_id}...", level=20, client=client)
-        for i in range(0, total_matched, 100): 
-            batch = collected_ids[i:i+100]
-            try:
-                deleted = await client.delete_messages(chat_id, batch, revoke=True)
-                deleted_count += deleted
-                if delay_msg > 0: await asyncio.sleep(delay_msg) 
-            except FloodWait as e: 
-                await asyncio.sleep(e.value + 3)
-            except Exception as e: 
-                Altruix.log(f"Purge Logic Batch Error (Chat {chat_id}): {e}", level=30, client=client)
-        
-        # 🔔 STEP 4: Reporting to Telegram Log Group
-        if settings.get("notify", True) and deleted_count > 0:
-            try:
-            # Resolve account index if not already present
-                idx = -1
-                for i, c in enumerate(Altruix.clients):
-                    if c.me.id == user_id:
-                        idx = i; break
-                
-                if idx != -1:
-                    final_info = {
-                        "Type": "✅ Auto-GP Cycle Complete",
-                        "Chat": chat_hyperlink,
-                        "ChatID": f"{chat_id}",
-                        "Deleted": f"{deleted_count} messages purged",
-                        "Limit": f"{limit} items configured",
-                        "Filters": f"{', '.join(target_filters)} active",
-                        "Delay/Msg": f"{delay_msg}s",
-                        "Delay/Chat": f"{delay_chat}s"
-                    }
-                    
-                    Altruix.log(f"✅ Auto-GP | Cycle Complete for {chat_id}. Deleted: {deleted_count}", level=20, client=client)
-                    if not suppress_log:
-                        await send_log_notification(
-                            client, "auto_global_purgeme", idx, client.me, True, 
-                            additional_info=final_info,
-                            edit_message=log_msg
-                        )
-            except Exception as e:
-                Altruix.log(f"Auto-GP Log Dispatch Error: {e}", level=30, client=client)
-        
-        return deleted_count
+            return deleted_count
+        finally:
+            if tid:
+                from Main.plugins.userbot.xcanceltask import unregister_task
+                unregister_task(tid)
+            return deleted_count # Ensure a return value even if an exception occurred before the final return
 
 # 🌍 LOCK MANAGEMENT REGISTRY
 # Handled at top of file
@@ -1711,7 +1722,7 @@ async def get_chat_lock(user_id, chat_id):
         return CHAT_PURGE_LOCKS[key]
 
 @log_errors
-async def auto_gp_global_cycle(client: Client, force=False):
+async def auto_gp_global_cycle(client: Client, force=False, tid: str = None):
     """
     Background engine that scans ALL target chats for deletions.
     """
@@ -1728,18 +1739,22 @@ async def auto_gp_global_cycle(client: Client, force=False):
         return
 
     async with user_lock:
+        if tid:
+            from Main.plugins.userbot.xcanceltask import register_task
+            register_task(tid, asyncio.current_task(), "Auto-GP Global", "xautogp", client.me.id, "Global Cycle")
+        
         try:
-            # 🔄 STEP 1: Settings Retrieval
-            Altruix.log(f"🔄 Auto-GP Global Cycle [User: {user_id}] | Fetching settings...", level=20, client=client)
+            # STEP 1: Settings Retrieval
+            Altruix.log(f"Auto-GP Global Cycle [User: {user_id}] | Fetching settings...", level=20, client=client)
             settings = await get_auto_gp_settings(user_id)
             if not force and not settings["status"]: 
-                Altruix.log(f"💤 Auto-GP Global Cycle [User: {user_id}] | Status is OFF. Aborting.", level=20, client=client)
+                Altruix.log(f"Auto-GP Global Cycle [User: {user_id}] | Status is OFF. Aborting.", level=20, client=client)
                 return
 
-            Altruix.log(f"🚀 Auto-GP Global Cycle Started", level=20, client=client)
+            Altruix.log(f"Auto-GP Global Cycle Started", level=20, client=client)
             
             # 1. Get Targets
-            Altruix.log(f"🔎 Auto-GP Global Cycle [User: {user_id}] | Identifying target chats...", level=20, client=client)
+            Altruix.log(f"Auto-GP Global Cycle [User: {user_id}] | Identifying target chats...", level=20, client=client)
             chats, ignored = await get_auto_gp_target_chats(
                 client, settings["target"], settings["admin_filter"], settings["blacklist"]
             )
@@ -1798,9 +1813,9 @@ async def auto_gp_global_cycle(client: Client, force=False):
                     # Formatting Header
                     part_label = f" (Part {part})" if total_parts > 1 else ""
                     header = (
-                        f"📋 <b>Batch Log — Task #{task_id}{part_label}</b>\n"
+                        f"<b>Batch Log — Task #{task_id}{part_label}</b>\n"
                         f"━━━━━━━━━━━━━━━━━━\n"
-                        f"📊 <b>{processed_chats}</b>/{len(chats)} │ ✅ <b>{total_deleted}</b> msgs\n"
+                        f"📊 <b>{processed_chats}</b>/{len(chats)} │ <b>{total_deleted}</b> msgs\n"
                         f"━━━━━━━━━━━━━━━━━━\n"
                     )
                     
@@ -1811,9 +1826,9 @@ async def auto_gp_global_cycle(client: Client, force=False):
 
                     # Formatting Footer statuses based on part position
                     if is_last_part:
-                         status_line = "🏁 <b>Completed</b>" if is_final else "🔄 <i>Processing...</i>"
+                         status_line = "<b>Completed</b>" if is_final else "<i>Processing...</i>"
                     else:
-                         status_line = "⏭ <i>Continued below...</i>"
+                         status_line = "<i>Continued below...</i>"
                          
                     footer = f"━━━━━━━━━━━━━━━━━━\n{status_line}"
                     
@@ -1862,10 +1877,10 @@ async def auto_gp_global_cycle(client: Client, force=False):
                     except: pass
                     
                     # 🎭 Determine Chat Emoji 
-                    type_emoji = "👥"
-                    if "channel" in c_type_str: type_emoji = "📢"
+                    type_label = "Group"
+                    if "channel" in c_type_str: type_label = "Channel"
                     elif "private" in c_type_str or "bot" in c_type_str:
-                         type_emoji = "🤖" if is_bot else "👩🏻\u200d🦳"
+                         type_label = "Bot" if is_bot else "Private"
                     
                     # ✂️ Truncate Chat Name to 15 chars
                     safe_chat_name = chat_name
@@ -1912,18 +1927,18 @@ async def auto_gp_global_cycle(client: Client, force=False):
             # Final Update
             await _update_batch_log(is_final=True)
             
-            Altruix.log(f"✅ Auto-GP Global Cycle Finished | User: {user_id} | Deleted: {total_deleted}", level=20, client=client)
+            Altruix.log(f"Auto-GP Global Cycle Finished | User: {user_id} | Deleted: {total_deleted}", level=20, client=client)
             
             # --- SEND CYCLE COMPLETED NOTIFICATION ---
             if settings.get("notify", True) and log_chat_id:
                 try:
                     c_mode = "Global" if not force else "Global (Forced)"
                     end_log = (
-                        f"<blockquote expandable>✅ <b>AUTO GLOBAL PURGEME - CYCLE COMPLETED</b>\n\n"
+                        f"<blockquote expandable><b>AUTO GLOBAL PURGEME - CYCLE COMPLETED</b>\n\n"
                         f"👤 <b>Account:</b> <a href='tg://user?id={client.me.id}'>{html.escape(client.me.first_name)}</a>\n"
                         f"🔄 <b>Cycle:</b> <code>{c_mode}</code>\n"
-                        f"🎯 <b>Targets:</b> {processed_chats}/{len(chats)} chats processed\n"
-                        f"🗑 <b>Purged:</b> <code>{total_deleted}</code> total messages deleted.</blockquote>"
+                        f"<b>Targets:</b> {processed_chats}/{len(chats)} chats processed\n"
+                        f"<b>Purged:</b> <code>{total_deleted}</code> total messages deleted.</blockquote>"
                     )
                     await bot.send_message(
                         log_chat_id,
@@ -1949,7 +1964,7 @@ async def autogp_bl_add_input_handler(client: Client, message: Message):
     Expects a chat_id (numeric) or @username.
     
     Security:
-    - Only processes messages from the EXACT user who pressed '➕ Add Chat'
+    - Only processes messages from the EXACT user who pressed 'Add Chat'
     - Validates via from_user_id stored in AUTO_GP_DASH_STATE
     - All other messages in the same chat are silently ignored
     """
@@ -2018,7 +2033,7 @@ async def autogp_bl_add_input_handler(client: Client, message: Message):
     except Exception as e:
         await client.send_message(
             log_chat_id,
-            f"❌ <b>Could not resolve:</b> <code>{html.escape(user_input)}</code>\n"
+            f"<b>Could not resolve:</b> <code>{html.escape(user_input)}</code>\n"
             f"<i>Error: {html.escape(str(e))}</i>\n\n"
             "Please try again with a valid chat ID or @username.",
         )
@@ -2030,7 +2045,7 @@ async def autogp_bl_add_input_handler(client: Client, message: Message):
     if resolved_chat_id is None:
         await client.send_message(
             log_chat_id,
-            "❌ <b>Invalid input.</b> Send a numeric Chat ID or @username."
+            "<b>Invalid input.</b> Send a numeric Chat ID or @username."
         )
         try:
             await message.delete()
@@ -2044,7 +2059,7 @@ async def autogp_bl_add_input_handler(client: Client, message: Message):
         try:
             await client.edit_message_text(
                 log_chat_id, state["prompt_msg_id"],
-                f"<blockquote expandable>⚠️ {html.escape(resolved_name)} ({resolved_chat_id}) is already in the blacklist.</blockquote>"
+                f"<blockquote expandable>{html.escape(resolved_name)} ({resolved_chat_id}) is already in the blacklist.</blockquote>"
             )
         except Exception as e:
             logger.error(f"Failed to edit prompt with already-in-blacklist text: {e}")
@@ -2062,8 +2077,8 @@ async def autogp_bl_add_input_handler(client: Client, message: Message):
     try:
         await client.edit_message_text(
             log_chat_id, state["prompt_msg_id"],
-            f"<blockquote expandable>✅ {html.escape(resolved_name)} ({resolved_chat_id}) has been ADDED to Auto-GP Blacklist.\n"
-            f"📋 Total blacklisted: <code>{len(settings['blacklist'])}</code> chats\n\n"
+            f"<blockquote expandable>{html.escape(resolved_name)} ({resolved_chat_id}) has been ADDED to Auto-GP Blacklist.\n"
+            f"Total blacklisted: <code>{len(settings['blacklist'])}</code> chats\n\n"
             f"Use .autogpblist to view all blacklisted chats.</blockquote>"
         )
     except Exception as e:

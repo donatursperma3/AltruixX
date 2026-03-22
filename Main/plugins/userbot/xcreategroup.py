@@ -399,6 +399,12 @@ async def creategroup_loop(
         return
         
     task_id = f'creategroup_{effective_user_id}'
+    
+    # Task Registration for .tasklist
+    from Main.plugins.userbot.xcanceltask import register_task, unregister_task, generate_task_id
+    tid = generate_task_id("CG")
+    register_task(tid, asyncio.current_task(), "Create Group", "xcreategroup", effective_user_id, f"Count: {count}")
+    
     created_groups = []
     batch_groups = [] # Buffer for current batch
     photo_path = None  # Cache untuk foto profil
@@ -1166,6 +1172,8 @@ async def creategroup_loop(
             control_message.id
         )
     finally:
+        if 'tid' in locals():
+            unregister_task(tid)
         # Cleanup foto profil
         if photo_path and os.path.exists(photo_path):
             try:

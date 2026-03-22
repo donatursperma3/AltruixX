@@ -112,6 +112,29 @@ class Message:
             )
 
     @property
+    def html(self):
+        """Returns the message text or caption as HTML."""
+        if self.text:
+            if hasattr(self.text, "html"):
+                return self.text.html
+            if self.entities:
+                try:
+                    return self._client.parser.apply(self.text, self.entities, "html")
+                except Exception:
+                    return self.text
+            return self.text
+        if self.caption:
+            if hasattr(self.caption, "html"):
+                return self.caption.html
+            if self.caption_entities:
+                try:
+                    return self._client.parser.apply(self.caption, self.caption_entities, "html")
+                except Exception:
+                    return self.caption
+            return self.caption
+        return None
+
+    @property
     def command_(self):
         try:
             return self.text.split()[0][
@@ -229,12 +252,13 @@ class Message:
                 Altruix.log(f"Failed to send document: {e}", level=40)
                 # Fallback: kirim sebagai teks
                 return await self.reply(text, **args)
+        msg_ = self
         try:
             # ✅ Prune before first edit attempt
             args.pop("reply_to_message_id", None)
             args.pop("message_thread_id", None)
             args.pop("reply_parameters", None)
-            msg_ = await self.edit(text, **args)
+            msg_ = await self.edit(text, **args) or self
         except MessageTooLong:
             text = Essentials.md_to_text(text)
             service, paste_link = await Paste(text).paste()
@@ -254,14 +278,14 @@ class Message:
                     reply_to_message_id=reply_to_message_id, 
                     message_thread_id=message_thread_id,
                     **args
-                )
+                ) or self
 
             # ✅ Final attempt: edit with paste link
             try:
                 args.pop("reply_to_message_id", None)
                 args.pop("message_thread_id", None)
                 args.pop("reply_parameters", None)
-                msg_ = await self.edit(_p, disable_web_page_preview=True, **args)
+                msg_ = await self.edit(_p, disable_web_page_preview=True, **args) or self
             except Exception as e:
                 # If even this fails (e.g. message deleted), we give up
                 Altruix.log(f"Final edit failed: {e}", level=40)
@@ -271,7 +295,7 @@ class Message:
             Altruix.log(f"Failed to edit message: {e}", level=10)
             # Fallback: kirim sebagai reply jika gagal edit biasa (bukan karena panjang)
             try:
-                return await self.reply_msg(text, too_long_as_file=too_long_as_file, **args)
+                return await self.reply_msg(text, too_long_as_file=too_long_as_file, **args) or self
             except MessageTooLong:
                 # Jika reply pun terlalu panjang, paksa paste atau file
                 text = Essentials.md_to_text(text)
@@ -282,7 +306,7 @@ class Message:
                      force_file = too_long_as_file if isinstance(too_long_as_file, str) else "message.txt"
                      if ";" not in force_file:
                          force_file = f"{force_file};📄 <b>Paste failed, sending as file...</b>"
-                     return await self.reply_msg(text, force_file=force_file, **args)
+                     return await self.reply_msg(text, force_file=force_file, **args) or self
 
 
                 service_name = service.title() if service else "Paste"
@@ -292,15 +316,19 @@ class Message:
                     force_file = too_long_as_file if isinstance(too_long_as_file, str) else "message.txt"
                     if ";" not in force_file:
                         force_file = f"{force_file};{_p}"
-                    return await self.reply_msg(text, force_file=force_file, **args)
+                    return await self.reply_msg(text, force_file=force_file, **args) or self
 
-                return await self.reply(_p, disable_web_page_preview=True, **args)
+                return await self.reply(_p, disable_web_page_preview=True, **args) or self
             except Exception:
                 return self
+        
         if del_in and isinstance(del_in, int):
             await asyncio.sleep(del_in)
-            await msg_.delete()
-        return msg_
+            try:
+                await msg_.delete()
+            except:
+                pass
+        return msg_ or self
 
     async def _delete(self, *args, **kwargs):
         with contextlib.suppress(Exception):

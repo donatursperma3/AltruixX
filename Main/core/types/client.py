@@ -221,6 +221,8 @@ class CustomClientMethods:
                     "PeerIdInvalid", "ChannelInvalid", "PEER_ID_INVALID", "CHANNEL_INVALID",
                     "ChatAdminRequired", "ChatIdInvalid", "BroadcastForbidden",
                     "StickersetInvalid", "STICKERSET_INVALID", "StickersEmpty",
+                    "DataInvalid", "DATA_INVALID", # ✅ Corrupted data/stale callbacks
+                    "ChatSendPlainForbidden", "CHAT_SEND_PLAIN_FORBIDDEN", # ✅ Media-only chats
                     "ChannelPrivate", "CHANNEL_PRIVATE", # ✅ Prevent 5x retries on kicked channels
                     "ChatForwardsRestricted", "CHAT_FORWARDS_RESTRICTED" # ✅ Bypasses retries on protected content
                 ]
@@ -307,7 +309,12 @@ class CustomClientMethods:
                     packs=[], keywords=[], documents=[]
                 )
             except Exception:
-                pass # Fallback to None if MTProto signature evolved
+                # ULTIMATE FALLBACK: SimpleNamespace mimics the attribute structure if raw types fail
+                from types import SimpleNamespace
+                return SimpleNamespace(
+                    set=SimpleNamespace(short_name="deleted", id=0, title="Deleted Sticker"),
+                    packs=[], keywords=[], documents=[]
+                )
 
         return None
 

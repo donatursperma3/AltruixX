@@ -31,7 +31,7 @@ from Main.utils.file_helpers import get_user_button_style
 # Plugin Metadata
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xauto_pro_gcast"
-PLUGIN_VERSION = "1.0.518"
+PLUGIN_VERSION = "1.0.532"
 
 logger = logging.getLogger("altruix.xauto_pro_gcast")
 logger.setLevel(logging.INFO)
@@ -100,6 +100,7 @@ def get_settings(user_id: int) -> dict:
             {"content": "Aseekk, makasih infonya ya kak! 🤘", "parse_mode": "html"},
             {"content": "Izin up kak, moga makin rame ya! 🔥", "parse_mode": "html"}
         ],
+        "reply_media_list": [],      # media list for auto-reply
         # Menu settings
         "menu_mode": "hide",         # full / hide
         "queues": {},               # { "QueueName": [chat_id1, chat_id2, ...] }
@@ -108,6 +109,13 @@ def get_settings(user_id: int) -> dict:
         "recurring_interval_minutes": 10,
         "recurring_specific_hour": 0,
         "recurring_specific_minute": 0,
+        # Typing Action settings
+        "typing_action": False,      # enable/disable typing action
+        "typing_mode": "before",     # before / after / both
+        "typing_duration": 4,        # seconds
+        # Link settings
+        "link_list": [],             # list of dicts: {"from_chat": ..., "msg_id": ..., "as_copy": True/False}
+        "link_forward_as_copy": True, # default for new links
     }
     if uid not in all_s:
         all_s[uid] = defaults
@@ -157,6 +165,12 @@ GCAST_REPLY_MEDIA_INPUT_STATE = {}
 # State for blacklist add input
 GCAST_BL_INPUT_STATE = {}
 
+# State for import configuration (waiting for user file)
+GCAST_IMPORT_STATE = {}
+
+# State for link input
+GCAST_LINK_INPUT_STATE = {}
+
 # ==================== LOG CHAT ====================
 try:
     LOG_CHAT_ID = Altruix.config.LOG_CHAT_ID
@@ -166,6 +180,32 @@ except Exception:
     LOG_CHAT_ID = "me"
 
 # ==================== HELPER FUNCTIONS ====================
+
+async def send_media_with_typing(c: Client, cid, subtype, fid, cap, pm=None, settings: dict = None):
+    """Helper to send various media types with optional typing action."""
+    try:
+        if subtype == "photo": m = await c.send_photo(cid, fid, caption=cap, parse_mode=pm)
+        elif subtype == "video": m = await c.send_video(cid, fid, caption=cap, parse_mode=pm)
+        elif subtype == "audio": m = await c.send_audio(cid, fid, caption=cap, parse_mode=pm)
+        elif subtype == "voice": m = await c.send_voice(cid, fid, caption=cap, parse_mode=pm)
+        elif subtype == "document": m = await c.send_document(cid, fid, caption=cap, parse_mode=pm)
+        elif subtype == "sticker": m = await c.send_sticker(cid, fid)
+        elif subtype == "animation": m = await c.send_animation(cid, fid, caption=cap, parse_mode=pm)
+        elif subtype == "video_note": m = await c.send_video_note(cid, fid)
+        else: return None
+        
+        # Typing Action: After Send (if settings provided)
+        if settings and settings.get("typing_action", False) and settings.get("typing_mode", "before") in ["after", "both"]:
+            try:
+                # We need message object for perform_typing_action, but for preview we can skip or pass None
+                # If cid is a chat id, it works.
+                await c.send_chat_action(cid, enums.ChatAction.TYPING)
+                await asyncio.sleep(1) # Short sleep for preview/after-send effect
+            except: pass
+        return m
+    except Exception as e:
+        Altruix.log(f"send_media_with_typing failed: {e}", level=40)
+        return None
 
 async def send_log(text: str, client=None, reply_markup=None):
     """Send a log message to the LOG_CHAT_ID via bot assistant."""
@@ -191,13 +231,11 @@ def build_detailed_log_text(status: dict) -> str:
         sd_gcast_status, sd_reply_status, error_reason
     """
     if status.get("success", True):
-        status_emoji = "✅"
         status_text = "SUCCESS"
     else:
-        status_emoji = "❌"
         status_text = "FAILED"
     
-    header = f"{status_emoji} <b>GCast {status_text}</b>"
+    header = f"<b>GCast {status_text}</b>"
     if status.get("counter"):
         header += f" [{status['counter']}]"
     
@@ -244,7 +282,118 @@ def build_chat_link(chat_id: int, chat_title: str, sent_message_id: int = None) 
             return f"<a href='https://t.me/c/{clean_chat_id}/{sent_message_id}'>{html.escape(chat_title)}</a>"
         else:
             return f"<a href='https://t.me/c/{clean_chat_id}'>{html.escape(chat_title)}</a>"
+    elif chat_id > 0: # User
+        return f"<a href='tg://user?id={chat_id}'>{html.escape(chat_title or str(chat_id))}</a>"
     return html.escape(chat_title)
+
+
+# ==================== CONFIG EXPORT/IMPORT & SYNC ====================
+
+def export_gcast_config(user_id: int) -> str:
+    """Generate a JSON string of a user's Gcast configuration."""
+    s = get_settings(user_id)
+    # Filter out runtime/volatile data if any (though currently most are settings)
+    export_data = {
+        "chat_filter": s.get("chat_filter"),
+        "admin_filter": s.get("admin_filter"),
+        "delay_per_chat": s.get("delay_per_chat"),
+        "text_list": s.get("text_list"),
+        "media_list": s.get("media_list"),
+        "random_text": s.get("random_text"),
+        "blacklist": s.get("blacklist"),
+        "recurring": s.get("recurring"),
+        "smart_purge": s.get("smart_purge"),
+        "purge_limit": s.get("purge_limit"),
+        "purge_delay_msg": s.get("purge_delay_msg"),
+        "purge_mode": s.get("purge_mode"),
+        "purge_offset": s.get("purge_offset"),
+        "notify_logs": s.get("notify_logs"),
+        "auto_react": s.get("auto_react"),
+        "react_emoji": s.get("react_emoji"),
+        "react_delay": s.get("react_delay"),
+        "self_destruct": s.get("self_destruct"),
+        "self_destruct_delay": s.get("self_destruct_delay"),
+        "sd_target": s.get("sd_target"),
+        "sd_trigger": s.get("sd_trigger"),
+        "auto_reply": s.get("auto_reply"),
+        "reply_delay": s.get("reply_delay"),
+        "random_reply": s.get("random_reply"),
+        "reply_text_list": s.get("reply_text_list"),
+        "reply_media_list": s.get("reply_media_list"),
+        "queues": s.get("queues"),
+        "recurring_mode": s.get("recurring_mode"),
+        "recurring_interval_hours": s.get("recurring_interval_hours"),
+        "recurring_interval_minutes": s.get("recurring_interval_minutes"),
+        "recurring_specific_hour": s.get("recurring_specific_hour"),
+        "recurring_specific_minute": s.get("recurring_specific_minute"),
+        "typing_action": s.get("typing_action"),
+        "typing_mode": s.get("typing_mode"),
+        "typing_duration": s.get("typing_duration"),
+        "link_list": s.get("link_list", []),
+        "link_forward_as_copy": s.get("link_forward_as_copy", True),
+        "export_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "version": PLUGIN_VERSION
+    }
+    return json.dumps(export_data, indent=2, ensure_ascii=False)
+
+def import_gcast_config(user_id: int, data: dict) -> bool:
+    """Import settings from a dictionary and save."""
+    try:
+        current_s = get_settings(user_id)
+        # Update current settings with imported data (only valid keys)
+        valid_keys = [
+            "chat_filter", "admin_filter", "delay_per_chat", "text_list", 
+            "media_list", "random_text", "blacklist", "recurring", 
+            "smart_purge", "purge_limit", "purge_delay_msg", "purge_mode", 
+            "purge_offset", "notify_logs", "auto_react", "react_emoji", 
+            "react_delay", "self_destruct", "self_destruct_delay", "sd_target", 
+            "sd_trigger", "auto_reply", "reply_delay", "random_reply", 
+            "reply_text_list", "reply_media_list", "queues", "recurring_mode", 
+            "recurring_interval_hours", "recurring_interval_minutes", 
+            "recurring_specific_hour", "recurring_specific_minute",
+            "typing_action", "typing_mode", "typing_duration",
+            "link_list", "link_forward_as_copy"
+        ]
+        
+        for key in valid_keys:
+            if key in data:
+                current_s[key] = data[key]
+        
+        save_settings(user_id, current_s)
+        return True
+    except Exception as e:
+        Altruix.log(f"Import failed for {user_id}: {e}", level=40)
+        return False
+
+def sync_gcast_config(from_uid: int, to_uid: int) -> bool:
+    """Synchronize configuration from one user to another."""
+    try:
+        from_s = get_settings(from_uid)
+        to_s = get_settings(to_uid)
+        
+        # Keys to copy
+        keys_to_sync = [
+            "chat_filter", "admin_filter", "delay_per_chat", "text_list", 
+            "media_list", "random_text", "blacklist", "recurring", 
+            "smart_purge", "purge_limit", "purge_delay_msg", "purge_mode", 
+            "purge_offset", "notify_logs", "auto_react", "react_emoji", 
+            "react_delay", "self_destruct", "self_destruct_delay", "sd_target", 
+            "sd_trigger", "auto_reply", "reply_delay", "random_reply", 
+            "reply_text_list", "reply_media_list", "queues", "recurring_mode", 
+            "recurring_interval_hours", "recurring_interval_minutes", 
+            "recurring_specific_hour", "recurring_specific_minute",
+            "typing_action", "typing_mode", "typing_duration",
+            "link_list", "link_forward_as_copy"
+        ]
+        
+        for key in keys_to_sync:
+            to_s[key] = from_s.get(key, to_s.get(key))
+            
+        save_settings(to_uid, to_s)
+        return True
+    except Exception as e:
+        Altruix.log(f"Sync failed from {from_uid} to {to_uid}: {e}", level=40)
+        return False
 
 
 async def edit_log_msg(log_msg, text: str, client=None):
@@ -454,12 +603,12 @@ def _task_status_str(user_id: int) -> str:
     """Get short status string for a user's task."""
     task = GCAST_TASKS.get(user_id)
     if not task:
-        return "⬚ IDLE"
+        return "IDLE"
     if not task["running"]:
-        return "🔴 STOPPED"
+        return "<b>STOPPED</b>"
     if not task["pause_event"].is_set():
-        return "🟡 PAUSED"
-    return "🟢 RUNNING"
+        return "<b>PAUSED</b>"
+    return "<b>RUNNING</b>"
 
 def _task_progress_str(user_id: int) -> str:
     """Get progress string for a user's task."""
@@ -521,7 +670,7 @@ def build_dashboard_text(user_id: int) -> str:
             rec_val = f"ON (At {sh:02d}:{sm:02d} Daily)"
 
     text = (
-        f"<blockquote expandable>📡 <b>Auto Pro Global BroadCast</b>\n"
+        f"<blockquote expandable><b>Auto Pro Global BroadCast</b>\n"
         f"{'━' * 18}\n"
         f"• Account: <b>{account_mention}</b>\n"
         f"• Status: {status} | • Task: <code>{task_id}</code>\n"
@@ -538,14 +687,15 @@ def build_dashboard_text(user_id: int) -> str:
         f"• Reply Msgs: <b>{len(s.get('reply_text_list', []))}</b>\n"
         f"• Blacklist: <b>{len(s['blacklist'])} chats</b>\n"
         f"• Smart Purge: <b>{smart_purge_status}</b>\n"
+        f"• Typing Action: <b>{'ON' if s.get('typing_action', False) else 'OFF'}</b> (<b>{s.get('typing_mode', 'before').title()}</b>, <b>{s.get('typing_duration', 4)}s</b>)\n"
         f"• Self-Destruct: <b>{'ON' if s.get('self_destruct', False) else 'OFF'}</b> (<b>{s.get('self_destruct_delay', 30)}s</b>)\n"
     )
     if task and task["running"]:
         text += (
             f"{'━' * 18}\n"
-            f"📊 Progress: {progress}\n"
-            f"📍 Current: {html.escape(str(current)[:30])}\n"
-            f"❌ Errors: {errs}\n"
+            f"Progress: {progress}\n"
+            f"Current: {html.escape(str(current)[:30])}\n"
+            f"Errors: {errs}\n"
         )
     text += f"{'━' * 18}</blockquote>"
     return text
@@ -558,14 +708,14 @@ def build_task_control_kb(user_id: int, task_id: str) -> InlineKeyboardMarkup:
     is_paused = state and not state["pause_event"].is_set()
     
     pause_resume_btn = (
-        InlineKeyboardButton("▶️ Resume", callback_data=f"pgc_resume_{user_id}_{task_id}", style=btn_style)
+        InlineKeyboardButton("Resume", callback_data=f"pgc_resume_{user_id}_{task_id}", style=btn_style)
         if is_paused else
-        InlineKeyboardButton("⏸ Pause", callback_data=f"pgc_pause_{user_id}_{task_id}", style=btn_style)
+        InlineKeyboardButton("Pause", callback_data=f"pgc_pause_{user_id}_{task_id}", style=btn_style)
     )
     
     return InlineKeyboardMarkup([
-        [pause_resume_btn, InlineKeyboardButton("⏹ Stop", callback_data=f"pgc_stop_{user_id}_{task_id}", style=btn_style)],
-        [InlineKeyboardButton("ℹ️ Status", callback_data=f"pgc_status_{user_id}_{task_id}", style=btn_style)]
+        [pause_resume_btn, InlineKeyboardButton("Stop", callback_data=f"pgc_stop_{user_id}_{task_id}", style=btn_style)],
+        [InlineKeyboardButton("Status", callback_data=f"pgc_status_{user_id}_{task_id}", style=btn_style)]
     ])
 
 def build_dashboard_kb(user_id: int) -> InlineKeyboardMarkup:
@@ -585,88 +735,111 @@ def build_dashboard_kb(user_id: int) -> InlineKeyboardMarkup:
     if menu_mode == "full":
         # 1. Chat Filter / Admin Filter
         rows.append([
-            InlineKeyboardButton(f"📋 Chat: {_filter_label(s['chat_filter'])}", callback_data=f"pgc_chatfilter_{uid}", style=btn_style),
-            InlineKeyboardButton(f"👤 Admin: {_filter_label(s['admin_filter'])}", callback_data=f"pgc_adminfilter_{uid}", style=btn_style),
+            InlineKeyboardButton(f"Chat: {_filter_label(s['chat_filter'])}", callback_data=f"pgc_chatfilter_{uid}", style=btn_style),
+            InlineKeyboardButton(f"Admin: {_filter_label(s['admin_filter'])}", callback_data=f"pgc_adminfilter_{uid}", style=btn_style),
         ])
 
         # 2. Messages GCast / Random Toggle
         total_messages = len(s.get('text_list', [])) + len(s.get('media_list', []))
         rows.append([
-            InlineKeyboardButton(f"📝 Messages GCast ({total_messages})", callback_data=f"pgc_msgmenu_{uid}", style=btn_style),
-            InlineKeyboardButton(f"🔀 RandomGcst: {'ON' if s['random_text'] else 'OFF'}", callback_data=f"pgc_randomtoggle_{uid}", style=btn_style),
+            InlineKeyboardButton(f"Msg GCast ({total_messages})", callback_data=f"pgc_msgmenu_{uid}", style=btn_style),
+            InlineKeyboardButton(f"RandomGcst: {'ON' if s['random_text'] else 'OFF'}", callback_data=f"pgc_randomtoggle_{uid}", style=btn_style),
         ])
 
         # 3. Messages Reply / Random Toggle
         total_reply_msgs = len(s.get('reply_text_list', []))
         rows.append([
-            InlineKeyboardButton(f"📩 Messages Reply ({total_reply_msgs})", callback_data=f"pgc_repmsgmenu_{uid}", style=btn_style),
-            InlineKeyboardButton(f"🔄 RandomRep: {'ON' if s.get('random_reply', True) else 'OFF'}", callback_data=f"pgc_reprandomtoggle_{uid}", style=btn_style),
+            InlineKeyboardButton(f"Msg Reply ({total_reply_msgs})", callback_data=f"pgc_repmsgmenu_{uid}", style=btn_style),
+            InlineKeyboardButton(f"RandomRep: {'ON' if s.get('random_reply', True) else 'OFF'}", callback_data=f"pgc_reprandomtoggle_{uid}", style=btn_style),
         ])
 
         # 4. Blacklist / List Chats
         rows.append([
-            InlineKeyboardButton(f"🚫 Blacklist ({len(s['blacklist'])})", callback_data=f"pgc_blmenu_{uid}", style=btn_style),
-            InlineKeyboardButton(f"📋 List Chats", callback_data=f"pgc_listchats_{uid}", style=btn_style),
+            InlineKeyboardButton(f"Blacklist ({len(s['blacklist'])})", callback_data=f"pgc_blmenu_{uid}", style=btn_style),
+            InlineKeyboardButton(f"List Chats", callback_data=f"pgc_listchats_{uid}", style=btn_style),
         ])
 
-        # 4.5 Queue Manager
+        # 4.5 Queue Manager & Typing Action
+        typing_status = "ON" if s.get('typing_action', False) else "OFF"
         rows.append([
-            InlineKeyboardButton(f"📁 Queue Manager ({len(s.get('queues', {}))})", callback_data=f"pgc_queuemgr_{uid}", style=btn_style),
+            InlineKeyboardButton(f"Queue Manager ({len(s.get('queues', {}))})", callback_data=f"pgc_queuemgr_{uid}", style=btn_style),
+            InlineKeyboardButton(f"Typing Action: {typing_status}", callback_data=f"pgc_typingmenu_{uid}", style=btn_style),
         ])
 
         # 5. Recurring / Notif
         notif_status = "ON" if s.get('notify_logs', True) else "OFF"
+        
+        # Derived status for button
+        rec_active = s.get('recurring', False)
+        if rec_active:
+            mode = s.get('recurring_mode', 'interval')
+            if mode == 'interval':
+                h = s.get('recurring_interval_hours', 0)
+                m = s.get('recurring_interval_minutes', 10)
+                rec_btn_label = f"Recurring: Every {h}h {m}m"
+            else:
+                sh = s.get('recurring_specific_hour', 0)
+                sm = s.get('recurring_specific_minute', 0)
+                rec_btn_label = f"Recurring: At {sh:02d}:{sm:02d}"
+        else:
+            rec_btn_label = "Recurring: OFF"
+
         rows.append([
-            InlineKeyboardButton(f"🔁 Recurring Settings", callback_data=f"pgc_rec_menu_{uid}", style=btn_style),
-            InlineKeyboardButton(f"🔔 Notif: {notif_status}", callback_data=f"pgc_notiftoggle_{uid}", style=btn_style),
+            InlineKeyboardButton(rec_btn_label, callback_data=f"pgc_rec_menu_{uid}", style=btn_style),
+            InlineKeyboardButton(f"Notif: {notif_status}", callback_data=f"pgc_notiftoggle_{uid}", style=btn_style),
         ])
 
         # 6. Smart Purge / React
         smart_purge_status = "ON" if s.get('smart_purge', False) else "OFF"
         react_status = "ON" if s.get('auto_react', False) else "OFF"
         rows.append([
-            InlineKeyboardButton(f"🧹 Smart Purge: {smart_purge_status}", callback_data=f"pgc_smartpurge_{uid}", style=btn_style),
-            InlineKeyboardButton(f"⚡ React: {react_status}", callback_data=f"pgc_reactmenu_{uid}", style=btn_style),
+            InlineKeyboardButton(f"Smart Purge: {smart_purge_status}", callback_data=f"pgc_smartpurge_{uid}", style=btn_style),
+            InlineKeyboardButton(f"React: {react_status}", callback_data=f"pgc_reactmenu_{uid}", style=btn_style),
         ])
 
         # 7. Self-Destruct / Delay Chat
         sd_status = "ON" if s.get('self_destruct', False) else "OFF"
         rows.append([
-            InlineKeyboardButton(f"🧨 Self-Destruc: {sd_status}", callback_data=f"pgc_sdmenu_{uid}", style=btn_style),
-            InlineKeyboardButton(f"⏱ Delay/Chat: {s['delay_per_chat']}s", callback_data=f"pgc_delaymenu_{uid}", style=btn_style),
+            InlineKeyboardButton(f"Self-Destruct: {sd_status}", callback_data=f"pgc_sdmenu_{uid}", style=btn_style),
+            InlineKeyboardButton(f"Delay/Chat: {s['delay_per_chat']}s", callback_data=f"pgc_delaymenu_{uid}", style=btn_style),
         ])
 
         # 8. Auto-Reply / Delay Reply
         ar_status = "ON" if s.get('auto_reply', False) else "OFF"
         rows.append([
-            InlineKeyboardButton(f"🤖 Auto-Reply: {ar_status}", callback_data=f"pgc_autoreply_{uid}", style=btn_style),
-            InlineKeyboardButton(f"⏱ Delay/Rep: {s.get('reply_delay', 3)}s", callback_data=f"pgc_repdelaymenu_{uid}", style=btn_style),
+            InlineKeyboardButton(f"Auto-Reply: {ar_status}", callback_data=f"pgc_autoreply_{uid}", style=btn_style),
+            InlineKeyboardButton(f"Delay/Rep: {s.get('reply_delay', 3)}s", callback_data=f"pgc_repdelaymenu_{uid}", style=btn_style),
         ])
 
         # 9. Info / Refresh
         rows.append([
-            InlineKeyboardButton("📊 Info", callback_data=f"pgc_info_{uid}", style=btn_style),
-            InlineKeyboardButton("🔄 Refresh", callback_data=f"pgc_refresh_{uid}", style=btn_style),
+            InlineKeyboardButton("Info", callback_data=f"pgc_info_{uid}", style=btn_style),
+            InlineKeyboardButton("Refresh", callback_data=f"pgc_refresh_{uid}", style=btn_style),
+        ])
+
+        # 9.1 Backup & Sync
+        rows.append([
+            InlineKeyboardButton("Backup & Sync", callback_data=f"pgc_syncmenu_{uid}", style=btn_style),
         ])
 
         # 10. Start/Stop / Close
         if not is_running:
             rows.append([
-                InlineKeyboardButton("🟢 Start GCast", callback_data=f"pgc_startconf_{uid}", style=btn_style),
-                InlineKeyboardButton("❌ Close Menu", callback_data=f"pgc_close_{uid}", style=btn_style),
+                InlineKeyboardButton("Start GCast", callback_data=f"pgc_startconf_{uid}", style=btn_style),
+                InlineKeyboardButton("Close Menu", callback_data=f"pgc_close_{uid}", style=btn_style),
             ])
         else:
-            stop_btn = InlineKeyboardButton("🔴 Stop GCast", callback_data=f"pgc_stop_{uid}", style=btn_style)
+            stop_btn = InlineKeyboardButton("Stop GCast", callback_data=f"pgc_stop_{uid}", style=btn_style)
             pause_resume_btn = (
-                InlineKeyboardButton("▶️ Resume", callback_data=f"pgc_resume_{uid}", style=btn_style) if is_paused 
-                else InlineKeyboardButton("⏸ Pause", callback_data=f"pgc_pause_{uid}", style=btn_style)
+                InlineKeyboardButton("Resume", callback_data=f"pgc_resume_{uid}", style=btn_style) if is_paused 
+                else InlineKeyboardButton("Pause", callback_data=f"pgc_pause_{uid}", style=btn_style)
             )
             rows.append([pause_resume_btn, stop_btn])
-            rows.append([InlineKeyboardButton("❌ Close Menu", callback_data=f"pgc_close_{uid}", style=btn_style)])
+            rows.append([InlineKeyboardButton("Close Menu", callback_data=f"pgc_close_{uid}", style=btn_style)])
 
         # 11. Hide Menu
         rows.append([
-            InlineKeyboardButton("🙈 Hide Menu", callback_data=f"pgc_hidemenu_{uid}", style=btn_style),
+            InlineKeyboardButton("Hide Menu", callback_data=f"pgc_hidemenu_{uid}", style=btn_style),
         ])
     else:
         # Hide Menu Mode
@@ -698,17 +871,17 @@ def build_queuemgr_kb(user_id: int) -> InlineKeyboardMarkup:
     uid = user_id
     rows = []
 
-    rows.append([InlineKeyboardButton("➕ Create New Queue", callback_data=f"pgc_qadd_{uid}", style=btn_style)])
+    rows.append([InlineKeyboardButton("Create New Queue", callback_data=f"pgc_qadd_{uid}", style=btn_style)])
 
     for q_name in sorted(queues.keys()):
         count = len(queues[q_name])
         q_hash = _get_q_hash(q_name)
         rows.append([
-            InlineKeyboardButton(f"📁 {q_name} ({count})", callback_data=f"pgc_qedit_{uid}_h:{q_hash}", style=btn_style),
-            InlineKeyboardButton("🗑", callback_data=f"pgc_qdelconf_{uid}_h:{q_hash}", style=btn_style)
+            InlineKeyboardButton(f"Queue: {q_name} ({count})", callback_data=f"pgc_qedit_{uid}_h:{q_hash}", style=btn_style),
+            InlineKeyboardButton("Delete", callback_data=f"pgc_qdelconf_{uid}_h:{q_hash}", style=btn_style)
         ])
 
-    rows.append([InlineKeyboardButton("⬅️ Back", callback_data=f"pgc_backmain_{uid}", style=btn_style)])
+    rows.append([InlineKeyboardButton("Back", callback_data=f"pgc_backmain_{uid}", style=btn_style)])
     return InlineKeyboardMarkup(rows)
 
 def build_queue_edit_kb(user_id: int, queue_name: str) -> InlineKeyboardMarkup:
@@ -721,28 +894,59 @@ def build_queue_edit_kb(user_id: int, queue_name: str) -> InlineKeyboardMarkup:
 
     q_hash = _get_q_hash(queue_name)
     rows.append([
-        InlineKeyboardButton(f"📁 Queue: {queue_name}", callback_data=f"pgc_noop_{uid}", style=btn_style)
+        InlineKeyboardButton(f"Queue: {queue_name}", callback_data=f"pgc_noop_{uid}", style=btn_style)
     ])
     
     rows.append([
-        InlineKeyboardButton("✏️ Edit Name", callback_data=f"pgc_qeditname_{uid}_h:{q_hash}", style=btn_style),
-        InlineKeyboardButton("➕ Add Chat (Current)", callback_data=f"pgc_qaddchat_{uid}_h:{q_hash}", style=btn_style),
+        InlineKeyboardButton("Edit Name", callback_data=f"pgc_qeditname_{uid}_h:{q_hash}", style=btn_style),
+        InlineKeyboardButton("Add Current Chat", callback_data=f"pgc_qaddchat_{uid}_h:{q_hash}", style=btn_style),
     ])
     rows.append([
-        InlineKeyboardButton("➕ Add Chat (by ID)", callback_data=f"pgc_qaddid_{uid}_h:{q_hash}", style=btn_style),
+        InlineKeyboardButton("Add Chat by ID", callback_data=f"pgc_qaddid_{uid}_h:{q_hash}", style=btn_style),
     ])
 
     # Show items in queue
     for cid in queue[:15]: # Show max 15
         rows.append([
             InlineKeyboardButton(f"Chat ID: {cid}", callback_data=f"pgc_noop_{uid}", style=btn_style),
-            InlineKeyboardButton("🗑", callback_data=f"pgc_qremchat_{uid}_h:{q_hash}_{cid}", style=btn_style)
+            InlineKeyboardButton("Remove", callback_data=f"pgc_qremchat_{uid}_h:{q_hash}_{cid}", style=btn_style)
         ])
     
     if len(queue) > 15:
         rows.append([InlineKeyboardButton(f"... and {len(queue)-15} more", callback_data=f"pgc_noop_{uid}", style=btn_style)])
 
-    rows.append([InlineKeyboardButton("⬅️ Back to Queues", callback_data=f"pgc_queuemgr_{uid}", style=btn_style)])
+    rows.append([InlineKeyboardButton("Back to Queues", callback_data=f"pgc_queuemgr_{uid}", style=btn_style)])
+    return InlineKeyboardMarkup(rows)
+
+
+def build_typing_submenu_kb(user_id: int) -> InlineKeyboardMarkup:
+    """Build the Typing Action settings submenu keyboard."""
+    uid = user_id
+    s = get_settings(user_id)
+    is_enabled = s.get('typing_action', False)
+    mode = s.get('typing_mode', 'before')
+    duration = s.get('typing_duration', 4)
+    btn_style = get_user_button_style(user_id)
+
+    rows = []
+    # Row 1: Toggle
+    toggle_text = "Disable Typing Action" if is_enabled else "Enable Typing Action"
+    rows.append([InlineKeyboardButton(toggle_text, callback_data=f"pgc_typingtoggle_{uid}", style=btn_style)])
+
+    if is_enabled:
+        # Row 2: Mode Selection (Before / After / Both)
+        mode_labels = {"before": "Mode: Before Send", "after": "Mode: After Send", "both": "Mode: Both (Before & After)"}
+        rows.append([InlineKeyboardButton(mode_labels.get(mode, "Mode: Before Send"), callback_data=f"pgc_typingmode_{uid}", style=btn_style)])
+
+        # Row 3: Duration adjustment
+        rows.append([
+            InlineKeyboardButton("-1s", callback_data=f"pgc_typingdurdec_{uid}", style=btn_style),
+            InlineKeyboardButton(f"Duration: {duration}s", callback_data=f"pgc_noop_{uid}", style=btn_style),
+            InlineKeyboardButton("+1s", callback_data=f"pgc_typingdurinc_{uid}", style=btn_style),
+        ])
+
+    # Row 4: Back
+    rows.append([InlineKeyboardButton("Back", callback_data=f"pgc_backmain_{uid}", style=btn_style)])
     return InlineKeyboardMarkup(rows)
 
 
@@ -758,27 +962,27 @@ def build_sd_submenu_kb(user_id: int) -> InlineKeyboardMarkup:
 
     rows = []
     # Row 1: Toggle
-    toggle_text = "🔴 Disable Self-Destruct" if is_enabled else "🟢 Enable Self-Destruct"
+    toggle_text = "Disable Self-Destruct" if is_enabled else "Enable Self-Destruct"
     rows.append([InlineKeyboardButton(toggle_text, callback_data=f"pgc_sdtoggle_{uid}", style=btn_style)])
 
     if is_enabled:
         # Row 2: Delay adjustment
         rows.append([
             InlineKeyboardButton("-10s", callback_data=f"pgc_sddelay_dec_{uid}", style=btn_style),
-            InlineKeyboardButton(f"⏰ Delay: {delay}s", callback_data=f"pgc_noop_{uid}", style=btn_style),
+            InlineKeyboardButton(f"Delay: {delay}s", callback_data=f"pgc_noop_{uid}", style=btn_style),
             InlineKeyboardButton("+10s", callback_data=f"pgc_sddelay_inc_{uid}", style=btn_style),
         ])
         
         # Row 3: Target Selection (GCast / Reply / Both)
-        target_labels = {"gcast": "🎯 Target: GCast Only", "reply": "🎯 Target: Reply Only", "both": "🎯 Target: Both"}
-        rows.append([InlineKeyboardButton(target_labels.get(target, "🎯 Target: GCast Only"), callback_data=f"pgc_sdtarget_{uid}", style=btn_style)])
+        target_labels = {"gcast": "Target: GCast Only", "reply": "Target: Reply Only", "both": "Target: Both"}
+        rows.append([InlineKeyboardButton(target_labels.get(target, "Target: GCast Only"), callback_data=f"pgc_sdtarget_{uid}", style=btn_style)])
         
         # Row 4: Trigger Selection (After GCast / After Reply)
-        trigger_labels = {"after_gcast": "⏱ Trigger: After GCast Sent", "after_reply": "⏱ Trigger: After Reply Sent"}
-        rows.append([InlineKeyboardButton(trigger_labels.get(trigger, "⏱ Trigger: After GCast Sent"), callback_data=f"pgc_sdtrigger_{uid}", style=btn_style)])
+        trigger_labels = {"after_gcast": "Trigger: After GCast Sent", "after_reply": "Trigger: After Reply Sent"}
+        rows.append([InlineKeyboardButton(trigger_labels.get(trigger, "Trigger: After GCast Sent"), callback_data=f"pgc_sdtrigger_{uid}", style=btn_style)])
 
     # Row 5: Back
-    rows.append([InlineKeyboardButton("⬅️ Back", callback_data=f"pgc_backmain_{uid}", style=btn_style)])
+    rows.append([InlineKeyboardButton("Back", callback_data=f"pgc_backmain_{uid}", style=btn_style)])
     return InlineKeyboardMarkup(rows)
 
 def build_delay_submenu_kb(user_id: int) -> InlineKeyboardMarkup:
@@ -818,26 +1022,26 @@ def build_recurring_settings_kb(user_id: int) -> InlineKeyboardMarkup:
 
     rows = []
     # Toggle Master Recurring
-    toggle_text = "🔴 Disable Recurring" if is_enabled else "🟢 Enable Recurring"
+    toggle_text = "Disable Recurring" if is_enabled else "Enable Recurring"
     rows.append([InlineKeyboardButton(toggle_text, callback_data=f"pgc_rec_toggle_{uid}", style=btn_style)])
 
     if is_enabled:
         # Mode Selection
         rows.append([
-            InlineKeyboardButton(f"{'✅ ' if mode=='interval' else ''}Repetition", callback_data=f"pgc_rec_rep_{uid}", style=btn_style),
-            InlineKeyboardButton(f"{'✅ ' if mode=='time' else ''}Specific Time", callback_data=f"pgc_rec_time_{uid}", style=btn_style),
+            InlineKeyboardButton(f"{'Select ' if mode=='interval' else ''}Repetition", callback_data=f"pgc_rec_rep_{uid}", style=btn_style),
+            InlineKeyboardButton(f"{'Select ' if mode=='time' else ''}Specific Time", callback_data=f"pgc_rec_time_{uid}", style=btn_style),
         ])
         
         if mode == "interval":
             h = s.get('recurring_interval_hours', 0)
             m = s.get('recurring_interval_minutes', 10)
-            rows.append([InlineKeyboardButton(f"⏱ Every: {h}h {m}m", callback_data=f"pgc_rec_rep_{uid}", style=btn_style)])
+            rows.append([InlineKeyboardButton(f"Every: {h}h {m}m", callback_data=f"pgc_rec_rep_{uid}", style=btn_style)])
         else:
             sh = s.get('recurring_specific_hour', 0)
             sm = s.get('recurring_specific_minute', 0)
-            rows.append([InlineKeyboardButton(f"{'✅ ' if mode=='time' else ''}At: {sh:02d}:{sm:02d} Daily", callback_data=f"pgc_rec_time_{uid}", style=btn_style)])
+            rows.append([InlineKeyboardButton(f"At: {sh:02d}:{sm:02d} Daily", callback_data=f"pgc_rec_time_{uid}", style=btn_style)])
 
-    rows.append([InlineKeyboardButton("⬅️ Back", callback_data=f"pgc_backmain_{uid}", style=btn_style)])
+    rows.append([InlineKeyboardButton("Back", callback_data=f"pgc_backmain_{uid}", style=btn_style)])
     return InlineKeyboardMarkup(rows)
 
 def build_repetition_menu_kb(user_id: int) -> InlineKeyboardMarkup:
@@ -917,31 +1121,30 @@ def build_reply_msglist_text(user_id: int, page: int = 0) -> str:
     
     lines = []
     if random_enabled:
-        lines.append("🎲 <b>Mode:</b> Random - Balasan dikirim acak")
+        lines.append("<b>Mode:</b> Random - Balasan dikirim acak")
     else:
         if fixed_msg_idx is not None:
-            lines.append(f"📌 <b>Mode:</b> Fixed - Selalu balas dengan pesan #{fixed_msg_idx + 1}")
+            lines.append(f"<b>Mode:</b> Fixed - Selalu balas dengan pesan #{fixed_msg_idx + 1}")
         else:
-            lines.append("📋 <b>Mode:</b> Sequential - Balasan dikirim berurutan")
+            lines.append("<b>Mode:</b> Sequential - Balasan dikirim berurutan")
             
-    lines.append(f"<i>Page {page+1}/{total_pages}</i>\n")
+    lines.append(f"Page {page+1}/{total_pages}\n")
     
     if not combined:
-        lines.append("📭 <i>Belum ada balasan yang ditambahkan.</i>")
+        lines.append("<i>Belum ada balasan yang ditambahkan.</i>")
     else:
         for i, (mtype, o_idx, item) in enumerate(page_items, start=start_idx + 1):
-            fixed_marker = " 📌" if fixed_msg_idx == (i - 1) else ""
+            fixed_marker = " (Fixed)" if fixed_msg_idx == (i - 1) else ""
             if mtype == "text":
                 content = item.get("content", "")
                 preview = html.escape(content[:40]) + ("..." if len(content) > 40 else "")
-                lines.append(f"{i}. 📝 {preview}{fixed_marker}")
+                lines.append(f"{i}. {preview}{fixed_marker}")
             else:
                 media_type = item.get("type", "unknown")
-                type_icon = {"photo": "🖼", "video": "🎬"}.get(media_type, "📎")
-                lines.append(f"{i}. {type_icon} {media_type.title()}{fixed_marker}")
+                lines.append(f"{i}. {media_type.title()}{fixed_marker}")
                 
     return (
-        f"<blockquote expandable>💬 <b>Reply Message List</b> ({total} items)\n"
+        f"<blockquote expandable><b>Reply Message List</b> ({total} items)\n"
         f"{'━' * 18}\n" + "\n".join(lines) + "</blockquote>"
     )
 
@@ -972,47 +1175,51 @@ def build_reply_msglist_kb(user_id: int, page: int = 0) -> InlineKeyboardMarkup:
     
     rows = []
     rows.append([
-        InlineKeyboardButton("➕ Add Text", callback_data=f"pgc_repmsgaddtext_{uid}_p{page}", style=btn_style),
-        InlineKeyboardButton("➕ Add Media", callback_data=f"pgc_repmsgaddmedia_{uid}_p{page}", style=btn_style),
+        InlineKeyboardButton("Add Text", callback_data=f"pgc_repmsgaddtext_{uid}_p{page}", style=btn_style),
+        InlineKeyboardButton("Add Media", callback_data=f"pgc_repmsgaddmedia_{uid}_p{page}", style=btn_style),
     ])
     
     for i, (mtype, o_idx, item) in enumerate(page_items, start=start_idx + 1):
         if mtype == "text":
             content = item.get("content", "")
             preview = content[:20].strip() + (".." if len(content) > 20 else "")
-            label = f"📝 #{i}: {preview}"
+            label = f"#{i}: {preview}"
             pref = "pgc_repmsgsetfixed_text"
-            ppref = "pgc_repmsgpreview_text"
-            dpref = "pgc_repmsgdelconf_text"
+            cpref = "pgc_repmsgconfig_text"
         else:
             mtype_val = item.get("type", "unknown")
-            label = f"🎬 #{i}: {mtype_val.title()}"
+            label = f"#{i}: {mtype_val.title()}"
             pref = "pgc_repmsgsetfixed_media"
-            ppref = "pgc_repmsgpreview_media"
-            dpref = "pgc_repmsgdelconf_media"
+            cpref = "pgc_repmsgconfig_media"
             
         rows.append([
             InlineKeyboardButton(label, callback_data=f"{pref}_{uid}_{o_idx}_p{page}", style=btn_style),
-            InlineKeyboardButton("👁", callback_data=f"{ppref}_{uid}_{o_idx}_p{page}", style=btn_style),
-            InlineKeyboardButton("🗑", callback_data=f"{dpref}_{uid}_{o_idx}_p{page}", style=btn_style),
+            InlineKeyboardButton("Config", callback_data=f"{cpref}_{uid}_{o_idx}_p{page}", style=btn_style),
         ])
     
     # Nav Row
     nav = []
     if page > 0:
-        nav.append(InlineKeyboardButton("◀️ Prev", callback_data=f"pgc_repmsgmenu_{uid}_page_{page-1}", style=btn_style))
-    nav.append(InlineKeyboardButton("🔄 Refresh", callback_data=f"pgc_repmsgmenu_{uid}_page_{page}", style=btn_style))
+        nav.append(InlineKeyboardButton("«", callback_data=f"pgc_repmsgmenu_{uid}_page_{page-1}", style=btn_style))
+    else:
+        nav.append(InlineKeyboardButton(" ", callback_data=f"pgc_noop_{uid}", style=btn_style))
+        
+    nav.append(InlineKeyboardButton(f"{page+1}/{total_pages}", callback_data=f"pgc_repmsgmenu_{uid}_page_{page}", style=btn_style))
+    
     if page < total_pages - 1:
-        nav.append(InlineKeyboardButton("Next ▶️", callback_data=f"pgc_repmsgmenu_{uid}_page_{page+1}", style=btn_style))
+        nav.append(InlineKeyboardButton("»", callback_data=f"pgc_repmsgmenu_{uid}_page_{page+1}", style=btn_style))
+    else:
+        nav.append(InlineKeyboardButton(" ", callback_data=f"pgc_noop_{uid}", style=btn_style))
     rows.append(nav)
     
     rows.append([
-        InlineKeyboardButton("🗑 Clear All", callback_data=f"pgc_repmsgclearconf_{uid}", style=btn_style),
-        InlineKeyboardButton("📌 Set Fixed", callback_data=f"pgc_repsetfixed_{uid}", style=btn_style),
+        InlineKeyboardButton("Clear All", callback_data=f"pgc_repmsgclearconf_{uid}", style=btn_style),
+        InlineKeyboardButton("Refresh", callback_data=f"pgc_repmsgmenu_{uid}_page_{page}", style=btn_style),
+        InlineKeyboardButton("Set Fixed", callback_data=f"pgc_repsetfixed_{uid}", style=btn_style),
     ])
     
     rows.append([
-        InlineKeyboardButton("⬅️ Back", callback_data=f"pgc_backmain_{uid}", style=btn_style),
+        InlineKeyboardButton("Back", callback_data=f"pgc_backmain_{uid}", style=btn_style),
     ])
     
     return InlineKeyboardMarkup(rows)
@@ -1026,9 +1233,9 @@ def build_reply_delay_submenu_kb(user_id: int) -> InlineKeyboardMarkup:
     
     # Delay controls
     rows.append([
-        InlineKeyboardButton("➖ 1s", callback_data=f"pgc_repdelay_dec_{uid}", style=btn_style),
-        InlineKeyboardButton(f"⏱ {delay}s", callback_data=f"pgc_noop_{uid}", style=btn_style),
-        InlineKeyboardButton("➕ 1s", callback_data=f"pgc_repdelay_inc_{uid}", style=btn_style),
+        InlineKeyboardButton("- 1s", callback_data=f"pgc_repdelay_dec_{uid}", style=btn_style),
+        InlineKeyboardButton(f"Delay: {delay}s", callback_data=f"pgc_noop_{uid}", style=btn_style),
+        InlineKeyboardButton("+ 1s", callback_data=f"pgc_repdelay_inc_{uid}", style=btn_style),
     ])
 
     # Presets
@@ -1039,7 +1246,7 @@ def build_reply_delay_submenu_kb(user_id: int) -> InlineKeyboardMarkup:
         InlineKeyboardButton("10s", callback_data=f"pgc_repdelay_set_{uid}_10", style=btn_style),
     ])
 
-    rows.append([InlineKeyboardButton("🔙 Back", callback_data=f"pgc_repmsgmenu_{uid}", style=btn_style)])
+    rows.append([InlineKeyboardButton("Back", callback_data=f"pgc_repmsgmenu_{uid}", style=btn_style)])
     return InlineKeyboardMarkup(rows)
 
 
@@ -1059,6 +1266,8 @@ def build_msglist_text(user_id: int, page: int = 0) -> str:
         combined.append(("text", i, item))
     for i, item in enumerate(media_list):
         combined.append(("media", i, item))
+    for i, item in enumerate(s.get("link_list", [])):
+        combined.append(("link", i, item))
     
     total = len(combined)
     items_per_page = 6
@@ -1073,39 +1282,36 @@ def build_msglist_text(user_id: int, page: int = 0) -> str:
     
     lines = []
     if random_enabled:
-        lines.append("🎲 <b>Mode:</b> Random - Message sent randomly")
+        lines.append("<b>Mode:</b> Random - Message sent randomly")
     else:
         if fixed_msg_idx is not None:
-            lines.append(f"📌 <b>Mode:</b> Fixed - Always send message #{fixed_msg_idx + 1}")
+            lines.append(f"<b>Mode:</b> Fixed - Always send message #{fixed_msg_idx + 1}")
         else:
-            lines.append("📋 <b>Mode:</b> Sequential - Pesan dikirim berurutan")
+            lines.append("<b>Mode:</b> Sequential - Pesan dikirim berurutan")
     
-    lines.append(f"<i>Page {page+1}/{total_pages}</i>\n")
+    lines.append(f"Page {page+1}/{total_pages}\n")
     
     if not combined:
-        lines.append("📭 <i>Belum ada pesan yang ditambahkan.</i>")
+        lines.append("<i>Belum ada pesan yang ditambahkan.</i>")
     else:
         for i, (mtype, o_idx, item) in enumerate(page_items, start=start_idx + 1):
-            fixed_marker = " 📌" if fixed_msg_idx == (i - 1) else ""
+            fixed_marker = " (Fixed)" if fixed_msg_idx == (i - 1) else ""
             if mtype == "text":
                 content = item.get("content", "") if isinstance(item, dict) else str(item)
-                parse_mode = item.get("parse_mode", "html") if isinstance(item, dict) else "html"
-                mode_icon = {"html": "🌐", "markdown": "", "none": "📄"}.get(parse_mode, "📄")
                 preview = html.escape(content[:40]) + ("..." if len(content) > 40 else "")
-                lines.append(f"{i}. 📝 {mode_icon} {preview}{fixed_marker}")
+                lines.append(f"{i}. {preview}{fixed_marker}")
+            elif mtype == "link":
+                from_chat = item.get("from_chat", "Unknown")
+                msg_id = item.get("msg_id", "?")
+                lines.append(f"{i}. Link Msg: <code>{from_chat}</code>/<code>{msg_id}</code>{fixed_marker}")
             else:
                 media_type = item.get("type", "unknown")
                 caption = item.get("caption", "")
-                type_icon = {
-                    "photo": "🖼", "video": "🎬", "audio": "🎵",
-                    "voice": "🎤", "document": "📄", "sticker": "🎨",
-                    "animation": "🎞", "video_note": "⏺"
-                }.get(media_type, "📎")
                 cap_preview = html.escape(caption[:30]) if caption else "<i>no caption</i>"
-                lines.append(f"{i}. {type_icon} {media_type.title()}: {cap_preview}{fixed_marker}")
+                lines.append(f"{i}. {media_type.title()}: {cap_preview}{fixed_marker}")
     
     return (
-        f"<blockquote expandable>📝 <b>Message List</b> ({total} items)\n"
+        f"<blockquote expandable><b>Message List</b> ({total} items)\n"
         f"{'━' * 18}\n" + "\n".join(lines) + "</blockquote>"
     )
 
@@ -1123,6 +1329,8 @@ def build_msglist_kb(user_id: int, page: int = 0) -> InlineKeyboardMarkup:
         combined.append(("text", i, item))
     for i, item in enumerate(media_list):
         combined.append(("media", i, item))
+    for i, item in enumerate(s.get("link_list", [])):
+        combined.append(("link", i, item))
     
     total = len(combined)
     items_per_page = 6
@@ -1138,8 +1346,15 @@ def build_msglist_kb(user_id: int, page: int = 0) -> InlineKeyboardMarkup:
     rows = []
     # Row 1: Add buttons
     rows.append([
-        InlineKeyboardButton("➕ Add Text", callback_data=f"pgc_addtext_{uid}", style=btn_style),
-        InlineKeyboardButton("➕ Add Media", callback_data=f"pgc_addmedia_{uid}", style=btn_style),
+        InlineKeyboardButton("Add Text", callback_data=f"pgc_addtext_{uid}", style=btn_style),
+        InlineKeyboardButton("Add Media", callback_data=f"pgc_addmedia_{uid}", style=btn_style),
+    ])
+    
+    # Row 1.5: Add Link Msg & Forward Copy Toggle
+    fw_copy = s.get("link_forward_as_copy", True)
+    rows.append([
+        InlineKeyboardButton("Add Link Msg", callback_data=f"pgc_linkadd_{uid}", style=btn_style),
+        InlineKeyboardButton(f"As Copy: {'ON' if fw_copy else 'OFF'}", callback_data=f"pgc_linkfwtoggle_{uid}", style=btn_style),
     ])
     
     # Paginated Items
@@ -1147,45 +1362,50 @@ def build_msglist_kb(user_id: int, page: int = 0) -> InlineKeyboardMarkup:
         if mtype == "text":
             content = item.get("content", "") if isinstance(item, dict) else str(item)
             preview = content[:25].strip() + (".." if len(content) > 25 else "")
-            label = f"📝 #{i}: {preview}"
+            label = f"#{i}: {preview}"
             cb_fixed = f"pgc_msgsetfixed_text_{uid}_{o_idx}_p{page}"
-            cb_preview = f"pgc_msgpreview_text_{uid}_{o_idx}_p{page}"
-            cb_edit = f"pgc_msgeditedit_text_{uid}_{o_idx}_p{page}"
-            cb_del = f"pgc_msgdelconf_text_{uid}_{o_idx}_p{page}"
+            cb_config = f"pgc_msgconfig_text_{uid}_{o_idx}_p{page}"
+        elif mtype == "link":
+            from_chat = item.get("from_chat", "Unknown")
+            as_copy = item.get("as_copy", True)
+            label = f"#{i}: Link ({'Copy' if as_copy else 'Fwd'})"
+            cb_fixed = f"pgc_msgsetfixed_link_{uid}_{o_idx}_p{page}"
+            cb_config = f"pgc_msgconfig_link_{uid}_{o_idx}_p{page}"
         else:
             media_type = item.get("type", "unknown")
-            label = f"🎬 #{i}: {media_type.title()}"
+            label = f"#{i}: {media_type.title()}"
             cb_fixed = f"pgc_msgsetfixed_media_{uid}_{o_idx}_p{page}"
-            cb_preview = f"pgc_msgpreview_media_{uid}_{o_idx}_p{page}"
-            cb_edit = f"pgc_msgeditedit_media_{uid}_{o_idx}_p{page}"
-            cb_del = f"pgc_msgdelconf_media_{uid}_{o_idx}_p{page}"
+            cb_config = f"pgc_msgconfig_media_{uid}_{o_idx}_p{page}"
             
-        rows.append([InlineKeyboardButton(label, callback_data=cb_fixed, style=btn_style)])
         rows.append([
-            InlineKeyboardButton("👁 Preview", callback_data=cb_preview, style=btn_style),
-            InlineKeyboardButton("✏️ Edit", callback_data=cb_edit, style=btn_style),
-            InlineKeyboardButton("🗑 Delete", callback_data=cb_del, style=btn_style),
+            InlineKeyboardButton(label, callback_data=cb_fixed, style=btn_style),
+            InlineKeyboardButton("Config", callback_data=cb_config, style=btn_style),
         ])
     
     # Navigation Row
     nav = []
     if page > 0:
-        nav.append(InlineKeyboardButton("◀️ Prev", callback_data=f"pgc_msgmenu_{uid}_page_{page-1}", style=btn_style))
-    
-    nav.append(InlineKeyboardButton("🔄 Refresh", callback_data=f"pgc_msgmenu_{uid}_page_{page}", style=btn_style))
+        nav.append(InlineKeyboardButton("«", callback_data=f"pgc_msgmenu_{uid}_page_{page-1}", style=btn_style))
+    else:
+        nav.append(InlineKeyboardButton(" ", callback_data=f"pgc_noop_{uid}", style=btn_style))
+        
+    nav.append(InlineKeyboardButton(f"{page+1}/{total_pages}", callback_data=f"pgc_msgmenu_{uid}_page_{page}", style=btn_style))
     
     if page < total_pages - 1:
-        nav.append(InlineKeyboardButton("Next ▶️", callback_data=f"pgc_msgmenu_{uid}_page_{page+1}", style=btn_style))
+        nav.append(InlineKeyboardButton("»", callback_data=f"pgc_msgmenu_{uid}_page_{page+1}", style=btn_style))
+    else:
+        nav.append(InlineKeyboardButton(" ", callback_data=f"pgc_noop_{uid}", style=btn_style))
     rows.append(nav)
     
     # Footer Actions
     rows.append([
-        InlineKeyboardButton("🗑 Clear All", callback_data=f"pgc_msgclearconf_{uid}", style=btn_style),
-        InlineKeyboardButton("📌 Set Fixed", callback_data=f"pgc_setfixed_{uid}", style=btn_style),
+        InlineKeyboardButton("Clear All", callback_data=f"pgc_msgclearconf_{uid}", style=btn_style),
+        InlineKeyboardButton("Refresh", callback_data=f"pgc_msgmenu_{uid}_page_{page}", style=btn_style),
+        InlineKeyboardButton("Set Fixed", callback_data=f"pgc_setfixed_{uid}", style=btn_style),
     ])
     
     rows.append([
-        InlineKeyboardButton("⬅️ Back", callback_data=f"pgc_backmain_{uid}", style=btn_style),
+        InlineKeyboardButton("Back", callback_data=f"pgc_backmain_{uid}", style=btn_style),
     ])
     
     return InlineKeyboardMarkup(rows)
@@ -1198,7 +1418,7 @@ def build_bl_text(user_id: int, page: int = 0) -> str:
     bl = s["blacklist"]
     
     if not bl:
-        return "🚫 <b>Blacklist Manager</b>\n\n<i>No chats blacklisted.</i>"
+        return "<b>Blacklist Manager</b>\n\n<i>No chats blacklisted.</i>"
     
     # Pagination: 10 items per page
     items_per_page = 10
@@ -1219,7 +1439,7 @@ def build_bl_text(user_id: int, page: int = 0) -> str:
         lines.append(f"{i}. <code>{cid}</code>")
     
     return (
-        f"<blockquote expandable>🚫 <b>Blacklist Manager</b>\n"
+        f"<blockquote expandable><b>Blacklist Manager</b>\n"
         f"<i>Page {page+1}/{total_pages}</i>\n"
         f"{'━' * 18}\n"
         f"Total: <b>{len(bl)}</b> chats\n\n"
@@ -1251,8 +1471,8 @@ def build_bl_kb(user_id: int, page: int = 0) -> InlineKeyboardMarkup:
     
     rows = [
         [
-            InlineKeyboardButton("➕ Add Chat", callback_data=f"pgc_bladd_{uid}", style=btn_style),
-            InlineKeyboardButton("🗑 Clear All", callback_data=f"pgc_blclearconf_{uid}", style=btn_style),
+            InlineKeyboardButton("Add Chat", callback_data=f"pgc_bladd_{uid}", style=btn_style),
+            InlineKeyboardButton("Clear All", callback_data=f"pgc_blclearconf_{uid}", style=btn_style),
         ],
     ]
     
@@ -1261,21 +1481,27 @@ def build_bl_kb(user_id: int, page: int = 0) -> InlineKeyboardMarkup:
         actual_idx = start_idx + i
         rows.append([
             InlineKeyboardButton(f"Chat: {cid}", callback_data=f"pgc_noop_{uid}", style=btn_style),
-            InlineKeyboardButton("🗑", callback_data=f"pgc_bldel_{uid}_{actual_idx}", style=btn_style),
+            InlineKeyboardButton("Delete", callback_data=f"pgc_bldel_{uid}_{actual_idx}", style=btn_style),
         ])
     
     # Pagination buttons
     if len(bl) > items_per_page:
-        nav_buttons = []
+        nav = []
         if page > 0:
-            nav_buttons.append(InlineKeyboardButton("◀️ Prev", callback_data=f"pgc_blmenu_{uid}_page_{page-1}", style=btn_style))
+            nav.append(InlineKeyboardButton("«", callback_data=f"pgc_blmenu_{uid}_page_{page-1}", style=btn_style))
+        else:
+            nav.append(InlineKeyboardButton(" ", callback_data=f"pgc_noop_{uid}", style=btn_style))
+            
+        nav.append(InlineKeyboardButton(f"{page+1}/{total_pages}", callback_data=f"pgc_blmenu_{uid}_page_{page}", style=btn_style))
+        
         if page < total_pages - 1:
-            nav_buttons.append(InlineKeyboardButton("Next ▶️", callback_data=f"pgc_blmenu_{uid}_page_{page+1}", style=btn_style))
-        if nav_buttons:
-            rows.append(nav_buttons)
+            nav.append(InlineKeyboardButton("»", callback_data=f"pgc_blmenu_{uid}_page_{page+1}", style=btn_style))
+        else:
+            nav.append(InlineKeyboardButton(" ", callback_data=f"pgc_noop_{uid}", style=btn_style))
+        rows.append(nav)
     
     rows.append([
-        InlineKeyboardButton("⬅️ Back", callback_data=f"pgc_backmain_{uid}", style=btn_style),
+        InlineKeyboardButton("Back", callback_data=f"pgc_backmain_{uid}", style=btn_style),
     ])
     return InlineKeyboardMarkup(rows)
 
@@ -1284,12 +1510,12 @@ def build_bl_kb(user_id: int, page: int = 0) -> InlineKeyboardMarkup:
 def build_smartpurge_text(user_id: int) -> str:
     """Build the smart purgeme sub-menu text."""
     s = get_settings(user_id)
-    status = "🟢 ENABLED" if s.get('smart_purge', False) else "🔴 DISABLED"
+    status = "ENABLED" if s.get('smart_purge', False) else "DISABLED"
     
     return (
-        f"<blockquote expandable>🧹 <b>Smart Purgeme Settings</b>\n"
+        f"<blockquote expandable><b>Smart Purgeme Settings</b>\n"
         f"{'━' * 18}\n"
-        f"Status: {status}\n\n"
+        f"Status: <b>{status}</b>\n\n"
         f"<b>Current Settings:</b>\n"
         f"• Limit: <b>{s.get('purge_limit', 4)} messages</b>\n"
         f"• Delay/Msg: <b>{s.get('purge_delay_msg', 1.0)}s</b>\n"
@@ -1302,16 +1528,13 @@ def build_smartpurge_text(user_id: int) -> str:
 def build_smartpurge_kb(user_id: int) -> InlineKeyboardMarkup:
     """Build the smart purgeme sub-menu keyboard."""
     uid = user_id
-    s = get_settings(user_id)
+    s = get_settings(uid)
     is_enabled = s.get('smart_purge', False)
-    
-    # Get user button style
-    btn_style = get_user_button_style(user_id)
-    
+    btn_style = get_user_button_style(uid)
     rows = []
     
     # Row 1: Enable/Disable Toggle
-    toggle_text = "🔴 Disable Smart Purge" if is_enabled else "🟢 Enable Smart Purge"
+    toggle_text = "Disable Smart Purge" if is_enabled else "Enable Smart Purge"
     rows.append([
         InlineKeyboardButton(toggle_text, callback_data=f"pgc_sp_toggle_{uid}", style=btn_style),
     ])
@@ -1336,8 +1559,8 @@ def build_smartpurge_kb(user_id: int) -> InlineKeyboardMarkup:
     mode = s.get('purge_mode', 'oldest')
     rows.append([
         InlineKeyboardButton(f"Mode: {mode.title()}", callback_data=f"pgc_noop_{uid}", style=btn_style),
-        InlineKeyboardButton(("✅ " if mode == "newest" else "") + "Newest", callback_data=f"pgc_sp_mode_newest_{uid}", style=btn_style),
-        InlineKeyboardButton(("✅ " if mode == "oldest" else "") + "Oldest", callback_data=f"pgc_sp_mode_oldest_{uid}", style=btn_style),
+        InlineKeyboardButton((" (Selected)" if mode == "newest" else "") + "Newest", callback_data=f"pgc_sp_mode_newest_{uid}", style=btn_style),
+        InlineKeyboardButton((" (Selected)" if mode == "oldest" else "") + "Oldest", callback_data=f"pgc_sp_mode_oldest_{uid}", style=btn_style),
     ])
     
     # Row 5: Offset [-5] [value] [+5]
@@ -1350,7 +1573,51 @@ def build_smartpurge_kb(user_id: int) -> InlineKeyboardMarkup:
     
     # Row 6: Back
     rows.append([
-        InlineKeyboardButton("⬅️ Back", callback_data=f"pgc_backmain_{uid}", style=btn_style),
+        InlineKeyboardButton("Back", callback_data=f"pgc_backmain_{uid}", style=btn_style),
+    ])
+    
+    return InlineKeyboardMarkup(rows)
+
+# ==================== BACKUP & SYNC SUB-MENU ====================
+
+def build_sync_submenu_text(user_id: int) -> str:
+    """Build the Backup & Sync sub-menu text."""
+    s = get_settings(user_id)
+    total_messages = len(s.get('text_list', [])) + len(s.get('media_list', []))
+    total_queues = len(s.get('queues', {}))
+    
+    return (
+        f"<blockquote expandable><b>Backup & Sync Manager</b>\n"
+        f"{'━' * 18}\n"
+        f"Manage your Gcast configuration and sync settings across your accounts.\n\n"
+        f"<b>Current Stats:</b>\n"
+        f"• Messages: <b>{total_messages}</b>\n"
+        f"• Queues: <b>{total_queues}</b>\n"
+        f"• Blacklist: <b>{len(s['blacklist'])} chats</b>\n\n"
+        f"<i>Export to get a JSON file of your settings, or Import an existing one. "
+        f"Sync allows copying settings from your other active sessions.</i></blockquote>"
+    )
+
+def build_sync_submenu_kb(user_id: int) -> InlineKeyboardMarkup:
+    """Build the Backup & Sync sub-menu keyboard."""
+    uid = user_id
+    btn_style = get_user_button_style(user_id)
+    rows = []
+    
+    # Row 1: Export / Import
+    rows.append([
+        InlineKeyboardButton("Export JSON", callback_data=f"pgc_exportcfg_{uid}", style=btn_style),
+        InlineKeyboardButton("Import JSON", callback_data=f"pgc_importcfg_{uid}", style=btn_style),
+    ])
+    
+    # Row 2: Sync from Account
+    rows.append([
+        InlineKeyboardButton("Sync From Another Account", callback_data=f"pgc_synclist_{uid}", style=btn_style),
+    ])
+    
+    # Row 3: Back
+    rows.append([
+        InlineKeyboardButton("Back", callback_data=f"pgc_backmain_{uid}", style=btn_style),
     ])
     
     return InlineKeyboardMarkup(rows)
@@ -1360,12 +1627,12 @@ def build_smartpurge_kb(user_id: int) -> InlineKeyboardMarkup:
 def build_react_text(user_id: int) -> str:
     """Build the auto react sub-menu text."""
     s = get_settings(user_id)
-    status = "🟢 ENABLED" if s.get('auto_react', False) else "🔴 DISABLED"
+    status = "ENABLED" if s.get('auto_react', False) else "DISABLED"
     
     return (
-        f"<blockquote expandable>⚡ <b>Auto React Settings</b>\n"
+        f"<blockquote expandable><b>Auto React Settings</b>\n"
         f"{'━' * 18}\n"
-        f"Status: {status}\n\n"
+        f"Status: <b>{status}</b>\n\n"
         f"<b>Current Settings:</b>\n"
         f"• Emoji: {s.get('react_emoji', '👍')}\n"
         f"• Delay: <b>{s.get('react_delay', 4)}s</b>\n\n"
@@ -1385,7 +1652,7 @@ def build_react_kb(user_id: int) -> InlineKeyboardMarkup:
     rows = []
     
     # Row 1: Enable/Disable Toggle
-    toggle_text = "🔴 Disable Auto React" if is_enabled else "🟢 Enable Auto React"
+    toggle_text = "Disable Auto React" if is_enabled else "Enable Auto React"
     rows.append([
         InlineKeyboardButton(toggle_text, callback_data=f"pgc_react_toggle_{uid}", style=btn_style),
     ])
@@ -1403,7 +1670,7 @@ def build_react_kb(user_id: int) -> InlineKeyboardMarkup:
     emojis = ['👍', '❤️', '🔥', '🎉', '😊', '💯']
     emoji_row = []
     for emoji in emojis:
-        prefix = "✅ " if emoji == current_emoji else ""
+        prefix = "(Selected) " if emoji == current_emoji else ""
         emoji_row.append(InlineKeyboardButton(f"{prefix}{emoji}", callback_data=f"pgc_react_emoji_{emoji}_{uid}", style=btn_style))
     
     # Split into 2 rows of 3 emojis each
@@ -1412,7 +1679,7 @@ def build_react_kb(user_id: int) -> InlineKeyboardMarkup:
     
     # Row 6: Back
     rows.append([
-        InlineKeyboardButton("⬅️ Back", callback_data=f"pgc_backmain_{uid}", style=btn_style),
+        InlineKeyboardButton("Back", callback_data=f"pgc_backmain_{uid}", style=btn_style),
     ])
     
     return InlineKeyboardMarkup(rows)
@@ -1426,91 +1693,118 @@ def build_info_text(page: int = 0) -> str:
     pages = [
         # Page 0: Dashboard Buttons Part 1
         (
-            "<blockquote expandable><b>📊 AUTO PRO GLOBAL BROADCAST - INFO</b>\n"
-            "<i>Page 1/4</i>\n\n"
-            "<b>🎯 DASHBOARD BUTTONS:</b>\n\n"
-            "• <b>🟢 Start GCast</b>\n"
+            "<blockquote expandable><b>AUTO PRO GLOBAL BROADCAST - INFO</b>\n"
+            "<i>Page 1/8</i>\n\n"
+            "<b>DASHBOARD BUTTONS:</b>\n\n"
+            "• <b>Start GCast</b>\n"
             "  ↳ Mulai broadcast ke semua chat yang sesuai filter\n\n"
-            "• <b>🔴 Stop GCast</b>\n"
+            "• <b>Stop GCast</b>\n"
             "  ↳ Hentikan broadcast yang sedang berjalan\n\n"
-            "• <b>⏸ Pause / ▶️ Resume</b>\n"
+            "• <b>Pause / Resume</b>\n"
             "  ↳ Jeda atau lanjutkan broadcast\n\n"
-            "• <b>📋 Chat Filter</b>\n"
+            "• <b>Chat Filter</b>\n"
             "  ↳ Pilih jenis chat: All → Groups → Personal\n\n"
-            "• <b>👤 Admin Filter</b>\n"
+            "• <b>Admin Filter</b>\n"
             "  ↳ Filter berdasarkan status admin: All → Admin → Non-Admin\n\n"
-            "• <b>⏱ Delay/Chat</b>\n"
+            "• <b>Delay/Chat</b>\n"
             "  ↳ Atur jeda waktu antar chat (±2s, min 2s)\n\n"
-            "• <b>📝 Messages</b>\n"
+            "• <b>Messages</b>\n"
             "  ↳ Kelola daftar pesan broadcast (text + media)\n"
             "  ↳ Mendukung format HTML & Markdown\n"
-            "  ↳ <b>👁 Preview:</b> Lihat isi pesan lengkap di LOG chat\n"
-            "  ↳ <b>🗑 Delete:</b> Hapus pesan (dengan konfirmasi)\n"
-            "  ↳ <b>📌 Set Fixed:</b> Pilih satu pesan tetap untuk broadcast</blockquote>"
+            "  ↳ <b>Preview:</b> Lihat isi pesan lengkap di LOG chat\n"
+            "  ↳ <b>Delete:</b> Hapus pesan (dengan konfirmasi)\n"
+            "  ↳ <b>Set Fixed:</b> Pilih satu pesan tetap untuk broadcast</blockquote>"
         ),
         # Page 1: Dashboard Buttons Part 2
         (
-            "<blockquote expandable><b>📊 AUTO PRO GLOBAL BROADCAST - INFO</b>\n"
-            "<i>Page 2/4</i>\n\n"
-            "<b>🎯 DASHBOARD BUTTONS (lanjutan):</b>\n\n"
-            "• <b>🔀 Random</b>\n"
+            "<blockquote expandable><b>AUTO PRO GLOBAL BROADCAST - INFO</b>\n"
+            "<i>Page 2/8</i>\n\n"
+            "<b>DASHBOARD BUTTONS (lanjutan):</b>\n\n"
+            "• <b>Random</b>\n"
             "  ↳ Toggle mode pengiriman pesan:\n"
             "  ↳ <b>ON:</b> Pesan dipilih secara acak\n"
             "  ↳ <b>OFF + Fixed:</b> Selalu kirim pesan yang sama (aman dari spam)\n"
             "  ↳ <b>OFF + Sequential:</b> Kirim berurutan 1→2→3...→1\n\n"
-            "• <b>🚫 Blacklist</b>\n"
+            "• <b>Blacklist</b>\n"
             "  ↳ Kelola daftar chat yang dikecualikan dari broadcast\n\n"
-            "• <b>📋 List Chats</b>\n"
+            "• <b>List Chats</b>\n"
             "  ↳ Lihat daftar chat target untuk broadcast\n\n"
-            "• <b>🔁 Recurring</b>\n"
+            "• <b>Recurring</b>\n"
             "  ↳ Auto-restart broadcast setelah selesai satu siklus\n\n"
-            "• <b>🔔 Notif</b>\n"
+            "• <b>Notif</b>\n"
             "  ↳ Toggle notifikasi log ke LOG chat\n"
             "  ↳ Menampilkan detail: chat, pesan, waktu, status, error\n\n"
-            "• <b>📊 Refresh</b>\n"
+            "• <b>Refresh</b>\n"
             "  ↳ Perbarui tampilan dashboard</blockquote>"
         ),
         # Page 2: Smart Purge & Auto React
         (
-            "<blockquote expandable><b>📊 AUTO PRO GLOBAL BROADCAST - INFO</b>\n"
-            "<i>Page 3/4</i>\n\n"
-            "<b>🎯 FITUR LANJUTAN:</b>\n\n"
-            "• <b>🧹 Smart Purge</b>\n"
+            "<blockquote expandable><b>AUTO PRO GLOBAL BROADCAST - INFO</b>\n"
+            "<i>Page 3/8</i>\n\n"
+            "<b>FITUR LANJUTAN:</b>\n\n"
+            "• <b>Smart Purge</b>\n"
             "  ↳ Hapus pesan Anda di chat target sebelum broadcast\n"
             "  ↳ <b>Limit:</b> Jumlah pesan yang akan dihapus (±2)\n"
             "  ↳ <b>Delay/Msg:</b> Jeda antar penghapusan (±0.5s)\n"
             "  ↳ <b>Mode:</b> Newest (terbaru) / Oldest (terlama)\n"
             "  ↳ <b>Offset:</b> Lewati N pesan teratas (±1)\n"
             "  ↳ Skip blacklist chat otomatis\n\n"
-            "• <b>⚡ React</b>\n"
+            "• <b>React</b>\n"
             "  ↳ Auto react pada pesan yang dikirim\n"
             "  ↳ <b>Toggle:</b> Enable/Disable auto react\n"
             "  ↳ <b>Delay:</b> Jeda sebelum react (±2s, default 4s)\n"
             "  ↳ <b>Emoji:</b> Pilih emoji (👍❤️🔥🎉😊💯)\n"
             "  ↳ React count ditampilkan di completion log</blockquote>"
         ),
-        # Page 3: Dynamic Variables
+        # Page 4: Dynamic Variables
         (
-            "<blockquote expandable><b>📊 AUTO PRO GLOBAL BROADCAST - INFO</b>\n"
-            "<i>Page 4/5</i>\n\n"
-            "<b>✨ DYNAMIC VARIABLES:</b>\n\n"
+            "<blockquote expandable><b>AUTO PRO GLOBAL BROADCAST - INFO</b>\n"
+            "<i>Page 4/8</i>\n\n"
+            "<b>DYNAMIC VARIABLES:</b>\n\n"
             "Gunakan variabel ini agar pesan terasa lebih natural:\n\n"
             "• <code>{group_title}</code>\n"
             "  ↳ Nama group atau Nama User (jika private)\n\n"
             "• <code>{chat_name}</code>\n"
             "  ↳ Nama depan User atau Nama Group\n\n"
-            "<b>💡 CONTOH PENGGUNAAN:</b>\n"
+            "<b>CONTOH PENGGUNAAN:</b>\n"
             "• <code>Halo member group {group_title}!</code>\n"
             "  ↳ <i>Halo member group Altruix Community!</i>\n\n"
             "• <code>Hi {chat_name}, apa kabar?</code>\n"
             "  ↳ <i>Hi Budi, apa kabar?</i>\n\n"
             "<i>Variabel ini bekerja di Pesan GCast & Auto-Reply.</i></blockquote>"
         ),
-        # Page 4: Chat Queues
+        # Page 5: Link Messages
         (
-            "<blockquote expandable><b>📊 AUTO PRO GLOBAL BROADCAST - INFO</b>\n"
-            "<i>Page 5/6</i>\n\n"
-            "<b>📁 CHAT QUEUES:</b>\n"
+            "<blockquote expandable><b>AUTO PRO GLOBAL BROADCAST - INFO</b>\n"
+            "<i>Page 5/8</i>\n\n"
+            "<b>LINK MESSAGES:</b>\n"
+            "Tambah pesan dari link Telegram (channel/group public/private).\n\n"
+            "<b>Fitur Utama:</b>\n"
+            "• <b>Add Link Msg:</b> Input link <code>t.me/...</code> untuk ambil pesan.\n"
+            "• <b>Forward as Copy:</b>\n"
+            "  ↳ <b>ON:</b> Kirim tanpa tag 'Forwarded from'.\n"
+            "  ↳ <b>OFF:</b> Kirim sebagai forward biasa.\n\n"
+            "<b>TIPS:</b> Gunakan 'Copy' agar pesan terlihat seperti dikirim langsung oleh Anda.</blockquote>"
+        ),
+        # Page 6: Backup & Sync
+        (
+            "<blockquote expandable><b>AUTO PRO GLOBAL BROADCAST - INFO</b>\n"
+            "<i>Page 6/8</i>\n\n"
+            "<b>BACKUP & SYNC:</b>\n"
+            "Amankan pengaturan Anda atau salin ke akun lain.\n\n"
+            "• <b>Export JSON:</b> Simpan semua setting ke file <code>.json</code>.\n"
+            "  ↳ File dikirim ke PM Bot / Group Log.\n"
+            "• <b>Import JSON:</b> Upload file backup untuk restore setting.\n"
+            "• <b>Sync From Account:</b> Copy setting langsung dari akun aktif lain.\n\n"
+            "<b>Manual Commands:</b>\n"
+            "• <code>.gcastexp</code> — Export backup\n"
+            "• <code>.gcastimp</code> — Import backup (balas ke file)</blockquote>"
+        ),
+        # Page 7: Chat Queues
+        (
+            "<blockquote expandable><b>AUTO PRO GLOBAL BROADCAST - INFO</b>\n"
+            "<i>Page 7/8</i>\n\n"
+            "<b>CHAT QUEUES:</b>\n"
             "Gunakan Chat Queue untuk membuat daftar target kustom.\n\n"
             "<b>Cara Menggunakan:</b>\n"
             "1. Buka <b>Queue Manager</b> di Dashboard.\n"
@@ -1522,11 +1816,11 @@ def build_info_text(page: int = 0) -> str:
             "• <code>.gcastqdel [Nama] [id]</code>\n"
             "• <code>.gcastqlist</code></blockquote>"
         ),
-        # Page 5: Format Text
+        # Page 8: Format Text
         (
-            "<blockquote expandable><b>📊 AUTO PRO GLOBAL BROADCAST - INFO</b>\n"
-            "<i>Page 6/6</i>\n\n"
-            "<b>📝 FORMAT TEXT:</b>\n\n"
+            "<blockquote expandable><b>AUTO PRO GLOBAL BROADCAST - INFO</b>\n"
+            "<i>Page 8/8</i>\n\n"
+            "<b>FORMAT TEXT:</b>\n\n"
             "<b>HTML Format:</b>\n"
             "• <code>&lt;b&gt;Bold&lt;/b&gt;</code> → <b>Bold</b>\n"
             "• <code>&lt;i&gt;Italic&lt;/i&gt;</code> → <i>Italic</i>\n"
@@ -1538,7 +1832,7 @@ def build_info_text(page: int = 0) -> str:
             "• <code>__Italic__</code> → <i>Italic</i>\n"
             "• <code>`Code`</code> → <code>Code</code>\n"
             "• <code>[Link](url)</code>\n\n"
-            "<b>💡 TIPS:</b>\n"
+            "<b>TIPS:</b>\n"
             "• Gunakan Fixed Mode untuk menghindari spam detection\n"
             "• Smart Purge + Blacklist = chat penting tetap aman\n"
             "• Preview pesan sebelum broadcast untuk cek format\n\n"
@@ -1580,6 +1874,12 @@ def build_showcmd_text() -> str:
         "  ↳ Contoh: <code>.gcastbldel -1001234567800</code>\n\n"
         "• <code>.gcastblist</code>\n"
         "  ↳ Lihat semua chat yang di-blacklist\n\n"
+        "• <code>.gcastexp</code>\n"
+        "  ↳ Export semua setting Gcast ke file JSON\n\n"
+        "• <code>.gcastimp</code>\n"
+        "  ↳ Import setting dari file JSON (balas ke file)\n\n"
+        "• <code>.gcastadd</code>\n"
+        "  ↳ Tambahkan pesan/media ke list (balas ke pesan)\n\n"
         "<i>Gunakan dashboard untuk pengaturan lanjutan seperti\n"
         "filter, delay, text list, dan lainnya.</i></blockquote>"
     )
@@ -1756,6 +2056,33 @@ async def smart_purge_chat(client: Client, chat_id: int, title: str, settings: d
         return stats
 
 
+async def perform_typing_action(client: Client, chat_id: int, message: dict, duration: int):
+    """Perform a typing or uploading action in a chat."""
+    try:
+        action = enums.ChatAction.TYPING
+        if message.get("type") == "media":
+            media_type = message.get("media_type", "photo")
+            if media_type == "photo": action = enums.ChatAction.UPLOAD_PHOTO
+            elif media_type == "video": action = enums.ChatAction.UPLOAD_VIDEO
+            elif media_type == "audio": action = enums.ChatAction.UPLOAD_AUDIO
+            elif media_type == "document": action = enums.ChatAction.UPLOAD_DOCUMENT
+            elif media_type == "voice": action = enums.ChatAction.RECORD_AUDIO
+            elif media_type == "video_note": action = enums.ChatAction.RECORD_VIDEO_NOTE
+            elif media_type == "sticker": action = enums.ChatAction.CHOOSE_STICKER
+            
+        # Start activity
+        await client.send_chat_action(chat_id, action)
+        
+        # Duration simulation
+        if duration > 0:
+            # We don't want to block for exact duration if it's too long, 
+            # but for natural feel we sleep.
+            await asyncio.sleep(duration)
+            
+    except Exception as e:
+        Altruix.log(f"perform_typing_action failed in {chat_id}: {e}", level=10)
+
+
 async def broadcast_loop(client: Client, user_id: int, start_index: int = 0):
     """
     Main broadcast loop. Sends messages to all target chats.
@@ -1787,10 +2114,13 @@ async def broadcast_loop(client: Client, user_id: int, start_index: int = 0):
             # Old format compatibility
             all_messages.append({"type": "text", "content": str(item), "parse_mode": "html"})
     
-    for item in media_list:
+    for i, item in enumerate(media_list):
         # Store media_type separately to avoid conflict with type="media"
         media_item = {"type": "media", "media_type": item.get("type", "photo"), **{k: v for k, v in item.items() if k != "type"}}
         all_messages.append(media_item)
+    
+    for item in settings.get("link_list", []):
+        all_messages.append({"type": "link", **item})
     
     if not all_messages:
         Altruix.log("❌ GCast Error: Message list is empty. Add texts or media first.", level=40, client=client)
@@ -1956,6 +2286,13 @@ async def broadcast_loop(client: Client, user_id: int, start_index: int = 0):
             message_type = "Unknown"
             content_preview = ""
             
+            # Typing Action: Before Send
+            if settings.get("typing_action", False) and settings.get("typing_mode", "before") in ["before", "both"]:
+                try:
+                    await perform_typing_action(client, cid, message, settings.get("typing_duration", 4))
+                except Exception as te:
+                    Altruix.log(f"[GCast] Typing Action Before error: {te}", level=10)
+
             # Send message based on type
             try:
                 if message["type"] == "text":
@@ -1977,9 +2314,20 @@ async def broadcast_loop(client: Client, user_id: int, start_index: int = 0):
                     
                     sent_msg = await client.send_message(cid, content, parse_mode=parse_mode_enum)
                 
+                    # Typing Action: After Send (Text)
+                    if settings.get("typing_action", False) and settings.get("typing_mode", "before") in ["after", "both"]:
+                        try:
+                            await perform_typing_action(client, cid, message, settings.get("typing_duration", 4))
+                        except Exception as te:
+                            Altruix.log(f"[GCast] Typing Action After error: {te}", level=10)
+                
                 elif message["type"] == "media":
                     # Send media message
                     media_subtype = message.get("media_type", message.get("type", "photo"))
+                    
+                    # Media Sending Logic
+                    # (Uses global send_media_with_typing)
+
                     message_type = media_subtype.title()
                     file_id = message.get("file_id")
                     caption = message.get("caption", "")
@@ -1997,23 +2345,31 @@ async def broadcast_loop(client: Client, user_id: int, start_index: int = 0):
                         caption_parse_mode = enums.ParseMode.MARKDOWN
                     
                     # Send based on media type
-                    if media_subtype == "photo":
-                        sent_msg = await client.send_photo(cid, file_id, caption=caption, parse_mode=caption_parse_mode)
-                    elif media_subtype == "video":
-                        sent_msg = await client.send_video(cid, file_id, caption=caption, parse_mode=caption_parse_mode)
-                    elif media_subtype == "audio":
-                        sent_msg = await client.send_audio(cid, file_id, caption=caption, parse_mode=caption_parse_mode)
-                    elif media_subtype == "voice":
-                        sent_msg = await client.send_voice(cid, file_id, caption=caption, parse_mode=caption_parse_mode)
-                    elif media_subtype == "document":
-                        sent_msg = await client.send_document(cid, file_id, caption=caption, parse_mode=caption_parse_mode)
-                    elif media_subtype == "sticker":
-                        sent_msg = await client.send_sticker(cid, file_id)
-                    elif media_subtype == "animation":
-                        sent_msg = await client.send_animation(cid, file_id, caption=caption, parse_mode=caption_parse_mode)
-                    elif media_subtype == "video_note":
-                        sent_msg = await client.send_video_note(cid, file_id)
+                    sent_msg = await send_media_with_typing(client, cid, media_subtype, file_id, caption, caption_parse_mode, settings=settings)
                 
+                elif message["type"] == "link":
+                    # Send message link (Forward or Copy)
+                    from_chat = message.get("from_chat")
+                    msg_id = message.get("msg_id")
+                    as_copy = message.get("as_copy", True)
+                    
+                    message_type = "Link (Copy)" if as_copy else "Link (Forward)"
+                    content_preview = f"🔗 Link: {from_chat}/{msg_id}"
+                    
+                    if as_copy:
+                        sent_msg = await client.copy_message(cid, from_chat, msg_id)
+                    else:
+                        # forward_messages returns a list
+                        fw_msgs = await client.forward_messages(cid, from_chat, msg_id)
+                        sent_msg = fw_msgs[0] if fw_msgs else None
+                    
+                    # Typing Action: After Send (Link)
+                    if settings.get("typing_action", False) and settings.get("typing_mode", "before") in ["after", "both"]:
+                        try:
+                            # For links, we default to typing since we don't know the content type easily without fetching
+                            await client.send_chat_action(cid, enums.ChatAction.TYPING)
+                            await asyncio.sleep(settings.get("typing_duration", 4))
+                        except Exception: pass
                 task_state["sent_count"] += 1
                 
                 # ========== PROGRESSIVE LOG: Phase 1 — Initial send ==========
@@ -2471,7 +2827,7 @@ async def pgc_callback_handler(c: Client, cb: CallbackQuery):
     uid = None
     try:
         # Format detection based on action
-        if action in ["msgpreview", "msgdelconf", "msgdel", "msgsetfixed", "repmsgpreview", "repmsgdelconf", "repmsgdel", "repmsgsetfixed"]:
+        if action in ["msgconfig", "msgpreview", "msgdelconf", "msgdel", "msgsetfixed", "msgeditedit", "msglinktoggle", "repmsgconfig", "repmsgpreview", "repmsgdelconf", "repmsgdel", "repmsgsetfixed"]:
             # Format: pgc_action_type_uid_index[_pPAGE]
             if len(parts) >= 4:
                 uid = int(parts[3])
@@ -3143,7 +3499,7 @@ async def pgc_callback_handler(c: Client, cb: CallbackQuery):
         await safe_cb_answer(cb, f"Auto-Reply list - Page {page+1}", show_alert=False)
         return
 
-    elif action in ["repmsgpreview", "repmsgdelconf", "repmsgdel", "repmsgsetfixed"]:
+    elif action in ["repmsgconfig", "repmsgpreview", "repmsgdelconf", "repmsgdel", "repmsgsetfixed"]:
         # parts: pgc_repmsg{action}_{mtype}_{uid}_{idx}[_p{page}]
         if len(parts) < 5: return
         mtype = parts[2]
@@ -3159,21 +3515,83 @@ async def pgc_callback_handler(c: Client, cb: CallbackQuery):
                 await safe_cb_answer(cb, "❌ Message not found.", show_alert=True)
                 return
 
+            if action == "repmsgconfig":
+                kb = InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton("Preview", callback_data=f"pgc_repmsgpreview_{mtype}_{uid}_{o_idx}_p{page}", style=btn_style),
+                        InlineKeyboardButton("Delete", callback_data=f"pgc_repmsgdelconf_{mtype}_{uid}_{o_idx}_p{page}", style=btn_style),
+                    ],
+                    [
+                        InlineKeyboardButton("Back", callback_data=f"pgc_repmsgmenu_{uid}_page_{page}", style=btn_style)
+                    ]
+                ])
+                await safe_edit_message(cb, f"<b>⚙️ Configure Auto-Reply #{o_idx+1}</b>\nSelect an action below:", reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+                return
+
             if action == "repmsgpreview":
                 item = target_list[o_idx]
+                
+                # Fetch userbot client
+                client_user = None
+                if mtype == "media":
+                    if hasattr(Altruix, 'clients') and Altruix.clients:
+                        for cl in Altruix.clients:
+                            if hasattr(cl, 'me') and cl.me and str(cl.me.id) == uid:
+                                client_user = cl
+                                break
+
                 if mtype == "text":
                     content = item.get("content", "")
                     preview_text = f"<b>Preview Auto-Reply Text #{o_idx+1}</b>\n{'━' * 18}\n{html.escape(content)}"
+                    alert_msg = "Previewing message."
                 else:
                     subtype = item.get("type", "photo")
+                    fid = item.get("file_id", "")
                     cap = item.get("caption", "")
-                    preview_text = f"<b>Preview Auto-Reply Media #{o_idx+1}</b>\n{'━' * 18}\nType: <b>{subtype.upper()}</b>\nCaption: {html.escape(cap) or '<i>none</i>'}"
+                    preview_text = (
+                        f"<b>Preview Auto-Reply Media #{o_idx+1}</b>\n"
+                        f"{'━' * 18}\n"
+                        f"Type: <b>{subtype.upper()}</b>\n"
+                        f"Caption: {html.escape(cap) or '<i>none</i>'}\n"
+                        f"{'━' * 18}\n"
+                        f"🕒 <i>Sending actual media to Log Chat for full preview...</i>"
+                    )
+                    
+                    # Try to send media with all available clients until one succeeds
+                    async def send_rep_preview():
+                        clients_to_try = []
+                        if hasattr(Altruix, 'bot_manager') and hasattr(Altruix.bot_manager, 'get_bot'):
+                            cb = Altruix.bot_manager.get_bot(int(uid))
+                            if cb: clients_to_try.append((cb, "Custom Bot"))
+                        if hasattr(Altruix, 'bot') and getattr(Altruix, 'bot', None):
+                            clients_to_try.append((Altruix.bot, "Bot Assistant"))
+                        if client_user:
+                            clients_to_try.append((client_user, "Userbot"))
+                            
+                        for c, cname in clients_to_try:
+                            m = await send_media_with_typing(
+                                c, LOG_CHAT_ID, subtype, fid, 
+                                f"<blockquote expandable>👁 <b>Auto-Reply Preview</b> #{o_idx+1}\nType: <b>{subtype.upper()}</b>\nSender: <b>{cname}</b>\nAccount: <code>{uid}</code></blockquote>", 
+                                enums.ParseMode.HTML
+                            )
+                            if m: return True
+                            
+                        # Fallback if all file_id attempts fail
+                        await send_log(f"⚠️ <b>Auto-Reply Preview Failed</b> #{o_idx+1}\nMedia type <b>{subtype.upper()}</b> could not be sent. The file reference might be invalid for the available clients. Please try deleting and re-adding this media.", client=None)
+                        return False
+
+                    if fid:
+                        asyncio.create_task(send_rep_preview())
+                        alert_msg = "✅ Mengirim media preview ke Log Chat..."
+                    else:
+                        alert_msg = "Previewing message."
                 
                 kb = InlineKeyboardMarkup([
                     [InlineKeyboardButton("🗑 Delete", callback_data=f"pgc_repmsgdelconf_{mtype}_{uid}_{o_idx}_p{page}", style=btn_style)],
                     [InlineKeyboardButton("🔙 Back", callback_data=f"pgc_repmsgmenu_{uid}_page_{page}", style=btn_style)]
                 ])
                 await safe_edit_message(cb, preview_text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+                await safe_cb_answer(cb, alert_msg, show_alert="✅" in alert_msg)
 
             elif action == "repmsgdelconf":
                 confirm_text = f"❓ <b>Hapus auto-reply {mtype} #{o_idx+1}?</b>"
@@ -3224,7 +3642,8 @@ async def pgc_callback_handler(c: Client, cb: CallbackQuery):
         msg_id = cb.message.id if cb.message else 0
         
         GCAST_REPLY_TEXT_INPUT_STATE[uid] = {"chat_id": chat_id, "msg_id": msg_id, "page": page, "action": "add"}
-        log_msg = await send_log(f"📝 <b>Add Auto-Reply Text</b>\n<i>Return to Page {page+1} after adding</i>\n\nReply with your text.", client=None)
+        cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data=f"pgc_inputcancel_{uid}_rep_p{page}", style=btn_style)]])
+        log_msg = await send_log(f"📝 <b>Add Auto-Reply Text</b>\n<i>Return to Page {page+1} after adding</i>\n\nReply with your text.", client=None, reply_markup=cancel_kb)
         
         if log_msg:
             await safe_cb_answer(cb, "📝 Silahkan balas (reply) pesan di LOG/Bot dengan Teks balasan baru.", show_alert=True)
@@ -3245,7 +3664,8 @@ async def pgc_callback_handler(c: Client, cb: CallbackQuery):
         # Re-use media state with a flag or separate dic? I'll use separate for clarity if I can.
         # But I'll modify pgc_input_handler accordingly.
         GCAST_REPLY_MEDIA_INPUT_STATE[uid] = {"chat_id": chat_id, "msg_id": msg_id, "page": page, "action": "add"}
-        log_msg = await send_log(f"🎬 <b>Add Auto-Reply Media</b>\n<i>Return to Page {page+1} after adding</i>\n\nReply with your media.", client=None)
+        cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data=f"pgc_inputcancel_{uid}_rep_p{page}", style=btn_style)]])
+        log_msg = await send_log(f"🎬 <b>Add Auto-Reply Media</b>\n<i>Return to Page {page+1} after adding</i>\n\nReply with your media.", client=None, reply_markup=cancel_kb)
         
         if log_msg:
             await safe_cb_answer(cb, "🎬 Silahkan balas (reply) pesan di LOG/Bot dengan Media baru.", show_alert=True)
@@ -3270,10 +3690,12 @@ async def pgc_callback_handler(c: Client, cb: CallbackQuery):
             GCAST_REPLY_MEDIA_INPUT_STATE[uid] = {"action": "edit", "idx": idx, "msg_id": msg_id, "page": page}
             prompt = "Silahkan balas (reply) pesan ini dengan Caption balasan baru."
             
+        cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data=f"pgc_inputcancel_{uid}_rep_p{page}", style=btn_style)]])
         log_msg = await send_log(
             f"✏️ <b>Edit Auto-Reply {mtype.title()} #{idx+1}</b>\n"
             f"{'━' * 18}\n{prompt}",
-            client=None
+            client=None,
+            reply_markup=cancel_kb
         )
         
         if log_msg:
@@ -3286,8 +3708,8 @@ async def pgc_callback_handler(c: Client, cb: CallbackQuery):
         confirm_text = "⚠️ <b>Hapus semua balasan otomatis?</b>"
         kb = InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("✅ Ya, Hapus Semua", callback_data=f"pgc_repmsgclear_{uid}", style=btn_style),
-                InlineKeyboardButton("❌ Batal", callback_data=f"pgc_repmsgmenu_{uid}", style=btn_style)
+                InlineKeyboardButton("❌ Cancel", callback_data=f"pgc_repmsgmenu_{uid}", style=btn_style),
+                InlineKeyboardButton("✅ Yes, Clear All", callback_data=f"pgc_repmsgclear_{uid}", style=btn_style)
             ]
         ])
         await safe_edit_message(cb, confirm_text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
@@ -3328,6 +3750,163 @@ async def pgc_callback_handler(c: Client, cb: CallbackQuery):
         await safe_edit_message(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
         await safe_cb_answer(cb, "Refreshed!", show_alert=False)
         return
+
+    # ========== BACKUP & SYNC ACTIONS ==========
+
+    elif action == "syncmenu":
+        text = build_sync_submenu_text(uid)
+        kb = build_sync_submenu_kb(uid)
+        await safe_edit_message(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+        await safe_cb_answer(cb, "Backup & Sync settings.", show_alert=False)
+        return
+
+    elif action == "exportcfg":
+        await safe_cb_answer(cb, "📤 Generating configuration file...", show_alert=False)
+        config_json = export_gcast_config(uid)
+        
+        # Save to temp file
+        import tempfile
+        # Avoid relative path issues, use OS temp
+        fd, temp_path = tempfile.mkstemp(suffix=".json", prefix=f"gcast_cfg_{uid}_")
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            f.write(config_json)
+            
+        file_path = Path(temp_path)
+            
+        # Send file: Order: 1. User PM (Bot), 2. Log Chat, 3. Current Chat
+        dest_chat_id = cb.from_user.id # PM with Bot is safest privacy-wise
+        
+        bot = None
+        if hasattr(Altruix, 'bot_manager'):
+            bot = Altruix.bot_manager.get_bot(uid)
+        if not bot:
+            bot = Altruix.bot
+            
+        success = False
+        if bot:
+            try:
+                await bot.send_document(
+                    dest_chat_id, 
+                    document=str(file_path),
+                    caption=f"📄 <b>Gcast Export Success</b>\nAccount: <code>{uid}</code>\nDate: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                    parse_mode=enums.ParseMode.HTML
+                )
+                await safe_cb_answer(cb, "✅ Config sent to your PM with Bot!", show_alert=True)
+                success = True
+            except Exception:
+                # Fallback to current chat or log if PM blocked
+                try:
+                    target_chat = cb.message.chat.id if cb.message else LOG_CHAT_ID
+                    await bot.send_document(
+                        target_chat,
+                        document=str(file_path),
+                        caption=f"📄 <b>Gcast Export</b> (Fallback)\nAccount: <code>{uid}</code>",
+                        parse_mode=enums.ParseMode.HTML
+                    )
+                    await safe_cb_answer(cb, "✅ Config sent to this chat/log.", show_alert=True)
+                    success = True
+                except Exception as e2:
+                    Altruix.log(f"Export send failing for bot: {e2}", level=40)
+        
+        # Final fallback: Use the userbot client itself if bot fails
+        if not success:
+            try:
+                await c.send_document(
+                    "me", # Saved Messages
+                    document=str(file_path),
+                    caption=f"📄 <b>Gcast Export</b> (Userbot Fallback)\nAccount: <code>{uid}</code>"
+                )
+                await safe_cb_answer(cb, "✅ Bot failed, config sent to your Saved Messages!", show_alert=True)
+                success = True
+            except Exception as e3:
+                await safe_cb_answer(cb, f"❌ Failed to send file: {e3}", show_alert=True)
+
+        # Cleanup
+        if file_path.exists():
+            try: os.remove(file_path)
+            except: pass
+        return
+
+    elif action == "importcfg":
+        # Enable import state
+        # Support inline mode (no cb.message)
+        chat_id = cb.message.chat.id if cb.message else LOG_CHAT_ID
+        msg_id = cb.message.id if cb.message else None
+        
+        GCAST_IMPORT_STATE[uid] = {"chat_id": chat_id, "msg_id": msg_id}
+        
+        text = (
+            f"<blockquote expandable>📥 <b>Import Gcast Configuration</b>\n"
+            f"{'━' * 18}\n"
+            f"Please upload your <code>.json</code> configuration file by replying to this message.\n\n"
+            f"⚠️ <b>Warning:</b> This will OVERWRITE your current settings.</blockquote>"
+        )
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data=f"pgc_syncmenu_{uid}", style=btn_style)]])
+        await safe_edit_message(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+        await safe_cb_answer(cb, "Please upload your .json config file.", show_alert=True)
+        return
+
+    elif action == "synclist":
+        # Build list of other active sessions to sync from
+        other_clients = []
+        for cl in Altruix.clients:
+            if hasattr(cl, 'me') and cl.me and cl.me.id != uid:
+                other_clients.append(cl.me)
+        
+        if not other_clients:
+            await safe_cb_answer(cb, "❌ No other active sessions found to sync from.", show_alert=True)
+            return
+            
+        text = (
+            f"<blockquote expandable>🔄 <b>Sync from Account</b>\n"
+            f"{'━' * 18}\n"
+            f"Select an account to copy configuration FROM. All current settings for account <code>{uid}</code> will be overwritten.</blockquote>"
+        )
+        
+        rows = []
+        for me in other_clients:
+            name = f"{me.first_name} {me.last_name or ''}".strip() or str(me.id)
+            rows.append([InlineKeyboardButton(f"👤 {name} ({me.id})", callback_data=f"pgc_syncfrom_{uid}_{me.id}", style=btn_style)])
+            
+        rows.append([InlineKeyboardButton("⬅️ Back", callback_data=f"pgc_syncmenu_{uid}", style=btn_style)])
+        kb = InlineKeyboardMarkup(rows)
+        await safe_edit_message(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+        await safe_cb_answer(cb, "Select account to sync from.", show_alert=False)
+        return
+
+    elif action == "syncfrom":
+        # pgc_syncfrom_uid_fromuid
+        if len(parts) < 4: return
+        from_uid = int(parts[3])
+        
+        text = (
+            f"<blockquote expandable>⚠️ <b>Confirm Synchronization</b>\n"
+            f"{'━' * 18}\n"
+            f"Are you sure you want to copy all Gcast settings FROM <code>{from_uid}</code> TO <code>{uid}</code>?\n\n"
+            f"All existing settings for <code>{uid}</code> will be lost.</blockquote>"
+        )
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Confirm Sync", callback_data=f"pgc_syncconfirm_{uid}_{from_uid}", style=btn_style)],
+            [InlineKeyboardButton("⬅️ Cancel", callback_data=f"pgc_synclist_{uid}", style=btn_style)]
+        ])
+        await safe_edit_message(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+        return
+
+    elif action == "syncconfirm":
+        # pgc_syncconfirm_uid_fromuid
+        if len(parts) < 4: return
+        from_uid = int(parts[3])
+        
+        if sync_gcast_config(from_uid, uid):
+            await safe_cb_answer(cb, "✅ Configuration synchronized successfully!", show_alert=True)
+        else:
+            await safe_cb_answer(cb, "❌ Synchronization failed.", show_alert=True)
+            
+        # Back to sync menu
+        text = build_sync_submenu_text(uid)
+        kb = build_sync_submenu_kb(uid)
+        await safe_edit_message(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+        return
     
     elif action == "info":
         # Show info sub-menu with button documentation (paginated)
@@ -3345,7 +3924,7 @@ async def pgc_callback_handler(c: Client, cb: CallbackQuery):
         nav_buttons = []
         if page > 0:
             nav_buttons.append(InlineKeyboardButton("◀️ Prev", callback_data=f"pgc_info_{uid}_page_{page-1}", style=btn_style))
-        if page < 3:  # ✅ FIX: We have 4 pages (0, 1, 2, 3)
+        if page < 7:  # ✅ UPDATED: We have 8 pages (0-7)
             nav_buttons.append(InlineKeyboardButton("Next ▶️", callback_data=f"pgc_info_{uid}_page_{page+1}", style=btn_style))
         
         kb_rows = []
@@ -3357,7 +3936,7 @@ async def pgc_callback_handler(c: Client, cb: CallbackQuery):
         kb = InlineKeyboardMarkup(kb_rows)
         success = await safe_edit_message(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
         if success:
-            await safe_cb_answer(cb, f"Info menu (Page {page+1}/4).", show_alert=False)
+            await safe_cb_answer(cb, f"Info menu (Page {page+1}/8).", show_alert=False)
         return
     
     elif action == "showcmd":
@@ -3500,6 +4079,84 @@ async def pgc_callback_handler(c: Client, cb: CallbackQuery):
         await safe_edit_message(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
         return
     
+    # ========== TYPING ACTION SUB-MENU ==========
+    elif action == "typingmenu":
+        text = (
+            f"<blockquote expandable>⌨️ <b>Typing Action Settings</b>\n"
+            f"{'━' * 18}\n"
+            f"Simulasikan aktivitas 'Typing' atau 'Uploading' agar broadcast Anda terlihat lebih natural dan manusiawi.\n\n"
+            f"• <b>Status:</b> {'ON' if s.get('typing_action', False) else 'OFF'}\n"
+            f"• <b>Mode:</b> {s.get('typing_mode', 'before').title()}\n"
+            f"• <b>Duration:</b> {s.get('typing_duration', 4)}s\n"
+            f"{'━' * 18}</blockquote>"
+        )
+        kb = build_typing_submenu_kb(uid)
+        await safe_edit_message(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+        return
+
+    elif action == "typingtoggle":
+        s["typing_action"] = not s.get("typing_action", False)
+        save_settings(uid, s)
+        await safe_cb_answer(cb, f"Typing Action {'Enabled' if s['typing_action'] else 'Disabled'}")
+        
+        text = (
+            f"<blockquote expandable>⌨️ <b>Typing Action Settings</b>\n"
+            f"{'━' * 18}\n"
+            f"Simulasikan aktivitas 'Typing' atau 'Uploading' agar broadcast Anda terlihat lebih natural dan manusiawi.\n\n"
+            f"• <b>Status:</b> {'ON' if s.get('typing_action', False) else 'OFF'}\n"
+            f"• <b>Mode:</b> {s.get('typing_mode', 'before').title()}\n"
+            f"• <b>Duration:</b> {s.get('typing_duration', 4)}s\n"
+            f"{'━' * 18}</blockquote>"
+        )
+        kb = build_typing_submenu_kb(uid)
+        await safe_edit_message(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+        return
+
+    elif action == "typingmode":
+        modes = ["before", "after", "both"]
+        current_mode = s.get("typing_mode", "before")
+        next_mode = modes[(modes.index(current_mode) + 1) % len(modes)]
+        s["typing_mode"] = next_mode
+        save_settings(uid, s)
+        await safe_cb_answer(cb, f"Mode set to: {next_mode.title()}")
+        
+        text = (
+            f"<blockquote expandable>⌨️ <b>Typing Action Settings</b>\n"
+            f"{'━' * 18}\n"
+            f"Simulasikan aktivitas 'Typing' atau 'Uploading' agar broadcast Anda terlihat lebih natural dan manusiawi.\n\n"
+            f"• <b>Status:</b> {'ON' if s.get('typing_action', False) else 'OFF'}\n"
+            f"• <b>Mode:</b> {s.get('typing_mode', 'before').title()}\n"
+            f"• <b>Duration:</b> {s.get('typing_duration', 4)}s\n"
+            f"{'━' * 18}</blockquote>"
+        )
+        kb = build_typing_submenu_kb(uid)
+        await safe_edit_message(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+        return
+
+    elif action in ["typingdurinc", "typingdurdec"]:
+        current_dur = s.get("typing_duration", 4)
+        if action == "typingdurinc":
+            new_dur = min(15, current_dur + 1)
+        else:
+            new_dur = max(1, current_dur - 1)
+        
+        s["typing_duration"] = new_dur
+        save_settings(uid, s)
+        await safe_cb_answer(cb, f"Duration set to: {new_dur}s")
+        
+        text = (
+            f"<blockquote expandable>⌨️ <b>Typing Action Settings</b>\n"
+            f"{'━' * 18}\n"
+            f"Simulasikan aktivitas 'Typing' atau 'Uploading' agar broadcast Anda terlihat lebih natural dan manusiawi.\n\n"
+            f"• <b>Status:</b> {'ON' if s.get('typing_action', False) else 'OFF'}\n"
+            f"• <b>Mode:</b> {s.get('typing_mode', 'before').title()}\n"
+            f"• <b>Duration:</b> {s.get('typing_duration', 4)}s\n"
+            f"{'━' * 18}</blockquote>"
+        )
+        kb = build_typing_submenu_kb(uid)
+        await safe_edit_message(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+        return
+
     # ========== MESSAGE LIST SUB-MENU ==========
     
     elif action == "msgmenu":
@@ -3517,6 +4174,46 @@ async def pgc_callback_handler(c: Client, cb: CallbackQuery):
             await safe_cb_answer(cb, f"Message list - Page {page+1}", show_alert=False)
         return
     
+    elif action == "inputcancel":
+        # Universal cancel handler: clears all pending input states
+        GCAST_TEXT_INPUT_STATE.pop(uid, None)
+        GCAST_MEDIA_INPUT_STATE.pop(uid, None)
+        GCAST_REPLY_TEXT_INPUT_STATE.pop(uid, None)
+        GCAST_REPLY_MEDIA_INPUT_STATE.pop(uid, None)
+        GCAST_BL_INPUT_STATE.pop(uid, None)
+        GCAST_LINK_INPUT_STATE.pop(uid, None)
+        GCAST_IMPORT_STATE.pop(uid, None)
+        
+        # Determine which menu to return to based on extra data
+        ret = "main"
+        if len(parts) >= 4:
+            ret = parts[3]  # e.g. "msg", "rep", "bl"
+        
+        if ret == "msg":
+            page = 0
+            if len(parts) >= 5 and parts[4].startswith("p"):
+                try: page = int(parts[4][1:])
+                except: page = 0
+            text = build_msglist_text(uid, page=page)
+            kb = build_msglist_kb(uid, page=page)
+        elif ret == "rep":
+            page = 0
+            if len(parts) >= 5 and parts[4].startswith("p"):
+                try: page = int(parts[4][1:])
+                except: page = 0
+            text = build_reply_msglist_text(uid, page=page)
+            kb = build_reply_msglist_kb(uid, page=page)
+        elif ret == "bl":
+            text = build_bl_text(uid)
+            kb = build_bl_kb(uid)
+        else:
+            text = build_dashboard_text(uid)
+            kb = build_dashboard_kb(uid)
+        
+        await safe_edit_message(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+        await safe_cb_answer(cb, "❌ Input dibatalkan.", show_alert=False)
+        return
+
     elif action == "addtext":
         # parts: pgc_addtext_uid[_p{page}]
         page = 0
@@ -3530,6 +4227,7 @@ async def pgc_callback_handler(c: Client, cb: CallbackQuery):
         msg_id = cb.message.id if cb.message else None
         GCAST_TEXT_INPUT_STATE[uid] = {"action": "add", "msg_id": msg_id, "page": page}
         
+        cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data=f"pgc_inputcancel_{uid}_msg_p{page}", style=btn_style)]])
         # Send log message for user to reply to
         log_msg = await send_log(
             f"📝 <b>Add Text to GCast</b>\n"
@@ -3542,7 +4240,8 @@ async def pgc_callback_handler(c: Client, cb: CallbackQuery):
             f"• Starts with <code>&lt;</code> → HTML\n"
             f"• Contains <code>**</code> or <code>__</code> → Markdown\n"
             f"• Otherwise → Plain text",
-            client=None
+            client=None,
+            reply_markup=cancel_kb
         )
         
         if log_msg:
@@ -3568,10 +4267,12 @@ async def pgc_callback_handler(c: Client, cb: CallbackQuery):
             GCAST_MEDIA_INPUT_STATE[uid] = {"action": "edit", "idx": idx, "msg_id": msg_id, "page": page}
             prompt = "Silahkan balas (reply) pesan ini dengan Caption baru."
             
+        cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data=f"pgc_inputcancel_{uid}_msg_p{page}", style=btn_style)]])
         log_msg = await send_log(
             f"✏️ <b>Edit GCast {mtype.title()} #{idx+1}</b>\n"
             f"{'━' * 18}\n{prompt}",
-            client=None
+            client=None,
+            reply_markup=cancel_kb
         )
         
         if log_msg:
@@ -3581,7 +4282,7 @@ async def pgc_callback_handler(c: Client, cb: CallbackQuery):
         return
     
     # Combined handlers for GCast message actions (preview, del, setfixed)
-    elif action in ["msgpreview", "msgdelconf", "msgdel", "msgsetfixed"]:
+    elif action in ["msgconfig", "msgpreview", "msgdelconf", "msgdel", "msgsetfixed", "msglinktoggle"]:
         # Parts: pgc_{action}_{type}_{uid}_{idx}[_p{page}]
         if len(parts) < 5: return
         mtype = parts[2]
@@ -3593,13 +4294,63 @@ async def pgc_callback_handler(c: Client, cb: CallbackQuery):
                 try: page = int(parts[5][1:])
                 except: page = 0
             
-            target_list = s["text_list"] if mtype == "text" else s["media_list"]
+            if mtype == "text":
+                target_list = s["text_list"]
+            elif mtype == "media":
+                target_list = s["media_list"]
+            else: # link
+                target_list = s.get("link_list", [])
+
             if o_idx < 0 or o_idx >= len(target_list):
                 await safe_cb_answer(cb, "❌ Message not found.", show_alert=True)
                 return
 
+            if action == "msgconfig":
+                if mtype == "link":
+                    item = target_list[o_idx]
+                    cur_copy = item.get("as_copy", True) if o_idx < len(target_list) else True
+                    copy_label = "As Copy: ON" if cur_copy else "As Copy: OFF"
+                    kb = InlineKeyboardMarkup([
+                        [
+                            InlineKeyboardButton("Preview", callback_data=f"pgc_msgpreview_{mtype}_{uid}_{o_idx}_p{page}", style=btn_style),
+                            InlineKeyboardButton(copy_label, callback_data=f"pgc_msglinktoggle_{mtype}_{uid}_{o_idx}_p{page}", style=btn_style),
+                        ],
+                        [
+                            InlineKeyboardButton("Delete", callback_data=f"pgc_msgdelconf_{mtype}_{uid}_{o_idx}_p{page}", style=btn_style),
+                        ],
+                        [
+                            InlineKeyboardButton("Back", callback_data=f"pgc_msgmenu_{uid}_page_{page}", style=btn_style)
+                        ]
+                    ])
+                else:
+                    edit_btn = InlineKeyboardButton("Edit", callback_data=f"pgc_msgeditedit_{mtype}_{uid}_{o_idx}_p{page}", style=btn_style) if mtype != "link" else InlineKeyboardButton(" ", callback_data=f"pgc_noop_{uid}", style=btn_style)
+                    kb = InlineKeyboardMarkup([
+                        [
+                            InlineKeyboardButton("Preview", callback_data=f"pgc_msgpreview_{mtype}_{uid}_{o_idx}_p{page}", style=btn_style),
+                            edit_btn,
+                        ],
+                        [
+                            InlineKeyboardButton("Delete", callback_data=f"pgc_msgdelconf_{mtype}_{uid}_{o_idx}_p{page}", style=btn_style),
+                        ],
+                        [
+                            InlineKeyboardButton("Back", callback_data=f"pgc_msgmenu_{uid}_page_{page}", style=btn_style)
+                        ]
+                    ])
+                await safe_edit_message(cb, f"<b>⚙️ Configure Message #{o_idx+1}</b>\nSelect an action below:", reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+                return
+
             if action == "msgpreview":
                 item = target_list[o_idx]
+                
+                # Fetch userbot client for media/link fetching
+                client_user = None
+                if mtype in ["media", "link"]:
+                    if hasattr(Altruix, 'clients') and Altruix.clients:
+                        for cl in Altruix.clients:
+                            if hasattr(cl, 'me') and cl.me and cl.me.id == uid:
+                                client_user = cl
+                                break
+
                 if mtype == "text":
                     content = item.get("content", "") if isinstance(item, dict) else str(item)
                     pm = item.get("parse_mode", "html") if isinstance(item, dict) else "html"
@@ -3610,22 +4361,77 @@ async def pgc_callback_handler(c: Client, cb: CallbackQuery):
                         f"{'━' * 18}\n"
                         f"Format: <code>{pm.upper()}</code>"
                     )
-                else:
+                    alert_msg = "Previewing message."
+                elif mtype == "media":
                     subtype = item.get("type", "photo")
+                    fid = item.get("file_id", "")
                     cap = item.get("caption", "")
                     preview_text = (
                         f"<b>Preview GCast Media #{o_idx+1}</b>\n"
                         f"{'━' * 18}\n"
                         f"Type: <b>{subtype.upper()}</b>\n"
-                        f"Caption: {html.escape(cap) if cap else '<i>none</i>'}"
+                        f"Caption: {html.escape(cap) if cap else '<i>none</i>'}\n"
+                        f"{'━' * 18}\n"
+                        f"🕒 <i>Sending actual media to Log Chat for full preview...</i>"
                     )
+                    # Try to send media with all available clients until one succeeds
+                    async def send_preview():
+                        clients_to_try = []
+                        if hasattr(Altruix, 'bot_manager') and hasattr(Altruix.bot_manager, 'get_bot'):
+                            cb = Altruix.bot_manager.get_bot(int(uid))
+                            if cb: clients_to_try.append((cb, "Custom Bot"))
+                        if hasattr(Altruix, 'bot') and getattr(Altruix, 'bot', None):
+                            clients_to_try.append((Altruix.bot, "Bot Assistant"))
+                        if client_user:
+                            clients_to_try.append((client_user, "Userbot"))
+                            
+                        for c, cname in clients_to_try:
+                            m = await send_media_with_typing(
+                                c, LOG_CHAT_ID, subtype, fid, 
+                                f"<blockquote expandable>👁 <b>Gcast Preview</b> #{o_idx+1}\nType: <b>{subtype.upper()}</b>\nSender: <b>{cname}</b>\nAccount: <code>{uid}</code></blockquote>", 
+                                enums.ParseMode.HTML
+                            )
+                            if m: return True
+                            
+                        # Fallback if all file_id attempts fail
+                        await send_log(f"⚠️ <b>Gcast Preview Failed</b> #{o_idx+1}\nMedia type <b>{subtype.upper()}</b> could not be sent. The file reference might be invalid for the available clients. Please try deleting and re-adding this media.", client=None)
+                        return False
+
+                    if fid:
+                        asyncio.create_task(send_preview())
+                        alert_msg = "✅ Mengirim media preview ke Log Chat..."
+                    else:
+                        alert_msg = "Previewing message."
+                else: # link
+                    from_chat = item.get("from_chat", "Unknown")
+                    msg_id = item.get("msg_id", "?")
+                    as_copy = item.get("as_copy", True)
+                    
+                    content_snippet = "<i>(Could not fetch message content)</i>"
+                    if client_user:
+                        try:
+                            lmsg = await client_user.get_messages(from_chat, msg_id)
+                            if lmsg and not lmsg.empty:
+                                raw_text = lmsg.text or lmsg.caption or ""
+                                content_snippet = f"<blockquote>{html.escape(raw_text[:150])}...</blockquote>"
+                        except: pass
+
+                    preview_text = (
+                        f"<b>Preview GCast Link #{o_idx+1}</b>\n"
+                        f"{'━' * 18}\n"
+                        f"From Chat: <code>{from_chat}</code>\n"
+                        f"Message ID: <code>{msg_id}</code>\n"
+                        f"Forward as Copy: <b>{'YES' if as_copy else 'NO'}</b>\n\n"
+                        f"<b>Content Preview:</b>\n{content_snippet}"
+                    )
+                    alert_msg = "Previewing message."
                 
                 kb = InlineKeyboardMarkup([
                     [InlineKeyboardButton("🗑 Delete", callback_data=f"pgc_msgdelconf_{mtype}_{uid}_{o_idx}_p{page}", style=btn_style)],
                     [InlineKeyboardButton("🔙 Back", callback_data=f"pgc_msgmenu_{uid}_page_{page}", style=btn_style)]
                 ])
                 await safe_edit_message(cb, preview_text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
-                await safe_cb_answer(cb, "Previewing message.", show_alert=False)
+                await safe_cb_answer(cb, alert_msg, show_alert="✅" in alert_msg)
 
             elif action == "msgdelconf":
                 confirm_text = f"❓ <b>Hapus pesan {mtype} #{o_idx+1}?</b>"
@@ -3640,7 +4446,8 @@ async def pgc_callback_handler(c: Client, cb: CallbackQuery):
             elif action == "msgdel":
                 target_list.pop(o_idx)
                 if mtype == "text": s["text_list"] = target_list
-                else: s["media_list"] = target_list
+                elif mtype == "media": s["media_list"] = target_list
+                else: s["link_list"] = target_list
                 
                 # If deleted fixed message, reset it
                 if not s["random_text"] and s.get("fixed_message_index") is not None:
@@ -3653,10 +4460,17 @@ async def pgc_callback_handler(c: Client, cb: CallbackQuery):
                 text = build_msglist_text(uid, page=page)
                 kb = build_msglist_kb(uid, page=page)
                 await safe_edit_message(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+                return
 
             elif action == "msgsetfixed":
                 # Calculate global index
-                actual_fixed_idx = o_idx if mtype == "text" else len(s["text_list"]) + o_idx
+                if mtype == "text":
+                    actual_fixed_idx = o_idx
+                elif mtype == "media":
+                    actual_fixed_idx = len(s["text_list"]) + o_idx
+                else: # link
+                    actual_fixed_idx = len(s["text_list"]) + len(s.get("media_list", [])) + o_idx
+                
                 s["random_text"] = False
                 s["fixed_message_index"] = actual_fixed_idx
                 save_settings(uid, s)
@@ -3667,8 +4481,36 @@ async def pgc_callback_handler(c: Client, cb: CallbackQuery):
                 kb = build_msglist_kb(uid, page=page)
                 await safe_edit_message(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
 
+            elif action == "msglinktoggle":
+                # Toggle as_copy for individual link item
+                if mtype == "link" and o_idx < len(target_list):
+                    current_copy = target_list[o_idx].get("as_copy", True)
+                    target_list[o_idx]["as_copy"] = not current_copy
+                    s["link_list"] = target_list
+                    save_settings(uid, s)
+                    
+                    new_label = "As Copy: ON" if not current_copy else "As Copy: OFF"
+                    await safe_cb_answer(cb, f"{'✅' if not current_copy else '📤'} {new_label}", show_alert=False)
+                    
+                    # Refresh Config submenu with updated button
+                    kb = InlineKeyboardMarkup([
+                        [
+                            InlineKeyboardButton("Preview", callback_data=f"pgc_msgpreview_{mtype}_{uid}_{o_idx}_p{page}", style=btn_style),
+                            InlineKeyboardButton(new_label, callback_data=f"pgc_msglinktoggle_{mtype}_{uid}_{o_idx}_p{page}", style=btn_style),
+                        ],
+                        [
+                            InlineKeyboardButton("Delete", callback_data=f"pgc_msgdelconf_{mtype}_{uid}_{o_idx}_p{page}", style=btn_style),
+                        ],
+                        [
+                            InlineKeyboardButton("Back", callback_data=f"pgc_msgmenu_{uid}_page_{page}", style=btn_style)
+                        ]
+                    ])
+                    await safe_edit_message(cb, f"<b>⚙️ Configure Message #{o_idx+1}</b>\nSelect an action below:", reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+                else:
+                    await safe_cb_answer(cb, "❌ Only link items can toggle copy mode.", show_alert=True)
+
         except Exception as e:
-            Altruix.log(f"Error in GCast msg action {action}: {e}", level=40, client=client)
+            Altruix.log(f"Error in GCast msg action {action}: {e}", level=40, client=c)
             await safe_cb_answer(cb, "❌ Gagal memproses pesan.", show_alert=True)
         return
     
@@ -3684,18 +4526,67 @@ async def pgc_callback_handler(c: Client, cb: CallbackQuery):
         msg_id = cb.message.id if cb.message else None
         GCAST_MEDIA_INPUT_STATE[uid] = {"action": "add", "msg_id": msg_id, "page": page}
         
+        cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data=f"pgc_inputcancel_{uid}_msg_p{page}", style=btn_style)]])
         log_msg = await send_log(
             f"🎬 <b>Add Media to GCast</b>\n"
             f"<i>Return to Page {page+1} after adding</i>\n\n"
             f"Reply to this message with the media you want to add.\n"
             f"Supported: Photo, Video, Animation, Audio, etc.",
-            client=None
+            client=None,
+            reply_markup=cancel_kb
         )
         
         if log_msg:
             await safe_cb_answer(cb, "🎬 Silahkan balas (reply) pesan di LOG/Bot dengan Media baru.", show_alert=True)
         else:
             await safe_cb_answer(cb, "❌ Gagal mengirim perintah input. Silahkan coba lagi.", show_alert=True)
+        return
+
+    elif action == "linkadd":
+        # parts: pgc_linkadd_uid[_p{page}]
+        page = 0
+        if len(parts) >= 3:
+            if parts[-1].startswith("p"):
+                try: page = int(parts[-1][1:])
+                except: page = 0
+        
+        msg_id = cb.message.id if cb.message else None
+        GCAST_LINK_INPUT_STATE[uid] = {"action": "add", "msg_id": msg_id, "page": page}
+        
+        cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data=f"pgc_inputcancel_{uid}_msg_p{page}", style=btn_style)]])
+        log_msg = await send_log(
+            f"🔗 <b>Add Link Message to GCast</b>\n"
+            f"<i>Return to Page {page+1} after adding</i>\n\n"
+            f"Please send the message link (e.g., <code>https://t.me/c/123/456</code> or <code>https://t.me/username/789</code>).\n\n"
+            f"This message will be fetched and added to your broadcast list.",
+            client=None,
+            reply_markup=cancel_kb
+        )
+        
+        if log_msg:
+            await safe_cb_answer(cb, "🔗 Silahkan kirim/balas dengan Link Pesan Telegram.", show_alert=True)
+        else:
+            await safe_cb_answer(cb, "❌ Gagal mengirim perintah input.", show_alert=True)
+        return
+
+    elif action == "linkfwtoggle":
+        # parts: pgc_linkfwtoggle_uid
+        current = s.get("link_forward_as_copy", True)
+        new_val = not current
+        s["link_forward_as_copy"] = new_val
+        
+        # Sync all existing links to match global toggle
+        for link_item in s.get("link_list", []):
+            link_item["as_copy"] = new_val
+        
+        save_settings(uid, s)
+        
+        page = 0 
+        text = build_msglist_text(uid, page=page)
+        kb = build_msglist_kb(uid, page=page)
+        await safe_edit_message(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+        status = "ON (Forward as Copy)" if new_val else "OFF (Normal Forward)"
+        await safe_cb_answer(cb, f"Forward as Copy: {status}", show_alert=False)
         return
     
     elif action == "msgclearconf":
@@ -3807,6 +4698,7 @@ async def pgc_callback_handler(c: Client, cb: CallbackQuery):
         msg_id = cb.message.id if cb.message else None
         GCAST_BL_INPUT_STATE[uid] = {"action": "add", "msg_id": msg_id}
         
+        cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data=f"pgc_inputcancel_{uid}_bl", style=btn_style)]])
         # Send log message for user to reply to
         log_msg = await send_log(
             f"🚫 <b>Add to GCast Blacklist</b>\n\n"
@@ -3814,7 +4706,8 @@ async def pgc_callback_handler(c: Client, cb: CallbackQuery):
             f"• Chat ID (e.g., <code>-100123456789</code>)\n"
             f"• Username (e.g., <code>@groupname</code>)\n\n"
             f"<i>Or use command: <code>.gcastbl &lt;chat_id&gt;</code></i>",
-            client=None
+            client=None,
+            reply_markup=cancel_kb
         )
         
         if log_msg:
@@ -4002,6 +4895,130 @@ async def pgc_input_handler(c: Client, m: PyroMessage):
             await m.reply(Altruix.get_string("ACCESS_DENIED"))
         return # SILENT for everyone else
 
+    # Check Gcast Link Msg input state
+    for uid, state in list(GCAST_LINK_INPUT_STATE.items()):
+        if m.from_user.id == uid and (m.text or m.reply_to_message):
+            link = m.text.strip() if m.text else ""
+            # Support link in reply
+            if not link and m.reply_to_message and m.reply_to_message.text:
+                link = m.reply_to_message.text.strip()
+            
+            if not link or "cancel" in link.lower():
+                GCAST_LINK_INPUT_STATE.pop(uid, None)
+                if "cancel" in link.lower():
+                    await m.reply("❌ <b>Add Link Cancelled.</b>")
+                return
+
+            # Link processing
+            import re
+            # t.me/c/chat_id/msg_id or t.me/chat_username/msg_id
+            pattern = r"(?:https?://)?(?:t\.me/|telegram\.me/|telegram\.dog/)(?:c/)?([^/]+)/(\d+)"
+            match = re.search(pattern, link)
+            
+            if not match:
+                await m.reply("❌ <b>Invalid Link:</b> Format must be <code>t.me/chat/123</code> or <code>t.me/c/id/456</code>")
+                return
+
+            chat_id_raw = match.group(1)
+            msg_id = int(match.group(2))
+            
+            # Resolve chat_id
+            try:
+                if chat_id_raw.isdigit():
+                    # Private chat ID (usually prefixed with -100 in links with /c/)
+                    chat_id = int(f"-100{chat_id_raw}")
+                else:
+                    chat_id = chat_id_raw # username
+                
+                # Verify message exists (using userbot client)
+                client_user = None
+                if hasattr(Altruix, 'clients') and Altruix.clients:
+                    for cl in Altruix.clients:
+                        if cl.me and cl.me.id == uid:
+                            client_user = cl
+                            break
+                
+                if not client_user:
+                    await m.reply("❌ <b>Error:</b> Client not found for this user.")
+                    return
+
+                status_msg = await m.reply("🔍 <b>Verifying link...</b>")
+                try:
+                    # We use userbot because bot might not be in the chat
+                    msg = await client_user.get_messages(chat_id, msg_id)
+                    if not msg or msg.empty:
+                        await status_msg.edit("❌ <b>Error:</b> Message not found or inaccessible.")
+                        return
+                except Exception as e:
+                    await status_msg.edit(f"❌ <b>Error fetching message:</b> {e}")
+                    return
+
+                # Add to link list
+                s = get_settings(uid)
+                if "link_list" not in s: s["link_list"] = []
+                
+                fw_copy = s.get("link_forward_as_copy", True)
+                s["link_list"].append({
+                    "from_chat": chat_id,
+                    "msg_id": msg_id,
+                    "as_copy": fw_copy
+                })
+                save_settings(uid, s)
+                GCAST_LINK_INPUT_STATE.pop(uid, None)
+                
+                page = state.get("page", 0)
+                await status_msg.edit(
+                    f"<blockquote expandable>"
+                    f"✅ <b>Link Message Added</b>\n"
+                    f"Chat: <code>{chat_id}</code>\n"
+                    f"ID: <code>{msg_id}</code>\n"
+                    f"Mode: <b>{'As Copy (No Tag)' if fw_copy else 'Forward (With Tag)'}</b>\n\n"
+                    f"</blockquote>"
+                    f"<i>Message text/caption:</i>\n"
+                    f"<blockquote>{html.escape((msg.text or msg.caption or '')[:100])}...</blockquote>"
+                )
+                
+                # Refresh UI
+                text = build_msglist_text(uid, page=page)
+                kb = build_msglist_kb(uid, page=page)
+                await Altruix.bot.send_message(m.chat.id, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+                return
+
+            except Exception as e:
+                await m.reply(f"❌ <b>Error:</b> {e}")
+                return
+
+    # Check Gcast Configuration Import state
+    for uid, state in list(GCAST_IMPORT_STATE.items()):
+        if m.from_user.id == uid and m.document and m.document.file_name.endswith(".json"):
+            # Download and parse JSON
+            await m.reply("📥 <b>Processing configuration file...</b>")
+            try:
+                file_path = await m.download()
+                with open(file_path, "r", encoding="utf-8") as f:
+                    import_data = json.load(f)
+                
+                # Cleanup temp file
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                
+                if import_gcast_config(uid, import_data):
+                    GCAST_IMPORT_STATE.pop(uid, None)
+                    await m.reply("✅ <b>Configuration Imported Successfully!</b>")
+                    # Send updated dashboard
+                    text = build_sync_submenu_text(uid)
+                    kb = build_sync_submenu_kb(uid)
+                    await Altruix.bot.send_message(m.chat.id, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+                else:
+                    await m.reply("❌ <b>Import Failed:</b> Invalid configuration data.")
+            except Exception as e:
+                await m.reply(f"❌ <b>Import Failed:</b> {e}")
+            return
+        elif m.from_user.id == uid and m.text and m.text.lower() in ["cancel", "/cancel"]:
+            GCAST_IMPORT_STATE.pop(uid, None)
+            await m.reply("❌ <b>Import Cancelled.</b>")
+            return
+
     # Check Auto-Reply text input state
     for uid, state in list(GCAST_REPLY_TEXT_INPUT_STATE.items()):
         if m.from_user.id == uid and m.text:
@@ -4065,12 +5082,12 @@ async def pgc_input_handler(c: Client, m: PyroMessage):
                 media_type = "audio"; file_id = m.audio.file_id
             elif m.voice:
                 media_type = "voice"; file_id = m.voice.file_id
+            elif m.animation:
+                media_type = "animation"; file_id = m.animation.file_id
             elif m.document:
                 media_type = "document"; file_id = m.document.file_id
             elif m.sticker:
                 media_type = "sticker"; file_id = m.sticker.file_id
-            elif m.animation:
-                media_type = "animation"; file_id = m.animation.file_id
             elif m.video_note:
                 media_type = "video_note"; file_id = m.video_note.file_id
             
@@ -4179,15 +5196,15 @@ async def pgc_input_handler(c: Client, m: PyroMessage):
             elif m.voice:
                 media_type = "voice"
                 file_id = m.voice.file_id
+            elif m.animation:
+                media_type = "animation"
+                file_id = m.animation.file_id
             elif m.document:
                 media_type = "document"
                 file_id = m.document.file_id
             elif m.sticker:
                 media_type = "sticker"
                 file_id = m.sticker.file_id
-            elif m.animation:
-                media_type = "animation"
-                file_id = m.animation.file_id
             elif m.video_note:
                 media_type = "video_note"
                 file_id = m.video_note.file_id
@@ -4745,6 +5762,118 @@ async def gcast_bl_del_cmd(client: Client, message: Message):
             await message.reply(f"⚠️ Chat <code>{chat_id}</code> is not in the blacklist.")
 
 @Altruix.register_on_cmd(
+    ["gcastexp", "gcastexport"],
+    cmd_help={"help": "Export Gcast configuration to JSON file.", "example": ".gcastexp"}
+)
+@iuser_check
+@log_errors
+async def gcast_export_cmd(client: Client, message: Message):
+    """Manual export of Gcast configuration."""
+    uid = client.me.id
+    await message.edit("📤 <b>Generating configuration file...</b>")
+    
+    config_json = export_gcast_config(uid)
+    
+    # Save to temp file
+    import tempfile
+    fd, temp_path = tempfile.mkstemp(suffix=".json", prefix=f"gcast_cfg_{uid}_")
+    with os.fdopen(fd, 'w', encoding='utf-8') as f:
+        f.write(config_json)
+        
+    file_path = Path(temp_path)
+    success = False
+    
+    # Delivery logic
+    dest_chat_id = message.from_user.id
+    bot = None
+    if hasattr(Altruix, 'bot_manager'):
+        bot = Altruix.bot_manager.get_bot(uid)
+    if not bot:
+        bot = Altruix.bot
+        
+    if bot:
+        try:
+            await bot.send_document(
+                dest_chat_id,
+                document=str(file_path),
+                caption=f"📄 <b>Gcast Export (Manual)</b>\nAccount: <code>{uid}</code>\nDate: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                parse_mode=enums.ParseMode.HTML
+            )
+            await message.edit("✅ <b>Config sent to your PM with Bot Assistant!</b>")
+            success = True
+        except Exception:
+            try:
+                await bot.send_document(
+                    LOG_CHAT_ID,
+                    document=str(file_path),
+                    caption=f"📄 <b>Gcast Export (Manual Fallback)</b>\nAccount: <code>{uid}</code>",
+                    parse_mode=enums.ParseMode.HTML
+                )
+                await message.edit("✅ <b>Config sent to Group Log!</b>")
+                success = True
+            except Exception as e2:
+                Altruix.log(f"Manual export send failing for bot: {e2}", level=40)
+
+    if not success:
+        try:
+            await client.send_document(
+                "me",
+                document=str(file_path),
+                caption=f"📄 <b>Gcast Export (Manual Userbot Fallback)</b>\nAccount: <code>{uid}</code>"
+            )
+            await message.edit("✅ <b>Bot failed, config sent to your Saved Messages!</b>")
+            success = True
+        except Exception as e3:
+            await message.edit(f"❌ <b>Failed to send file:</b> {e3}")
+
+    if file_path.exists():
+        try: os.remove(file_path)
+        except: pass
+
+@Altruix.register_on_cmd(
+    ["gcastimp", "gcastimport"],
+    cmd_help={"help": "Import Gcast configuration from a JSON file (Reply to file).", "example": ".gcastimp (replying to .json file)"}
+)
+@iuser_check
+@log_errors
+async def gcast_import_cmd(client: Client, message: Message):
+    """Manual import of Gcast configuration."""
+    uid = client.me.id
+    
+    if not message.reply_to_message or not message.reply_to_message.document:
+        await message.reply("❌ <b>Error:</b> Please reply to a <code>.json</code> configuration file.")
+        return
+        
+    rep = message.reply_to_message
+    if not rep.document.file_name.endswith(".json"):
+        await message.reply("❌ <b>Error:</b> Replying file must be a <code>.json</code> file.")
+        return
+        
+    msg = await message.reply("📥 <b>Downloading and importing configuration...</b>")
+    
+    try:
+        # Download to memory or temp file
+        file_path = await client.download_media(rep)
+        if not file_path:
+            await msg.edit("❌ <b>Failed to download file.</b>")
+            return
+            
+        with open(file_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            
+        if import_gcast_config(uid, data):
+            await msg.edit("✅ <b>Configuration imported successfully!</b>\nSettings have been updated.")
+            await send_log(f"📥 <b>Manual Gcast Import Success</b>\nAccount: <code>{uid}</code>", client=client)
+        else:
+            await msg.edit("❌ <b>Import failed:</b> Invalid configuration format.")
+            
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            
+    except Exception as e:
+        await msg.edit(f"❌ <b>Error:</b> {e}")
+
+@Altruix.register_on_cmd(
     ["gcastadd"],
     cmd_help={
         "help": "Add message to GCast list by replying to it.",
@@ -4842,13 +5971,15 @@ async def gcast_add_cmd(client: Client, message: Message):
             }.get(media_type, "📎")
             
             await message.reply(
+                "<blockquote expandable>"
                 f"✅ <b>Media Added to GCast</b>\n"
                 f"Type: {type_icon} <b>{media_type.title()}</b>\n"
                 f"Total media: {len(s['media_list'])}\n"
                 f"Caption: {html.escape(caption[:50]) if caption else '<i>no caption</i>'}"
+                "</blockquote>"
             )
         else:
-            await message.reply("❌ <b>Error:</b> Unsupported message type. Please reply to text or media.")
+            await message.reply("<blockquote expandable>❌ <b>Error:</b> Unsupported message type. Please reply to text or media.</blockquote>")
 
 
 # ==================== RESUME AFTER RESTART ====================
@@ -4898,11 +6029,13 @@ async def resume_pending_broadcasts():
                 continue
             
             await send_log(
+                "<blockquote expandable>"
                 f"🔄 <b>GCast Resuming</b> <code>{task_id}</code>\n"
                 f"{'━' * 18}\n"
                 f"📊 <b>Progress:</b> {sent_index}/{total} chats already sent\n"
                 f"▶️ Resuming from chat #{sent_index + 1}...\n"
-                f"{'━' * 18}",
+                f"{'━' * 18}"
+                "</blockquote>",
                 client=resume_client
             )
             

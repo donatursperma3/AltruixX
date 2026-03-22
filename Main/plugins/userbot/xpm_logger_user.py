@@ -38,7 +38,7 @@ logger = logging.getLogger("altruix.pm_logger_user")
 logger.setLevel(logging.INFO)
 
 PLUGIN_NAME = __plugin_name__ 
-PLUGIN_VERSION = "1.3.72C"  # ✅ Adjusted safe settings fallback logic
+PLUGIN_VERSION = "1.3.74C"  # ✅ Adjusted safe settings fallback logic
 from Main.utils.file_helpers import get_db_path, get_user_button_style as get_btn_style
 STORAGE_FILE = Path(get_db_path("pm_logger_user_settings.json"))
 
@@ -71,7 +71,17 @@ class SessionManager:
             with open(cache_file, "w", encoding="utf-8") as f:
                 json.dump(Altruix.PM_LOG_CACHE, f, indent=4)
                 
-            logger.debug("SessionManager: Saved successfully.")
+            # ✅ NEW: Save USER_REPLY_COUNTS, BLOCK_STATUS_CACHE and BUTTON_STATS
+            stats_file = Path(get_db_path("pm_logger_stats.json"))
+            stats_data = {
+                "user_counts": {str(k): v for k, v in Altruix.USER_REPLY_COUNTS.items()},
+                "block_cache": Altruix.BLOCK_STATUS_CACHE,
+                "button_stats": Altruix.BUTTON_STATS
+            }
+            with open(stats_file, "w", encoding="utf-8") as f:
+                json.dump(stats_data, f, indent=4)
+                
+            logger.debug("SessionManager: Saved successfully (inc. stats).")
         except Exception as e:
             logger.error(f"SessionManager: Failed to save: {e}")
 
@@ -83,7 +93,7 @@ class SessionManager:
                     data = json.load(f)
                     # Merge but keep integer types if they exist or just rely on manager casting to str
                     Altruix.REPLY_AS_MENTIONED_WAITING.update(data)
-                logger.info(f"SessionManager: Loaded {len(data)} sessions from {SESSION_FILE}")
+                logger.debug(f"SessionManager: Loaded {len(data)} sessions from {SESSION_FILE}")
             except Exception as e:
                 logger.error(f"SessionManager: Failed to load sessions: {e}")
                 
@@ -93,15 +103,44 @@ class SessionManager:
                 with open(cache_file, "r", encoding="utf-8") as f:
                     c_data = json.load(f)
                     Altruix.PM_LOG_CACHE.update(c_data)
-                logger.info(f"SessionManager: Loaded {len(c_data)} cache items from {cache_file}")
+                logger.debug(f"SessionManager: Loaded {len(c_data)} cache items from {cache_file}")
             except Exception as e:
                 logger.error(f"SessionManager: Failed to load cache: {e}")
+        
+        # ✅ NEW: Load USER_REPLY_COUNTS and BUTTON_STATS
+        stats_file = Path(get_db_path("pm_logger_stats.json"))
+        if stats_file.exists():
+            try:
+                with open(stats_file, "r", encoding="utf-8") as f:
+                    s_data = json.load(f)
+                    # Restore USER_REPLY_COUNTS
+                    u_counts = s_data.get("user_counts", {})
+                    for k, v in u_counts.items():
+                        Altruix.USER_REPLY_COUNTS[int(k)].update(v)
+                    # Restore BLOCK_STATUS_CACHE
+                    b_cache = s_data.get("block_cache", {})
+                    Altruix.BLOCK_STATUS_CACHE.update(b_cache)
+                    # Restore BUTTON_STATS
+                    b_stats = s_data.get("button_stats", {})
+                    Altruix.BUTTON_STATS.update(b_stats)
+                logger.debug(f"SessionManager: Loaded stats from {stats_file}")
+            except Exception as e:
+                logger.error(f"SessionManager: Failed to load stats: {e}")
         
         # Cleanup: Remove old sessions (TTL: 24h) or missing thread_id
         # These are from before the thread_id tracking was implemented
         cleaned_count = 0
         current_time = int(time.time())
         ttl_seconds = 86400 # 24 Hours
+        
+        # Try load dynamic TTL
+        try:
+            if STORAGE_FILE.exists():
+                with open(STORAGE_FILE, 'r', encoding='utf-8') as fs:
+                    ts = json.load(fs)
+                    ttl_seconds = ts.get("global_config", {}).get("cache_ttl", 86400)
+        except:
+            pass
         
         for session_id in list(Altruix.REPLY_AS_MENTIONED_WAITING.keys()):
             session_data = Altruix.REPLY_AS_MENTIONED_WAITING[session_id]
@@ -118,7 +157,7 @@ class SessionManager:
                 session_data["thread_id"] = None # Ensure key exists
         
         if cleaned_count > 0:
-            logger.info(f"SessionManager: Cleaned {cleaned_count} stale sessions (older than 24h)")
+            logger.debug(f"SessionManager: Cleaned {cleaned_count} stale sessions (older than 24h)")
             # Auto-save after cleaning
             SessionManager.save()
 
@@ -573,10 +612,10 @@ async def pm_logger_user_handler(c: Client, m: RawMessage):
             f"• <b>User ID:</b> <code>{sender_id}</code>\n"
             f"• <b>Username:</b> {sender_username}\n"
             f"• <b>To Account:</b> {c.me.mention}\n"
-            f"• <b>reply to msg id:</b> <code>{reply_id_val}</code>\n"
+            f"• <b>Reply to msg id:</b> <code>{reply_id_val}</code>\n"
             f"• <b>Time:</b> <code>{log_time}</code>\n"
             f"• <b>Type:</b> <code>{msg_type_str.upper()}</code></blockquote>\n"
-            f"• <b>Message:</b>\n<blockquote expandable>{html.escape(str(msg_text)[:1000])}</blockquote>"
+            f"\n📩 <b>Message:</b>\n<blockquote expandable>{html.escape(str(msg_text)[:1000])}</blockquote>"
         )
 
         # Get topic: "pm logger"
@@ -726,16 +765,16 @@ async def pm_logger_user_edit_handler(c: Client, m: RawMessage):
         reply_id_val = m.reply_to_message_id if m.reply_to_message_id else "False"
         
         log_content = (
-            f"👤 <b>New PM Received (User) [#EDITED]</b>\n\n"
+            f"👤 <b>New PM Received (User) [#EDITED]</b>\n"
             f"<blockquote expandable>• <b>From:</b> {sender_hyperlink}\n"
             f"• <b>User ID:</b> <code>{sender_id}</code>\n"
             f"• <b>Username:</b> {sender_username}\n"
             f"• <b>To Account:</b> {c.me.mention}\n"
-            f"• <b>reply to msg id:</b> <code>{reply_id_val}</code>\n"
+            f"• <b>Reply to msg id:</b> <code>{reply_id_val}</code>\n"
             f"• <b>Time Original:</b> <code>{log_time}</code>\n"
             f"• <b>Time Edited:</b> <code>{edit_time}</code>\n"
             f"• <b>Type:</b> <code>{msg_type.upper()}</code></blockquote>\n"
-            f"• <b>New Message:</b>\n<blockquote expandable>{html.escape(str(msg_text)[:1000])}</blockquote>"
+            f"\n📩 <b>New Message:</b>\n<blockquote expandable>{html.escape(str(msg_text)[:1000])}</blockquote>"
         )
 
         # Preserve the reply_markup by fetching it
@@ -809,27 +848,194 @@ async def generate_pmlu_menu(client_id):
                  InlineKeyboardButton(await Essentials.get_user_button_style(client_id, f"Bot Assist: {bot_assist_btn}"), callback_data=f"pmlu_cfg_toggle_botassist_{client_id}")
              ],
              [
-                 InlineKeyboardButton(await Essentials.get_user_button_style(client_id, "❌ Close"), callback_data="bot_controls_menu") # Back to Bot Controls if opened from there
+                 InlineKeyboardButton(await Essentials.get_user_button_style(client_id, "🗃️ Cache Manager"), callback_data=f"pmlu_cache_menu_{client_id}")
+             ],
+             [
+                 InlineKeyboardButton(await Essentials.get_user_button_style(client_id, "🔙 Back"), callback_data="bot_controls_menu")
              ]
         ]
         
         res = (
             f"{Altruix.get_string('PMLU_CONFIG_HEADER').format(client_id=client_id)}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"• **Status:** {status}\n"
-            f"• **Logger Mode:** `{mode}`\n"
-            f"• **Apply Type:** `{PM_LOGGER_USER_DATA.get('apply_types', {}).get(user_id, 'per_account')}`\n"
-            f"• **Auto Topic:** {auto_topic_val}\n"
-            f"• **Reply From All:** {ra_status}\n"
-            f"• **Bot Assist:** {bot_assist_label}\n"
-            f"• **Log Group:** ` {log_chat} `\n"
-            f"• **Bot Access:** {bot_access}\n\n"
+            f"• <b>Status:</b> {status}\n"
+            f"• <b>Logger Mode:</b> <code>{mode}</code>\n"
+            f"• <b>Apply Type:</b> <code>{PM_LOGGER_USER_DATA.get('apply_types', {}).get(user_id, 'per_account')}</code>\n"
+            f"• <b>Auto Topic:</b> {auto_topic_val}\n"
+            f"• <b>Reply From All:</b> {ra_status}\n"
+            f"• <b>Bot Assist:</b> {bot_assist_label}\n"
+            f"• <b>Log Group:</b> <code> {log_chat} </code>\n"
+            f"• <b>Bot Access:</b> {bot_access}\n\n"
             f"<i>Click buttons below to change settings.</i>"
         )
         return res, InlineKeyboardMarkup(buttons)
     except Exception as e:
         logger.error(f"Menu gen error: {e}")
         return f"Error: {e}", None
+
+
+# ============================================================================
+# 🗃️ CACHE MANAGER MENU & HANDLERS
+# ============================================================================
+async def generate_pmlu_cache_menu(client_id):
+    try:
+        user_id_str = str(client_id)
+        current_ttl = 86400
+        try:
+            if STORAGE_FILE.exists():
+                with open(STORAGE_FILE, 'r', encoding='utf-8') as fs:
+                    ts = json.load(fs)
+                    current_ttl = ts.get("global_config", {}).get("cache_ttl", 86400)
+        except:
+            pass
+            
+        ttl_hours = current_ttl // 3600
+        
+        # Calculate Sizes
+        pm_count = len(PM_LOG_CACHE)
+        session_count = len(Altruix.REPLY_AS_MENTIONED_WAITING)
+        
+        # Disk Size Estimation
+        disk_size_bytes = 0
+        cache_file = Path(get_db_path("pm_logger_cache.json"))
+        if cache_file.exists():
+            disk_size_bytes += cache_file.stat().st_size
+        if SESSION_FILE.exists():
+            disk_size_bytes += SESSION_FILE.stat().st_size
+            
+        size_kb = disk_size_bytes / 1024
+        size_mb = size_kb / 1024
+        size_str = f"{size_mb:.2f} MB" if size_kb > 1024 else f"{size_kb:.2f} KB"
+        
+        # Check Next TTL Value
+        next_ttls = [43200, 86400, 172800, 259200]  # 12h, 24h, 48h, 72h
+        next_ttl = next_ttls[0]
+        for t in next_ttls:
+            if t > current_ttl:
+                next_ttl = t
+                break
+        
+        buttons = [
+            [
+                InlineKeyboardButton(await Essentials.get_user_button_style(client_id, f"🕒 Cache TTL: {ttl_hours}h"), callback_data="pmlu_cache_noop"),
+                InlineKeyboardButton(await Essentials.get_user_button_style(client_id, f"📝 Change to {next_ttl//3600}h"), callback_data=f"pmlu_cache_set_ttl_{client_id}_{next_ttl}")
+            ],
+            [
+                InlineKeyboardButton(await Essentials.get_user_button_style(client_id, f"🗑️ PM Logs ({pm_count})"), callback_data=f"pmlu_cache_clear_logs_{client_id}"),
+                InlineKeyboardButton(await Essentials.get_user_button_style(client_id, f"🗑️ Active Sessions ({session_count})"), callback_data=f"pmlu_cache_clear_sessions_{client_id}")
+            ],
+            [
+                InlineKeyboardButton(await Essentials.get_user_button_style(client_id, "🔙 Back to Settings"), callback_data=f"pmlu_cfg_open_{client_id}")
+            ]
+        ]
+        
+        res = (
+            f"🗃️ <b>PM Logger Cache Manager</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"• <b>Cache Expiration Timer:</b> <code>{ttl_hours} hours</code>\n"
+            f"• <b>Estimated Disk Usage:</b> <code>{size_str}</code>\n\n"
+            f"📊 <b>Data Statistics:</b>\n"
+            f"• Valid PM Logs Cached: <code>{pm_count}</code>\n"
+            f"• Active Waiting Sessions: <code>{session_count}</code>\n\n"
+            f"<i>Select an option below to manage memory.</i>"
+        )
+        return res, InlineKeyboardMarkup(buttons)
+    except Exception as e:
+        logger.error(f"PMLU Cache Menu Gen Error: {e}")
+        return f"Error: {e}", None
+
+@Altruix.bot.on_callback_query(filters.regex(r"^pmlu_cache_menu_(\d+)$"))
+@log_errors
+@iuser_check
+async def pmlu_cache_menu_handler(c: Client, cb: CallbackQuery):
+    try:
+        client_id = int(cb.data.split("_")[-1])
+        text, markup = await generate_pmlu_cache_menu(client_id)
+        if markup:
+            await Altruix.edit_cb(cb, text, reply_markup=markup, parse_mode=enums.ParseMode.HTML)
+    except Exception as e:
+        await cb.answer(f"Error: {e}", show_alert=True)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^pmlu_cache_set_ttl_(\d+)_(\d+)$"))
+@log_errors
+@iuser_check
+async def pmlu_cache_set_ttl_handler(c: Client, cb: CallbackQuery):
+    try:
+        parts = cb.data.split("_")
+        client_id = int(parts[-2])
+        new_ttl = int(parts[-1])
+        
+        data = {}
+        if STORAGE_FILE.exists():
+            with open(STORAGE_FILE, "r") as f:
+                data = json.load(f)
+        
+        if "global_config" not in data:
+            data["global_config"] = {}
+        data["global_config"]["cache_ttl"] = new_ttl
+        
+        with open(STORAGE_FILE, "w") as f:
+            json.dump(data, f, indent=4)
+            
+        await load_settings()
+        
+        await cb.answer(f"✅ Cache TTL adjusted to {new_ttl//3600} hours!", show_alert=True)
+        
+        # Refresh Menu
+        text, markup = await generate_pmlu_cache_menu(client_id)
+        if markup:
+            await Altruix.edit_cb(cb, text, reply_markup=markup, parse_mode=enums.ParseMode.HTML)
+    except Exception as e:
+        await cb.answer(f"Error: {e}", show_alert=True)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^pmlu_cache_clear_(logs|sessions)_(\d+)$"))
+@log_errors
+@iuser_check
+async def pmlu_cache_clear_handler(c: Client, cb: CallbackQuery):
+    try:
+        action = cb.matches[0].group(1)
+        client_id = int(cb.matches[0].group(2))
+        
+        cleared_count = 0
+        if action == "logs":
+            cleared_count = len(PM_LOG_CACHE)
+            PM_LOG_CACHE.clear()
+        elif action == "sessions":
+            cleared_count = len(Altruix.REPLY_AS_MENTIONED_WAITING)
+            Altruix.REPLY_AS_MENTIONED_WAITING.clear()
+            
+        SessionManager.save()
+            
+        await cb.answer(f"✅ Cleared {cleared_count} items from {action} cache!", show_alert=True)
+        
+        # Refresh Menu
+        text, markup = await generate_pmlu_cache_menu(client_id)
+        if markup:
+            await Altruix.edit_cb(cb, text, reply_markup=markup, parse_mode=enums.ParseMode.HTML)
+    except Exception as e:
+        await cb.answer(f"Error: {e}", show_alert=True)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^pmlu_cache_noop$"))
+async def pmlu_cache_noop_handler(c, cb):
+    await cb.answer("Current Cache TTL Duration", show_alert=False)
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^pmlu_cfg_open_(\d+)$"))
+@iuser_check
+@log_errors
+async def pmlu_cfg_open_handler(c: Client, cb: CallbackQuery):
+    try:
+        await cb.answer()
+        client_id = int(cb.matches[0].group(1))
+        text, markup = await generate_pmlu_menu(client_id)
+        if markup:
+            await Altruix.edit_cb(cb, text, reply_markup=markup, parse_mode=enums.ParseMode.HTML)
+        else:
+            await cb.answer("Failed to generate menu", show_alert=True)
+            
+    except Exception as e:
+        logger.error(f"Failed to open PMLU settings for {client_id}: {e}")
+        await cb.answer(f"Error: {e}", show_alert=True)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^open_pmlu_settings_owner$"))
 @iuser_check
@@ -838,7 +1044,10 @@ async def open_pmlu_settings_owner_handler(c: Client, cb: CallbackQuery):
     try:
         await cb.answer()
         owner_id = Altruix.config.OWNER_USERS_ID
-        text, markup = await generate_pmlu_menu(owner_id)
+        if isinstance(owner_id, list):
+            owner_id = owner_id[0]
+            
+        text, markup = await generate_pmlu_menu(int(owner_id))
         if markup:
             await Altruix.edit_cb(cb, text, reply_markup=markup, parse_mode=enums.ParseMode.HTML)
         else:
@@ -1445,9 +1654,11 @@ async def pmlu_send_msg_callback(c: Client, cb: CallbackQuery):
         
         instruction_msg = await Altruix.bot.send_message(
             Altruix.log_chat,
-            f"📤 **Send Message to User**\n\n"
+            f"<blockquote expandable>\n"
+            f"📤 <b>Send Message to User</b>\n\n"
             f"Reply to this message with the text or media you want to send to user <code>{chat_id}</code>\n"
-            f"Pesan akan dikirim sebagai pesan baru, bukan balasan (reply).",
+            f"Pesan akan dikirim sebagai pesan baru, bukan balasan (reply).\n"
+            f"</blockquote>",
             parse_mode=enums.ParseMode.HTML,
             reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton("❌ Cancel", callback_data=f"pmlu_send_cancel_{waiting_id}")
@@ -1547,47 +1758,25 @@ async def handle_pmlu_send_message_input(c: Client, m: RawMessage):
 # Cleanup task for cache
 async def cleanup_pmlu_cache():
     while True:
-        if len(PM_LOG_CACHE) > 1000:
-            # Simple cleanup: remove oldest 200
-            keys = list(PM_LOG_CACHE.keys())[:200]
-            for k in keys:
-                PM_LOG_CACHE.pop(k, None)
+        try:
+            ttl_seconds = 86400
+            if STORAGE_FILE.exists():
+                with open(STORAGE_FILE, 'r', encoding='utf-8') as fs:
+                    ts = json.load(fs)
+                    ttl_seconds = ts.get("global_config", {}).get("cache_ttl", 86400)
+                    
+            # Use size heuristic based on TTL (approx 100 items per 12 hours)
+            max_cache_len = max(1000, int((ttl_seconds / 86400) * 1500))
+            if len(PM_LOG_CACHE) > max_cache_len:
+                keys = list(PM_LOG_CACHE.keys())[:200]
+                for k in keys:
+                    PM_LOG_CACHE.pop(k, None)
+        except:
+            pass
         await asyncio.sleep(3600)
 
 asyncio.create_task(cleanup_pmlu_cache())
 
-# ==================== RESOURCE MONITOR ====================
-async def resource_monitor():
-    """Monitor system resources and alert if usage exceeds 90%."""
-    alert_triggered = False
-    while True:
-        try:
-            cpu_usage = psutil.cpu_percent(interval=1)
-            ram_usage = psutil.virtual_memory().percent
-            
-            if (cpu_usage > 90 or ram_usage > 90) and not alert_triggered:
-                log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_USERS_ID))
-                alert_text = (
-                    "<blockquote expandable>"
-                    "🚨 <b>SYSTEM OVERLOAD ALERT</b> 🚨\n\n"
-                    f"⚠️ <b>CPU Usage:</b> <code>{cpu_usage}%</code>\n"
-                    f"⚠️ <b>RAM Usage:</b> <code>{ram_usage}%</code>\n\n"
-                    "Please check your server immediately to prevent crashes."
-                    "</blockquote>"
-                )
-                try:
-                    await Altruix.bot.send_message(log_chat_id, alert_text)
-                    alert_triggered = True
-                except: pass
-            elif cpu_usage < 80 and ram_usage < 80:
-                alert_triggered = False
-                
-        except Exception as e:
-            logger.error(f"Resource monitor error: {e}")
-            
-        await asyncio.sleep(60)
-
-asyncio.create_task(resource_monitor())
 
 # ==================== LOG SUKSES LOADING ====================
 # try:

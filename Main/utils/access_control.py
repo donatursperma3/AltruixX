@@ -29,8 +29,8 @@ def check_reply_access(
     from Main.core.client import Altruix
     
     # ✅ Optimized Check: If user is in centralized cache, they are authorized for SUDO/OWNER tasks
-    # (Altruix.auth_users includes OWNER_ID, Session IDs, and all Sudo users)
-    is_globally_auth = user_id in Altruix.auth_users
+    # (Altruix._auth_users_cache includes OWNER_ID, Session IDs, and all Sudo users)
+    is_globally_auth = user_id in Altruix._auth_users_cache
 
     # Mode: ALL - anyone can reply
     if mode == ACCESS_MODE_ALL:
@@ -92,7 +92,7 @@ def is_authorized_user(user_id: int, owner_id: int, sudo_users: List[int]) -> bo
     Supports dynamic cache from Altruix.
     """
     from Main.core.client import Altruix
-    if user_id in Altruix.auth_users:
+    if user_id in Altruix._auth_users_cache:
         return True
     return user_id == owner_id or user_id in sudo_users or user_id in getattr(Altruix.config, "OWNER_USERS_ID", [])
 
