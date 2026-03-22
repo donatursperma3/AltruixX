@@ -208,3 +208,7 @@ downloads/
 temp/
 *.tmp
 *.temp
+
+# others
+*report.md
+*.ini
