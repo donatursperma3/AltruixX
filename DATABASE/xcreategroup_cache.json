@@ -1,0 +1,241 @@
+{
+  "tasks": {
+    "creategroup_main": {
+      "running": false,
+      "paused": false,
+      "paused_by_user": false,
+      "current_index": 2,
+      "created_groups": [
+        {
+          "name": "\ud83d\udd30 X26 B02-T16AC 1",
+          "link": "https://t.me/+f-ZraD498YUyOTI1",
+          "id": -1003895932039,
+          "time": "01:29:16",
+          "type": "a"
+        },
+        {
+          "name": "\ud83d\udd30 X26 B02-T16AC 2",
+          "link": "https://t.me/+6CLjPISDOfZiNmY1",
+          "id": -1003868574592,
+          "time": "01:38:53",
+          "type": "a"
+        }
+      ],
+      "start_time": "2026-02-16T01:25:13.000549",
+      "control_message_id": 2453,
+      "user_id": 6800269145,
+      "params": {
+        "delay": 333,
+        "count": 2,
+        "extra_delay_minutes": 10,
+        "batch_size": 2,
+        "group_type": "a",
+        "name_pattern": "\ud83d\udd30 X(tahun) B(bulan)-T(tanggal)AC",
+        "username_prefix": null,
+        "bot_identifiers": [
+          "@MissRose_bot",
+          "@simixbot",
+          "@Spillgame_bot",
+          "@truthordaresbot",
+          "@truthordares_bot",
+          "@truthordarerp_bot",
+          "@truthordarerln_bot",
+          "@truthordares18_bot"
+        ],
+        "action_delay": 3.0,
+        "invite_bots": true,
+        "anon_mode": true,
+        "copy_messages": true,
+        "description": "Powered by @AlphaXProject",
+        "photo_source": "source",
+        "custom_photo_id": null
+      }
+    },
+    "creategroup_5240721396": {
+      "running": false,
+      "paused": false,
+      "paused_by_user": false,
+      "current_index": 2,
+      "created_groups": [
+        {
+          "name": "\ud83d\udd30 X26 B02-T16AD 1",
+          "link": "https://t.me/+O4MyBbZgg3pjOGY1",
+          "id": -1003607052856,
+          "time": "02:07:13",
+          "type": "i"
+        },
+        {
+          "name": "\ud83d\udd30 X26 B02-T16AD 2",
+          "link": "https://t.me/+M-BYDVAGtnFmNTk9",
+          "id": -1003395674477,
+          "time": "02:16:48",
+          "type": "i"
+        }
+      ],
+      "start_time": "2026-02-16T02:03:06.093795",
+      "control_message_id": 14948,
+      "user_id": 5240721396,
+      "params": {
+        "delay": 333,
+        "count": 2,
+        "extra_delay_minutes": 5,
+        "batch_size": 2,
+        "group_type": "i",
+        "name_pattern": "\ud83d\udd30 X(tahun) B(bulan)-T(tanggal)AD",
+        "username_prefix": null,
+        "bot_identifiers": [
+          "@MissRose_bot",
+          "@simixbot",
+          "@Spillgame_bot",
+          "@truthordaresbot",
+          "@truthordares_bot",
+          "@truthordarerp_bot",
+          "@truthordarerln_bot",
+          "@truthordares18_bot"
+        ],
+        "action_delay": 3.0,
+        "invite_bots": false,
+        "anon_mode": true,
+        "copy_messages": true,
+        "description": "Powered by @AlphaXproject",
+        "photo_source": "source",
+        "custom_photo_id": null
+      }
+    },
+    "creategroup_6800269145": {
+      "running": false,
+      "paused": false,
+      "paused_by_user": false,
+      "current_index": 2,
+      "created_groups": [
+        {
+          "name": "\ud83d\udd30 X26 B02-T18AA 1",
+          "link": "https://t.me/+lPlbgIIKQGtiNzM1",
+          "id": -1003747994833,
+          "time": "02:43:43",
+          "type": "a"
+        },
+        {
+          "name": "\ud83d\udd30 X26 B02-T18AA 2",
+          "link": "https://t.me/+q4-37361KdBlNTk9",
+          "id": -1003703528716,
+          "time": "02:53:20",
+          "type": "a"
+        }
+      ],
+      "start_time": "2026-02-18T02:39:38.043259",
+      "control_message_id": 2682,
+      "user_id": 6800269145,
+      "params": {
+        "delay": 333,
+        "count": 2,
+        "extra_delay_minutes": 5,
+        "batch_size": 2,
+        "group_type": "a",
+        "name_pattern": "\ud83d\udd30 X(tahun) B(bulan)-T(tanggal)AA",
+        "username_prefix": null,
+        "bot_identifiers": [
+          "@MissRose_bot",
+          "@simixbot",
+          "@Spillgame_bot",
+          "@truthordaresbot",
+          "@truthordares_bot",
+          "@truthordarerp_bot",
+          "@truthordarerln_bot",
+          "@truthordares18_bot"
+        ],
+        "action_delay": 3.0,
+        "invite_bots": true,
+        "anon_mode": true,
+        "copy_messages": true,
+        "description": "Powered by @AlphaXProject",
+        "photo_source": "source",
+        "custom_photo_id": null
+      }
+    },
+    "creategroup_7844837037": {
+      "running": true,
+      "paused": false,
+      "paused_by_user": false,
+      "current_index": 1,
+      "created_groups": [
+        {
+          "name": "\ud83d\udd30 X26 B03-T01AA 1",
+          "link": "https://t.me/+jmBZdapRyPQ2NmJl",
+          "id": -1003515351057,
+          "time": "22:26:54",
+          "type": "a"
+        }
+      ],
+      "start_time": "2026-03-01T22:22:50.676665",
+      "control_message_id": 3657,
+      "user_id": 7844837037,
+      "params": {
+        "delay": 333,
+        "count": 1,
+        "extra_delay_minutes": 8,
+        "batch_size": 4,
+        "group_type": "a",
+        "name_pattern": "\ud83d\udd30 X(tahun) B(bulan)-T(tanggal)AA",
+        "username_prefix": null,
+        "bot_identifiers": [
+          "@MissRose_bot",
+          "@simixbot",
+          "@Spillgame_bot",
+          "@truthordaresbot",
+          "@truthordares_bot",
+          "@truthordarerp_bot",
+          "@truthordarerln_bot",
+          "@truthordares18_bot"
+        ],
+        "action_delay": 3.0,
+        "invite_bots": true,
+        "anon_mode": true,
+        "copy_messages": true,
+        "description": "Powered by @AlphaXProject",
+        "photo_source": "source",
+        "custom_photo_id": null
+      }
+    }
+  },
+  "completed": {
+    "creategroup_8373318964": {
+      "delay": 333,
+      "count": 2,
+      "extra_delay_minutes": 5,
+      "batch_size": 2,
+      "group_type": "i",
+      "name_pattern": "\ud83d\udd30 X(tahun) B(bulan)-T(tanggal)AA",
+      "username_prefix": null,
+      "bot_identifiers": [
+        "@MissRose_bot",
+        "@simixbot",
+        "@Spillgame_bot",
+        "@truthordaresbot",
+        "@truthordares_bot",
+        "@truthordarerp_bot",
+        "@truthordarerln_bot",
+        "@truthordares18_bot"
+      ],
+      "created_groups": [
+        {
+          "name": "\ud83d\udd30 X26 B02-T16AA 1",
+          "link": "https://t.me/+paaGDovreHI5MDRl",
+          "id": -1003546770702,
+          "time": "02:06:19",
+          "type": "i"
+        },
+        {
+          "name": "\ud83d\udd30 X26 B02-T16AA 2",
+          "link": "https://t.me/+tVFfqotIuOczNzZl",
+          "id": -1003650156365,
+          "time": "02:15:57",
+          "type": "i"
+        }
+      ],
+      "total_duration": 823.469631,
+      "user_id": 7844837037,
+      "start_time": "2026-02-16 02:02:14"
+    }
+  }
+}

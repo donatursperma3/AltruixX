@@ -5,37 +5,91 @@
 # Please see < https://github.com/Altriux/Altruix/blob/main/LICENSE >
 #
 # All rights reserved.
-
 """
 A-Z for sudo users!
 """
-
 from Main import Altruix
 from style import bullets
 from pyrogram import Client
+from pyrogram.types import User
 from ...core.types.message import Message
+import os
+import asyncio
+import re
+from pyrogram.errors import RPCError
+from Main.core.decorators import log_errors
+import logging
+
+# ─── LOGGER KHUSUS PLUGIN ───────────────────────────────────────────────
+import logging
+
+plugin_name = f"{os.path.basename(__file__)}"
+__plugin_name__ = plugin_name if plugin_name else "sudo_manager"
+PLUGIN_VERSION = "0.0.6"  # ✅ REFACTORED: Unified logging
+
+logger = logging.getLogger("altruix.sudo_manager")
+logger.setLevel(logging.INFO)
+
+# 🔥 LOG STARTUP
+# logger.info(f"🚀 Initializing sudo_manager plugin v{PLUGIN_VERSION}")
 
 
-b4 = bullets["bullet4"]
-b5 = bullets["bullet5"]
-b6 = bullets["bullet6"]
-b7 = bullets["bullet7"]
 
+# ← PERUBAHAN BARU: Format function dirombak untuk handle 3 kategori (Aktif, Unfetchable, Deleted)
+#     - Unfetchable: Untuk ID gagal fetch (mungkin aktif tapi privacy/blocked)
+#     - Tampilkan ID di unfetchable agar bisa dicek manual
+def format_sudo_list(active_users: list[User], unfetchable_users: list[User], deleted_users: list[User]) -> str:
+    total = len(active_users) + len(unfetchable_users) + len(deleted_users)
+    out = f"<b>Sudo Users (Total: {total})</b>:\n\n"
 
-def bulletify(u_):
-    out = "<b>Sudo Users :</b> \n"
-    len_ = len(u_)
-    if len_ == 1:
-        return f"{out}\n{b6}{b4} {u_[0].mention}"
-    if len_ == 2:
-        return f"{out}\n{b5}{b4} {u_[0].mention}\n{b7}{b4} {u_[1].mention}"
-    for i in enumerate(u_):
-        if i[0] == 0:
-            out += f"\n{b5}{b4} {i[1].mention}"
-        elif i[0] == len_ - 1:
-            out += f"\n{b7}{b4} {i[1].mention}"
-        else:
-            out += f"\n{b6}{b4} {i[1].mention}"
+    # === Bagian Aktif Users ===
+    if active_users:
+        out += f"<b>Aktif Users ({len(active_users)})</b>:\n"
+        for i, user in enumerate(active_users):
+            first_name = user.first_name or ""
+            last_name = f" {user.last_name}" if user.last_name else ""
+            display_name = (first_name + last_name).strip()
+            display_name = display_name.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            hyperlink = f"<a href=\"tg://user?id={user.id}\">{display_name}</a>"
+            if i == 0:
+                out += f"┏◈ {hyperlink}\n"
+            elif i == len(active_users) - 1:
+                out += f"┗◈ {hyperlink}\n"
+            else:
+                out += f"┣◈ {hyperlink}\n"
+        out += "\n"
+    else:
+        out += "<b>Aktif Users (0)</b>:\n<i>Tidak ada user aktif.</i>\n\n"
+
+    # === Bagian Unfetchable Users ===
+    if unfetchable_users:
+        out += f"<b>Unfetchable Users ({len(unfetchable_users)})</b> <i>(Mungkin aktif tapi gagal diambil, cek manual)</i>:\n"
+        for i, user in enumerate(unfetchable_users):
+            hyperlink = f"<a href=\"tg://user?id={user.id}\">Unfetchable Account (ID: {user.id})</a>"
+            if i == 0:
+                out += f"┏◈ {hyperlink}\n"
+            elif i == len(unfetchable_users) - 1:
+                out += f"┗◈ {hyperlink}\n"
+            else:
+                out += f"┣◈ {hyperlink}\n"
+        out += "\n"
+    else:
+        out += "<b>Unfetchable Users (0)</b>:\n<i>Tidak ada user yang gagal diambil.</i>\n\n"
+
+    # === Bagian Deleted Users ===
+    if deleted_users:
+        out += f"<b>Deleted Users ({len(deleted_users)})</b>:\n"
+        for i, user in enumerate(deleted_users):
+            hyperlink = f"<a href=\"tg://user?id={user.id}\">Deleted Account</a>"
+            if i == 0:
+                out += f"┏◈ {hyperlink}\n"
+            elif i == len(deleted_users) - 1:
+                out += f"┗◈ {hyperlink}\n"
+            else:
+                out += f"┣◈ {hyperlink}\n"
+    else:
+        out += "<b>Deleted Users (0)</b>:\n<i>Tidak ada akun terhapus.</i>"
+
     return out
 
 
@@ -44,13 +98,17 @@ def bulletify(u_):
     cmd_help={"help": "Disabled cmds for sudo users!", "example": "dpfs eval"},
     requires_input=True,
 )
+@log_errors
 async def disabled_ps_func(c: Client, m: Message):
     msg = await m.handle_message("PROCESSING")
     input_ = m.user_input.strip()
     if "," in input_:
-        input_ = input_.split(",").strip()
+        input_ = [x.strip() for x in input_.split(",")]
     await Altruix.config.sync_env_to_db("DISABLED_SUDO_CMD_LIST", input_, push_=True)
     await msg.edit_msg("DISABLED_SUDO_CMD", string_args=(input_))
+    # Delete input only if response is reply (not inline edit)
+    if msg.id != m.id:
+        await m.delete_if_self()
 
 
 @Altruix.register_on_cmd(
@@ -58,13 +116,17 @@ async def disabled_ps_func(c: Client, m: Message):
     cmd_help={"help": "Disabled cmds from sudo users", "example": "dpfs eval"},
     requires_input=True,
 )
+@log_errors
 async def remove_disabled_ps_func(c: Client, m: Message):
     msg = await m.handle_message("PROCESSING")
     input_ = m.user_input.strip()
     if "," in input_:
-        input_ = input_.split(",")
+        input_ = [x.strip() for x in input_.split(",")]
     await Altruix.config.unsync_env_to_db("DISABLED_SUDO_CMD_LIST", input_)
     await msg.edit_msg("UNDISABLED_SUDO_CMD", string_args=(input_))
+    # Delete input only if response is reply (not inline edit)
+    if msg.id != m.id:
+        await m.delete_if_self()
 
 
 @Altruix.register_on_cmd(
@@ -74,19 +136,35 @@ async def remove_disabled_ps_func(c: Client, m: Message):
         "example": "addsudo @warner_stark",
     },
 )
+@log_errors
 async def add_sudo_func(c: Client, m: Message):
     msg = await m.handle_message("PROCESSING")
     user, _, is_channel = m.get_user
     if not user or is_channel:
-        return await msg.edit_msg("INVALID_USER")
+        await msg.edit_msg("INVALID_USER")
+        # Only delete input if response was inline (edit mode)
+        if msg.id == m.id:
+            await m.delete_if_self()
+        return
     try:
         user_id = await c.get_users(user)
     except Exception:
-        return await msg.edit_msg("INVALID_USER")
+        await msg.edit_msg("INVALID_USER")
+        # Only delete input if response was inline (edit mode)
+        if msg.id == m.id:
+            await m.delete_if_self()
+        return
     if user_id.id in (await Altruix.config.get_sudo()):
-        return await msg.edit_msg("ALREADY_IN_SUDO")
+        await msg.edit_msg("ALREADY_IN_SUDO")
+        # Delete input only if response is reply
+        if msg.id != m.id:
+            await m.delete_if_self()
+        return
     await Altruix.config.add_sudo(user_id.id)
     await msg.edit_msg("ADDED_SUDO", string_args=(user_id.mention))
+    # Delete input only if response is reply (not inline edit)
+    if msg.id != m.id:
+        await m.delete_if_self()
 
 
 @Altruix.register_on_cmd(
@@ -103,6 +181,7 @@ async def add_sudo_func(c: Client, m: Message):
         ],
     },
 )
+@log_errors
 async def rm_sudo_func(c: Client, m: Message):
     msg = await m.handle_message("PROCESSING")
     user, _, is_channel = m.get_user
@@ -117,34 +196,91 @@ async def rm_sudo_func(c: Client, m: Message):
                     count += 1
                 except BaseException:
                     pass
-            return await msg.edit_msg("DEL_SUDO_A", string_args=(count, lacg))
+            await msg.edit_msg("DEL_SUDO_A", string_args=(count, lacg))
+            # Delete input only if response is reply
+            if msg.id != m.id:
+                await m.delete_if_self()
+            return
     if not user or is_channel:
-        return await msg.edit_msg("INVALID_USER")
+        await msg.edit_msg("INVALID_USER")
+        # Only delete input if response was inline (edit mode)
+        if msg.id == m.id:
+            await m.delete_if_self()
+        # Delete input only if response is reply (not inline edit)
+        if msg.id != m.id:
+            await m.delete_if_self()
+        return
     try:
         user_id = await c.get_users(user)
     except Exception:
-        return await msg.edit_msg("INVALID_USER")
+        await msg.edit_msg("INVALID_USER")
+        # Delete input only if response is reply (not inline edit)
+        if msg.id != m.id:
+            await m.delete_if_self()
+        return
     if user_id.id not in acg:
-        return await msg.edit_msg("NOT_IN_SUDO")
+        await msg.edit_msg("NOT_IN_SUDO")
+        # Delete input only if response is reply (not inline edit)
+        if msg.id != m.id:
+            await m.delete_if_self()
+        return
     await Altruix.config.del_sudo(user_id.id)
     await msg.edit_msg("DEL_SUDO", string_args=(user_id.mention))
+    # Delete input only if response is reply (not inline edit)
+    if msg.id != m.id:
+        await m.delete_if_self()
 
 
 @Altruix.register_on_cmd(
-    "listsudo", cmd_help={"help": "list all sudo users!", "example": "listsudo"}
+    "listsudo",
+    cmd_help={"help": "List all sudo users (separated active, unfetchable & deleted)", "example": "listsudo"}
 )
-async def add_sudo_func(c: Client, m: Message):
+@log_errors
+# ← PERUBAHAN BARU: Tambah kategori Unfetchable untuk handle gagal fetch (penyebab count aktif kurang)
+async def list_sudo_func(c: Client, m: Message):
     msg = await m.handle_message("PROCESSING")
-    users_ = await Altruix.config.get_sudo()
-    if not users_:
-        return await msg.edit_msg("NO_SUDO_LIST")
-    user_ = []
-    for i in users_:
-        try:
-            user_.append(await c.get_users(int(i)))
-        except Exception:
-            continue
-    if not user_:
-        return await msg.edit_msg("NO_SUDO_LIST")
+    sudo_ids = await Altruix.config.get_sudo()
 
-    await msg.edit_msg(bulletify(user_))
+    if not sudo_ids:
+        await msg.edit_msg(
+            "<b>Sudo Users (Total: 0)</b>\n\n"
+            "<b>Aktif Users (0)</b>:\n<i>Tidak ada user aktif.</i>\n\n"
+            "<b>Unfetchable Users (0)</b>:\n<i>Tidak ada user yang gagal diambil.</i>\n\n"
+            "<b>Deleted Users (0)</b>:\n<i>Tidak ada akun terhapus.</i>"
+        )
+        # Delete input only if response is reply
+        if msg.id != m.id:
+            await m.delete_if_self()
+        return
+
+    active_users = []
+    unfetchable_users = []
+    deleted_users = []
+
+    for user_id in sudo_ids:
+        try:
+            user = await c.get_users(int(user_id))
+            if user.is_deleted:
+                deleted_users.append(user)
+            else:
+                active_users.append(user)
+        except Exception:
+            # Jika gagal fetch → kategori unfetchable (mungkin aktif)
+            dummy_user = User(
+                id=int(user_id),
+                is_deleted=False,  # Bukan deleted, tapi unfetchable
+                first_name=None,
+                last_name=None,
+                username=None,
+                dc_id=None,
+                is_bot=False
+            )
+            unfetchable_users.append(dummy_user)
+
+    await msg.edit_msg(format_sudo_list(active_users, unfetchable_users, deleted_users))
+    # Delete input only if response is reply (not inline edit)
+    if msg.id != m.id:
+        await m.delete_if_self()
+
+# # Log sukses loading
+# logger.info(f"✅ Loaded → {__plugin_name__} v{PLUGIN_VERSION}")

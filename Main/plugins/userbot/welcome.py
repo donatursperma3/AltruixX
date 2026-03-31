@@ -7,6 +7,8 @@
 # All rights reserved.
 
 
+
+PLUGIN_VERSION = "0.0.1"
 from Main import Altruix
 from pyrogram import Client, filters
 from Main.core.types.message import Message
@@ -137,3 +139,4 @@ async def welcome_users(c: Client, m: Message):
             caption=text,
             reply_to_message_id=m.id,
         )
+

@@ -6,6 +6,8 @@
 #
 # All rights reserved.
 
+
+PLUGIN_VERSION = "0.0.1"
 from Main import Altruix
 from style import bullets
 from pyrogram import Client
@@ -58,7 +60,7 @@ async def listdir_cmd_handler(c: Client, m: Message):
         if isfile(j):
             files.append(f"<code>  {b2} {i} ({readable(stat(j).st_size)})</code>")
     if not input_:
-        input_ = "Altruix"
+        input_ = "Altroid-X"
     output_ = f"<b>Files and Folders in</b> <code>{input_}</code> (<code>{length}</code>) <b>are :</b> \n\n"
     output_ += (
         f"<code>{b3}</code> <i><b>Folders</b></i> (<code>{len(folders)}</code>):\n"
@@ -154,3 +156,4 @@ async def remove_cmd_handler(c: Client, m: Message):
         await msg.edit(
             f"<b>File,</b> <code>{input_}</code> <b>has been removed successfully.</b>"
         )
+

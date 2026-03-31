@@ -27,8 +27,88 @@ class _Essentials:
         return soup.get_text()
 
     @staticmethod
+    def fix_html(text: str) -> str:
+        """
+        Hardened HTML fixer for Telegram compatibility.
+        - Balances and closes tags.
+        - Whitelists only supported tags: b, i, u, s, code, pre, blockquote, a.
+        - Removes all attributes except 'href' for <a> and 'expandable' for <blockquote>.
+        - Removes empty tags.
+        """
+        if not text:
+            return ""
+        
+        ALLOWED_TAGS = ['b', 'strong', 'i', 'em', 'u', 'ins', 's', 'strike', 'del', 'code', 'pre', 'blockquote', 'a']
+        
+        try:
+            soup = BeautifulSoup(text, "html.parser")
+            
+            # Recursive cleaning
+            for tag in soup.find_all(True):
+                # Normalize tags (e.g., strong -> b, em -> i)
+                if tag.name == 'strong': tag.name = 'b'
+                elif tag.name == 'em': tag.name = 'i'
+                elif tag.name == 'ins': tag.name = 'u'
+                elif tag.name in ['strike', 'del']: tag.name = 's'
+                
+                if tag.name not in ALLOWED_TAGS:
+                    # Strip unsupported tags but keep their contents
+                    tag.unwrap()
+                else:
+                    # Filter attributes
+                    attrs = dict(tag.attrs)
+                    tag.attrs = {}
+                    if tag.name == 'a' and 'href' in attrs:
+                        tag.attrs['href'] = attrs['href']
+                    elif tag.name == 'blockquote':
+                        # Preserve 'expandable' as a boolean attribute for Telegram
+                        if 'expandable' in attrs:
+                            tag.attrs['expandable'] = ""
+            
+            # Remove empty tags (recursively)
+            for tag in soup.find_all(True):
+                if not tag.get_text(strip=True) and not tag.contents:
+                    tag.decompose()
+            
+            fixed = soup.decode_contents()
+            # Restore boolean attributes for Telegram parser
+            return fixed.replace('expandable=""', 'expandable')
+            
+        except Exception:
+            # Fallback for extreme cases: strip all tags if BS4 fails
+            return re.sub(r"<[^>]*>", "", text)
+
+    @staticmethod
     def clean_html(text: str) -> str:
         return re.sub(r"<[^>]*>", "", text)
+
+    @staticmethod
+    def clean_user_name(name: str) -> str:
+        """
+        Clean user names by replacing invisible/blank unicode characters
+        and collapsing multiple spaces.
+        """
+        if not name:
+            return "No name"
+        
+        # Common invisible/blank characters
+        # U+3164 (Hangul Filler), U+200B (Zero Width Space), U+00A0 (Non-breaking space)
+        # U+2000-U+200A (Various spaces), U+202F, U+205F, U+3000
+        blanks = [
+            "\u3164", "\u200b", "\u00a0", "\u2000", "\u2001", "\u2002", 
+            "\u2003", "\u2004", "\u2005", "\u2006", "\u2007", "\u2008", 
+            "\u2009", "\u200a", "\u202f", "\u205f", "\u3000", "\u180e",
+            "\u200c", "\u200d", "\u2060", "\ufeff"
+        ]
+        
+        cleaned = str(name)
+        for char in blanks:
+            cleaned = cleaned.replace(char, " ")
+            
+        # Collapse multiple spaces and trim
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        
+        return cleaned or "No name"
 
     @staticmethod
     def get_readable_time(seconds: int) -> str:
@@ -118,10 +198,34 @@ class _Essentials:
                     )
 
                 except FloodWait as e:
-                    await asyncio.sleep(e.x + 2)
+                    await asyncio.sleep(e.value + 2)
                     message._client.log(f"Sleeping for : {e.value} due to floodwaits!")
                 except MessageNotModified:
                     pass
+
+    async def get_user_button_style(self, user_id, label):
+        """Prepend a style icon to the button label based on user's preference."""
+        try:
+             from Main.utils.file_helpers import get_button_style_data
+             data = get_button_style_data()
+             apply_type = data.get("apply_types", {}).get(str(user_id), "global")
+             
+             if apply_type == "per_account" and str(user_id) in data.get("sessions", {}):
+                 style_key = data["sessions"][str(user_id)].get("style", "DEFAULT")
+             else:
+                 style_key = data["global"].get("style", "DEFAULT")
+                 
+             icons = {
+                 "DEFAULT": "",
+                 "PRIMARY": "",
+                 "DANGER":  "",
+                 "SUCCESS": "",
+             }
+             icon = icons.get(style_key, "")
+             return f"{icon} {label}".strip()
+        except Exception:
+             return label
+
 
 
 Essentials = _Essentials()

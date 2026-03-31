@@ -1,0 +1,68 @@
+{
+    "7115438332": {
+        "timestamp": 1766589259.808962,
+        "stats": {
+            "created": {
+                "group": 10,
+                "supergroup": 187,
+                "channel": 13
+            },
+            "admin": {
+                "group": 0,
+                "supergroup": 12,
+                "channel": 11
+            },
+            "total": {
+                "group": 10,
+                "supergroup": 270,
+                "channel": 56
+            },
+            "private_chat": 958,
+            "bot": 149
+        }
+    },
+    "1192566681": {
+        "timestamp": 1766592372.406315,
+        "stats": {
+            "created": {
+                "group": 10,
+                "supergroup": 174,
+                "channel": 38
+            },
+            "admin": {
+                "group": 0,
+                "supergroup": 11,
+                "channel": 37
+            },
+            "total": {
+                "group": 13,
+                "supergroup": 266,
+                "channel": 191
+            },
+            "private_chat": 1944,
+            "bot": 1380
+        }
+    },
+    "7844837037": {
+        "timestamp": 1766844037.089276,
+        "stats": {
+            "created": {
+                "group": 0,
+                "supergroup": 12,
+                "channel": 2
+            },
+            "admin": {
+                "group": 0,
+                "supergroup": 0,
+                "channel": 1
+            },
+            "total": {
+                "group": 0,
+                "supergroup": 18,
+                "channel": 7
+            },
+            "private_chat": 28,
+            "bot": 21
+        }
+    }
+}

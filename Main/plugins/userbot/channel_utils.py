@@ -7,6 +7,8 @@
 # All rights reserved.
 
 
+
+PLUGIN_VERSION = "0.0.1"
 import random
 import asyncio
 import logging
@@ -188,3 +190,4 @@ async def auto_poster(c, m: Union[Message, MMessage]):
         except Exception:
             Altruix.log()
         continue
+

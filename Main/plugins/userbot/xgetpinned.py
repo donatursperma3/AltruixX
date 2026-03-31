@@ -1,0 +1,563 @@
+# kiro_1.5.5.12
+# Copyright (C) 2021-present by Altruix@Github, < https://github.com/Altruix >.
+#
+# This file is part of < https://github.com/Altruix/Altruix > project,
+# and is released under the "GNU v3.0 License Agreement".
+# Please see < https://github.com/Altriux/Altruix/blob/main/LICENSE >
+#
+# All rights reserved.
+
+PLUGIN_VERSION = "0.1.33"
+
+"""
+📌 PLUGIN: Pinned Messages Report PRO (Persistent & Logged)
+COMMANDS: .getpinned, .listpinned, .countpinned, .stkpinned, .imgpinned, .vidpinned, .docpinned, .audpinned, .getpin, .unpinall
+"""
+
+import asyncio
+import random
+import string
+import time
+from pyrogram import Client, enums, filters
+from pyrogram.types import (
+    InlineQuery, InlineQueryResultArticle, InputTextMessageContent,
+    InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+)
+from pyrogram.errors import FloodWait, RPCError, MessageNotModified
+from Main import Altruix
+from Main.core.types.message import Message
+from Main.core.decorators import log_errors
+from Main.utils.file_helpers import get_user_button_style
+
+# Memory cache for speed (DB is primary)
+if not hasattr(Altruix, "GETPINNED_STATE"):
+    Altruix.GETPINNED_STATE = {}
+
+# Pagination Settings
+PAGE_SIZE = 20
+
+# Helper for type detection (detects various media/message types)
+def get_msg_type(msg: Message) -> str:
+    if msg.photo:
+        return "Photo"
+    if msg.video:
+        return "Video"
+    if msg.document:
+        return "Document"
+    if msg.animation:
+        return "GIF"
+    if msg.sticker:
+        return "Sticker"
+    if msg.voice:
+        return "Voice"
+    if msg.audio:
+        return "Audio"
+    if msg.video_note:
+        return "Video Note"
+    if msg.poll:
+        return "Poll"
+    if msg.location or msg.venue:
+        return "Location"
+    if msg.contact:
+        return "Contact"
+    if msg.text:
+        return "Text"
+    return "Message"
+
+# Helper to generate page content with DB persistence
+async def get_pinned_report_page(unique_id, page=0):
+    """Generates the HTML report and Keyboard for a specific page using persistent state."""
+    # 1. Check Memory Cache first for speed
+    state = Altruix.GETPINNED_STATE.get(unique_id)
+    
+    # 2. If not in memory (e.g. after restart), Fetch from MongoDB
+    if not state:
+        try:
+            db_state = await Altruix.db.data_col.find_one({"_id": f"getpin_{unique_id}"})
+            if db_state:
+                state = db_state
+                # Restore to memory cache for subsequent page turns
+                Altruix.GETPINNED_STATE[unique_id] = state
+        except Exception as e:
+            Altruix.log(f"DB Error fetching getpinned state: {e}", level=30)
+
+    if not state:
+        return "<b>❌ Error:</b> Session expired or not found. Please run the command again.", None
+
+    chat_id = state["chat_id"]
+    chat_name = state["chat_name"]
+    msg_filter = state["filter"]
+    msg_ids = state.get("message_ids", [])
+    total_count = len(msg_ids)
+    
+    if total_count == 0:
+        return "<b>❌ Error:</b> No messages recorded in this report.", None
+
+    total_pages = (total_count - 1) // PAGE_SIZE + 1
+    if page < 0:
+        page = 0
+    if page >= total_pages:
+        page = total_pages - 1
+
+    # Slice IDs for requested page
+    start_idx = page * PAGE_SIZE
+    end_idx = start_idx + PAGE_SIZE
+    page_msg_ids = msg_ids[start_idx:end_idx]
+
+    # 3. Fetch actual message objects from Telegram
+    try:
+        # We use a userbot client to fetch the messages as the bot might not be in the chat
+        worker = Altruix.clients[0]
+        page_messages = await worker.get_messages(chat_id, page_msg_ids)
+        if not isinstance(page_messages, list):
+            page_messages = [page_messages]
+    except Exception as e:
+        Altruix.log(f"Fetch Error in get_pinned_report_page: {e}", level=30)
+        return f"<b>❌ Error:</b> Failed to fetch messages for this page.\n<code>{str(e)}</code>", None
+
+    # Header Construction
+    report = f"📌 <b>PINNED MESSAGES REPORT</b>\n\n"
+    report += f"<b>Chat:</b> {chat_name}\n"
+    report += f"<b>Filter:</b> <code>{msg_filter}</code>\n"
+    report += f"<b>Total:</b> {total_count} Messages\n\n"
+
+    # List items
+    lines = []
+    chat_id_num = str(chat_id).replace("-100", "")
+    for i, msg in enumerate(page_messages, start_idx + 1):
+        if not msg or msg.empty:
+            lines.append(f"{i}. <code>ID: {page_msg_ids[i - (start_idx + 1)]}</code> — <i>Message not available</i>")
+            continue
+            
+        tipe = get_msg_type(msg)
+        category = tipe.lower()
+        if category == "text":
+            category = "message"
+            
+        link = msg.link if hasattr(msg, "link") and msg.link else f"https://t.me/c/{chat_id_num}/{msg.id}"
+        # Format: 1. ID: 123 — <a href='link'>Type</a>
+        lines.append(f"{i}. <code>ID: {msg.id}</code> — <a href='{link}'>{tipe}</a>")
+
+    report += "\n".join(lines)
+    report += f"\n\n<i>Generated by Altroid-X Engine • Page {page+1}/{total_pages}</i>"
+
+    # 4. Interactive Keyboard UI
+    user_id = state.get("user_id")
+    # Resolve button style based on user config
+    user_style = get_user_button_style(user_id) if user_id else enums.ButtonStyle.SUCCESS
+
+    buttons = []
+    nav_row = []
+    if total_pages > 1:
+        prev_idx = page - 1 if page > 0 else total_pages - 1
+        nav_row.append(InlineKeyboardButton("«", callback_data=f"getpin_p_{unique_id}_{prev_idx}", style=user_style))
+        nav_row.append(InlineKeyboardButton(f"{page+1}/{total_pages}", callback_data="noop", style=user_style))
+        next_idx = page + 1 if page < total_pages - 1 else 0
+        nav_row.append(InlineKeyboardButton("»", callback_data=f"getpin_p_{unique_id}_{next_idx}", style=user_style))
+        
+    buttons.append(nav_row)
+    buttons.append([InlineKeyboardButton("Close Report", callback_data=f"getpin_close_{unique_id}", style=user_style)])
+
+    return report, InlineKeyboardMarkup(buttons)
+
+# Primary Command Handler (Unified for shortcuts and main)
+@Altruix.register_on_cmd(
+    ["getpinned", "listpinned", "stkpinned", "imgpinned", "vidpinned", "docpinned", "audpinned"],
+    bot_mode_unsupported=True,
+    cmd_help={
+        "help": "Get a paginated, persistent report of pinned messages with filters.",
+        "usage": ".getpinned [chat_id] [filter]",
+        "examples": [
+            ".getpinned", 
+            ".getpinned photo", 
+            ".getpinned -100123456789 text", 
+            ".imgpinned altruix_chat",
+            ".stkpinned"
+        ],
+        "notes": "Persistent across restarts. Auto-logs to Log Group. 20 items per page.",
+        "detail": """
+<b>Pinned Messages Report PRO</b>
+
+Interactive tool to audit pinned messages in any chat.
+
+<b>Shortcuts:</b>
+• <code>.listpinned</code> - All types.
+• <code>.imgpinned</code> - Photos only.
+• <code>.vidpinned</code> - Videos only.
+• <code>.docpinned</code> - Documents only.
+• <code>.stkpinned</code> - Stickers only.
+• <code>.audpinned</code> - Audio files only.
+
+<b>Filters:</b>
+<code>all, text, photo, video, document, sticker, gif, voice, audio, location, poll, contact, video_note.</code>
+
+<b>Usage Instructions:</b>
+1. Use <code>.getpinned</code> in the current chat to see everything.
+2. Provide a <b>Chat ID</b> or <b>Username</b> as the first argument to scan a different chat.
+3. Provide a <b>Filter</b> as the second argument (or first if chat is omitted) to narrow results.
+""",
+    },
+)
+@log_errors
+async def get_pinned_pro_cmd(c: Client, m: Message):
+    """Handles the main .getpinned command and its aliases."""
+    if not m.command:
+        # Fallback safety for unexpected None command
+        raw_text = m.text or m.caption or ""
+        cmd = raw_text.split()[0].lower().lstrip(".!/ ") if raw_text else "getpinned"
+    else:
+        cmd = m.command[0].lower()
+        
+    args = m.raw_user_input.split() if m.raw_user_input else []
+    
+    target_chat = m.chat.id
+    msg_filter = "all"
+    
+    # Process Alias to Filter
+    CMD_FILTER_MAP = {
+        "listpinned": "all",
+        "stkpinned": "sticker",
+        "imgpinned": "photo",
+        "vidpinned": "video",
+        "docpinned": "document",
+        "audpinned": "audio"
+    }
+    
+    if cmd in CMD_FILTER_MAP:
+        msg_filter = CMD_FILTER_MAP[cmd]
+        if args:
+            target_chat = args[0]
+    else:
+        # Parse arguments for .getpinned
+        valid_filters = ["all", "text", "photo", "video", "document", "sticker", "gif", "voice", "audio", "location", "poll", "contact", "video_note"]
+        if len(args) == 1:
+            if args[0].lower() in valid_filters:
+                msg_filter = args[0].lower()
+            else:
+                target_chat = args[0]
+        elif len(args) >= 2:
+            target_chat = args[0]
+            if args[1].lower() in valid_filters:
+                msg_filter = args[1].lower()
+
+    # Resolve Chat Metadata
+    try:
+        if isinstance(target_chat, str) and target_chat.lstrip('-').isdigit():
+            target_chat_input = int(target_chat)
+        else:
+            target_chat_input = target_chat
+            
+        chat = await c.get_chat(target_chat_input)
+        chat_id = chat.id
+    except Exception as e:
+        error_text = f"<b>❌ Error:</b> Failed to find chat (<code>{target_chat}</code>)\n{str(e)}"
+        return await m.handle_message(error_text)
+
+    status_msg = await m.handle_message("<code>🔍 Fetching pinned messages...</code>")
+
+    try:
+        # Search for all pinned messages
+        all_ids = []
+        async for msg in c.search_messages(chat_id, filter=enums.MessagesFilter.PINNED):
+            # Pre-filter by type to minimize DB payload and processing
+            if msg_filter == "all":
+                pass
+            elif msg_filter == "text" and not (msg.text or msg.caption):
+                continue
+            elif msg_filter == "photo" and not msg.photo:
+                continue
+            elif msg_filter == "video" and not msg.video:
+                continue
+            elif msg_filter == "document" and not msg.document:
+                continue
+            elif msg_filter == "sticker" and not msg.sticker:
+                continue
+            elif msg_filter == "gif" and not msg.animation:
+                continue
+            elif msg_filter == "voice" and not msg.voice:
+                continue
+            elif msg_filter == "audio" and not msg.audio:
+                continue
+            elif msg_filter == "location" and not (msg.location or msg.venue):
+                continue
+            elif msg_filter == "poll" and not msg.poll:
+                continue
+            elif msg_filter == "contact" and not msg.contact:
+                continue
+            elif msg_filter == "video_note" and not msg.video_note:
+                continue
+            
+            all_ids.append(msg.id)
+        
+        if not all_ids:
+            return await status_msg.edit(f"📌 <b>PINNED MESSAGES REPORT</b>\n\n<b>Chat:</b> {chat.title}\n<b>Result:</b> No matches found.")
+
+        # Ensure oldest first (Chronological)
+        all_ids.sort()
+
+        # Create Persistent Session Data
+        unique_id = "".join(random.choices(string.ascii_lowercase + string.digits, k=8))
+        state = {
+            "chat_id": chat_id,
+            "chat_name": chat.title or chat.first_name or "Unknown",
+            "filter": msg_filter,
+            "message_ids": all_ids,
+            "user_id": m.from_user.id,
+            "created_at": time.time()
+        }
+        
+        # Save to Cache and MongoDB for persistence across restarts
+        Altruix.GETPINNED_STATE[unique_id] = state
+        await Altruix.db.data_col.find_one_and_update(
+            {"_id": f"getpin_{unique_id}"},
+            {"$set": state},
+            upsert=True
+        )
+
+        # Trigger Bot Assistant UI via Inline Mode
+        bot_username = Altruix.bot_manager.get_bot_username(c.me.id)
+        try:
+            results = await c.get_inline_bot_results(bot_username, f"getpin_init_{unique_id}")
+            await c.send_inline_bot_result(
+                chat_id=m.chat.id,
+                query_id=results.query_id,
+                result_id=results.results[0].id,
+                reply_to_message_id=m.reply_to_message.id if m.reply_to_message else None
+            )
+            
+            # 📝 LOGGING to configured Log Channel
+            if Altruix.config.LOG_CHAT_ID:
+                text, markup = await get_pinned_report_page(unique_id, 0)
+                await Altruix.bot.send_message(
+                    Altruix.config.LOG_CHAT_ID,
+                    f"📝 <b>Pinned Report Log</b>\nRequested by: <code>{m.from_user.id}</code>\n\n{text}",
+                    disable_web_page_preview=True,
+                    reply_markup=markup
+                )
+
+            # Cleanup status and original command
+            await status_msg.delete()
+            await m.delete_if_self()
+            
+        except Exception as bot_err:
+            Altruix.log(f"Bot failed to send inline result for getpinned: {bot_err}", level=30)
+            # Fallback to direct editing if inline fails
+            text, _ = await get_pinned_report_page(unique_id, 0)
+            await status_msg.edit(text, disable_web_page_preview=True)
+
+    except Exception as e:
+        Altruix.log(f"Error in get_pinned_pro_cmd: {e}", level=40)
+        await status_msg.edit(f"<b>❌ Failure:</b> <code>{str(e)}</code>")
+
+# ========== BOT ASSISTANT UI HANDLERS ==========
+
+@Altruix.bot.on_inline_query(filters.regex(r"^getpin_init_(\w+)"))
+async def getpinned_inline_handler(client: Client, query: InlineQuery):
+    """Initial inline response for the pinned report."""
+    unique_id = query.matches[0].group(1)
+    text, markup = await get_pinned_report_page(unique_id, 0)
+    
+    await query.answer(
+        results=[
+            InlineQueryResultArticle(
+                title="📌 Pinned Messages Report",
+                description="Click to send the interactive report.",
+                input_message_content=InputTextMessageContent(
+                    text, 
+                    parse_mode=enums.ParseMode.HTML, 
+                    disable_web_page_preview=True
+                ),
+                reply_markup=markup
+            )
+        ],
+        cache_time=0
+    )
+
+@Altruix.bot.on_callback_query(filters.regex(r"^getpin_p_(\w+)_(\d+)"))
+async def getpinned_page_callback(client: Client, cb: CallbackQuery):
+    """Handles pagination button clicks [«] [1/N] [»]."""
+    unique_id = cb.matches[0].group(1)
+    page = int(cb.matches[0].group(2))
+    
+    text, markup = await get_pinned_report_page(unique_id, page)
+    try:
+        await cb.edit_message_text(
+            text, 
+            parse_mode=enums.ParseMode.HTML, 
+            disable_web_page_preview=True, 
+            reply_markup=markup
+        )
+    except MessageNotModified:
+        # Ignore pyrogram error when content is same
+        pass
+    except Exception as e:
+        await cb.answer(f"UI Error: {e}", show_alert=True)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^getpin_close_(\w+)"))
+async def getpinned_close_callback(client: Client, cb: CallbackQuery):
+    """Closes the report and cleans up the session data."""
+    unique_id = cb.matches[0].group(1)
+    
+    # Remove from memory cache
+    if unique_id in Altruix.GETPINNED_STATE:
+        del Altruix.GETPINNED_STATE[unique_id]
+        
+    # Remove from database
+    await Altruix.db.data_col.find_one_and_delete({"_id": f"getpin_{unique_id}"})
+    
+    # Delete the message
+    await cb.message.delete()
+    
+    if cb.inline_message_id:
+        await client.edit_inline_text(cb.inline_message_id, "<b>Report Closed.</b>")
+
+# ========== UTILITY COMMANDS ==========
+
+@Altruix.register_on_cmd(
+    ["countpinned"], 
+    bot_mode_unsupported=True,
+    cmd_help={
+        "help": "Get total count of pinned messages without listing them.",
+        "usage": ".countpinned [chat_id]",
+        "examples": [".countpinned", ".countpinned -100123456789"],
+        "notes": "Useful for a quick audit of heavily pinned chats.",
+        "detail": "Fetches only the total count of currently pinned messages in the current or target chat."
+    }
+)
+@log_errors
+async def count_pinned_cmd(c: Client, m: Message):
+    """Quickly audits the total number of pinned messages."""
+    target_chat = m.chat.id
+    args = m.raw_user_input.split() if m.raw_user_input else []
+    
+    if args:
+        target_chat = args[0]
+        
+    try:
+        # Resolve target chat to integer if possible
+        if isinstance(target_chat, str) and target_chat.lstrip('-').isdigit():
+            target_chat = int(target_chat)
+            
+        chat = await c.get_chat(target_chat)
+        
+        # ✅ Using search_messages_count with filter=enums.MessagesFilter.PINNED
+        count = await c.search_messages_count(chat.id, filter=enums.MessagesFilter.PINNED)
+        
+        await m.reply(f"📌 <b>Total Pinned Messages in {chat.title}:</b> <code>{count}</code>")
+    except Exception as e:
+        await m.reply(f"<b>❌ Error:</b> <code>{str(e)}</code>")
+
+@Altruix.register_on_cmd(
+    ["getpin"], 
+    bot_mode_unsupported=True,
+    cmd_help={
+        "help": "Get a specific pinned message by index.",
+        "usage": ".getpin [chat_id] <index>",
+        "examples": [".getpin 1", ".getpin altruix_chat 5"],
+        "notes": "Index is 1-based (1 = oldest).",
+        "detail": "Fetches up to 100 pins and retrieves the direct link for the requested index."
+    }
+)
+@log_errors
+async def get_by_index_cmd(c: Client, m: Message):
+    """Retrieves a direct link to the N-th pinned message."""
+    args = m.raw_user_input.split() if m.raw_user_input else []
+    
+    if not args:
+        return await m.reply("<b>Specify index:</b> <code>.getpin <index></code>")
+        
+    target_chat = m.chat.id
+    index = 1
+    
+    if len(args) == 1:
+        if args[0].isdigit():
+            index = int(args[0])
+        else:
+            return await m.reply("<b>Invalid Index.</b> Use a number.")
+    else:
+        target_chat = args[0]
+        if args[1].isdigit():
+            index = int(args[1])
+        else:
+            return await m.reply("<b>Invalid Index.</b> Use a number.")
+            
+    try:
+        if isinstance(target_chat, str) and target_chat.lstrip('-').isdigit():
+            target_chat = int(target_chat)
+            
+        chat = await c.get_chat(target_chat)
+        
+        # ✅ Fetch results to handle chronological indexing
+        # Limit 100 for safety and performance
+        messages = []
+        async for message in c.search_messages(chat.id, filter=enums.MessagesFilter.PINNED, limit=100):
+            messages.append(message)
+            
+        if not messages:
+            return await m.reply("<b>No pinned messages found.</b>")
+            
+        messages.sort(key=lambda x: x.id) # Chronological
+        
+        if index < 1 or index > len(messages):
+            return await m.reply(f"Invalid index (Max available: {len(messages)})")
+            
+        actual_msg = messages[index-1]
+        tipo = get_msg_type(actual_msg)
+        
+        category = tipo.lower()
+        if category == "text":
+            category = "message"
+            
+        await m.reply(
+            f"📌 <b>PINNED MESSAGE #{index}</b>\n\n"
+            f"<b>Chat:</b> {chat.title}\n"
+            f"<b>Type:</b> <a href='{actual_msg.link}'>{tipo}</a> ({category})\n\n"
+            f"<i>Generated by Altroid-X Engine</i>",
+            disable_web_page_preview=True
+        )
+    except Exception as e:
+        await m.reply(f"<b>❌ Error:</b> <code>{str(e)}</code>")
+
+@Altruix.register_on_cmd(
+    ["unpinall"], 
+    bot_mode_unsupported=True,
+    cmd_help={
+        "help": "Unpin ALL messages in a chat.",
+        "usage": ".unpinall",
+        "examples": [".unpinall"],
+        "notes": "⚠️ <b>WARNING</b>: This is irreversible. Requires Sudo or Owner permissions.",
+        "detail": "Attempts unpin_all_chat_messages first, then falls back to manual loop if unsupported."
+    }
+)
+@log_errors
+async def unpin_all_cmd(c: Client, m: Message):
+    """Removes all messages from the pinned list in the current chat."""
+    from Main.utils.access_control import is_authorized_user
+    
+    # Permission Check
+    if not is_authorized_user(m.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
+        return await m.reply("<b>Unauthorized.</b> Only Sudo/Owner can unpin everything.")
+        
+    status = await m.reply("<code>🔥 Unpinning all messages...</code>")
+    
+    try:
+        # Kurigram/latest Pyrogram support
+        await c.unpin_all_chat_messages(m.chat.id)
+        await status.edit("<b>✅ Successfully unpinned all messages in this chat.</b>")
+    except Exception as err:
+        Altruix.log(f"Unpin All failed, falling back to manual: {err}", level=30)
+        # Fallback manual method for older versions or different chat types
+        try:
+            unpinned_count = 0
+            async for message in c.search_messages(m.chat.id, filter=enums.MessagesFilter.PINNED, limit=100):
+                await c.unpin_chat_message(m.chat.id, message.id)
+                unpinned_count += 1
+                await asyncio.sleep(0.3)
+                
+            if unpinned_count > 0:
+                await status.edit(f"<b>✅ Manually unpinned {unpinned_count} messages.</b>")
+            else:
+                await status.edit("<b>No pinned messages found to unpin.</b>")
+        except Exception as e2:
+            Altruix.log(f"Manual Unpin Failure: {e2}", level=40)
+            await status.edit(f"<b>❌ Critical Failure:</b> <code>{str(e2)}</code>")

@@ -6,6 +6,8 @@
 #
 # All rights reserved.
 
+
+PLUGIN_VERSION = "0.0.1"
 from Main import Altruix
 from pyrogram import Client
 from Main.utils.paste import Paste
@@ -57,14 +59,15 @@ async def paste(c: Client, m: Message):
         _hash = random_hash()
         Altruix.local_db.add_to_col("paste", {_hash: text})
         try:
+            bot_username = Altruix.bot_manager.get_bot_username(c.me.id)
             results = await c.get_inline_bot_results(
-                Altruix.bot_info.username, f"paste_menu:{_hash}"
+                bot_username, f"paste_menu:{_hash}"
             )
             await c.send_inline_bot_result(
                 chat_id=m.chat.id,
                 query_id=results.query_id,
                 result_id=results.results[0].id,
-                reply_to_message_id=rm.id if rm else None,
+                reply_to_message_id=rm.id if rm else m.id,
             )
             await m.delete_if_self()
         except ChatSendInlineForbidden:
@@ -74,14 +77,15 @@ async def paste(c: Client, m: Message):
     ]:
         name, link = await Paste(text, service=val[0]).paste()
         try:
+            bot_username = Altruix.bot_manager.get_bot_username(c.me.id)
             results = await c.get_inline_bot_results(
-                Altruix.bot_info.username, f"paste_url:{link}"
+                bot_username, f"paste_url:{link}"
             )
             await c.send_inline_bot_result(
                 chat_id=m.chat.id,
                 query_id=results.query_id,
                 result_id=results.results[0].id,
-                reply_to_message_id=rm.id if rm else None,
+                reply_to_message_id=rm.id if rm else m.id,
             )
             await m.delete_if_self()
         except ChatSendInlineForbidden:
@@ -92,3 +96,4 @@ async def paste(c: Client, m: Message):
             Altruix.get_string("PASTE_TEXT").format(link, name),
             disable_web_page_preview=True,
         )
+

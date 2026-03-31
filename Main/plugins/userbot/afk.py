@@ -7,6 +7,8 @@
 # All rights reserved.
 
 
+
+PLUGIN_VERSION = "0.0.12"
 import time
 import asyncio
 from Main import Altruix
@@ -39,38 +41,35 @@ async def afk(c: Client, m: Message):
     user_args = m.user_args
     afk_time = int(time.time())
     reason = m.user_input
-    result = await Altruix.db.settings_col.find_one(
-        {"_id": "AFK", "client_id": c.myself.id}
-    )
-    if result:
-        await Altruix.db.settings_col.update_one(
-            {"_id": "AFK", "client_id": c.myself.id},
-            {
-                "$set": {
-                    "afk_time": afk_time,
-                    "reason": reason,
-                    "dlm": "dlm" in user_args,
-                    "hls": "hls" in user_args,
-                }
-            },
-        )
-    else:
-        await Altruix.db.settings_col.insert_one(
-            {
-                "_id": "AFK",
-                "client_id": c.myself.id,
+    # ✅ FIX: Safely get client ID
+    client_id = (getattr(c, 'myself', None) or c.me).id
+    
+    # ✅ FIX: Use find_one_and_update with upsert for LocalCollection compatibility
+    await Altruix.db.settings_col.find_one_and_update(
+        {"_id": "AFK", "client_id": client_id},
+        {
+            "$set": {
                 "afk_time": afk_time,
                 "reason": reason,
-                "dlm": "-dlm" in user_args,
-                "hls": "-hls" in user_args,
+                "dlm": "dlm" in user_args,
+                "hls": "hls" in user_args,
             }
-        )
+        },
+        upsert=True
+    )
     await m.handle_message("GOING_AFK", del_in=7)
 
 
 async def user_afk(filter, c: Altruix, m: Message):
+    # ✅ FIX: Safely get client ID
+    client_id = getattr(c, 'myself', None)
+    client_id = client_id.id if client_id else (c.me.id if hasattr(c, 'me') and c.me else 0)
+    
+    if not client_id:
+        return False
+        
     afk = await Altruix.db.settings_col.find_one(
-        {"_id": "AFK", "client_id": c.myself.id}
+        {"_id": "AFK", "client_id": client_id}
     )
     return bool(afk)
 
@@ -92,8 +91,10 @@ async def afk_mentioned(c: Client, m: Message):
         return
     if afk_sanity_check[user_id] > 3:
         return
+    # ✅ FIX: Safely get client ID
+    client_id = (getattr(c, 'myself', None) or c.me).id
     result = await Altruix.db.settings_col.find_one(
-        {"_id": "AFK", "client_id": c.myself.id}
+        {"_id": "AFK", "client_id": client_id}
     )
     afk_time = result["afk_time"]
     hls = result["hls"]
@@ -124,19 +125,27 @@ async def afk_mentioned(c: Client, m: Message):
 )
 async def set_unafk(c: Client, m: Message):
     global MENTIONED
-    await Altruix.db.settings_col.delete_one({"_id": "AFK", "client_id": c.myself.id})
-    _m_ = await c.send_message(m.chat.id, Altruix.get_string("NO_AFK"))
-    await asyncio.sleep(7)
-    await _m_.delete()
-    if MENTIONED:
-        if not Altruix.log_chat:
-            return
-        text = Altruix.get_string("AFK_MENTION", args=(len(MENTIONED)))
-        for msg in MENTIONED:
-            text += Altruix.get_string(
-                "AFK_MENTION_DETAILS",
-                args=(msg["chat_id"], msg["id"], msg["user"], msg["chat"]),
-            )
-        await c.send_message(Altruix.log_chat, text)
-        MENTIONED = []
-    afk_sanity_check.clear()
+    try:
+        # ✅ FIX: Safely get client ID (c.myself may not exist)
+        client_id = (getattr(c, 'myself', None) or c.me).id
+        
+        # ✅ FIX: Use find_one_and_delete for compatibility with LocalCollection
+        await Altruix.db.settings_col.find_one_and_delete({"_id": "AFK", "client_id": client_id})
+        
+        _m_ = await c.send_message(m.chat.id, Altruix.get_string("NO_AFK"))
+        await asyncio.sleep(7)
+        await _m_.delete()
+        if MENTIONED:
+            if not Altruix.log_chat:
+                return
+            text = Altruix.get_string("AFK_MENTION", args=(len(MENTIONED)))
+            for msg in MENTIONED:
+                text += Altruix.get_string(
+                    "AFK_MENTION_DETAILS",
+                    args=(msg["chat_id"], msg["id"], msg["user"], msg["chat"]),
+                )
+            await c.send_message(Altruix.log_chat, text)
+            MENTIONED = []
+        afk_sanity_check.clear()
+    except Exception as e:
+        Altruix.log(f"[AFK] Error in set_unafk: {e}", level=40)

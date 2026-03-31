@@ -112,7 +112,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
-
+.venv_wsl/
 # Spyder project settings
 .spyderproject
 .spyproject
@@ -151,3 +151,10 @@ eval_output
 cache/
 Main/plugins/userbot/.goutputstream-CIPMO1
 Main/assets/images/logo.jpg
+AUTO*.md
+
+# others
+*_db.py
+funcs.txt
+LOGS/
+tests/

@@ -1,0 +1,131 @@
+{
+  "settings": {
+    "enabled": false,
+    "mode": "user",
+    "7115438332": {
+      "enabled": true,
+      "filters": {
+        "from_bot": {
+          "text": false,
+          "photo": false,
+          "video": false,
+          "document": false,
+          "audio": false,
+          "voice": false,
+          "sticker": false,
+          "animation": false,
+          "video_note": false
+        }
+      }
+    },
+    "7844837037": {
+      "enabled": true
+    },
+    "1192566681": true,
+    "auto_create_topic": false,
+    "6800269145": {
+      "enabled": false
+    },
+    "apply_types": {
+      "7844837037": "global",
+      "1192566681": "global"
+    },
+    "global_config": {
+      "enabled": true,
+      "filters": {
+        "from_bot": {
+          "photo": false,
+          "video": false,
+          "sticker": false,
+          "animation": false
+        }
+      }
+    }
+  },
+  "sessions": {
+    "enabled": false,
+    "mode": "user",
+    "7115438332": {
+      "enabled": true,
+      "filters": {
+        "from_bot": {
+          "text": false,
+          "photo": false,
+          "video": false,
+          "document": false,
+          "audio": false,
+          "voice": false,
+          "sticker": false,
+          "animation": false,
+          "video_note": false
+        }
+      }
+    },
+    "7844837037": {
+      "enabled": true
+    },
+    "1192566681": true,
+    "auto_create_topic": false,
+    "6800269145": {
+      "enabled": false
+    },
+    "apply_types": {
+      "7844837037": "global",
+      "1192566681": "global"
+    },
+    "global_config": {
+      "enabled": true,
+      "filters": {
+        "from_bot": {
+          "photo": false,
+          "video": false,
+          "sticker": false,
+          "animation": false
+        }
+      }
+    }
+  },
+  "filters": {
+    "from_user": {
+      "text": true,
+      "photo": true,
+      "video": true,
+      "document": true,
+      "audio": true,
+      "voice": true,
+      "sticker": true,
+      "animation": true,
+      "video_note": true
+    },
+    "from_bot": {
+      "text": true,
+      "photo": true,
+      "video": true,
+      "document": true,
+      "audio": true,
+      "voice": true,
+      "sticker": true,
+      "animation": true,
+      "video_note": true
+    }
+  },
+  "reply_from_all_accessible": false,
+  "reply_access_mode": "sudo",
+  "version": "1.3.74C",
+  "apply_types": {
+    "7844837037": "global",
+    "1192566681": "global"
+  },
+  "global_config": {
+    "enabled": true,
+    "filters": {
+      "from_bot": {
+        "photo": false,
+        "video": false,
+        "sticker": false,
+        "animation": false
+      }
+    }
+  },
+  "auto_create_topic": false
+}

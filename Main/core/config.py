@@ -8,6 +8,7 @@
 
 
 import re
+import ast
 import dotenv
 import asyncio
 import logging
@@ -24,10 +25,21 @@ from .exceptions import NoDatabaseConnected, EnvVariableTypeError
 dotenv.load_dotenv()
 
 
+def safe_int(digit, default=None):
+    if digit is None:
+        return default
+    if isinstance(digit, int):
+        return digit
+    # Strip quotes and spaces
+    clean_digit = str(digit).strip().strip('"').strip("'")
+    if clean_digit.isdigit() or (clean_digit.startswith('-') and clean_digit[1:].isdigit()):
+        return int(clean_digit)
+    return default
+
+
 def digit_wrap(digit):
-    with contextlib.suppress(Exception):
-        return int(digit)
-    return digit
+    res = safe_int(digit)
+    return res if res is not None else digit
 
 
 class TGLIMITS(object):
@@ -48,20 +60,54 @@ class BaseConfig(object):
     BOT_MODE = getenv("BOT_MODE", False)
     AUTOPOST_CACHE = {}
     CUSTOM_BOT_MEDIA = getenv("CUSTOM_BOT_MEDIA")
-    OWNER_ID = (
-        int(getenv("OWNER_ID"))
-        if getenv("OWNER_ID") and getenv("OWNER_ID").isdigit()
-        else None
-    )
+    # ✅ REFACTOR: OWNER_USERS_ID is now a list to support multiple owners
+    # Fallback to OWNER_ID for single entry compatibility
+    OWNER_USERS_ID = [
+        int(i) for i in (getenv("OWNER_USERS_ID") or getenv("OWNER_ID") or "").split(" ") if i.isdigit()
+    ]
+    
+    @property
+    def OWNER_ID(self):
+        """Returns the primary owner ID for single-ID compatibility (e.g. loggers)."""
+        return self.OWNER_USERS_ID[0] if self.OWNER_USERS_ID else None
+
+    @OWNER_ID.setter
+    def OWNER_ID(self, value):
+        """Allows setting OWNER_ID for single-ID compatibility/loading."""
+        if isinstance(value, int):
+            self.OWNER_USERS_ID = [value]
+        elif isinstance(value, list):
+            self.OWNER_USERS_ID = value
+
+    @property
+    def SUDO_USERS(self):
+        """Returns the list of sudo user IDs for backward compatibility."""
+        return self.SUDO_USERS_ID
+
+    @SUDO_USERS.setter
+    def SUDO_USERS(self, value):
+        """Allows setting SUDO_USERS for backward compatibility/loading."""
+        if isinstance(value, list):
+            self.SUDO_USERS_ID = value
+        elif isinstance(value, (int, str)):
+            # Handle string/int conversion if needed (legacy fallback)
+            try:
+                if isinstance(value, str):
+                    self.SUDO_USERS_ID = [int(i) for i in value.split() if i.isdigit()]
+                else:
+                    self.SUDO_USERS_ID = [int(value)]
+            except: pass
     LOAD_ENV_TO_DB = getenv("LOAD_ENV_TO_DB", False)
+    SESSION_NAMES: List[str] = []
     CUSTOM_BT_START_MSG = getenv("CUSTOM_BT_START_MSG", "")
     SESSIONS = [i for i in getenv("SESSIONS", "").split(" ") if i != "" or None]
-    API_ID = int(getenv("API_ID"))
+    API_ID = safe_int(getenv("API_ID"))
     DISABLED_SUDO_CMD_LIST = []
     API_HASH = getenv("API_HASH")
     HEROKU_APP_NAME = getenv("HEROKU_APP_NAME")
-    HELP_MENU_ROWS = int(getenv("HELP_MENU_ROWS", 6))
-    HELP_MENU_COLUMNS = int(getenv("HELP_MENU_COLUMNS", 3))
+    HELP_MENU_ROWS = safe_int(getenv("HELP_MENU_ROWS"), 3)
+    HELP_MENU_COLUMNS = safe_int(getenv("HELP_MENU_COLUMNS"), 3)
+    HELP_MENU_MAX_CHARS = safe_int(getenv("HELP_MENU_MAX_CHARS"), 666)
 
     DEFAULT_REPO = "https://github.com/Altruix/Altruix"
     HEROKU_API_KEY = getenv("HEROKU_API_KEY")
@@ -69,7 +115,7 @@ class BaseConfig(object):
 
     UPDATE_ON_STARTUP = (
         False
-        if (getenv("UPDATE_ON_STARTUP", "yes").lower() in ["n", "nope", "false"])
+        if (getenv("UPDATE_ON_STARTUP", "no").lower() in ["n", "nope", "false"])
         else True
     )
     DB_NAME = "mongo"
@@ -77,22 +123,32 @@ class BaseConfig(object):
     RESOURCE_SAVER = getenv("RESOURCE_SAVER") or "true"
     DEBUG = True if getenv("DEBUG", "false").lower() == "true" else False
     LOG_CHAT_ID = digit_wrap(getenv("LOG_CHAT_ID", None))
+    CACHE_LOG_ENABLED = getenv("CACHE_LOG_ENABLED", "True").lower() == "true"
     UB_LANG = getenv("UB_LANG")
-    SUDO_CMD_HANDLER = getenv("SUDO_CMD_HANDLER") or "!"
-    CMD_HANDLER = getenv("CMD_HANDLER") or "."
+    REPLY_ERR_NOTIF_GLOBAL = getenv("REPLY_ERR_NOTIF_GLOBAL", "on")
+    # ✅ RENAME: PREFIX_SUDO_USERS (Sudo commands) & PREFIX_OWNER_USER (Owner/Self commands)
+    # These are the new primary variables for command prefixes.
+    PREFIX_SUDO_USERS = (getenv("PREFIX_SUDO_USERS") or getenv("SUDO_CMD_HANDLER") or "!")
+    PREFIX_OWNER_USER = (getenv("PREFIX_OWNER_USER") or getenv("CMD_HANDLER") or ".")
+    
     try:
-        SUDO_USERS = [
-            int(i) for i in getenv("SUDO_USERS", "").split(" ") if i.isdigit()
+        # ✅ RENAME: SUDO_USERS_ID (List of authorized users)
+        # Replaces legacy 'SUDO_USERS' string with a list of integers.
+        SUDO_USERS_ID = [
+            int(i) for i in (getenv("SUDO_USERS_ID") or getenv("SUDO_USERS") or "").split(" ") if i.isdigit()
         ]
     except Exception:
         raise EnvVariableTypeError(Exception)
 
     ALIVE_MEDIA = getenv("ALIVE_MEDIA")
+    PEER_NOTIF_ENABLED = getenv("PEER_NOTIF_ENABLED", "on")
+    RESOURCE_NOTIF_ENABLED = getenv("RESOURCE_NOTIF_ENABLED", "off")
+    HEARTBEAT_NOTIF_ENABLED = getenv("HEARTBEAT_NOTIF_ENABLED", "on")
 
     def pop_session(self, index: int) -> Optional[str]:
         if len(self.SESSIONS) == 0:
             raise Exception("No sessions to pop")
-        if index <= len(self.SESSIONS):
+        if index < len(self.SESSIONS):
             for trials in range(5):
                 try:
                     popped = self.SESSIONS.pop(index)
@@ -124,6 +180,38 @@ class BaseConfig(object):
             f.write(new_data)
         logging.info("The unstable session was removed successfully")
         return popped
+
+    def remove_session_by_value(self, session_str: str) -> bool:
+        """Remove a session by its string value instead of index."""
+        if session_str not in self.SESSIONS:
+            logging.warning("Session string not found in local list.")
+            return False
+        
+        try:
+            self.SESSIONS.remove(session_str)
+        except ValueError:
+            return False
+
+        env_path = pathlib.Path().cwd().joinpath(".env")
+        if not env_path.exists():
+            return True
+            
+        with open(env_path, "r") as f:
+            raw_data = f.read()
+            
+        with open(env_path, "w") as f:
+            if re.search(r"SESSIONS=(?:[^\r\n\t\f\v]+)?", raw_data):
+                new_data = re.sub(
+                    r"SESSIONS=(?:[^\r\n\t\f\v]+)?",
+                    f"SESSIONS={' '.join(self.SESSIONS)}",
+                    raw_data,
+                )
+            else:
+                new_data = f'{raw_data}\nSESSIONS={" ".join(self.SESSIONS)}'
+            f.write(new_data)
+            
+        logging.info("Session string removed successfully and .env updated.")
+        return True
 
     def append_session(self, session: str) -> None:
         if session not in self.SESSIONS:
@@ -164,6 +252,7 @@ class Config(BaseConfig):
                 "Please add database uri, So that the Userbot can function!"
             )
         self.env_col: AgnosticCollection = env_col
+        self._env_cache: dict = {}
         self.loop = asyncio.get_event_loop() if loop is None else loop
         self.loop.run_until_complete(self.get_sudo())
         self.loop.run_until_complete(self.load_vars_from_db())
@@ -199,15 +288,121 @@ class Config(BaseConfig):
 
     async def load_vars_from_db(self):
         async for var in self.env_col.find({}):
-            setattr(self, var.get("_id"), var.get("env_value"))
+            key = var.get("_id")
+            val = var.get("env_value")
+            
+            # Fix for stringified lists (legacy data support)
+            if isinstance(val, str) and val.strip().startswith("[") and val.strip().endswith("]"):
+                with contextlib.suppress(Exception):
+                    val = ast.literal_eval(val)
 
-    async def get_env(self, env_key, as_list=False):
+            # ✅ LEGACY KEY MAPPING (Redirect old keys to new attributes)
+            # This ensures that variables renamed in the codebase (e.g. OWNER_ID -> OWNER_USERS_ID)
+            # are correctly loaded from the database even if stored under old names.
+            # It facilitates a smooth transition without requiring database migrations.
+            legacy_map = {
+                "OWNER_ID": "OWNER_USERS_ID",
+                "SUDO_USERS": "SUDO_USERS_ID",
+                "CMD_HANDLER": "PREFIX_OWNER_USER",
+                "SUDO_CMD_HANDLER": "PREFIX_SUDO_USERS"
+            }
+            
+            target_key = legacy_map.get(key, key)
+            
+            # Special handling for converting single IDs to lists for new attributes.
+            # Legacy OWNER_ID was an int, while new OWNER_USERS_ID is a list.
+            if key == "OWNER_ID" and not isinstance(val, list):
+                val = [int(val)] if str(val).isdigit() else []
+            elif key == "SUDO_USERS" and isinstance(val, str):
+                val = [int(i) for i in val.split() if i.isdigit()]
+            
+            try:
+                setattr(self, target_key, val)
+                self._env_cache[target_key] = val
+            except Exception as e:
+                logging.error(f"Error loading ENV {key} (mapped to {target_key}): {e}")
+
+    # ✅ Override Session Management to Sync with DB
+    def append_session(self, session: str) -> None:
+        super().append_session(session)
+        # Async save to DB
+        if self.loop:
+            self.loop.create_task(self.sync_env_to_db("SESSIONS", self.SESSIONS, upsert=True))
+
+    def remove_session_by_value(self, session_str: str) -> bool:
+        result = super().remove_session_by_value(session_str)
+        if result and self.loop:
+            self.loop.create_task(self.sync_env_to_db("SESSIONS", self.SESSIONS, upsert=True))
+        return result
+
+    def pop_session(self, index: int) -> Optional[str]:
+        result = super().pop_session(index)
+        if result and self.loop:
+            self.loop.create_task(self.sync_env_to_db("SESSIONS", self.SESSIONS, upsert=True))
+        return result
+
+    async def get_env(self, env_key, as_list=False, default=None):
+        """
+        Retrieves an environment variable value, prioritizing database, Then cache, Then .env, Then class attributes.
+        Includes BACKWARD COMPATIBILITY for renamed variables.
+        """
         env_key = env_key.strip().upper()
-        return (
-            await self.get_env_from_db(env_key)
-            or self.get_env_(env_key, as_list)
-            or super().__getattribute__(env_key)
-        )
+        
+        # ✅ BACKWARD COMPATIBILITY MAPPING
+        BC_MAP = {
+            "PREFIX_OWNER_USER": "CMD_HANDLER",
+            "PREFIX_SUDO_USERS": "SUDO_CMD_HANDLER",
+            "SUDO_USERS_ID": "SUDO_USERS",
+            "OWNER_USERS_ID": "OWNER_ID"
+        }
+        
+        # Priority 1: Cache (Fastest)
+        if env_key in self._env_cache:
+            cached_val = self._env_cache[env_key]
+            if cached_val is not None:
+                return cached_val
+            # If cached as None (missing), fall through to getattr/default check below
+        
+        # Priority 2: Database
+        db_val = await self.get_env_from_db(env_key)
+        
+        # If not found with new key, try old key (Backward Compatibility)
+        if db_val is None and env_key in BC_MAP:
+            db_val = await self.get_env_from_db(BC_MAP[env_key])
+            if db_val is not None:
+                # Automigrate in cache
+                self._env_cache[env_key] = db_val
+
+        # ✅ DYNAMIC SUFFIX BACKWARD COMPATIBILITY
+        if db_val is None:
+            if env_key.startswith("PREFIX_OWNER_USER_"):
+                suffix = env_key.replace("PREFIX_OWNER_USER_", "")
+                legacy_key = f"CMD_HANDLER_{suffix}"
+                db_val = await self.get_env_from_db(legacy_key)
+            elif env_key.startswith("PREFIX_SUDO_USERS_"):
+                suffix = env_key.replace("PREFIX_SUDO_USERS_", "")
+                legacy_key = f"SUDO_CMD_HANDLER_{suffix}"
+                db_val = await self.get_env_from_db(legacy_key)
+            
+            if db_val is not None:
+                self._env_cache[env_key] = db_val
+        
+        # Cache the result (even if None) to avoid re-querying DB for misses
+        if db_val is not None:
+            self._env_cache[env_key] = db_val
+            return db_val
+        
+        # Priority 3: .env file
+        env_val = self.get_env_(env_key, as_list)
+        if env_val is not None:
+            # Optionally cache ENV file hits too
+            self._env_cache[env_key] = env_val
+            return env_val
+            
+        # If still not found, cache as None (Negative Caching) to prevent N+1 queries
+        self._env_cache[env_key] = None
+        
+        return getattr(self, env_key, default)
 
     def get_env_(self, env_key, as_list):
         env_ = getenv(env_key)
@@ -228,22 +423,43 @@ class Config(BaseConfig):
     async def del_env_from_db(self, env_name):
         if await self.env_col.find_one({"_id": env_name}):
             await self.env_col.find_one_and_delete({"_id": env_name})
+            if env_name in self._env_cache:
+                del self._env_cache[env_name]
+            # ✅ Force Save for LocalDB
+            if hasattr(self.env_col, "db") and hasattr(self.env_col.db, "save_now"):
+                await self.env_col.db.save_now()
             return True
         return False
 
     async def add_env_to_db(
         self, env_name, update: Union[str, int, List[Any], dict], upsert: bool = False
     ) -> None:
-        if self.DEBUG:
-            logging.info("DEBUG mode is enabled, skipping db syncing...")
-        elif isinstance(update, dict):
+        """
+        Updates an environment variable in the database and local cache.
+        """
+        if self.DEBUG and not isinstance(update, dict):
+             logging.debug(f"DEBUG mode: Syncing {env_name} to database despite flag.")
+             
+        if isinstance(update, dict):
+            # Special case for SUDO_USERS updates which often use $push/$pull
             await self.env_col.find_one_and_update(
-                {"_id": "SUDO_USERS"}, update, upsert=upsert
+                {"_id": "SUDO_USERS_ID"}, update, upsert=upsert
             )
         else:
             await self.env_col.find_one_and_update(
                 {"_id": env_name}, {"$set": {"env_value": update}}, upsert=upsert
             )
+            # Update local state/cache
+            self._env_cache[env_name] = update
+            setattr(self, env_name, update)
+            
+        # ✅ Force Save for LocalDB immediate consistency
+        if hasattr(self.env_col, "db") and hasattr(self.env_col.db, "save_now"):
+            await self.env_col.db.save_now()
+
+    async def set_env(self, env_name: str, value: Any) -> None:
+        """Alias for add_env_to_db(..., upsert=True)"""
+        return await self.add_env_to_db(env_name, value, upsert=True)
 
     async def add_element_to_list(self, env_name, value):
         if self.DEBUG:
@@ -253,13 +469,20 @@ class Config(BaseConfig):
             await self.env_col.find_one_and_update(
                 {"_id": env_name}, {"$addToSet": {"env_value": value}}, upsert=True
             )
+            # ✅ Force Save for LocalDB
+            if hasattr(self.env_col, "db") and hasattr(self.env_col.db, "save_now"):
+                await self.env_col.db.save_now()
 
     async def pop_element_from_list(self, env_name, value):
         await self.env_col.find_one_and_update(
             {"_id": env_name}, {"$pull": {"env_value": value}}
         )
+        # ✅ Force Save for LocalDB
+        if hasattr(self.env_col, "db") and hasattr(self.env_col.db, "save_now"):
+            await self.env_col.db.save_now()
 
     async def unsync_env_to_db(self, env_name, env_value, upsert=False):
+        res = None
         if env_ := await self.get_env_from_db(env_name):
             if isinstance(env_value, list):
                 for i in env_value:
@@ -270,63 +493,164 @@ class Config(BaseConfig):
                             upsert=upsert,
                         )
             elif env_value in env_:
-                return await self.env_col.find_one_and_update(
+                res = await self.env_col.find_one_and_update(
                     {"_id": env_name},
                     {"$pull": {"env_value": env_value}},
                     upsert=upsert,
                 )
+        # ✅ Force Save for LocalDB
+        if hasattr(self.env_col, "db") and hasattr(self.env_col.db, "save_now"):
+            await self.env_col.db.save_now()
+        return res
 
     async def sync_env_to_db(self, env_name, env_value, upsert=False, push_=False):
+        res = None
         if await self.get_env_from_db(env_name):
             if push_:
                 if not isinstance(env_value, list):
-                    return await self.env_col.find_one_and_update(
+                    res = await self.env_col.find_one_and_update(
                         {"_id": env_name},
                         {"$push": {"env_value": env_value}},
                         upsert=upsert,
                     )
-                for i in env_value:
-                    await self.env_col.find_one_and_update(
-                        {"_id": env_name},
-                        {"$push": {"env_value": i}},
-                        upsert=upsert,
-                    )
-            return await self.env_col.find_one_and_update(
-                {"_id": env_name}, {"$set": {"env_value": env_value}}, upsert=upsert
-            )
-        if push_:
-            env_value = [env_value]
-        return await self.env_col.insert_one({"_id": env_name, "env_value": env_value})
+                else:
+                    for i in env_value:
+                        await self.env_col.find_one_and_update(
+                            {"_id": env_name},
+                            {"$push": {"env_value": i}},
+                            upsert=upsert,
+                        )
+            else:
+                res = await self.env_col.find_one_and_update(
+                    {"_id": env_name}, {"$set": {"env_value": env_value}}, upsert=upsert
+                )
+        else:
+            if push_:
+                env_value = [env_value]
+            res = await self.env_col.insert_one({"_id": env_name, "env_value": env_value})
+        
+        self._env_cache[env_name] = env_value
+        # ✅ Force Save for LocalDB
+        if hasattr(self.env_col, "db") and hasattr(self.env_col.db, "save_now"):
+            await self.env_col.db.save_now()
+        return res
 
     @var_check
     async def add_sudo(self, user_id: Union[int, str, List[Union[int, str]]]) -> None:
-        if isinstance(user_id, int):
-            user_id = [user_id]
-        if isinstance(user_id, str):
-            user_id = [int(user_id)]
-        if isinstance(user_id, list):
-            user_id = [int(i) for i in user_id]
-        await self.add_env_to_db(
-            "SUDO_USERS", {"$push": {"user_ids": {"$each": user_id}}}, upsert=True
-        )
+        """Add a user or list of users to the authorized sudo list."""
+        if isinstance(user_id, (int, str)):
+            await self.add_element_to_list("SUDO_USERS_ID", int(user_id))
+        elif isinstance(user_id, list):
+            for i in user_id:
+                await self.add_element_to_list("SUDO_USERS_ID", int(i))
+        
+        # Refresh local cache
+        await self.get_sudo()
 
     @var_check
     async def get_sudo(self):
         users = []
-        if var := await self.env_col.find_one({"_id": "SUDO_USERS"}):
-            if var.get("user_ids"):
-                users.extend([int(i) for i in var.get("user_ids")])
-        if local_var := self.SUDO_USERS:
-            users.extend(local_var)
-            users = list(set(users))
-            await self.add_env_to_db("SUDO_USERS", local_var)
-        self.SUDO_USERS = users
+        if var := await self.env_col.find_one({"_id": "SUDO_USERS_ID"}):
+            env_val = var.get("env_value")
+            if env_val:
+                if isinstance(env_val, list):
+                    users.extend([int(i) for i in env_val])
+                elif isinstance(env_val, (int, str)):
+                    if str(env_val).isdigit():
+                        users.append(int(env_val))
+        
+        # Backward compatibility check for old key
+        if not users:
+            if var := await self.env_col.find_one({"_id": "SUDO_USERS"}):
+                env_val = var.get("env_value")
+                if env_val:
+                    if isinstance(env_val, list):
+                        users.extend([int(i) for i in env_val])
+                    elif isinstance(env_val, (int, str)) and str(env_val).isdigit():
+                        users.append(int(env_val))
+
+        # ✅ FIX: Always merge with ORIGINAL .env value (not self.SUDO_USERS_ID which
+        # gets overwritten by load_vars_from_db). This ensures .env sudo users are NEVER lost.
+        raw_env = getenv("SUDO_USERS_ID") or getenv("SUDO_USERS") or ""
+        env_sudos = [int(i) for i in raw_env.split() if i.isdigit()]
+        if env_sudos:
+            users.extend(env_sudos)
+
+        users = list(set(users))
+        
+        # Sync merged list back to DB
+        if users:
+            await self.add_env_to_db("SUDO_USERS_ID", users)
+        self.SUDO_USERS_ID = users
         return users
 
-    async def del_sudo(self, user_id):
+    async def del_sudo(self, user_id: int) -> None:
+        """Remove a user from the authorized sudo list."""
+        await self.pop_element_from_list("SUDO_USERS_ID", int(user_id))
+        # Update local list as well
+        if hasattr(self, "SUDO_USERS_ID") and int(user_id) in self.SUDO_USERS_ID:
+            self.SUDO_USERS_ID.remove(int(user_id))
+
+    # ─── OWNER MANAGEMENT METHODS ──────────────────────────────────────────
+    
+    @var_check
+    async def add_owner(self, user_id: Union[int, str, List[Union[int, str]]]) -> None:
+        """Add a user or list of users to the authorized owners list."""
+        if isinstance(user_id, (int, str)):
+            await self.add_element_to_list("OWNER_USERS_ID", int(user_id))
+        elif isinstance(user_id, list):
+            for i in user_id:
+                await self.add_element_to_list("OWNER_USERS_ID", int(i))
+            
+        # Refresh local cache
+        await self.get_owners()
+
+    @var_check
+    async def get_owners(self) -> List[int]:
+        """Fetch the current list of authorized owners from database and local config."""
+        owners = []
+        if var := await self.env_col.find_one({"_id": "OWNER_USERS_ID"}):
+            env_val = var.get("env_value")
+            if env_val:
+                if isinstance(env_val, list):
+                    owners.extend([int(i) for i in env_val])
+                elif isinstance(env_val, (int, str)) and str(env_val).isdigit():
+                    owners.append(int(env_val))
+        
+        # Backward compatibility check for old key
+        if not owners:
+            if var := await self.env_col.find_one({"_id": "OWNER_ID"}):
+                env_val = var.get("env_value")
+                if env_val:
+                    if isinstance(env_val, list):
+                        owners.extend([int(i) for i in env_val])
+                    elif isinstance(env_val, (int, str)) and str(env_val).isdigit():
+                        owners.append(int(env_val))
+
+        # ✅ FIX: Always merge with ORIGINAL .env value (not self.OWNER_USERS_ID which 
+        # gets overwritten by load_vars_from_db). This ensures .env owners are NEVER lost.
+        raw_env = getenv("OWNER_USERS_ID") or getenv("OWNER_ID") or ""
+        env_owners = [int(i) for i in raw_env.split() if i.isdigit()]
+        if env_owners:
+            owners.extend(env_owners)
+            
+        owners = list(set(owners))
+        
+        # Sync merged list back to DB
+        if owners:
+            await self.add_env_to_db("OWNER_USERS_ID", owners)
+            
+        self.OWNER_USERS_ID = owners
+        return owners
+
+    async def del_owner(self, user_id: int) -> None:
+        """Remove a user from the authorized owners list."""
         await self.env_col.find_one_and_update(
-            {"_id": "SUDO_USERS"}, {"$pull": {"user_id": int(user_id)}}
+            {"_id": "OWNER_USERS_ID"}, {"$pull": {"env_value": int(user_id)}}
         )
+        # Update local list as well
+        if hasattr(self, "OWNER_USERS_ID") and int(user_id) in self.OWNER_USERS_ID:
+            self.OWNER_USERS_ID.remove(int(user_id))
 
     async def get_pm_sts(self):
         if await self.get_env_from_db("PM_PERMIT"):

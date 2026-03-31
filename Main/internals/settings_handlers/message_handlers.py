@@ -1,0 +1,330 @@
+# Main/internals/settings_handlers/message_handlers.py
+import html
+import os
+import asyncio
+import logging
+from pyrogram import Client, filters
+from pyrogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
+from Main.core.decorators import log_errors, iuser_check
+from Main.core.client import Altruix
+from pyrogram.enums import ParseMode, ChatType
+from pyrogram.errors import FloodWait
+
+# States & Utils
+from .states import user_purge_state, user_recent_messages_state
+from .utils import send_log_notification
+# from .session_info import sessions_info_cb_handler
+
+# Logger
+logger = logging.getLogger(__name__)
+
+@Altruix.bot.on_callback_query(filters.regex(r"purge_msg_start_(\d+)_(\d+)"))
+@iuser_check
+@log_errors
+async def purge_msg_start_handler(c: Client, cb: CallbackQuery):
+    """Start purge session message process"""
+    await cb.answer()
+    index, page = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
+    user_id = cb.from_user.id
+    
+    user_purge_state[user_id] = {'session_index': index, 'page': page, 'step': 'waiting_chat'}
+    
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(user_id)
+    
+    await cb.edit_message_text(
+        text="<b>🧹 Purge My Message</b>\n\n"
+             "Menghapus pesan Anda sendiri di chat tertentu.\n"
+             "Silakan kirim <b>Username</b> atau <b>ID</b> target chat.\n\n"
+             "❌ <b>Cancel:</b> /cancel",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}", style=user_style)]])
+    )
+
+@Altruix.bot.on_callback_query(filters.regex(r"rpm_conf_(\d+)_(-?\d+)_(\d+)"))
+@iuser_check
+@log_errors
+async def rpm_conf_handler(c: Client, cb: CallbackQuery):
+    """Confirmation for replying to a PM mention"""
+    await cb.answer()
+    index, chat_id, msg_id = int(cb.matches[0].group(1)), int(cb.matches[0].group(2)), int(cb.matches[0].group(3))
+    
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
+    
+    buttons = [
+        [
+            InlineKeyboardButton("✅ Yes, Reply", f"rpm_exec_{index}_{chat_id}_{msg_id}", style=user_style),
+            InlineKeyboardButton("❌ No", f"session_info_{index}_1", style=user_style)
+        ]
+    ]
+    await cb.edit_message_text(
+        "<b>❓ Konfirmasi Reply PM</b>\n\n"
+        "Kirim balasan otomatis ke pengirim mention melalui PM?",
+        reply_markup=InlineKeyboardMarkup(buttons),
+        parse_mode=ParseMode.HTML
+    )
+
+@Altruix.bot.on_callback_query(filters.regex(r"rpm_exec_(\d+)_(-?\d+)_(\d+)"))
+@iuser_check
+@log_errors
+async def rpm_exec_handler(c: Client, cb: CallbackQuery):
+    """Execute PM reply for mention"""
+    index, chat_id, msg_id = int(cb.matches[0].group(1)), int(cb.matches[0].group(2)), int(cb.matches[0].group(3))
+    await cb.answer("⏳ Memproses balas pesan...", show_alert=False)
+    
+    if index >= len(Altruix.clients): return
+    client = Altruix.clients[index]
+    try:
+        msg = await client.get_messages(chat_id, msg_id)
+        if msg and msg.from_user:
+            await client.send_message(msg.from_user.id, "Halo, ada yang bisa saya bantu? (Auto-reply via Mention Logger)")
+            await cb.answer("✅ Berhasil membalas via PM.", show_alert=True)
+        else: await cb.answer("❌ Pesan tidak ditemukan.", show_alert=True)
+    except Exception as e: await cb.answer(f"❌ Error: {e}", show_alert=True)
+    from .session_info import sessions_info_cb_handler
+    await sessions_info_cb_handler(c, cb, index=index, callback_page=1)
+
+# Note: Complex multi-step purge handlers (amt, del, mode, exec) are usually triggered via on_message logic
+# which we'll implement in session_info.py or a dedicated module.
+@Altruix.bot.on_callback_query(filters.regex(r"^gen_conf_join_chat_input_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def join_chat_input_handler(c: Client, cb: CallbackQuery):
+    """Start join chat process"""
+    index, page = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
+    await cb.answer()
+    from .states import user_join_state
+    user_join_state[cb.from_user.id] = {'session_index': index, 'page': page, 'step': 'waiting_link'}
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
+    await cb.edit_message_text(
+        "<b>➕ Join Chat</b>\n\n"
+        "Silakan kirim <b>Invite Link</b> atau <b>Username</b> grup/channel yang ingin dimasuki.\n\n"
+        "❌ <b>Cancel:</b> /cancel",
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}", style=user_style)]])
+    )
+
+@Altruix.bot.on_callback_query(filters.regex(r"^gen_conf_leave_chat_input_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def leave_chat_input_handler(c: Client, cb: CallbackQuery):
+    """Start leave chat process"""
+    index, page = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
+    await cb.answer()
+    from .states import user_leave_state
+    user_leave_state[cb.from_user.id] = {'session_index': index, 'page': page, 'step': 'waiting_chat'}
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
+    await cb.edit_message_text(
+        "<b>➖ Leave Chat</b>\n\n"
+        "Silakan kirim <b>Username</b> atau <b>ID</b> grup/channel yang ingin ditinggalkan.\n\n"
+        "❌ <b>Cancel:</b> /cancel",
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}", style=user_style)]])
+    )
+
+@Altruix.bot.on_callback_query(filters.regex(r"^gen_conf_send_message_input_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def send_message_input_handler(c: Client, cb: CallbackQuery):
+    """Start send message process"""
+    index, page = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
+    await cb.answer()
+    from .states import user_send_msg_state
+    user_send_msg_state[cb.from_user.id] = {'session_index': index, 'page': page, 'step': 'waiting_target'}
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
+    await cb.edit_message_text(
+        "<b>💬 Send Message</b>\n\n"
+        "Silakan kirim <b>Target (Username/ID)</b> tujuan pengiriman pesan.\n\n"
+        "❌ <b>Cancel:</b> /cancel",
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}", style=user_style)]])
+    )
+async def process_join_chat(c: Client, m: Message, state: dict):
+    """Process join chat input"""
+    user_id = m.from_user.id
+    index, page = state['session_index'], state['page']
+    link = m.text.strip()
+    
+    await m.reply(f"⏳ <b>Joining...</b>\nTarget: <code>{html.escape(link)}</code>", parse_mode=ParseMode.HTML)
+    session_client = Altruix.clients[index]
+    try:
+        await session_client.join_chat(link)
+        await m.reply("✅ <b>Success!</b> Successfully joined chat.")
+        await send_log_notification(c, 'join_chat', index, m.from_user, True, additional_info={'Target': link})
+    except Exception as e:
+        await m.reply(f"❌ <b>Failed:</b> {str(e)}")
+        await send_log_notification(c, 'join_chat', index, m.from_user, False, str(e))
+    
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(m.from_user.id)
+    if user_id in user_join_state: del user_join_state[user_id]
+    await asyncio.sleep(2)
+    await m.reply("🔄 Memuat ulang menu...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Dashboard", f"session_info_{index}_{page}", style=user_style)]]))
+
+async def process_leave_chat(c: Client, m: Message, state: dict):
+    """Process leave chat input"""
+    user_id = m.from_user.id
+    index, page = state['session_index'], state['page']
+    target = m.text.strip()
+    
+    await m.reply(f"⏳ <b>Leaving...</b>\nTarget: <code>{html.escape(target)}</code>", parse_mode=ParseMode.HTML)
+    session_client = Altruix.clients[index]
+    try:
+        await session_client.leave_chat(target)
+        await m.reply("✅ <b>Success!</b> Successfully left chat.")
+        await send_log_notification(c, 'leave_chat', index, m.from_user, True, additional_info={'Target': target})
+    except Exception as e:
+        await m.reply(f"❌ <b>Failed:</b> {str(e)}")
+        await send_log_notification(c, 'leave_chat', index, m.from_user, False, str(e))
+    
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(m.from_user.id)
+    if user_id in user_leave_state: del user_leave_state[user_id]
+    await asyncio.sleep(2)
+    await m.reply("🔄 Memuat ulang menu...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Dashboard", f"session_info_{index}_{page}", style=user_style)]]))
+
+async def process_send_message(c: Client, m: Message, state: dict):
+    """Process send message target input and move to step 2 (message content)"""
+    user_id = m.from_user.id
+    index, page = state['session_index'], state['page']
+    target = m.text.strip()
+    
+    from .states import user_send_msg_state
+    user_send_msg_state[user_id].update({'target': target, 'step': 'waiting_content'})
+    await m.reply(f"🎯 <b>Target set:</b> <code>{html.escape(target)}</code>\n\nSilakan kirim pesan yang ingin dikirim.\n\n❌ <b>Cancel:</b> /cancel", parse_mode=ParseMode.HTML)
+
+async def process_send_message_content(c: Client, m: Message, state: dict):
+    """Process actual message sending"""
+    user_id = m.from_user.id
+    index, page, target = state['session_index'], state['page'], state['target']
+    content = m.text
+    
+    await m.reply(f"⏳ <b>Sending message to...</b>\nTarget: <code>{html.escape(target)}</code>", parse_mode=ParseMode.HTML)
+    session_client = Altruix.clients[index]
+    try:
+        await session_client.send_message(target, content)
+        await m.reply("✅ <b>Success!</b> Message sent.")
+        await send_log_notification(c, 'send_message', index, m.from_user, True, additional_info={'Target': target})
+    except Exception as e:
+        await m.reply(f"❌ <b>Failed:</b> {str(e)}")
+        await send_log_notification(c, 'send_message', index, m.from_user, False, str(e))
+    
+async def process_misc_profile_input(c: Client, m: Message, state: dict):
+    """Router for miscellaneous profile actions (stats, tracking, photos, etc.)"""
+    action = state['action']
+    index = state['session_index']
+    page = state['page']
+    text = m.text.strip()
+    user_id = m.from_user.id
+    
+    session_client = Altruix.clients[index]
+    
+    try:
+        if action == 'download_user_photo':
+            status_msg = await m.reply("📸 Downloading photos...")
+            target = text.lstrip('@')
+            user = await session_client.get_users(int(target) if target.isdigit() else target)
+            photos = [p async for p in session_client.get_chat_photos(user.id, limit=5)]
+            if not photos:
+                await status_msg.edit("❌ No photos found.")
+                return
+            for p in photos:
+                await m.reply_photo(p.file_id)
+            await status_msg.edit(f"✅ Sent {len(photos)} photos!")
+            
+        elif action == 'track_profile':
+            status_msg = await m.reply("👁️ Tracking...")
+            target = text.lstrip('@')
+            user = await session_client.get_users(int(target) if target.isdigit() else target)
+            await status_msg.edit(f"👁️ <b>Tracking:</b> {user.first_name} (@{user.username or 'None'})\nID: <code>{user.id}</code>")
+            
+        elif action == 'chat_stats':
+            status_msg = await m.reply("📊 Analyzing...")
+            chat = await session_client.get_chat(text)
+            await status_msg.edit(f"📊 <b>{chat.title or chat.first_name}</b>\n<b>Type:</b> {chat.type}\n<b>Members:</b> {chat.members_count or 'N/A'}")
+            
+        elif action == 'recent_messages':
+            status_msg = await m.reply("📨 Fetching...")
+            messages = [msg async for msg in session_client.get_chat_history(text, limit=10)]
+            if messages:
+                msgs_text = "📨 <b>Recent Messages</b>\n\n" + "\n".join([f"{i}. {(msg.from_user.first_name if msg.from_user else 'Unknown')}: {(msg.text or '[Media]')[:30]}..." for i, msg in enumerate(messages, 1)])
+                await status_msg.edit(msgs_text)
+            else:
+                await status_msg.edit("❌ No messages found.")
+                
+    except Exception as e:
+        await m.reply(f"❌ <b>Error:</b> {str(e)}")
+        
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(user_id)
+    del user_profile_edit_state[user_id]
+    await asyncio.sleep(2)
+    await m.reply("🔄 Memuat ulang menu...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Dashboard", f"session_info_{index}_{page}", style=user_style)]]))
+
+# --- Global Reply Manager (Bot Controls) ---
+
+@Altruix.bot.on_callback_query(filters.regex(r"^reply_manager_menu$"))
+@iuser_check
+@log_errors
+async def reply_manager_menu_handler(c: Client, cb: CallbackQuery):
+    """
+    Global control menu for Reply Manager (Bot Assistant progressive replies).
+    Allows toggling the master status, auto-reply, and error notifications.
+    """
+    await cb.answer()
+    
+    # 💾 Master Status (Sync from DB/Env)
+    current = await Altruix.config.get_env("REPLY_MANAGER_GLOBAL") or "off"
+    status_emoji = "✅ ON" if current == "on" else "❌ OFF"
+    
+    # 🤖 Auto Reply Status
+    auto_reply = await Altruix.config.get_env("AUTO_REPLY_GLOBAL") or "off"
+    auto_reply_emoji = "✅ ON" if auto_reply == "on" else "❌ OFF"
+
+    # ⚠️ Error Notif Status (Silent non-matched replies)
+    err_notif = await Altruix.config.get_env("REPLY_ERR_NOTIF_GLOBAL") or "on"
+    err_notif_emoji = "✅ ON" if err_notif == "on" else "❌ OFF"
+    
+    buttons = [
+        [InlineKeyboardButton(f"Master Status: {status_emoji}", "toggle_reply_manager_global")],
+        [InlineKeyboardButton(f"Auto Reply: {auto_reply_emoji}", "toggle_auto_reply_global")],
+        [InlineKeyboardButton(f"Error Notif: {err_notif_emoji}", "toggle_reply_err_notif_global")],
+        [InlineKeyboardButton("🔙 Back", "bot_controls_menu")]
+    ]
+    
+    from .utils import edit_cb
+    await edit_cb(cb, 
+        f"<b>💬 Global Reply Manager Control</b>\n\n"
+        f"• 🔌 <b>Master Status:</b> {status_emoji}\n"
+        f"• 🤖 <b>Auto Reply:</b> {auto_reply_emoji}\n"
+        f"• ⚠️ <b>Error Notif:</b> {err_notif_emoji}\n\n"
+        f"<i>Aksi ini akan mempengaruhi semua sesi yang menggunakan mode Global. Toggle Error Notif berguna untuk mematikan peringatan 'Sesi Balasan Tidak Ditemukan'.</i>",
+        reply_markup=InlineKeyboardMarkup(buttons),
+        parse_mode=ParseMode.HTML
+    )
+
+@Altruix.bot.on_callback_query(filters.regex(r"^toggle_(reply_manager|auto_reply|reply_err_notif)_global$"))
+@iuser_check
+@log_errors
+async def toggle_reply_manager_global_handler(c: Client, cb: CallbackQuery):
+    """
+    Toggle global status for Reply Manager components.
+    Syncs the new state to the centralized database and Altruix config object.
+    """
+    comp = cb.matches[0].group(1).upper()
+    key = f"{comp}_GLOBAL"
+    
+    # Special case for default 'on' vs 'off'
+    default_val = "on" if comp == "REPLY_ERR_NOTIF" else "off"
+    current = await Altruix.config.get_env(key) or default_val
+    new_val = "off" if current == "on" else "on"
+    
+    await Altruix.config.sync_env_to_db(key, new_val, upsert=True)
+    setattr(Altruix.config, key, new_val)
+    
+    await cb.answer(f"Global {comp.replace('_', ' ')}: {new_val.upper()}")
+    await reply_manager_menu_handler(c, cb)
+

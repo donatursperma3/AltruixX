@@ -6,6 +6,8 @@
 #
 # All rights reserved.
 
+
+PLUGIN_VERSION = "0.0.20"
 import os
 from os import remove
 from Main import Altruix
@@ -26,7 +28,6 @@ b3 = bullets["bullet3"]
         "help": "To change the title of the chat!",
         "example": "setchattitle <newtitle>",
     },
-    group_only=True,
     requires_input=True,
 )
 async def set_chat_title_cmd_handler(c: Client, m: Message):
@@ -38,14 +39,13 @@ async def set_chat_title_cmd_handler(c: Client, m: Message):
         await c.set_chat_title(m.chat.id, title)
     except Exception as be:
         name, err = await Paste(be).paste()
-        return await msg.edit_msg("ERROR_", sting_args=(name, err))
+        return await msg.edit_msg("ERROR_", string_args=(name, err))
     await msg.edit_msg("CHAT_TITLE_CHANGED")
 
 
 @Altruix.register_on_cmd(
     ["setchatpic", "scp"],
     cmd_help={"help": "To set current chat pic", "example": "setchatpic"},
-    group_only=True,
 )
 async def set_chat_pic_cmd_handler(c: Client, m: Message):
     msg = await m.handle_message("PROCESSING")
@@ -54,14 +54,13 @@ async def set_chat_pic_cmd_handler(c: Client, m: Message):
         if not reply.media:
 
             return await msg.edit_msg("INVALID_REPLY")
-        if reply.photo:
-            file = reply.photo.file_id
-        elif reply.video:
+        if reply.photo or reply.video or reply.document:
             file = await reply.download()
         else:
             return await msg.edit_msg("INVALID_REPLY")
         try:
-            await c.set_chat_photo(m.chat.id, file)
+            await c.set_chat_photo(m.chat.id, photo=file)
+            await msg.edit_msg("CHNG_PHOTO")
         except Exception as be:
             name, err = await Paste(be).paste()
             await msg.edit_msg(Altruix.get_string("ERROR_"), string_args=(name, err))
@@ -76,7 +75,6 @@ async def set_chat_pic_cmd_handler(c: Client, m: Message):
         "help": "To delete chat current pic",
         "example": "delchatpic",
     },
-    group_only=True,
 )
 async def del_chat_pic_cmd_handler(c: Client, m: Message):
     msg = await m.handle_message("PROCESSING")
@@ -89,7 +87,7 @@ async def del_chat_pic_cmd_handler(c: Client, m: Message):
 
 
 @Altruix.register_on_cmd(
-    ["chatinfo", "cinfo", "ci", "groupinfo", "ginfo", "gi"],
+    ["chatinfo", "cinfo", "ci"],
     cmd_help={
         "help": "To get chat info",
         "example": "chatinfo <chat id/chat username>",
@@ -99,7 +97,7 @@ async def get_group_info_cmd_handler(c: Client, m: Message):
     msg = await m.handle_message("PROCESSING")
     chat_id = m.text.split(None, 1)[1] if m.user_input else m.chat.id
     try:
-        ci = await c.get_group(chat_id)
+        ci = await c.get_chat(chat_id)
     except Exception as e:
         return await msg.edit(
             f"<code>Failed to fetch chat info.</code>\n\n<b><u>Traceback</u> :</b>\n\n<code>{e}</code>"
@@ -117,6 +115,8 @@ async def get_group_info_cmd_handler(c: Client, m: Message):
         f"  {b1} <b>Is Support : <i>{'Yes' if (ci.is_support or m.chat.id == -1001596389253) else 'No'}</i></b>\n"
         f"  {b1} <b>Is Verified : <i>{'Yes' if (ci.is_verified or m.chat.id == -1001596389253) else 'No'}</i></b>\n",
         f"  {b1} <b>Chat Type : <i>{ci.type}</i></b>\n",
+        f"  {b1} <b>Is Forum : <i>{'Yes' if ci.is_forum else 'No'}</i></b>\n",
+        f"  {b1} <b>Topic ID : <i>{m.message_thread_id or 'General'}</i></b>\n" if ci.is_forum else "",
         f"  {b1} <b>Chat Description :</b>\n\n<code>{ci.description}</code>"
         if ci.description is not None
         else "",
@@ -130,6 +130,7 @@ async def get_group_info_cmd_handler(c: Client, m: Message):
             photo,
             caption="".join(ci_text),
             reply_to_message_id=m.id,
+            message_thread_id=m.message_thread_id
         )
         remove(photo)
         await msg.delete()

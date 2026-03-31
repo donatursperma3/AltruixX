@@ -1,0 +1,703 @@
+{
+  "8hawvo": {
+    "client_id": 6800269145,
+    "target": "FakboiPensiun",
+    "target_display": "<a href=\"tg://user?id=1192566681\">Fakboi Pensiun</a>",
+    "story_data": [
+      [
+        20,
+        "Video"
+      ],
+      [
+        19,
+        "Video"
+      ],
+      [
+        16,
+        "Video"
+      ],
+      [
+        15,
+        "Photo"
+      ],
+      [
+        14,
+        "Video"
+      ],
+      [
+        13,
+        "Video"
+      ],
+      [
+        12,
+        "Video"
+      ],
+      [
+        10,
+        "Video"
+      ],
+      [
+        9,
+        "Video"
+      ],
+      [
+        6,
+        "Photo"
+      ],
+      [
+        5,
+        "Photo"
+      ],
+      [
+        2,
+        "Video"
+      ],
+      [
+        1,
+        "Photo"
+      ]
+    ],
+    "selected": [],
+    "page": 0,
+    "ts": 1774899182.6228273,
+    "chat_id": -1002819883800,
+    "status": "selecting",
+    "menu_msg_id": 34643,
+    "menu_chat_id": -1002819883800,
+    "sent_to": "current",
+    "last_hash": null,
+    "watermark": true,
+    "send_as_album": false,
+    "reply_to_id": 34640,
+    "_id": "8hawvo",
+    "busy_until": 0,
+    "menu_mode": "full"
+  },
+  "7442wn": {
+    "client_id": 6800269145,
+    "target": "FakboiPensiun",
+    "target_display": "<a href=\"tg://user?id=1192566681\">Fakboi Pensiun</a>",
+    "story_data": [
+      [
+        20,
+        "Video"
+      ],
+      [
+        19,
+        "Video"
+      ],
+      [
+        16,
+        "Video"
+      ],
+      [
+        15,
+        "Photo"
+      ],
+      [
+        14,
+        "Video"
+      ],
+      [
+        13,
+        "Video"
+      ],
+      [
+        12,
+        "Video"
+      ],
+      [
+        10,
+        "Video"
+      ],
+      [
+        9,
+        "Video"
+      ],
+      [
+        6,
+        "Photo"
+      ],
+      [
+        5,
+        "Photo"
+      ],
+      [
+        2,
+        "Video"
+      ],
+      [
+        1,
+        "Photo"
+      ]
+    ],
+    "selected": [
+      13,
+      15
+    ],
+    "page": 0,
+    "ts": 1774899681.8954248,
+    "chat_id": -1002819883800,
+    "status": "downloading",
+    "menu_msg_id": 34660,
+    "menu_chat_id": -1002819883800,
+    "sent_to": "current",
+    "last_hash": null,
+    "watermark": true,
+    "send_as_album": true,
+    "reply_to_id": 34657,
+    "_id": "7442wn",
+    "busy_until": 0,
+    "menu_mode": "hide",
+    "status_text": "Done! 2 success, 0 failed."
+  },
+  "ki4jw4": {
+    "_id": "ki4jw4",
+    "client_id": 5406196985,
+    "target": "FakboiPensiun",
+    "target_display": "<a href=\"tg://user?id=1192566681\">Fakboi Pensiun</a>",
+    "target_id": null,
+    "target_name": null,
+    "story_data": [
+      [
+        20,
+        "Video"
+      ],
+      [
+        19,
+        "Video"
+      ],
+      [
+        16,
+        "Video"
+      ],
+      [
+        15,
+        "Photo"
+      ],
+      [
+        14,
+        "Video"
+      ],
+      [
+        13,
+        "Video"
+      ],
+      [
+        12,
+        "Video"
+      ],
+      [
+        10,
+        "Video"
+      ],
+      [
+        9,
+        "Video"
+      ],
+      [
+        6,
+        "Photo"
+      ],
+      [
+        5,
+        "Photo"
+      ],
+      [
+        2,
+        "Video"
+      ],
+      [
+        1,
+        "Photo"
+      ]
+    ],
+    "selected": [],
+    "page": 0,
+    "ts": 1774903224.6735084,
+    "chat_id": -1002819883800,
+    "status": "selecting",
+    "menu_msg_id": 34699,
+    "menu_chat_id": -1002819883800,
+    "sent_to": "current",
+    "last_hash": null,
+    "watermark": true,
+    "send_as_album": false,
+    "reply_to_id": 34696
+  },
+  "k723mt": {
+    "_id": "k723mt",
+    "client_id": 6800269145,
+    "target": "FakboiPensiun",
+    "target_display": "<a href=\"tg://user?id=1192566681\">Fakboi Pensiun</a>",
+    "target_id": null,
+    "target_name": null,
+    "story_data": [
+      [
+        20,
+        "Video"
+      ],
+      [
+        19,
+        "Video"
+      ],
+      [
+        16,
+        "Video"
+      ],
+      [
+        15,
+        "Photo"
+      ],
+      [
+        14,
+        "Video"
+      ],
+      [
+        13,
+        "Video"
+      ],
+      [
+        12,
+        "Video"
+      ],
+      [
+        10,
+        "Video"
+      ],
+      [
+        9,
+        "Video"
+      ],
+      [
+        6,
+        "Photo"
+      ],
+      [
+        5,
+        "Photo"
+      ],
+      [
+        2,
+        "Video"
+      ],
+      [
+        1,
+        "Photo"
+      ]
+    ],
+    "selected": [
+      20,
+      15
+    ],
+    "page": 0,
+    "ts": 1774953388.856544,
+    "chat_id": -1002819883800,
+    "status": "idle",
+    "menu_msg_id": 34712,
+    "menu_chat_id": -1002819883800,
+    "sent_to": "current",
+    "last_hash": null,
+    "watermark": true,
+    "send_as_album": true,
+    "reply_to_id": 34709,
+    "busy_until": 0,
+    "status_text": "Done! 2 success, 0 failed."
+  },
+  "e4jci3": {
+    "_id": "e4jci3",
+    "client_id": 1192566681,
+    "target": "dinda_dewi",
+    "target_display": "<a href=\"tg://user?id=755479947\">Dinda</a>",
+    "target_id": 755479947,
+    "target_name": "Dinda",
+    "story_data": [
+      [
+        630,
+        "Photo"
+      ],
+      [
+        627,
+        "Photo"
+      ],
+      [
+        622,
+        "Photo"
+      ],
+      [
+        569,
+        "Video"
+      ],
+      [
+        544,
+        "Video"
+      ],
+      [
+        538,
+        "Video"
+      ],
+      [
+        513,
+        "Video"
+      ],
+      [
+        487,
+        "Video"
+      ],
+      [
+        473,
+        "Video"
+      ],
+      [
+        448,
+        "Video"
+      ],
+      [
+        440,
+        "Video"
+      ],
+      [
+        439,
+        "Video"
+      ],
+      [
+        424,
+        "Video"
+      ],
+      [
+        416,
+        "Video"
+      ],
+      [
+        415,
+        "Video"
+      ],
+      [
+        411,
+        "Video"
+      ],
+      [
+        401,
+        "Photo"
+      ],
+      [
+        382,
+        "Video"
+      ],
+      [
+        372,
+        "Video"
+      ],
+      [
+        367,
+        "Photo"
+      ],
+      [
+        365,
+        "Video"
+      ],
+      [
+        363,
+        "Video"
+      ],
+      [
+        347,
+        "Video"
+      ],
+      [
+        335,
+        "Video"
+      ],
+      [
+        326,
+        "Video"
+      ],
+      [
+        310,
+        "Video"
+      ],
+      [
+        309,
+        "Video"
+      ],
+      [
+        286,
+        "Video"
+      ],
+      [
+        283,
+        "Video"
+      ],
+      [
+        281,
+        "Video"
+      ],
+      [
+        259,
+        "Photo"
+      ],
+      [
+        240,
+        "Video"
+      ],
+      [
+        225,
+        "Video"
+      ],
+      [
+        222,
+        "Video"
+      ],
+      [
+        219,
+        "Video"
+      ],
+      [
+        216,
+        "Video"
+      ],
+      [
+        214,
+        "Video"
+      ],
+      [
+        209,
+        "Video"
+      ],
+      [
+        196,
+        "Video"
+      ],
+      [
+        191,
+        "Video"
+      ],
+      [
+        189,
+        "Video"
+      ],
+      [
+        173,
+        "Video"
+      ],
+      [
+        159,
+        "Photo"
+      ],
+      [
+        142,
+        "Photo"
+      ],
+      [
+        138,
+        "Photo"
+      ],
+      [
+        131,
+        "Video"
+      ],
+      [
+        106,
+        "Photo"
+      ],
+      [
+        105,
+        "Photo"
+      ],
+      [
+        104,
+        "Photo"
+      ],
+      [
+        81,
+        "Video"
+      ],
+      [
+        66,
+        "Video"
+      ],
+      [
+        65,
+        "Video"
+      ],
+      [
+        63,
+        "Video"
+      ],
+      [
+        60,
+        "Photo"
+      ],
+      [
+        59,
+        "Video"
+      ],
+      [
+        58,
+        "Photo"
+      ],
+      [
+        57,
+        "Video"
+      ],
+      [
+        56,
+        "Photo"
+      ],
+      [
+        55,
+        "Photo"
+      ],
+      [
+        54,
+        "Photo"
+      ],
+      [
+        53,
+        "Photo"
+      ],
+      [
+        52,
+        "Photo"
+      ],
+      [
+        51,
+        "Photo"
+      ],
+      [
+        48,
+        "Photo"
+      ],
+      [
+        47,
+        "Photo"
+      ],
+      [
+        46,
+        "Video"
+      ],
+      [
+        45,
+        "Photo"
+      ],
+      [
+        44,
+        "Photo"
+      ],
+      [
+        43,
+        "Photo"
+      ],
+      [
+        42,
+        "Photo"
+      ],
+      [
+        41,
+        "Video"
+      ],
+      [
+        40,
+        "Photo"
+      ],
+      [
+        39,
+        "Photo"
+      ],
+      [
+        36,
+        "Video"
+      ],
+      [
+        34,
+        "Video"
+      ],
+      [
+        32,
+        "Photo"
+      ],
+      [
+        30,
+        "Photo"
+      ],
+      [
+        23,
+        "Video"
+      ],
+      [
+        22,
+        "Video"
+      ],
+      [
+        15,
+        "Video"
+      ],
+      [
+        13,
+        "Photo"
+      ],
+      [
+        11,
+        "Video"
+      ],
+      [
+        7,
+        "Photo"
+      ],
+      [
+        4,
+        "Photo"
+      ],
+      [
+        3,
+        "Photo"
+      ]
+    ],
+    "selected": [
+      34
+    ],
+    "page": 7,
+    "ts": 1774962234.1648362,
+    "chat_id": 755479947,
+    "status": "idle",
+    "menu_msg_id": 211142,
+    "menu_chat_id": 755479947,
+    "sent_to": "current",
+    "last_hash": null,
+    "watermark": true,
+    "send_as_album": false,
+    "reply_to_id": 211139,
+    "busy_until": 0,
+    "status_text": "Done! 0 success, 1 failed."
+  },
+  "2tgm71": {
+    "_id": "2tgm71",
+    "client_id": 1192566681,
+    "target": 5375716869,
+    "target_display": "<a href=\"tg://user?id=5375716869\">ㅤmolvy</a>",
+    "target_id": 5375716869,
+    "target_name": "ㅤmolvy",
+    "story_data": [
+      [
+        12,
+        "Video"
+      ]
+    ],
+    "selected": [
+      12
+    ],
+    "page": 0,
+    "ts": 1774962602.7215462,
+    "chat_id": -1002819883800,
+    "status": "idle",
+    "menu_msg_id": 34794,
+    "menu_chat_id": -1002819883800,
+    "sent_to": "current",
+    "last_hash": null,
+    "watermark": true,
+    "send_as_album": false,
+    "reply_to_id": 34791,
+    "busy_until": 0,
+    "status_text": "Done! 1 success, 0 failed."
+  }
+}

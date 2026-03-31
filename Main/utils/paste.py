@@ -9,6 +9,7 @@
 import httpx
 import random
 import contextlib
+import json
 from json import JSONDecodeError
 from typing import Set, List, Union
 
@@ -22,43 +23,99 @@ class Paste:
         file_ext: str = None,
         service: str = None,
     ) -> None:
-        self.httpx = httpx.AsyncClient()
-        self.text: Union[str, bytes] = text
-        self.title: str = title
-        self.author: str = author
+        # Try HTTP/2 first, fallback to HTTP/1.1 if h2 package is not installed
+        try:
+            self.httpx = httpx.AsyncClient(
+                http2=True,
+                follow_redirects=True,
+                headers={"User-Agent": "AltruixUserbot/0.0.8"}
+            )
+        except ImportError:
+            # h2 package not installed, use HTTP/1.1
+            self.httpx = httpx.AsyncClient(
+                http2=False,
+                follow_redirects=True,
+                headers={"User-Agent": "AltruixUserbot/0.0.8"}
+            )
+        self.text: str = text
+        self.title: str = title or "Altruix Paste"
+        self.author: str = author or "Altruix"
         self.file_ext: str = file_ext
         self.service: str = service
+        # ✅ Ensure text is string for JSON serialization
+        if isinstance(self.text, bytes):
+            try:
+                self.text = self.text.decode("utf-8")
+            except UnicodeDecodeError:
+                self.text = str(self.text)
 
     async def to_nekobin(self) -> Set[Union[str, None]]:
-        url = "https://nekobin.com/api/documents/"
-        data = {
-            "content": self.text,
-            "title": self.title,
-            "author": self.author,
-        }
-        resp = await self.httpx.post(url, json=data)
+        url = "https://nekobin.com/api/documents"
+        data = {"content": self.text}
         try:
+            resp = await self.httpx.post(url, json=data)
             data = resp.json()
             return "nekobin", f"https://nekobin.com/{data['result']['key']}"
-        except (KeyError, TypeError, TimeoutError, JSONDecodeError):
+        except Exception:
             return None, None
 
-    async def to_spacebin(self) -> Set[Union[str, None]]:
-        url = "https://spaceb.in/api/v1/documents"
-        data = {"content": self.text, "extension": "txt"}
-        r = await self.httpx.post(url, data=data)
+    async def to_idkmoe(self) -> Set[Union[str, None]]:
+        url = "https://bin.idk.moe/documents"
         try:
+            r = await self.httpx.post(url, content=self.text)
             data = r.json()
-            return "spacebin", f'https://spaceb.in/{data["payload"]["id"]}'
-        except (KeyError, TypeError, TimeoutError, JSONDecodeError):
+            return "idkmoe", f'https://bin.idk.moe/{data["key"]}'
+        except Exception:
             return None, None
 
-    async def to_hastebin(self) -> Set[Union[str, None]]:
-        r = await self.httpx.post("https://hastebin.com/documents", data=self.text)
+    async def to_telegraph(self) -> Set[Union[str, None]]:
+        # Telegra.ph is very reliable for Telegram-native pastes
+        url = "https://api.telegra.ph/createPage"
+        # Content must be in nodes format (JSON)
+        content_nodes = [{"tag": "pre", "children": [self.text]}]
+        data = {
+            "title": self.title,
+            "author_name": self.author,
+            "content": json.dumps(content_nodes),
+            "return_content": False
+        }
         try:
+            r = await self.httpx.post(url, data=data) 
             data = r.json()
-            return "hastebin", f'https://hastebin.com/{data["key"]}'
-        except (KeyError, TypeError, TimeoutError, JSONDecodeError):
+            if data.get("ok"):
+                return "telegraph", data["result"]["url"]
+            return None, None
+        except Exception:
+            return None, None
+
+    async def to_pasty(self) -> Set[Union[str, None]]:
+        url = "https://pasty.lus.pm/api/v1/pastes"
+        data = {"content": self.text}
+        try:
+            r = await self.httpx.post(url, json=data)
+            data = r.json()
+            return "pasty", f'https://pasty.lus.pm/{data["id"]}'
+        except Exception:
+            return None, None
+
+    async def to_pasters(self) -> Set[Union[str, None]]:
+        url = "https://paste.rs/"
+        try:
+            r = await self.httpx.post(url, content=self.text)
+            if r.status_code < 400:
+                return "pasters", r.text.strip()
+            return None, None
+        except Exception:
+            return None, None
+
+    async def to_dpaste(self) -> Set[Union[str, None]]:
+        url = "https://dpaste.org/api/"
+        data = {"format": "json", "content": self.text}
+        try:
+            r = await self.httpx.post(url, data=data)
+            data = r.json()
+            return "dpaste", data["url"]
+        except Exception:
             return None, None
 
     async def paste(self) -> Set[Union[str, None]]:

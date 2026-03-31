@@ -1,0 +1,32 @@
+{
+  "global": {
+    "mention": true,
+    "auto_log": true,
+    "reply_from_all": false
+  },
+  "settings": {
+    "7115438332": {
+      "mention": true,
+      "auto_log": true,
+      "reply_from_all": false
+    },
+    "6800269145": {
+      "filters": {
+        "from_bot": {
+          "text": false
+        }
+      },
+      "mention": false
+    },
+    "7844837037": {
+      "value": false,
+      "timestamp_int": 1772304659
+    }
+  },
+  "apply_types": {
+    "7844837037": "per_account"
+  },
+  "auto_reply": false,
+  "last_saved": 1772394416,
+  "version": "1.7.893-TAG"
+}

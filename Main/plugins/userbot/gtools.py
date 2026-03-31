@@ -6,6 +6,8 @@
 #
 # All rights reserved.
 
+
+PLUGIN_VERSION = "0.0.1"
 import time
 import logging
 from Main import Altruix
@@ -156,3 +158,4 @@ async def gwatch_(c: Client, m: Message):
             "GBANNED_USER_JOINED", args=(m.from_user.mention, chat_, m.id)
         )
         await c.send_message(Altruix.log_chat, gbanned_)
+

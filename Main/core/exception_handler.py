@@ -1,0 +1,354 @@
+# Copyright (C) 2021-present by Altruix@Github, < https://github.com/Altruix >.
+#
+# This file is part of < https://github.com/Altruix/Altruix > project,
+# and is released under the "GNU v3.0 License Agreement".
+# Please see < https://github.com/Altriux/Altruix/blob/main/LICENSE >
+#
+# All rights reserved.
+
+"""
+Global Exception Handler for Pyrogram Dispatcher Errors
+Catches errors that occur in Pyrogram's internal message parser
+"""
+
+import logging
+import traceback
+import asyncio
+import time
+from pyrogram.errors import PeerIdInvalid, ChannelInvalid
+from pyrogram import Client
+from Main.utils.file_helpers import get_user_button_style
+
+logger = logging.getLogger("Altruix")
+
+
+# Global state to avoid circular imports
+_ALTRUIX_INST = None
+
+# --- RECURSION GUARDS ---
+# Prevents infinite loops if the logging chat itself causes exceptions.
+HANDLING_PEER_NOTIFS = set()
+
+def get_session_info(client):
+    """Extract session information from client without triggering property hangs"""
+    try:
+        # Use getattr with None to avoid property access hangs if possible
+        me = getattr(client, "myself", getattr(client, "me", None))
+        if me:
+            client_name = getattr(me, "first_name", "Unknown") or "Unknown"
+            client_id = getattr(me, "id", 0)
+            username = getattr(me, "username", None)
+            client_username = f"@{username}" if username else "No username"
+            
+            # Get session index safely
+            try:
+                if _ALTRUIX_INST:
+                    # Use a local copy to avoid mutation issues during iteration
+                    clients = list(_ALTRUIX_INST.clients)
+                    total_sessions = len(clients)
+                    current_index = None
+                    for idx, c in enumerate(clients, start=1):
+                        # Use myself/me check that doesn't trigger remote calls
+                        c_me = getattr(c, "myself", getattr(c, "me", None))
+                        if c_me and getattr(c_me, "id", None) == client_id:
+                            current_index = idx
+                            break
+                    
+                    if current_index:
+                        session_index = f"{current_index}/{total_sessions}"
+                    else:
+                        # Check if it's the bot assistant
+                        if _ALTRUIX_INST.bot == client:
+                            session_index = "B"
+                        else:
+                            session_index = "?"
+                else:
+                    session_index = "?"
+            except:
+                session_index = "?"
+            
+            return f"[{session_index}] {client_name} (ID: {client_id}, {client_username})"
+        elif hasattr(client, 'name'):
+            return f"[?] {client.name}"
+    except:
+        pass
+    return "[?] Unknown"
+
+
+def handle_peer_id_invalid(error, client, context="Unknown", peer_id=None):
+    """Handle PEER_ID_INVALID error with compact logging and interactive cleanup option"""
+    session_info = get_session_info(client)
+    
+    # Extract peer ID from error string if not provided
+    if not peer_id:
+        error_str = str(error)
+        if "ID not found:" in error_str:
+            try:
+                peer_id = error_str.split("ID not found:")[1].strip().strip("'\"")
+            except:
+                pass
+    
+    # Compact log (one-liner)
+    if _ALTRUIX_INST:
+        _ALTRUIX_INST.log(
+            f"⚠️ [Dispatcher-PeerIdInvalid] Peer: {peer_id or 'Unknown'} | Context: {context} | "
+            f"💡 Solution: Send a message to this chat First with this account to refresh cache.",
+            level=logging.WARNING,
+            client=client
+        )
+        
+        # ✅ ACTIONABLE LOG: Send interactive notification via prioritized bot
+        if peer_id and _ALTRUIX_INST.log_chat:
+            async def _send_interactive_notif():
+                try:
+                    # ✅ CHECK IF NOTIF IS ENABLED (Global Toggle)
+                    peer_notif = str(await _ALTRUIX_INST.config.get_env("PEER_NOTIF_ENABLED", default="on")).lower()
+                    if peer_notif == "off":
+                        return
+                    
+                    # 1. Determine accounts info
+                    me = getattr(client, "me", None)
+                    acc_name = getattr(me, "first_name", "Unknown") if me else "Unknown"
+                    acc_id = getattr(me, "id", 0) if me else 0
+                    
+                    # 2. Try to get chat title
+                    chat_title = "Unknown Chat"
+                    # Check cache first
+                    if hasattr(_ALTRUIX_INST, "PM_LOG_CACHE"):
+                        msg_key = f"{acc_id}_{peer_id}"
+                        cached = _ALTRUIX_INST.PM_LOG_CACHE.get(msg_key)
+                        if cached and isinstance(cached, dict):
+                            chat_title = cached.get("name") or cached.get("group_name") or "Unknown Chat"
+                    
+                    # 3. Prioritized Bot (Custom Bot > Main Bot)
+                    target_bot = _ALTRUIX_INST.bot
+                    if hasattr(_ALTRUIX_INST, "bot_manager"):
+                        cbot = _ALTRUIX_INST.bot_manager.get_bot(acc_id)
+                        if cbot and cbot.is_connected:
+                            target_bot = cbot
+                    
+                    if not target_bot or not target_bot.is_connected:
+                        return
+
+                    # Try one last attempt to get chat title via bot if still unknown
+                    if chat_title == "Unknown Chat":
+                        try:
+                            chat = await target_bot.get_chat(peer_id)
+                            chat_title = chat.title or f"{chat.first_name} {chat.last_name or ''}".strip()
+                        except: pass
+
+                    # 3. Construct Chat Link
+                    chat_link = None
+                    pid = str(peer_id)
+                    if pid.startswith("-100"):
+                        stripped_id = pid.replace("-100", "")
+                        chat_link = f"https://t.me/c/{stripped_id}/1"
+                    elif pid.isdigit() and not pid.startswith("-"): # User ID
+                        chat_link = f"tg://user?id={pid}"
+                    elif not pid.startswith("-") and not pid.isdigit() and not pid.isnumeric(): # Username
+                        chat_link = f"https://t.me/{pid.replace('@', '')}"
+
+                    from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+                    text = (
+                        "<blockquote expandable>"
+                        f"⚠️ <b>[Invalid Peer Detected]</b>\n\n"
+                        f"• <b>Account:</b> {acc_name} (<code>{acc_id}</code>)\n"
+                        f"• <b>Chat:</b> {chat_title} (<code>{peer_id}</code>)\n"
+                        f"• <b>Context:</b> <code>{context}</code>\n\n"
+                        f"💡 This account doesn't recognize the Chat ID above. If the account has been kicked or is no longer relevant, you can order it to leave (Leave Chat)."
+                        "</blockquote>"
+                    )
+                    
+                    # ✅ Resolve Button Style for this session
+                    user_style = get_user_button_style(acc_id)
+                    
+                    buttons = []
+                    if chat_link:
+                        buttons.append(InlineKeyboardButton("🔗 Open Chat", url=chat_link))
+                    buttons.append(InlineKeyboardButton("🗑 Leave Chat", callback_data=f"p_leave_req_{acc_id}_{peer_id}"))
+                    
+                    # Apply style to all buttons
+                    for btn in buttons:
+                        btn.style = user_style
+                    
+                    kb = InlineKeyboardMarkup([buttons])
+                    
+                    await target_bot.send_message(_ALTRUIX_INST.log_chat, text, reply_markup=kb)
+                except Exception as e:
+                    logger.debug(f"Failed to send interactive peer notif: {e}")
+                finally:
+                    # ✅ Release guard after task completion (or failure)
+                    if peer_id:
+                        HANDLING_PEER_NOTIFS.discard(peer_id)
+
+            # --- Apply Guard ---
+            if peer_id in HANDLING_PEER_NOTIFS:
+                return # Already handling this peer ID
+            
+            HANDLING_PEER_NOTIFS.add(peer_id)
+            asyncio.create_task(_send_interactive_notif())
+    else:
+        logger.warning(
+            f"⚠️ [Dispatcher-PeerIdInvalid] {session_info} | Peer: {peer_id or 'Unknown'} | Context: {context} | "
+            f"💡 Solution: Send a message to this chat First with this account to refresh cache."
+        )
+
+
+def handle_channel_invalid(error, client, context="Unknown", peer_id=None):
+    """Handle CHANNEL_INVALID error with compact logging"""
+    session_info = get_session_info(client)
+    
+    # Compact log
+    if _ALTRUIX_INST:
+        _ALTRUIX_INST.log(
+            f"⚠️ [Dispatcher-ChannelInvalid] Peer: {peer_id or 'Unknown'} | Context: {context} | "
+            f"💡 Solution: Check if Joined or if Channel ID is correct.",
+            level=logging.WARNING,
+            client=client
+        )
+    else:
+        logger.warning(
+            f"⚠️ [Dispatcher-ChannelInvalid] {session_info} | Context: {context} | "
+            f"💡 Solution: Check if Joined or if Channel ID is correct."
+        )
+
+
+def install_exception_handler(altruix_instance=None):
+    """
+    Docstring:
+    Memasang handler global untuk error dispatcher Pyrogram.
+    - Monkey-patch resolve_peer agar log mencakup informasi sesi
+    - Debounce refresh dialogs di background saat PeerIdInvalid terdeteksi,
+      untuk membantu membangun cache peer tanpa memblokir jalur eksekusi
+    """
+    global _ALTRUIX_INST
+    if altruix_instance:
+        _ALTRUIX_INST = altruix_instance
+
+    from pyrogram.methods.advanced.resolve_peer import ResolvePeer
+    
+    # Store original resolve_peer from the Mixin class itself
+    original_resolve_peer = ResolvePeer.resolve_peer
+    _LAST_REFRESH = {}
+    
+    async def _refresh_dialogs_debounced(client):
+        """
+        Docstring:
+        Memicu refresh dialogs secara terkontrol (debounced) untuk memperbarui
+        storage peer. Jika baru saja dilakukan, akan di-skip.
+        """
+        try:
+            me_id = client.me.id if hasattr(client, "me") and client.me else None
+            now = time.time()
+            last = _LAST_REFRESH.get(me_id, 0)
+            # Minimal interval 120 detik antar refresh
+            if now - last < 120:
+                return
+            _LAST_REFRESH[me_id] = now
+            # Jalankan tanpa memblokir resolve_peer
+            async def _do():
+                try:
+                    if hasattr(client, "me") and client.me and getattr(client.me, "is_bot", False):
+                        return
+                    async for _ in client.get_dialogs():
+                        break
+                except Exception:
+                    pass
+            asyncio.create_task(_do())
+        except Exception:
+            pass
+    
+    async def wrapped_resolve_peer(self, peer_id):
+        """Docstring: Bungkus resolve_peer dengan logging sesi + refresh dialogs debounce"""
+        try:
+            return await original_resolve_peer(self, peer_id)
+        except PeerIdInvalid as e:
+            # Log with session info and specific peer_id
+            handle_peer_id_invalid(e, self, context="resolve_peer", peer_id=peer_id)
+            # Jadwalkan refresh dialogs untuk membantu cache peer
+            try:
+                await _refresh_dialogs_debounced(self)
+            except Exception:
+                pass
+            # Re-raise to maintain original behavior
+            raise
+        except ChannelInvalid as e:
+            # Log with session info and specific peer_id
+            handle_channel_invalid(e, self, context="resolve_peer", peer_id=peer_id)
+            # Re-raise to maintain original behavior
+            raise
+        except Exception as e:
+            # Log other errors with session info (Compact)
+            if _ALTRUIX_INST:
+                _ALTRUIX_INST.log(f"⚠️ [Dispatcher-Error] resolve_peer failed: {e}", level=logging.WARNING, client=self)
+            else:
+                session_info = get_session_info(self)
+                logger.warning(f"⚠️ [Dispatcher-Error] Session: {session_info} | resolve_peer failed: {e}")
+            # Re-raise to maintain original behavior
+            raise
+    
+    # ✅ DEEP PATCH: Replace on the Mixin class directly. 
+    # This affects pyrogram.Client because it inherits from ResolvePeer.
+    ResolvePeer.resolve_peer = wrapped_resolve_peer
+    
+    # Also ensure Client's own reference is updated if it was already bound/copied
+    from pyrogram import Client
+    Client.resolve_peer = wrapped_resolve_peer
+    
+    # ✅ DEEP PATCH 2: Intercept Pyrogram's internal Dispatcher exception logging
+    import pyrogram.dispatcher
+    import inspect
+    orig_log = pyrogram.dispatcher.log
+
+    class PyrogramLogProxy:
+        def getattr(self, name):
+            return getattr(orig_log, name)
+            
+        def _get_context_client(self):
+            try:
+                for frame_record in inspect.stack():
+                    locals_dict = frame_record.frame.f_locals
+                    if 'self' in locals_dict:
+                        obj = locals_dict['self']
+                        if type(obj).__name__ == "Dispatcher" and hasattr(obj, 'client'):
+                            return obj.client
+            except Exception:
+                pass
+            return None
+
+        def exception(self, msg, *args, **kwargs):
+            self.error(msg, *args, exc_info=True, **kwargs)
+
+        def error(self, msg, *args, **kwargs):
+            try:
+                client = self._get_context_client()
+                
+                if _ALTRUIX_INST and client:
+                    exc_info = kwargs.get('exc_info')
+                    if exc_info:
+                        if isinstance(exc_info, tuple) and len(exc_info) >= 2:
+                            exc = exc_info[1]
+                        elif isinstance(exc_info, Exception):
+                            exc = exc_info
+                        else:
+                            # fallback fetch from sys.exc_info if strictly True
+                            import sys
+                            exc = sys.exc_info()[1]
+                            
+                        if exc:
+                            # Pass to Altruix logger which formats properly with session context
+                            _ALTRUIX_INST.log(exc, level=logging.ERROR, client=client)
+                            return
+                            
+                    _ALTRUIX_INST.log(f"⚠️ [Dispatcher-Unhandled] {msg}", level=logging.ERROR, client=client)
+                    return
+            except Exception:
+                pass
+            orig_log.error(msg, *args, **kwargs)
+            
+        def __getattr__(self, name):
+            return getattr(orig_log, name)
+
+    pyrogram.dispatcher.log = PyrogramLogProxy()
+
+    logger.debug("✅ Global exception handler installed for Pyrogram dispatcher (Deep Patch)")

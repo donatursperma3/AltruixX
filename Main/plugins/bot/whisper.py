@@ -7,9 +7,12 @@
 # All rights reserved.
 
 
+
+PLUGIN_VERSION = "0.0.1"
 import uuid
 from Main import Altruix
 from Main.core.decorators import log_errors
+from Main.utils.essentials import Essentials
 from pyrogram import Client, enums, filters
 from Main.plugins.userbot.channel_utils import digit_wrap
 from pyrogram.types import (
@@ -18,6 +21,21 @@ from pyrogram.types import (
 
 
 MSGS_DICT = {}
+
+
+@Altruix.register_on_cmd(
+    cmd="whisper",
+    cmd_help={
+        "help": Altruix.get_string("WHISPER_HELP"),
+        "example": "whisper @username, hello",
+        "detail": Altruix.get_string("WHISPER_USAGE")
+    },
+)
+def whisper_doc():
+    """Documenting whisper plugin"""
+    pass
+
+Altruix.plugin_categories["whisper"] = "extra"
 
 
 @Altruix.bot.on_inline_query(filters.regex("^whisper"))
@@ -50,7 +68,7 @@ async def whisper(c: Client, iq: InlineQuery):
                 [
                     [
                         InlineKeyboardButton(
-                            "Show Message",
+                            await Essentials.get_user_button_style(iq.from_user.id, "Show Message"),
                             callback_data=f"whisper_{_id}",
                         ),
                     ]
@@ -70,7 +88,8 @@ async def whisper_callback(c: Client, cq: CallbackQuery):
     msg_dict = MSGS_DICT[_id]
     user_id_or_username = digit_wrap(msg_dict.get("user"))
     MSG = msg_dict.get("msg")
-    if cq.from_user.id in Altruix.auth_users:
+    # ✅ AUTHORIZATION CHECK (Centralized & Dynamic)
+    if await Altruix.is_sudo(cq.from_user.id):
         return await cq.answer(MSG, True)
     if isinstance(user_id_or_username, int):
         if cq.from_user.id == int(user_id_or_username):
@@ -82,3 +101,4 @@ async def whisper_callback(c: Client, cq: CallbackQuery):
             return await cq.answer(MSG, True)
     else:
         await cq.answer(Altruix.get_string("WHISPER_INVALID_USER"))
+

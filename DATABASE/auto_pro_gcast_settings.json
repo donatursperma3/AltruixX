@@ -1,0 +1,701 @@
+{
+  "7844837037": {
+    "chat_filter": "q:Dev Ubot",
+    "admin_filter": "nonadmin",
+    "delay_per_chat": 8,
+    "text_list": [
+      {
+        "content": "<b><i>Hello world</i></b>",
+        "parse_mode": "html"
+      },
+      {
+        "content": "<pre language=python>✅ hello world</pre>",
+        "parse_mode": "html"
+      },
+      {
+        "content": "hmm 🤔",
+        "parse_mode": "none"
+      },
+      {
+        "content": "<i>ada yg nyawit kah?</i>",
+        "parse_mode": "html"
+      },
+      {
+        "content": "sepi amat",
+        "parse_mode": "none"
+      },
+      {
+        "content": "adakah cew kamboj4 disini?",
+        "parse_mode": "none"
+      },
+      {
+        "content": "adakah yg mau bagi2 thr?",
+        "parse_mode": "none"
+      },
+      {
+        "content": "<blackqoute><i>Aku tak bercerita, diam-diam dapat mama muda</i></blackqoute>",
+        "parse_mode": "html"
+      },
+      {
+        "content": "<pre language=python>✅ hello mama muda</pre>",
+        "parse_mode": "html"
+      },
+      {
+        "content": "tutor jdi admin",
+        "parse_mode": "none"
+      },
+      {
+        "content": "<i>adakah yg mau send pap imup?</i>",
+        "parse_mode": "html"
+      },
+      {
+        "content": "<i>Kalau jadi orang sabar, aku udah jadi patung di taman kota.</i>",
+        "parse_mode": "html"
+      },
+      {
+        "content": "<b>Tenang, badai pasti berlalu... terus datang lagi badai berikutnya ⛈</b>",
+        "parse_mode": "html"
+      },
+      {
+        "content": "<i>Move on itu butuh waktu, kalau butuh duit itu butuh kerja</i>",
+        "parse_mode": "html"
+      },
+      {
+        "content": "<i><b>infokan SPBU yg ga antri dan ga naik daerah medan ges?</b></i>",
+        "parse_mode": "html"
+      },
+      {
+        "content": "<blockquote> hi member <b>{chat_name}</b> adakah yg mau bagi bagi aipon?🤩</blockquote>",
+        "parse_mode": "html"
+      }
+    ],
+    "random_text": false,
+    "blacklist": [
+      -1001361294038,
+      -1002400916702,
+      -1002795513298,
+      -1001622008530,
+      -1001241321702
+    ],
+    "recurring": false,
+    "media_list": [
+      {
+        "type": "sticker",
+        "file_id": "CAACAgUAAyEFAASoFAMYAAJMZ2mg8pHcl0YLX0Q0k2a9OgqC8fD_AAJEFwACs2KAV8uR8LVKwX0mHgQ",
+        "caption": "",
+        "parse_mode": "none"
+      },
+      {
+        "type": "animation",
+        "file_id": "CgACAgIAAyEFAASoFAMYAAJMbmmg8x2BdWFRhUiTssG8GSgvhG9hAAL_CQAC1te5SiMGofRL7Zp9HgQ",
+        "caption": "",
+        "parse_mode": "none"
+      }
+    ],
+    "parse_mode": "html",
+    "smart_purge": false,
+    "purge_limit": 2,
+    "purge_delay_msg": 1.0,
+    "purge_mode": "newest",
+    "purge_offset": 0,
+    "notify_logs": true,
+    "auto_react": true,
+    "react_emoji": "💯",
+    "react_delay": 4,
+    "fixed_message_index": 17,
+    "self_destruct": true,
+    "self_destruct_delay": 20,
+    "menu_mode": "hide",
+    "auto_reply": true,
+    "reply_delay": 3,
+    "random_reply": true,
+    "reply_text_list": [
+      {
+        "content": "Izin nyimak kak, menarik banget infonya! 😍",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Wah boleh juga nih, gas polll! 🚀",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Mantap jiwa, info yang sangat berfaedah! 🙏",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Lucu banget sih ini, gemeshhh! ✨",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Aseekk, makasih infonya ya kak! 🤘",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Izin up kak, moga makin rame ya! 🔥",
+        "parse_mode": "html"
+      },
+      {
+        "content": "react dong maniez",
+        "parse_mode": "none"
+      },
+      {
+        "content": "Komen ini murni dari hati, bukan dari template.",
+        "parse_mode": "none"
+      },
+      {
+        "content": "<i>Komen ini disponsori oleh kuota yang lagi banyak-banyaknya.</i>",
+        "parse_mode": "html"
+      }
+    ],
+    "sd_trigger": "after_reply",
+    "sd_target": "both",
+    "reply_media_list": [
+      {
+        "type": "sticker",
+        "file_id": "CAACAgQAAyEFAASoFAMYAAJX6GmopadGn4_xHAscUG1Gd22_2hudAALbDQAC6sTBU0HAbL_5ZfUoHgQ",
+        "caption": "",
+        "parse_mode": "none"
+      }
+    ],
+    "queues": {
+      "GC Medan": [
+        -1001906020460,
+        -1002593915420,
+        -1002610277034,
+        -1002415351450,
+        -1002015565524,
+        -1001430159763,
+        -1001824601350,
+        -1001845316980,
+        -1002643716680
+      ],
+      "FWB LIST": [
+        -1002015565524,
+        -1002525559430,
+        -1001803682852
+      ],
+      "Dev Ubot": [
+        1192566681,
+        5406196985,
+        7115438332,
+        6800269145
+      ]
+    },
+    "recurring_mode": "time",
+    "recurring_interval_hours": 6,
+    "recurring_interval_minutes": 3,
+    "recurring_specific_hour": 6,
+    "recurring_specific_minute": 3,
+    "typing_action": true,
+    "typing_mode": "both",
+    "typing_duration": 6,
+    "reply_fixed_message_index": 0,
+    "link_list": [
+      {
+        "from_chat": "AlphaXProject",
+        "msg_id": 36,
+        "as_copy": true
+      }
+    ],
+    "link_forward_as_copy": true
+  },
+  "999999999": {
+    "chat_filter": "all",
+    "admin_filter": "all",
+    "delay_per_chat": 6,
+    "text_list": [],
+    "media_list": [],
+    "random_text": true,
+    "blacklist": [],
+    "recurring": false,
+    "parse_mode": "html",
+    "smart_purge": false,
+    "purge_limit": 4,
+    "purge_delay_msg": 1.0,
+    "purge_mode": "oldest",
+    "purge_offset": 0
+  },
+  "3": {
+    "chat_filter": "all",
+    "admin_filter": "all",
+    "delay_per_chat": 6,
+    "text_list": [],
+    "media_list": [],
+    "random_text": true,
+    "blacklist": [],
+    "recurring": false,
+    "parse_mode": "html",
+    "smart_purge": false,
+    "purge_limit": 4,
+    "purge_delay_msg": 1.0,
+    "purge_mode": "oldest",
+    "purge_offset": 0,
+    "notify_logs": true,
+    "auto_react": false,
+    "react_emoji": "👍",
+    "react_delay": 4,
+    "self_destruct": false,
+    "self_destruct_delay": 30,
+    "auto_reply": false,
+    "reply_delay": 3,
+    "random_reply": true,
+    "reply_text_list": [
+      {
+        "content": "Izin nyimak kak, menarik banget infonya! 😍",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Wah boleh juga nih, gas polll! 🚀",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Mantap jiwa, info yang sangat berfaedah! 🙏",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Lucu banget sih ini, gemeshhh! ✨",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Aseekk, makasih infonya ya kak! 🤘",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Izin up kak, moga makin rame ya! 🔥",
+        "parse_mode": "html"
+      }
+    ],
+    "menu_mode": "hide"
+  },
+  "1": {
+    "chat_filter": "all",
+    "admin_filter": "all",
+    "delay_per_chat": 6,
+    "text_list": [],
+    "media_list": [],
+    "random_text": true,
+    "blacklist": [],
+    "recurring": false,
+    "parse_mode": "html",
+    "smart_purge": false,
+    "purge_limit": 4,
+    "purge_delay_msg": 1.0,
+    "purge_mode": "oldest",
+    "purge_offset": 0,
+    "notify_logs": true,
+    "auto_react": false,
+    "react_emoji": "👍",
+    "react_delay": 4,
+    "self_destruct": false,
+    "self_destruct_delay": 30,
+    "auto_reply": false,
+    "reply_delay": 3,
+    "random_reply": true,
+    "reply_text_list": [
+      {
+        "content": "Izin nyimak kak, menarik banget infonya! 😍",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Wah boleh juga nih, gas polll! 🚀",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Mantap jiwa, info yang sangat berfaedah! 🙏",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Lucu banget sih ini, gemeshhh! ✨",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Aseekk, makasih infonya ya kak! 🤘",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Izin up kak, moga makin rame ya! 🔥",
+        "parse_mode": "html"
+      }
+    ],
+    "menu_mode": "hide"
+  },
+  "0": {
+    "chat_filter": "all",
+    "admin_filter": "all",
+    "delay_per_chat": 6,
+    "text_list": [],
+    "media_list": [],
+    "random_text": true,
+    "blacklist": [],
+    "recurring": false,
+    "parse_mode": "html",
+    "smart_purge": false,
+    "purge_limit": 4,
+    "purge_delay_msg": 1.0,
+    "purge_mode": "oldest",
+    "purge_offset": 0,
+    "notify_logs": true,
+    "auto_react": false,
+    "react_emoji": "👍",
+    "react_delay": 4,
+    "self_destruct": false,
+    "self_destruct_delay": 30,
+    "auto_reply": false,
+    "reply_delay": 3,
+    "random_reply": true,
+    "reply_text_list": [
+      {
+        "content": "Izin nyimak kak, menarik banget infonya! 😍",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Wah boleh juga nih, gas polll! 🚀",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Mantap jiwa, info yang sangat berfaedah! 🙏",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Lucu banget sih ini, gemeshhh! ✨",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Aseekk, makasih infonya ya kak! 🤘",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Izin up kak, moga makin rame ya! 🔥",
+        "parse_mode": "html"
+      }
+    ],
+    "menu_mode": "hide",
+    "reply_media_list": [],
+    "queues": {},
+    "recurring_mode": "interval",
+    "recurring_interval_hours": 0,
+    "recurring_interval_minutes": 10,
+    "recurring_specific_hour": 0,
+    "recurring_specific_minute": 0,
+    "typing_action": false,
+    "typing_mode": "before",
+    "typing_duration": 4,
+    "link_list": [],
+    "link_forward_as_copy": true
+  },
+  "10": {
+    "chat_filter": "all",
+    "admin_filter": "all",
+    "delay_per_chat": 6,
+    "text_list": [],
+    "media_list": [],
+    "random_text": true,
+    "blacklist": [],
+    "recurring": false,
+    "parse_mode": "html",
+    "smart_purge": false,
+    "purge_limit": 4,
+    "purge_delay_msg": 1.0,
+    "purge_mode": "oldest",
+    "purge_offset": 0,
+    "notify_logs": true,
+    "auto_react": false,
+    "react_emoji": "👍",
+    "react_delay": 4,
+    "self_destruct": false,
+    "self_destruct_delay": 30,
+    "auto_reply": false,
+    "reply_delay": 3,
+    "random_reply": true,
+    "reply_text_list": [
+      {
+        "content": "Izin nyimak kak, menarik banget infonya! 😍",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Wah boleh juga nih, gas polll! 🚀",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Mantap jiwa, info yang sangat berfaedah! 🙏",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Lucu banget sih ini, gemeshhh! ✨",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Aseekk, makasih infonya ya kak! 🤘",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Izin up kak, moga makin rame ya! 🔥",
+        "parse_mode": "html"
+      }
+    ],
+    "menu_mode": "full"
+  },
+  "5": {
+    "chat_filter": "all",
+    "admin_filter": "all",
+    "delay_per_chat": 6,
+    "text_list": [],
+    "media_list": [],
+    "random_text": true,
+    "blacklist": [],
+    "recurring": false,
+    "parse_mode": "html",
+    "smart_purge": false,
+    "purge_limit": 4,
+    "purge_delay_msg": 1.0,
+    "purge_mode": "oldest",
+    "purge_offset": 0,
+    "notify_logs": true,
+    "auto_react": false,
+    "react_emoji": "👍",
+    "react_delay": 4,
+    "self_destruct": false,
+    "self_destruct_delay": 30,
+    "auto_reply": false,
+    "reply_delay": 3,
+    "random_reply": false,
+    "reply_text_list": [
+      {
+        "content": "Izin nyimak kak, menarik banget infonya! 😍",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Wah boleh juga nih, gas polll! 🚀",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Mantap jiwa, info yang sangat berfaedah! 🙏",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Lucu banget sih ini, gemeshhh! ✨",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Aseekk, makasih infonya ya kak! 🤘",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Izin up kak, moga makin rame ya! 🔥",
+        "parse_mode": "html"
+      }
+    ],
+    "menu_mode": "full",
+    "reply_media_list": [],
+    "queues": {},
+    "recurring_mode": "interval",
+    "recurring_interval_hours": 0,
+    "recurring_interval_minutes": 10,
+    "recurring_specific_hour": 0,
+    "recurring_specific_minute": 0,
+    "typing_action": false,
+    "typing_mode": "before",
+    "typing_duration": 4,
+    "link_list": [],
+    "link_forward_as_copy": true
+  },
+  "6800269145": {
+    "chat_filter": "all",
+    "admin_filter": "all",
+    "delay_per_chat": 6,
+    "text_list": [],
+    "media_list": [
+      {
+        "type": "video",
+        "file_id": "BAACAgQAAyEFAASoFAMYAAJx7Wm59udxdqUBLqHsElNWltWRzDSLAAKUBQACC8rFUbcdcAFRzfNMHgQ",
+        "caption": "https://www.tiktok.com/t/ZTLCknaDF/\n\n📥 @ttsavebot",
+        "parse_mode": "none"
+      }
+    ],
+    "random_text": true,
+    "blacklist": [],
+    "recurring": false,
+    "parse_mode": "html",
+    "smart_purge": false,
+    "purge_limit": 4,
+    "purge_delay_msg": 1.0,
+    "purge_mode": "oldest",
+    "purge_offset": 0,
+    "notify_logs": true,
+    "auto_react": false,
+    "react_emoji": "👍",
+    "react_delay": 4,
+    "self_destruct": false,
+    "self_destruct_delay": 30,
+    "auto_reply": false,
+    "reply_delay": 3,
+    "random_reply": true,
+    "reply_text_list": [
+      {
+        "content": "Izin nyimak kak, menarik banget infonya! 😍",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Wah boleh juga nih, gas polll! 🚀",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Mantap jiwa, info yang sangat berfaedah! 🙏",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Lucu banget sih ini, gemeshhh! ✨",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Aseekk, makasih infonya ya kak! 🤘",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Izin up kak, moga makin rame ya! 🔥",
+        "parse_mode": "html"
+      }
+    ],
+    "menu_mode": "hide",
+    "queues": {},
+    "recurring_mode": "interval",
+    "recurring_interval_hours": 0,
+    "recurring_interval_minutes": 10,
+    "recurring_specific_hour": 0,
+    "recurring_specific_minute": 0,
+    "typing_action": false,
+    "typing_mode": "before",
+    "typing_duration": 4,
+    "link_list": [],
+    "link_forward_as_copy": true,
+    "reply_media_list": []
+  },
+  "1192566681": {
+    "chat_filter": "groups",
+    "admin_filter": "nonadmin",
+    "delay_per_chat": 6,
+    "text_list": [],
+    "media_list": [],
+    "random_text": true,
+    "blacklist": [],
+    "recurring": false,
+    "parse_mode": "html",
+    "smart_purge": false,
+    "purge_limit": 4,
+    "purge_delay_msg": 1.0,
+    "purge_mode": "oldest",
+    "purge_offset": 0,
+    "notify_logs": true,
+    "auto_react": false,
+    "react_emoji": "👍",
+    "react_delay": 4,
+    "self_destruct": false,
+    "self_destruct_delay": 30,
+    "auto_reply": false,
+    "reply_delay": 3,
+    "random_reply": true,
+    "reply_text_list": [
+      {
+        "content": "Izin nyimak kak, menarik banget infonya! 😍",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Wah boleh juga nih, gas polll! 🚀",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Mantap jiwa, info yang sangat berfaedah! 🙏",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Lucu banget sih ini, gemeshhh! ✨",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Aseekk, makasih infonya ya kak! 🤘",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Izin up kak, moga makin rame ya! 🔥",
+        "parse_mode": "html"
+      }
+    ],
+    "menu_mode": "full",
+    "queues": {},
+    "reply_media_list": [],
+    "recurring_mode": "interval",
+    "recurring_interval_hours": 0,
+    "recurring_interval_minutes": 10,
+    "recurring_specific_hour": 0,
+    "recurring_specific_minute": 0,
+    "typing_action": false,
+    "typing_mode": "before",
+    "typing_duration": 4,
+    "link_list": [],
+    "link_forward_as_copy": true
+  },
+  "4": {
+    "chat_filter": "all",
+    "admin_filter": "all",
+    "delay_per_chat": 6,
+    "text_list": [],
+    "media_list": [],
+    "random_text": true,
+    "blacklist": [],
+    "recurring": false,
+    "parse_mode": "html",
+    "smart_purge": false,
+    "purge_limit": 4,
+    "purge_delay_msg": 1.0,
+    "purge_mode": "oldest",
+    "purge_offset": 0,
+    "notify_logs": true,
+    "auto_react": false,
+    "react_emoji": "👍",
+    "react_delay": 4,
+    "self_destruct": false,
+    "self_destruct_delay": 30,
+    "auto_reply": false,
+    "reply_delay": 3,
+    "random_reply": true,
+    "reply_text_list": [
+      {
+        "content": "Izin nyimak kak, menarik banget infonya! 😍",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Wah boleh juga nih, gas polll! 🚀",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Mantap jiwa, info yang sangat berfaedah! 🙏",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Lucu banget sih ini, gemeshhh! ✨",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Aseekk, makasih infonya ya kak! 🤘",
+        "parse_mode": "html"
+      },
+      {
+        "content": "Izin up kak, moga makin rame ya! 🔥",
+        "parse_mode": "html"
+      }
+    ],
+    "reply_media_list": [],
+    "menu_mode": "hide",
+    "queues": {},
+    "recurring_mode": "interval",
+    "recurring_interval_hours": 0,
+    "recurring_interval_minutes": 10,
+    "recurring_specific_hour": 0,
+    "recurring_specific_minute": 0,
+    "typing_action": false,
+    "typing_mode": "before",
+    "typing_duration": 4,
+    "link_list": [],
+    "link_forward_as_copy": true
+  }
+}

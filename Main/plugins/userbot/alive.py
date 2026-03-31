@@ -7,6 +7,8 @@
 # All rights reserved.
 
 
+
+PLUGIN_VERSION = "0.0.1"
 import os
 import glob
 import time
@@ -31,3 +33,4 @@ async def alive(c: Client, m: Message):
         )
         return await m.delete_if_self()
     await m.handle_message(Altruix.get_string("ALIVE_TEXT").format(version, uptime))
+

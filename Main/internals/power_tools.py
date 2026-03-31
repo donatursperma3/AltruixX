@@ -12,6 +12,7 @@ from Main import Altruix
 from style import ping_format as pf
 from pyrogram import Client, filters
 from Main.core.types.message import Message
+from Main.utils.file_helpers import get_user_button_style
 from Main.core.decorators import log_errors, iuser_check, inline_check
 from pyrogram.types import (
     InlineQuery, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup,
@@ -47,21 +48,22 @@ async def restart_cb_handler(c: Client, cb: CallbackQuery):
 
 
 @Altruix.bot.on_message(
-    filters.command(["restart", "reload"], "/") & filters.user(Altruix.config.OWNER_ID)
+    filters.command(["restart", "reload"], "/") & filters.user(Altruix.config.OWNER_USERS_ID)
 )
 @log_errors
 async def restart_command_handler(_, m: Message):
     reload_only = m.command[0] == "reload"
+    user_style = get_user_button_style(m.from_user.id)
     await m.reply(
-        f"<b>Are you sure about {'reloading' if reload_only else 'restarting'} Altruix?</b>\n\n<i>This will stop all the ongoing processes and the {'reload' if reload_only else 'restart'} will take some time.</i>",
+        f"<blockquote expandable><b>Are you sure about {'reloading' if reload_only else 'restarting'} Altroid-X?</b>\n\n<i>This will stop all the ongoing processes and the {'reload' if reload_only else 'restart'} will take some time.</i></blockquote>",
         reply_markup=InlineKeyboardMarkup(
             [
                 [
                     InlineKeyboardButton(
-                        "Yes", f"{'reload' if reload_only else 'restart'}_confirm"
+                        "Yes", f"{'reload' if reload_only else 'restart'}_confirm", style=user_style
                     ),
                     InlineKeyboardButton(
-                        "No", f"{'reload' if reload_only else 'restart'}_cancel"
+                        "No", f"{'reload' if reload_only else 'restart'}_cancel", style=user_style
                     ),
                 ]
             ]
@@ -83,16 +85,16 @@ async def ping_inline_handler(_, iq: InlineQuery):
                     "INTERNAL_FUNCTION", args=pf["ping_emoji2"]
                 ),
                 input_message_content=InputTextMessageContent(
-                    f"<b>Are you sure about {'reloading' if soft else 'restarting'} Altruix?</b>\n\n<i>This will stop all the ongoing processes and the restart will take some time.</i>",
+                    f"<blockquote expandable><b>Are you sure about {'reloading' if soft else 'restarting'} Altroid-X?</b>\n\n<i>This will stop all the ongoing processes and the restart will take some time.</i></blockquote>",
                 ),
                 reply_markup=InlineKeyboardMarkup(
                     [
                         [
                             InlineKeyboardButton(
-                                "Yes", f"{'reload' if soft else 'restart'}_confirm"
+                                "Yes", f"{'reload' if soft else 'restart'}_confirm", style=get_user_button_style(iq.from_user.id)
                             ),
                             InlineKeyboardButton(
-                                "No", f"{'reload' if soft else 'restart'}_cancel"
+                                "No", f"{'reload' if soft else 'restart'}_cancel", style=get_user_button_style(iq.from_user.id)
                             ),
                         ]
                     ]
@@ -125,8 +127,9 @@ async def ping_inline_handler(_, iq: InlineQuery):
 async def restart_ub_cmd(c: Client, m: Message):
     reload = m.user_args and m.user_args.soft
     rm = m.reply_to_message
+    bot_username = Altruix.bot_manager.get_bot_username(c.me.id)
     results = await c.get_inline_bot_results(
-        Altruix.bot_info.username, "reload" if reload else "restart"
+        bot_username, "reload" if reload else "restart"
     )
     await asyncio.gather(
         *[

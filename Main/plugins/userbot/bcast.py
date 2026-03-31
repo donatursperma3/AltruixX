@@ -6,6 +6,8 @@
 #
 # All rights reserved.
 
+
+PLUGIN_VERSION = "0.0.1"
 from Main import Altruix
 from pyrogram import Client
 from Main.core.types.message import Message
@@ -93,3 +95,4 @@ async def broadcast(c: Client, m: Message):
     await msg.edit(
         f"Succesfully broadcasted in <code>{success}</code> chats and errors in <code>{err}</code> chats!"
     )
+

@@ -7,6 +7,8 @@
 # All rights reserved.
 
 
+
+PLUGIN_VERSION = "0.0.1"
 import os
 from Main import Altruix
 from pyrogram import filters
@@ -14,17 +16,32 @@ from Main.utils.paste import Paste
 from Main.core.types.message import Message
 from Main.utils.essentials import Essentials
 from Main.utils.helpers import arrange_buttons
+
+
 from Main.core.decorators import log_errors, iuser_check
+# ✅ FIX: Removed is_authorized_user_check import (commented out by user)
+# Only importing is_authorized_user which is actually used in the code
+from Main.utils.access_control import is_authorized_user
 from pyrogram.types import (
     InlineQuery, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup,
     InputTextMessageContent, InlineQueryResultArticle)
 
-
-@Altruix.bot.on_message(
-    filters.command("paste", "/") & filters.user(Altruix.config.OWNER_ID)
+@Altruix.register_on_cmd(
+    ["paste"],
+    cmd_help={
+        "help": "Upload text or file content to a hastebin service.",
+        "usage": "/paste [text/reply]",
+        "example": "/paste Hello World",
+        "detail": "Mengunggah teks atau konten file ke layanan pastebin/hastebin dan memberikan tautan."
+    },
+    group_only=False,
+    requires_input=False,
 )
 @log_errors
 async def paste_bot_cmd_handler(_, m: Message):
+    if not is_authorized_user(m.from_user.id, Altruix.config.OWNER_ID, Altruix.config.SUDO_USERS):
+        return
+        
     if mess := m.reply_to_message:
         if mess.text:
             text = mess.text
@@ -76,7 +93,7 @@ async def paste_inline_handler(_, iq: InlineQuery):
         buttons = arrange_buttons(
             [
                 InlineKeyboardButton(
-                    service.title(),
+                    await Essentials.get_user_button_style(iq.from_user.id, service.title()),
                     callback_data=f"paste_to_{service}#{iq.matches[0].group(3)}",
                 )
                 for service in Paste().all_bins
@@ -111,7 +128,7 @@ async def paste_inline_handler(_, iq: InlineQuery):
                         Altruix.get_string("PASTE_TEXT").format(url, "bin"),
                     ),
                     reply_markup=InlineKeyboardMarkup(
-                        [[InlineKeyboardButton("URL", url=url)]]
+                        [[InlineKeyboardButton(await Essentials.get_user_button_style(iq.from_user.id, "URL"), url=url)]]
                     ),
                 )
             ],
@@ -120,3 +137,4 @@ async def paste_inline_handler(_, iq: InlineQuery):
             switch_pm_text="Paste Menu",
             switch_pm_parameter="paste",
         )
+

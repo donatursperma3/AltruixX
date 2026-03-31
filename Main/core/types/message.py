@@ -18,7 +18,7 @@ from pyrogram.utils import zero_datetime
 from pyrogram.errors import MessageTooLong
 from Main.utils.essentials import Essentials
 from ...utils.startup_helpers import monkeypatch
-from pyrogram.types import Message as RawMessage
+from pyrogram.types import Message as RawMessage, ReplyParameters  # ✅ Import ReplyParameters
 from Main.utils.file_helpers import make_file_from_text
 
 
@@ -53,7 +53,7 @@ class Message:
         file_path: str,
         thumb=None,
         quote=None,
-        reply_to_message_id=None,
+        reply_to_message_id=None,  # 🔄 Parameter lama (untuk kompatibilitas)
         send_msg_if_file_invalid=False,
         *args,
         **kwargs,
@@ -63,35 +63,84 @@ class Message:
 
         if reply_to_message_id is None and quote:
             reply_to_message_id = self.id
+
+        # ✅ KONVERSI reply_to_message_id KE reply_parameters UNTUK KOMPATIBILITAS PYROGRAM V2+
+        reply_params = None
+        if reply_to_message_id:
+            try:
+                # Coba gunakan ReplyParameters (Pyrogram v2+)
+                reply_params = ReplyParameters(message_id=reply_to_message_id)
+            except TypeError:
+                # Fallback ke reply_to_message_id (Pyrogram < v2.0.106)
+                kwargs['reply_to_message_id'] = reply_to_message_id
+
         if send_msg_if_file_invalid and (kwargs.get("caption")):
             try:
+                # ✅ GUNAKAN reply_params JIKA TERSEDIA
+                send_kwargs = {}
+                if reply_params:
+                    send_kwargs['reply_parameters'] = reply_params
+                else:
+                    send_kwargs['reply_to_message_id'] = reply_to_message_id
+
                 return await self._client.send_file(
                     self.chat.id,
                     file_path,
                     thumb=thumb,
-                    reply_to_message_id=reply_to_message_id,
                     *args,
                     **kwargs,
+                    **send_kwargs
                 )
             except Exception:
                 Altruix.log()
                 return await self.reply(kwargs.get("caption"))
-        return await self._client.send_file(
-            self.chat.id,
-            file_path,
-            thumb=thumb,
-            reply_to_message_id=reply_to_message_id,
-            *args,
-            **kwargs,
-        )
+        else:
+            # ✅ GUNAKAN reply_params JIKA TERSEDIA
+            send_kwargs = {}
+            if reply_params:
+                send_kwargs['reply_parameters'] = reply_params
+            else:
+                send_kwargs['reply_to_message_id'] = reply_to_message_id
+
+            return await self._client.send_file(
+                self.chat.id,
+                file_path,
+                thumb=thumb,
+                *args,
+                **kwargs,
+                **send_kwargs
+            )
+
+    @property
+    def html(self):
+        """Returns the message text or caption as HTML."""
+        if self.text:
+            if hasattr(self.text, "html"):
+                return self.text.html
+            if self.entities:
+                try:
+                    return self._client.parser.apply(self.text, self.entities, "html")
+                except Exception:
+                    return self.text
+            return self.text
+        if self.caption:
+            if hasattr(self.caption, "html"):
+                return self.caption.html
+            if self.caption_entities:
+                try:
+                    return self._client.parser.apply(self.caption, self.caption_entities, "html")
+                except Exception:
+                    return self.caption
+            return self.caption
+        return None
 
     @property
     def command_(self):
         try:
-            self.text.split()[0][
+            return self.text.split()[0][
                 1:
             ].strip() if self.text and " " in self.text else self.text[1:].strip()
-        except (IndexError or AttributeError):
+        except (IndexError, AttributeError):
             return None
 
     @property
@@ -118,12 +167,25 @@ class Message:
         force_paste=False,
         force_file=None,
         reply_to_message_id=None,
+        message_thread_id=None,
         ttwp=None,
         del_in=None,
+        too_long_as_file=False, # ✅ NEW
         **args,
     ):
         headers = ttwp or "<b>OUTPUT</b>"
         reply_to_message_id = reply_to_message_id or self.id
+        message_thread_id = message_thread_id or self.message_thread_id # ✅ Preserve thread
+        
+        # ✅ KONVERSI reply_to_message_id KE reply_parameters
+        reply_params = None
+        if reply_to_message_id:
+            try:
+                reply_params = ReplyParameters(message_id=reply_to_message_id)
+            except TypeError:
+                # Fallback ke reply_to_message_id
+                args['reply_to_message_id'] = reply_to_message_id
+
         if txt := Altruix.get_string(text):
             if "string_args" in args:
                 s_args = args.get("string_args")
@@ -134,8 +196,31 @@ class Message:
         if force_paste:
             text = Essentials.md_to_text(text)
             service, paste_link = await Paste(text).paste()
-            _p = f"{headers.format(service.title())} : <b><a href='{paste_link}'>PREVIEW</a></b>"
-            return await self.edit(_p, disable_web_page_preview=True, **args)
+            
+            # ✅ Fallback if paste fails
+            if not paste_link or not str(paste_link).startswith("http"):
+                 force_file = "paste_error.txt;📄 <b>Paste failed, sending as file...</b>"
+                 return await self.edit_msg(
+                    text,
+                    force_file=force_file,
+                    reply_to_message_id=reply_to_message_id, 
+                    message_thread_id=message_thread_id,
+                    **args
+                )
+
+            service_name = service.title() if service else "Paste"
+            _p = f"<blockquote>{headers.format(service_name)} : <b><a href='{paste_link}'>PREVIEW</a> ({paste_link})</b></blockquote>"
+            # ✅ FIX: Pyrogram's edit_text does NOT support reply_parameters or reply_to_message_id.
+            # We ONLY use those for send_message/send_document (replying).
+            # For editing, we just edit the message content.
+            args.pop("reply_to_message_id", None)
+            args.pop("message_thread_id", None)
+            args.pop("reply_parameters", None)
+            return await self.edit(
+                _p, 
+                disable_web_page_preview=True, 
+                **args
+            )
         if force_file:
             if ";" in force_file:
                 force_file, caption = force_file.split(";", 1)
@@ -144,27 +229,106 @@ class Message:
             file_ = await make_file_from_text(
                 text, file_name=force_file, file_suffix=file_suffix
             )
-            return await asyncio.gather(
-                self.delete(),
-                self._client.send_document(
-                    self.chat.id,
-                    file_,
-                    reply_to_message_id=reply_to_message_id,
-                    caption=caption,
-                    **args,
-                ),
-            )
+            # ✅ GUNAKAN reply_params JIKA TERSEDIA
+            doc_kwargs = {}
+            if reply_params:
+                doc_kwargs['reply_parameters'] = reply_params
+            else:
+                doc_kwargs['reply_to_message_id'] = reply_to_message_id
+
+            try:
+                await asyncio.gather(
+                    self.delete(),
+                    self._client.send_document(
+                        self.chat.id,
+                        file_,
+                        caption=caption,
+                        message_thread_id=message_thread_id, # ✅ Passing thread id
+                        **args,
+                        **doc_kwargs
+                    ),
+                )
+            except Exception as e:
+                Altruix.log(f"Failed to send document: {e}", level=40)
+                # Fallback: kirim sebagai teks
+                return await self.reply(text, **args)
+        msg_ = self
         try:
-            msg_ = await self.edit(text, **args)
+            # ✅ Prune before first edit attempt
+            args.pop("reply_to_message_id", None)
+            args.pop("message_thread_id", None)
+            args.pop("reply_parameters", None)
+            msg_ = await self.edit(text, **args) or self
         except MessageTooLong:
             text = Essentials.md_to_text(text)
             service, paste_link = await Paste(text).paste()
-            _p = f"{headers.format(service.title())} : <b><a href='{paste_link}'>PREVIEW</a></b>"
-            msg_ = await self.edit(_p, disable_web_page_preview=True, **args)
+            service_name = service.title() if service else "Paste"
+            _p = f"<blockquote>{headers.format(service_name)} : <b><a href='{paste_link}'>PREVIEW</a> ({paste_link})</b></blockquote>"
+
+            # ✅ UPLOAD SEBAGAI FILE JIKA OPSI AKTIF
+            if too_long_as_file:
+                force_file = too_long_as_file if isinstance(too_long_as_file, str) else "message.txt"
+                if ";" not in force_file:
+                    force_file = f"{force_file};{_p}"
+                
+                # Gunakan rekursi terbatas untuk kirim file
+                return await self.edit_msg(
+                    text, 
+                    force_file=force_file, 
+                    reply_to_message_id=reply_to_message_id, 
+                    message_thread_id=message_thread_id,
+                    **args
+                ) or self
+
+            # ✅ Final attempt: edit with paste link
+            try:
+                args.pop("reply_to_message_id", None)
+                args.pop("message_thread_id", None)
+                args.pop("reply_parameters", None)
+                msg_ = await self.edit(_p, disable_web_page_preview=True, **args) or self
+            except Exception as e:
+                # If even this fails (e.g. message deleted), we give up
+                Altruix.log(f"Final edit failed: {e}", level=40)
+                return self
+        except Exception as e:
+            # Expected errors like MESSAGE_AUTHOR_REQUIRED, CHAT_ADMIN_REQUIRED are normal
+            Altruix.log(f"Failed to edit message: {e}", level=10)
+            # Fallback: kirim sebagai reply jika gagal edit biasa (bukan karena panjang)
+            try:
+                return await self.reply_msg(text, too_long_as_file=too_long_as_file, **args) or self
+            except MessageTooLong:
+                # Jika reply pun terlalu panjang, paksa paste atau file
+                text = Essentials.md_to_text(text)
+                service, paste_link = await Paste(text).paste()
+                
+                # ✅ Fallback if paste fails
+                if not paste_link or not str(paste_link).startswith("http"):
+                     force_file = too_long_as_file if isinstance(too_long_as_file, str) else "message.txt"
+                     if ";" not in force_file:
+                         force_file = f"{force_file};📄 <b>Paste failed, sending as file...</b>"
+                     return await self.reply_msg(text, force_file=force_file, **args) or self
+
+
+                service_name = service.title() if service else "Paste"
+                _p = f"<blockquote>{headers.format(service_name)} : <b><a href='{paste_link}'>PREVIEW</a> ({paste_link})</b></blockquote>"
+                
+                if too_long_as_file:
+                    force_file = too_long_as_file if isinstance(too_long_as_file, str) else "message.txt"
+                    if ";" not in force_file:
+                        force_file = f"{force_file};{_p}"
+                    return await self.reply_msg(text, force_file=force_file, **args) or self
+
+                return await self.reply(_p, disable_web_page_preview=True, **args) or self
+            except Exception:
+                return self
+        
         if del_in and isinstance(del_in, int):
             await asyncio.sleep(del_in)
-            await msg_.delete()
-        return msg_
+            try:
+                await msg_.delete()
+            except:
+                pass
+        return msg_ or self
 
     async def _delete(self, *args, **kwargs):
         with contextlib.suppress(Exception):
@@ -176,10 +340,13 @@ class Message:
         text,
         force_paste=False,
         force_file=None,
+        message_thread_id=None,
         ttwp=None,
         del_in=None,
+        too_long_as_file=False, # ✅ NEW
         **args,
     ):
+        message_thread_id = message_thread_id or self.message_thread_id # ✅ Preserve thread
         headers = ttwp or "<b>OUTPUT</b>"
         if txt := Altruix.get_string(text):
             if "string_args" in args:
@@ -191,10 +358,38 @@ class Message:
         if force_paste:
             text = Essentials.md_to_text(text)
             service, paste_link = await Paste(text).paste()
-            _p = f"{headers.format(service.title())} : <b><a href='{paste_link}'>PREVIEW</a></b>"
-            return await self.reply(
-                _p, quote=True, disable_web_page_preview=True, **args
-            )
+            
+            # ✅ Fallback if paste fails
+            if not paste_link or not str(paste_link).startswith("http"):
+                 force_file = "paste_error.txt;📄 <b>Paste failed, sending as file...</b>"
+                 return await self.reply_msg(
+                    text, 
+                    force_file=force_file, 
+                    message_thread_id=message_thread_id,
+                    **args
+                )
+
+            service_name = service.title() if service else "Paste"
+            _p = f"<blockquote>{headers.format(service_name)} : <b><a href='{paste_link}'>PREVIEW</a> ({paste_link})</b></blockquote>"
+            # ✅ GUNAKAN quote=True (bawaan reply)
+            try:
+                # 🔄 Force reply ID via ReplyParameters if possible
+                send_kwargs = {}
+                try:
+                    send_kwargs['reply_parameters'] = ReplyParameters(message_id=self.id)
+                except TypeError:
+                    args['reply_to_message_id'] = self.id
+
+                return await self.reply(
+                    _p, 
+                    disable_web_page_preview=True, 
+                    message_thread_id=message_thread_id, # ✅ Pass thread id
+                    **args,
+                    **send_kwargs
+                )
+            except Exception as e:
+                Altruix.log(f"Failed to reply with paste: {e}", level=40)
+                return await self.reply(text, quote=True, **args)
         if force_file:
             if ";" in force_file:
                 force_file, caption = force_file.split(";", 1)
@@ -203,43 +398,258 @@ class Message:
             file_ = await make_file_from_text(
                 text, file_name=force_file, file_suffix=file_suffix
             )
-            return await self.reply_document(file_, quote=True, caption=caption, **args)
+            try:
+                return await self.reply_document(
+                    file_, 
+                    quote=True, 
+                    caption=caption, 
+                    message_thread_id=message_thread_id, # ✅ Pass thread id
+                    **args
+                )
+            except Exception as e:
+                Altruix.log(f"Failed to reply with document: {e}", level=40)
+                return await self.reply(text, quote=True, **args)
+        # ✅ KONVERSI reply_to_message_id KE reply_parameters UNTUK KOMPATIBILITAS PYROGRAM V2+
+        reply_params = None
         try:
-            msg_ = await self.reply(text, quote=True, **args)
+            # Coba gunakan ReplyParameters (Pyrogram v2+)
+            reply_params = ReplyParameters(message_id=self.id)
+        except TypeError:
+            # Fallback ke reply_to_message_id (Pyrogram < v2.0.106)
+            args['reply_to_message_id'] = self.id
+
+        try:
+            # ✅ GUNAKAN reply_params JIKA TERSEDIA, Hapus quote=True eksplisit untuk hindari konflik
+            send_kwargs = {}
+            if reply_params:
+                send_kwargs['reply_parameters'] = reply_params
+            else:
+                send_kwargs['reply_to_message_id'] = self.id
+            
+            # Buat copy args agar tidak memodifikasi original dict
+            reply_args = args.copy()
+            reply_args.pop("quote", None) # Hapus quote dari args jika ada
+            reply_args.pop("reply_to_message_id", None) # Hapus jika ada
+
+            msg_ = await self.reply(
+                text, 
+                message_thread_id=message_thread_id, # ✅ Pass thread id
+                **reply_args,
+                **send_kwargs
+            )
         except MessageTooLong:
             text = Essentials.md_to_text(text)
             service, paste_link = await Paste(text).paste()
-            _p = f"{headers.format(service.title())} : <b><a href='{paste_link}'>PREVIEW</a></b>"
-            msg_ = await self.reply(_p, disable_web_page_preview=True, **args)
+            service_name = service.title() if service else "Paste"
+            _p = f"<blockquote>{headers.format(service_name)} : <b><a href='{paste_link}'>PREVIEW</a> ({paste_link})</b></blockquote>"
+            try:
+                msg_ = await self.reply(
+                    _p, 
+                    disable_web_page_preview=True, 
+                    message_thread_id=message_thread_id, # ✅ Pass thread id
+                    **args
+                )
+            except Exception as e:
+                Altruix.log(f"Failed to reply with long text: {e}", level=40)
+                msg_ = await self.reply("Text too long to display.", **args)
+        except Exception as e:
+            # Expected errors like CHAT_ADMIN_REQUIRED, SLOWMODE_WAIT_X are normal
+            Altruix.log(f"Unexpected error in reply_msg: {e}", level=10)
+            msg_ = await self.reply("Failed to send message.", **args)
         if del_in and isinstance(del_in, int):
             await asyncio.sleep(del_in)
             await msg_.delete()
+        
+        # ✅ NEW: Attach sent message to self for error logger tracking
+        try:
+            self.wait_msg = msg_
+        except: pass
+        
         return msg_
 
+    # 
     async def handle_message(self, text_, **kwargs):
-        sudo_users = Altruix.config.SUDO_USERS
-        if self._client.myself.id == Altruix.bot_info.id:
-            return await self.reply_msg(text_, **kwargs)
-        if not self:
+        """
+        ✅ PERBAIKAN: Gunakan getattr() + fallback ke .me untuk hindari AttributeError.
+        Juga tambahkan try-except untuk keamanan ekstra.
+        """
+        try:
+            sudo_users = Altruix.config.SUDO_USERS_ID
+            
+            # ✅ AMBIL ID CLIENT DENGAN AMAN
+            client_id = (getattr(self._client, 'myself', None) or self._client.me).id
+            
+            # ✅ PRESERVE THREAD ID
+            thread_id = self.message_thread_id
+            if 'message_thread_id' not in kwargs:
+                kwargs['message_thread_id'] = thread_id
+
+            if client_id == Altruix.bot_info.id:
+                return await self.reply_msg(text_, **kwargs)
+            if not self:
+                return await self.edit_msg(text_, **kwargs)
+            if not self.from_user or not self.from_user.id:
+                return await self.edit_msg(text_, **kwargs)
+            # ✅ REFACTOR: Use centralized is_sudo helper for authorized sender check.
+            # This ensures users added via UI (persisted in DB) are recognized correctly.
+            # We use the optimized cache to avoid DB lookups on every message.
+            is_authorized = await Altruix.is_sudo(int(self.from_user.id), client=self._client)
+            
+            if is_authorized:
+                # ✅ FIX: Always reply to the command message (self) for sudo users,
+                # even if the command itself was a reply to another message.
+                return await self.reply_msg(text_, **kwargs)
             return await self.edit_msg(text_, **kwargs)
-        if not self.from_user or not self.from_user.id:
-            return await self.edit_msg(text_, **kwargs)
-        if int(self.from_user.id) in sudo_users:
-            if self.reply_to_message:
-                return await self.reply_to_message.reply_msg(text_, **kwargs)
-            return await self.reply_msg(text_, **kwargs)
-        return await self.edit_msg(text_, **kwargs)
+        except AttributeError as e:
+            # ✅ TANGANI ERROR JIKA .myself dan .me TIDAK ADA (seharusnya tidak terjadi)
+            Altruix.log(f"AttributeError in handle_message: {e}", level=40)
+            return await self.reply("❌ Terjadi kesalahan internal. Silakan coba lagi.", **kwargs)
+        except Exception as e:
+            Altruix.log(f"Unexpected error in handle_message: {e}", level=40)
+            return await self.reply("❌ Gagal menangani pesan.", **kwargs)
 
     async def delete_if_self(self, **kwargs):
-        if self.from_user and self.from_user.is_self or self.outgoing:
-            return await self.delete(**kwargs)
+            """
+            Delete message if sender is self (userbot), respecting auto-delete configuration.
+
+            This method checks AUTO_DELETE_CMD settings from database and deletes the message
+            if auto-delete is enabled for this session. It supports both global and per-account
+            configuration modes.
+
+            Error Handling:
+            - Database connection errors: Falls back to default (auto-delete disabled)
+            - Permission errors: Gracefully skips delete operation
+            - Invalid config values: Uses default values
+            - All errors are logged with appropriate levels
+
+            Returns:
+                Message: Returns self (for chaining) whether deleted or not
+            """
+            # Only delete if sender is self (userbot), NOT sudo users
+            if not (self.from_user and self.from_user.is_self or self.outgoing):
+                return self
+
+            try:
+                # Get client ID safely
+                client_id = (getattr(self._client, 'myself', None) or self._client.me).id
+
+                # Find session index for this client
+                index = -1
+                for i, c in enumerate(Altruix.clients):
+                    try:
+                        c_id = (getattr(c, 'myself', None) or c.me).id
+                        if c_id == client_id:
+                            index = i
+                            break
+                    except Exception as e:
+                        Altruix.log(f"Error getting client ID for index {i}: {e}", level=10)
+                        continue
+
+                # If client not found in Altruix.clients, skip auto-delete
+                if index == -1:
+                    Altruix.log(f"Client {client_id} not found in Altruix.clients, skipping auto-delete", level=10)
+                    return self
+
+                # Read configuration type (global or per_account) with database error handling
+                apply_type = None
+                try:
+                    apply_type = await Altruix.config.get_env(f"AUTO_DELETE_CMD_TYPE_{index}")
+                except Exception as e:
+                    Altruix.log(f"Database error reading AUTO_DELETE_CMD_TYPE_{index}: {e}, using default 'per_account'", level=30)
+                    apply_type = None
+
+                # Default to per_account if not configured
+                if apply_type is None:
+                    apply_type = "per_account"
+                    Altruix.log(f"AUTO_DELETE_CMD_TYPE_{index} not set, defaulting to per_account", level=10)
+
+                # Validate apply_type value
+                apply_type_str = str(apply_type).lower().strip()
+                if apply_type_str not in ("global", "per_account"):
+                    Altruix.log(f"Invalid AUTO_DELETE_CMD_TYPE value '{apply_type}', defaulting to per_account", level=30)
+                    apply_type_str = "per_account"
+
+                # Read appropriate configuration based on type with database error handling
+                enabled = None
+                delay = None
+                try:
+                    if apply_type_str == "global":
+                        enabled = await Altruix.config.get_env("AUTO_DELETE_CMD_GLOBAL")
+                        delay = await Altruix.config.get_env("AUTO_DELETE_CMD_DELAY_GLOBAL")
+                        Altruix.log(f"Using global auto-delete config: enabled={enabled}, delay={delay}", level=10)
+                    else:
+                        enabled = await Altruix.config.get_env(f"AUTO_DELETE_CMD_STATUS_{index}")
+                        delay = await Altruix.config.get_env(f"AUTO_DELETE_CMD_DELAY_{index}")
+                        Altruix.log(f"Using per-account auto-delete config for index {index}: enabled={enabled}, delay={delay}", level=10)
+                except Exception as e:
+                    Altruix.log(f"Database error reading auto-delete config: {e}, using defaults (disabled)", level=30)
+                    enabled = None
+                    delay = None
+
+                # Convert enabled string to boolean with validation
+                # Accept "on", "ON", "true", "True", "1" as enabled
+                if enabled is None:
+                    is_enabled = False
+                else:
+                    enabled_str = str(enabled).lower().strip()
+                    is_enabled = enabled_str in ("on", "true", "1", "yes")
+                    if enabled_str not in ("on", "off", "true", "false", "1", "0", "yes", "no"):
+                        Altruix.log(f"Invalid enabled value '{enabled}', treating as disabled", level=30)
+                        is_enabled = False
+
+                # If auto-delete is disabled, return without deleting
+                if not is_enabled:
+                    Altruix.log(f"Auto-delete disabled for index {index}, skipping", level=10)
+                    return self
+
+                # Parse and apply delay with validation
+                delay_sec = 0
+                if delay is not None:
+                    try:
+                        delay_sec = int(delay)
+                        if delay_sec < 0:
+                            Altruix.log(f"Invalid delay value {delay_sec} (negative), using 0", level=30)
+                            delay_sec = 0
+                        elif delay_sec > 3600:  # Max 1 hour
+                            Altruix.log(f"Invalid delay value {delay_sec} (too large), using 3600", level=30)
+                            delay_sec = 3600
+                    except (ValueError, TypeError) as e:
+                        Altruix.log(f"Failed to parse delay '{delay}': {e}, using default 0", level=30)
+                        delay_sec = 0
+
+                # Wait for delay if configured
+                if delay_sec > 0:
+                    Altruix.log(f"Waiting {delay_sec}s before deleting message", level=10)
+                    await asyncio.sleep(delay_sec)
+
+                # Delete the message with permission error handling
+                try:
+                    Altruix.log(f"Deleting self message (auto-delete enabled)", level=10)
+                    return await self.delete(**kwargs)
+                except Exception as delete_error:
+                    # Check if it's a permission error
+                    error_msg = str(delete_error).lower()
+                    if "permission" in error_msg or "forbidden" in error_msg or "right" in error_msg:
+                        Altruix.log(f"Permission denied to delete message, skipping gracefully: {delete_error}", level=20)
+                    else:
+                        Altruix.log(f"Error deleting message: {delete_error}", level=40)
+                    return self
+
+            except Exception as e:
+                # Log error but don't crash - return self for graceful degradation
+                Altruix.log(f"Unexpected error in delete_if_self: {e}", level=40)
+                return self
+
 
     async def delete_if_sudo(self, **kwargs):
-        sudo_ = Altruix.config.SUDO_USERS
+        sudo_ = Altruix.config.SUDO_USERS_ID
         if self.from_user and self.from_user.is_self:
             return
         if self.from_user and self.from_user.id in sudo_:
-            return await self.delete(**kwargs)
+            try:
+                return await self.delete(**kwargs)
+            except Exception as e:
+                Altruix.log(f"Failed to delete sudo message: {e}", level=40)
 
     @property
     def user_input(self):
@@ -256,6 +666,7 @@ class Message:
                     final_text_ += f"{stripContext} "
             ft = final_text_.strip()
             return ft
+        return None
 
     def strip_args(self, text_to_return):
         if text_to_return is None:
@@ -279,9 +690,17 @@ class Message:
             return msg[msg.find(" ") + 1 :]
 
     async def edit_and_del(self, text, del_in=5, **args):
-        _m_ = await self.edit(text, **args)
+        try:
+            _m_ = await self.edit(text, **args)
+        except Exception as e:
+            # Expected errors like MESSAGE_AUTHOR_REQUIRED are normal
+            Altruix.log(f"Failed to edit message in edit_and_del: {e}", level=10)
+            _m_ = await self.reply(text, **args)
         await asyncio.sleep(del_in)
-        await _m_.delete()
+        try:
+            await _m_.delete()
+        except Exception as e:
+            Altruix.log(f"Failed to delete message in edit_and_del: {e}", level=40)
 
     @property
     def get_user(self) -> Union[Tuple[Union[int, str]], None]:
