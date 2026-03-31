@@ -212,3 +212,5 @@ temp/
 # others
 *report.md
 *.ini
+*.sqlite3
+*.db
