@@ -48,7 +48,7 @@ from Main.plugins.userbot.xpm_logger_user import SessionManager
 # ============================================================================
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "tags"  # Renamed from mentions
-PLUGIN_VERSION = "1.7.901-TAG"  # ✅ Fixed formatting and clickable names
+PLUGIN_VERSION = "1.7.910-TAG"  # ✅ Fixed formatting and clickable names
 
 # Gunakan logger Altruix jika tersedia, atau buat baru yang konsisten
 logger = logging.getLogger("altruix.mentions")
@@ -1558,7 +1558,7 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
 
         log_message = (
             f"⚡️ <b>Mention Detected</b>\n"
-            f"<blockquote expandable>\n"
+            f"<blockquote expandable>"
             f"• <b>Tagged By:</b> {mentioner_hyperlink} (<code>{mentioner_id}</code>)\n"
             f"• <b>Username:</b> {username_display}\n"
             f"• <b>Blocked Me:</b> {block_label}\n"
@@ -1662,7 +1662,9 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
             "group_name": m.chat.title,
             "client_name": c.me.first_name if c.me else "Unknown",
             "last_reply_id": None,
-            "last_reply_chat": None
+            "last_reply_chat": None,
+            "edit_count": 0,
+            "edit_history": []
         }
         
         await save_mention_to_cache(msg_key, cache_data)
@@ -1698,7 +1700,9 @@ async def send_mention_log_handler(c: Client, m: RawMessage):
             "group_name": m.chat.title,
             "client_name": c.me.first_name if c.me else "Unknown",
             "last_reply_id": None,
-            "last_reply_chat": None
+            "last_reply_chat": None,
+            "edit_count": 0,
+            "edit_history": []
         }
         
         logger.info(f"✅ Cached mention: {msg_key} for client {client_id} ({c.me.first_name})")
@@ -1718,6 +1722,7 @@ async def send_mention_edit_handler(c: Client, m: RawMessage):
     Updates existing mention logs when the original message is edited.
     If a message becomes a mention after editing, it initiates a new log entry.
     Ensures that only the client that originally logged the mention can update it.
+    Now enhanced to log every edit as a NEW entry with history tracking.
     """
     try:
         # ✅ SAFETY CHECK: Basic message validity
@@ -1767,6 +1772,7 @@ async def send_mention_edit_handler(c: Client, m: RawMessage):
                 if c.me.id != cache.get("client_id"):
                     return
                 log_msg_id = cache.get("log_msg_id")
+                cache_data = cache
             else:
                 # If not in cache, check if it's now mentioned (new mention via edit)
                 if m.mentioned:
@@ -1786,29 +1792,56 @@ async def send_mention_edit_handler(c: Client, m: RawMessage):
 
         logger.info(f"✏️ Mention edited in {m.chat.title} ({msg_key})")
 
+        # 1. Update Tracking Details
+        old_text = cache_data.get("text", "[No text content]")
+        
+        # For the first history entry, use the original timestamp if possible
+        if not cache_data.get("edit_history"):
+             prev_time = cache_data.get("timestamp_int")
+             try:
+                 prev_time_str = datetime.fromtimestamp(prev_time).strftime("%H:%M:%S")
+             except:
+                 prev_time_str = datetime.now().strftime("%H:%M:%S")
+        else:
+             prev_time_str = datetime.now().strftime("%H:%M:%S")
+             
+        history_entry = {
+            "text": old_text,
+            "time": prev_time_str
+        }
+        
+        if "edit_history" not in cache_data or not isinstance(cache_data["edit_history"], list):
+            cache_data["edit_history"] = []
+            
+        cache_data["edit_history"].append(history_entry)
+        cache_data["edit_count"] = cache_data.get("edit_count", 0) + 1
+        edit_count = cache_data["edit_count"]
+        
         # Re-format text (limit to 500)
         message_text = m.text or m.caption or "[No text content]"
-        message_text = html.escape(str(message_text))[:500]
+        message_escape = html.escape(str(message_text))[:500]
 
         # Use formatted HTML for updated content
-        # Format for Edited Message (Consistent with new request)
         mentioner = m.from_user
         mentioner_id = mentioner.id if mentioner else 0
         
         # Name handling
         f_name_edit = (mentioner.first_name if mentioner else "") or ""
         l_name_edit = (mentioner.last_name if mentioner else "") or ""
-        full_name_edit = f"{f_name_edit} {l_name_edit}".strip() or "Blank User"
+        full_name_raw = f"{f_name_edit} {l_name_edit}".strip() or "Blank User"
+        full_name_edit = Essentials.clean_user_name(full_name_raw)
         
         # Robust clickable hyperlink (Name + ID)
         mentioner_hyperlink = f'<a href="tg://user?id={mentioner_id}">{html.escape(full_name_edit)}</a>'
         username_display_edit = f"@{mentioner.username}" if mentioner and mentioner.username else "None"
         
-        my_name_edit = c.me.first_name if c.me else "Unknown"
+        my_name_edit = Essentials.clean_user_name(c.me.first_name if c.me else "Unknown")
         
         # Time handling
         try:
-             mention_time = m.date.strftime("%Y-%m-%d %H:%M:%S")
+             # Use the timestamp_int from cache as the original mention time
+             orig_ts = cache_data.get("timestamp_int")
+             mention_time = datetime.fromtimestamp(orig_ts).strftime("%Y-%m-%d %H:%M:%S")
         except:
              mention_time = "Unknown"
         edit_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1825,9 +1858,19 @@ async def send_mention_edit_handler(c: Client, m: RawMessage):
         group_hyperlink_edit = f'<a href="{group_link_edit}">{group_title_edit}</a>'
         group_display_edit = f"{group_hyperlink_edit} ({m.chat.id})"
 
+        # Build History Text
+        history_text = f"\n\n🕰 <b>Edit History ({edit_count}):</b>\n<blockquote expandable>"
+        for i, entry in enumerate(cache_data["edit_history"], 1):
+            h_time = entry.get("time", "Unknown")
+            h_text = entry.get("text", "[No text]")
+            if len(h_text) > 250:
+                 h_text = h_text[:247] + "..."
+            history_text += f"{i}. <b>({h_time})</b>: {h_text}\n"
+        history_text += "</blockquote>"
+
         log_content = (
-            f"⚡️ <b>Mention Detected</b> [EDITED]\n"
-            f"<blockquote expandable>\n"
+            f"⚡️ <b>Mention Detected</b> [EDITED] (Edit #{edit_count})\n"
+            f"<blockquote expandable>"
             f"• <b>Tagged By:</b> {mentioner_hyperlink} (<code>{mentioner_id}</code>)\n"
             f"• <b>Username:</b> {username_display_edit}\n"
             f"• <b>My Account:</b> <a href=\"tg://user?id={c.me.id}\">{html.escape(my_name_edit)}</a> (<code>{c.me.id}</code>)\n"
@@ -1836,7 +1879,8 @@ async def send_mention_edit_handler(c: Client, m: RawMessage):
             f"• <b>Edited:</b> <code>{edit_time}</code>\n"
             f"• <b>Msg ID:</b> <code>{m.id}</code>\n"
             f"</blockquote>\n"
-            f"📄 <b>Message:</b>\n<blockquote expandable>{message_text}</blockquote>"
+            f"📄 <b>Latest Message:</b>\n<blockquote expandable>{message_escape}</blockquote>"
+            f"{history_text}"
         )
 
         # Preserve markup by fetching original msg
@@ -1849,26 +1893,41 @@ async def send_mention_edit_handler(c: Client, m: RawMessage):
         except:
             markup = None
 
-        await bot.edit_message_text(
+        # 4. SEND NEW LOG MESSAGE
+        sent_log = await bot.send_message(
             Altruix.log_chat,
-            log_msg_id,
             log_content,
             parse_mode=enums.ParseMode.HTML,
             reply_markup=markup,
-            disable_web_page_preview=True
+            disable_web_page_preview=True,
+            message_thread_id=cache_data.get("thread_id")
         )
         
+        # 5. Update Cache & State
+        cache_data["text"] = message_text
+        cache_data["log_msg_id"] = sent_log.id
+        
         # Update cache text (PERSISTEN)
-        if cache_data:
-            cache_data["text"] = message_text
-            await save_mention_to_cache(msg_key, cache_data)
+        await save_mention_to_cache(msg_key, cache_data)
         
         # Update in-memory cache juga
         if msg_key in MENTION_LOG_CACHE:
-            MENTION_LOG_CACHE[msg_key]["text"] = message_text
+            MENTION_LOG_CACHE[msg_key] = cache_data
+            
+        # Update REPLY_AS_MENTIONED_WAITING
+        waiting_id = f"mentions_{m.chat.id}_{m.id}"
+        if waiting_id in REPLY_AS_MENTIONED_WAITING:
+            REPLY_AS_MENTIONED_WAITING[waiting_id]["log_msg_id"] = sent_log.id
         
+        try:
+            from Main.plugins.userbot.xpm_logger_user import SessionManager
+            SessionManager.save()
+        except: pass
+
+        logger.info(f"✅ New edit log sent for {msg_key}, msg_id: {sent_log.id}")
+
     except Exception as e:
-        logger.error(f"Error in mention edit handler: {e}")
+        logger.error(f"Error in mention edit handler: {e}", exc_info=True)
 
 # ============================================================================
 # 🔥 QUICK REACTION HANDLER - DIUPDATE DENGAN CACHE
@@ -3381,7 +3440,7 @@ async def tags_toggle_menu_callback(c: Client, cb: CallbackQuery):
                 ],
                 [
                     InlineKeyboardButton("⚙️ Hide Full Menu", callback_data=f"tags_toggle_compact_{chat_id}_{msg_id}"),
-                    InlineKeyboardButton("🔗 Go to Message", url=f"https://t.me/c/{str(chat_id)[4:]}/{msg_id}")
+                    InlineKeyboardButton("🔗 Go to Message", url=f"https://t.me/c/{str(chat_id).replace("-100", "").lstrip("-")}/{msg_id}")
                 ]
             ]
         else:
@@ -3389,7 +3448,7 @@ async def tags_toggle_menu_callback(c: Client, cb: CallbackQuery):
             keyboard = [
                 [
                     InlineKeyboardButton("⚙️ Show Full Menu", callback_data=f"tags_toggle_full_{chat_id}_{msg_id}"),
-                    InlineKeyboardButton("🔗 Go to Message", url=f"https://t.me/c/{str(chat_id)[4:]}/{msg_id}")
+                    InlineKeyboardButton("🔗 Go to Message", url=f"https://t.me/c/{str(chat_id).replace("-100", "").lstrip("-")}/{msg_id}")
                 ]
             ]
             
@@ -3502,7 +3561,7 @@ async def tags_forward_cancel_callback(c: Client, cb: CallbackQuery):
         keyboard = [
             [
                 InlineKeyboardButton("⚙️ Show Full Menu", callback_data=f"tags_toggle_full_{chat_id}_{msg_id}"),
-                InlineKeyboardButton("🔗 Go to Message", url=f"https://t.me/c/{str(chat_id)[4:]}/{msg_id}")
+                InlineKeyboardButton("🔗 Go to Message", url=f"https://t.me/c/{str(chat_id).replace("-100", "").lstrip("-")}/{msg_id}")
             ]
         ]
         

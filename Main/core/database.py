@@ -49,11 +49,38 @@ class LocalCollection:
                 return item
         return None
 
-    async def find(self, query: Dict[str, Any]):
+    class _Cursor:
+        def __init__(self, async_gen):
+            self.async_gen = async_gen
+            
+        async def to_list(self, length=None):
+            result = []
+            count = 0
+            async for item in self.async_gen:
+                if length is not None and count >= length:
+                    break
+                result.append(item)
+                count += 1
+            return result
+            
+        def __aiter__(self):
+            return self.async_gen.__aiter__()
+
+    def find(self, query: Dict[str, Any]):
+        async def _generator():
+            data = self.db.get_collection_data(self.name)
+            for item in data.values():
+                if not query or all(item.get(k) == v for k, v in query.items()):
+                    yield item
+        return self._Cursor(_generator())
+
+    async def count_documents(self, query: Dict[str, Any]) -> int:
         data = self.db.get_collection_data(self.name)
+        count = 0
         for item in data.values():
             if not query or all(item.get(k) == v for k, v in query.items()):
-                yield item
+                count += 1
+        return count
 
     async def insert_one(self, document: Dict[str, Any]):
         if "_id" not in document:
@@ -66,6 +93,14 @@ class LocalCollection:
         if item:
             self.db.delete_from_collection(self.name, item["_id"])
         return item
+
+    class _UpdateResult:
+        def __init__(self, modified_count):
+            self.modified_count = modified_count
+
+    async def update_one(self, query: Dict[str, Any], update: Dict[str, Any], upsert: bool = False):
+        item = await self.find_one_and_update(query, update, upsert=upsert)
+        return self._UpdateResult(1 if item else 0)
 
     async def find_one_and_update(
         self, query: Dict[str, Any], update: Dict[str, Any], upsert: bool = False
@@ -143,17 +178,38 @@ class LocalDatabase:
         self.inline_col = LocalCollection(self, "INLINE_METADATA")
         self.callback_col = LocalCollection(self, "CALLBACK_CACHE")
         self.group_wl_col = LocalCollection(self, "GROUP_WHITELIST")
+    
+    @property
+    def lock(self):
+        return self._lock
 
     def _load(self):
         if not path.exists(self.path):
             self.data = {}
             self._sync_save()
+            return
         try:
             with open(self.path, "r", encoding="utf-8") as f:
                 self.data = json.load(f)
+            self._dirty = False
         except (ValueError, FileNotFoundError):
             self.data = {}
             self._sync_save()
+
+    async def reload(self):
+        """Reload database from disk safely."""
+        async with self._lock:
+            self._load()
+            self._dirty = False
+
+    async def safe_extract_and_reload(self, zip_path: str, extract_path: str):
+        """Safely extract a ZIP into the DB directory and reload data."""
+        import shutil
+        async with self._lock:
+            # Run extraction in thread
+            await asyncio.to_thread(shutil.unpack_archive, zip_path, extract_path, 'zip')
+            self._load()
+            self._dirty = False
 
     def _sync_save(self) -> None:
         """Synchronous save for initialization only."""

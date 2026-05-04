@@ -27,7 +27,7 @@ def readable(data):
 
 
 @Altruix.register_on_cmd(
-    ["listdir", "list", "ls", "ld"],
+    ["listdir", "ls", "ld"],
     cmd_help={
         "help": "Lists given directory given as input.",
         "example": "ls Main/plugins/userbot",

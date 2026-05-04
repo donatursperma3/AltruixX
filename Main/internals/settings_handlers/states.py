@@ -18,6 +18,7 @@ user_mentions_state = {}
 user_bulk_join_state = {}
 user_bulk_leave_state = {}
 user_bulk_report_state = {}
+user_bulk_append_session_state = {}
 user_message_count_state = {}
 
 # Security & Tracking States
@@ -31,6 +32,7 @@ user_sys_ctrl_state = {}
 
 # Privacy & Config States
 user_privacy_state = {}
+user_backup_restore_state = {}
 
 # CreateGroup State
 user_creategroup_state = {}
@@ -38,6 +40,14 @@ user_creategroup_state = {}
 # Scan Limit State
 user_scan_limit_state = {}
 
+# Message Pusher State
+user_messagepusher_state = {}
+
 # Ultroid Addon States
 WAIT_ULTROID_PREFIX = "WAIT_ULTROID_PFX"
 WAIT_UPM_INSTALL = "WAIT_UPM_INSTALL"
+
+# Main Bot Manager States
+user_mainbot_token_state = {}
+user_mainbot_confirm_delete_state = {}
+user_mainbot_confirm_stop_state = {}

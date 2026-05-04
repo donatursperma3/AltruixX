@@ -9,8 +9,11 @@
 import asyncio
 import logging
 import os
+import html
 import contextlib
 from Main import Altruix
+from pyrogram.enums import ParseMode
+from pyrogram import enums
 from pyrogram import Client, filters
 from Main.core.decorators import log_errors
 from pyrogram.types import (
@@ -269,12 +272,30 @@ async def _start_add_session_process(cb: CallbackQuery):
     # Ekspor dan simpan session
     try:
         app_session = await app.export_session_string()
-        await app.send_message("me", f"✅ **Session Berhasil!**\n\n`{app_session}`\n\n⚠️ **JANGAN DIBAGIKAN!**")
+        await app.send_message(
+            "me", 
+            f"✅ <b>Session Berhasil!</b>\n\n<code>{app_session}</code>\n\n• String: Pyrogram\n• Powered by: Altroid-X\n\n⚠️ <b>JANGAN DIBAGIKAN!</b>"
+        )
         await app.disconnect()
-        await Altruix.add_session(app_session, process_msg, user=cb.from_user)
+        await Altruix.add_session(app_session, process_msg, user=cb.from_user, skip_reload=True)
         await log_to_group(
-            f"✅ <b>BERHASIL TAMBAH SESSION</b>\n"
+            f"✅ <b>BERHASIL ADD SESSION</b>\n"
             f"• User ID: <code>{user_id}</code>\n"
+        )
+        
+        from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+        from Main.utils.file_helpers import get_user_button_style
+        user_style = get_user_button_style(cb.from_user.id)
+        await cb.message.reply(
+            "✅ **Session added successfully!**\n\n"
+            "Do you want to reload the system modules now to apply changes?\n"
+            "*(Choose 'No' if you want to add more sessions first to save time)*",
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("Yes, Reload Now", callback_data="reload_sys_yes", style=user_style),
+                    InlineKeyboardButton("No, Later", callback_data="reload_sys_no", style=user_style)
+                ]
+            ])
         )
     except Exception as e:
         await process_msg.edit("❌ Gagal tambahkan session ke bot.")

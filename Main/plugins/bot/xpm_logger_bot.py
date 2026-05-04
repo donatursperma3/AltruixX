@@ -286,24 +286,29 @@ async def pml_status_bot_handler(c: Client, m: AltruixMessage):
 @log_errors
 async def pm_logger_bot_handler(c: Client, m: RawMessage):
     """Log incoming private messages to the bot."""
+    Altruix.log(f"DEBUG: pm_logger_bot_handler triggered from {m.from_user.id if m.from_user else 'None'}", level=20)
     try:
         # ✅ Dynamic Reload: Catch UI updates from settings.py
         await load_settings()
 
-        if not PM_LOGGER_BOT_DATA.get("log_mode", "off") != "off":
+        log_mode = PM_LOGGER_BOT_DATA.get("log_mode", "off")
+        Altruix.log(f"DEBUG: PMLB Mode: {log_mode}", level=20)
+        
+        if log_mode == "off":
+            Altruix.log("DEBUG: PMLB is OFF, returning", level=20)
             return
 
         # Filtering Logic
-        log_mode = PM_LOGGER_BOT_DATA.get("log_mode", "all")
-        
         # Check authorization for Sudo/Non-Sudo modes
         from Main.utils.access_control import is_authorized_user
         sender_is_auth = is_authorized_user(m.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID)
         
         if log_mode == "sudo" and not sender_is_auth:
+            Altruix.log("DEBUG: PMLB sudo mode but sender is not auth", level=20)
             return # Sudo mode: Only authorized users
         
         if log_mode == "nonsudo" and sender_is_auth:
+            Altruix.log("DEBUG: PMLB nonsudo mode but sender is auth", level=20)
             return # Non-Sudo mode: Only unauthorized users
             
         # Optional: Check if at least one session has bot logging enabled 
@@ -311,20 +316,24 @@ async def pm_logger_bot_handler(c: Client, m: RawMessage):
             
         sender = m.from_user
         if not sender:
+            Altruix.log("DEBUG: PMLB No sender found", level=20)
             return
             
+        sender_id = sender.id
+        
         # Block Bot PMs if coming from another Bot (optional, if you want only user PMs)
         if sender.is_bot and log_mode == "nonsudo":
            # Logic choice: Are bots considered non-sudo? typically yes. 
            # But let's assume 'nonsudo' implies 'regular human users'.
            pass 
 
-        sender_id = sender.id
-        logger.info(f"🤖 Bot Logger triggered for PM from {sender_id} [Mode: {log_mode}]")
+        Altruix.log(f"DEBUG: PMLB Proceeding with sender {sender_id}", level=20)
 
         if not Altruix.log_chat:
-            logger.warning("🤖 PMLB: log_chat is not configured!")
+            Altruix.log("DEBUG: PMLB Altruix.log_chat is not set!", level=20)
             return
+            
+        Altruix.log(f"DEBUG: PMLB Altruix.log_chat: {Altruix.log_chat}", level=20)
         sender_name = f"{sender.first_name or ''} {sender.last_name or ''}".strip() or "Unknown"
         sender_username = f"@{sender.username}" if sender.username else "No Username"
         sender_hyperlink = f'<a href="tg://user?id={sender_id}">{html.escape(sender_name)}</a>'
@@ -411,13 +420,16 @@ async def pm_logger_bot_handler(c: Client, m: RawMessage):
         topic_id = await get_or_create_topic(Altruix.bot, Altruix.log_chat, "pm logger")
 
         # Forward message to log chat using Bot
+        Altruix.log(f"DEBUG: PMLB Attempting forward to {Altruix.log_chat} in thread {topic_id}", level=20)
         try:
             fwd_msg = await Altruix.bot.forward_messages(Altruix.log_chat, m.chat.id, m.id, message_thread_id=topic_id)
+            Altruix.log(f"DEBUG: PMLB Forward success: {fwd_msg.id if fwd_msg else 'None'}", level=20)
         except Exception as e:
-            logger.debug(f"PMLB Forward failed: {e}")
+            Altruix.log(f"DEBUG: PMLB Forward failed: {e}", level=40)
             fwd_msg = None
         
         # Send Detailed Info as a reply to the forwarded message
+        Altruix.log("DEBUG: PMLB Sending info message", level=20)
         sent_log = await Altruix.bot.send_message(
             Altruix.log_chat,
             log_content,
@@ -426,6 +438,7 @@ async def pm_logger_bot_handler(c: Client, m: RawMessage):
             reply_to_message_id=fwd_msg.id if fwd_msg else None,
             message_thread_id=topic_id
         )
+        Altruix.log(f"DEBUG: PMLB Info message sent: {sent_log.id}", level=20)
         
         # Cache for recovery
         # Cache for recovery - capture ACTUAL thread_id from sent message

@@ -82,23 +82,12 @@ async def export_all_sessions_confirm_yes_handler(c: Client, cb: CallbackQuery):
     user_id = cb.from_user.id
     
     if user_id in user_confirmation_state:
-        user_confirmation_state[user_id]['step'] = 'waiting_text_confirmation'
-        user_text_confirmation_state[user_id] = {
-            'action': 'export_all_sessions',
-            'message_id': cb.message.id if cb.message else 0,
-            'chat_id': cb.message.chat.id if cb.message else 0,
-            'timestamp': datetime.now()
-        }
+        del user_confirmation_state[user_id]
     
-    await cb.answer()
-    await edit_cb(cb, 
-        text="🔐 <b>Security Verification Required</b>\n\n"
-             "Please type <code>ok</code> in this chat to confirm export all sessions.\n\n"
-             "⚠️ This is an additional security step to prevent accidental exports.\n"
-             "⏳ You have 60 seconds to type <code>ok</code>",
-        parse_mode=ParseMode.HTML
-    )
-    asyncio.create_task(clear_user_state_after_timeout(user_id, 60))
+    await cb.answer("Exporting sessions...", show_alert=False)
+    # We pass the callback query to the execution handler
+    await execute_export_all_sessions(c, cb)
+
 
 # ====================== EXPORT PHONES FEATURE ======================
 @Altruix.bot.on_callback_query(filters.regex(r"^export_all_phones_confirmation$"))
@@ -162,39 +151,34 @@ async def export_all_phones_confirm_yes_handler(c: Client, cb: CallbackQuery):
     user_id = cb.from_user.id
     
     if user_id in user_confirmation_state:
-        user_confirmation_state[user_id]['step'] = 'waiting_text_confirmation'
-        user_text_confirmation_state[user_id] = {
-            'action': 'export_all_phones',
-            'message_id': cb.message.id if cb.message else 0,
-            'chat_id': cb.message.chat.id if cb.message else 0,
-            'timestamp': datetime.now()
-        }
+        del user_confirmation_state[user_id]
     
-    await cb.answer()
-    await edit_cb(cb, 
-        text="🔐 <b>Security Verification Required</b>\n\n"
-             "Please type <code>ok</code> in this chat to confirm export all phone numbers.\n\n"
-             "⚠️ This is an additional security step to prevent accidental exports.\n"
-             "⏳ You have 60 seconds to type <code>ok</code>",
-        parse_mode=ParseMode.HTML
-    )
-    asyncio.create_task(clear_user_state_after_timeout(user_id, 60))
+    await cb.answer("Exporting phones...", show_alert=False)
+    # We pass the callback query to the execution handler
+    await execute_export_all_phones(c, cb)
 
-# ====================== EXECUTION LOGIC ======================
-async def execute_export_all_sessions(c: Client, m: Message):
+async def execute_export_all_sessions(c: Client, event):
     """Executes the export of all sessions to a file."""
-    user = m.from_user
+    user = event.from_user
     user_id = user.id
+    m = event.message if isinstance(event, CallbackQuery) else event
+    
     log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_USERS_ID))
     user_name = html.escape(user.first_name if user.first_name else "User")
     user_link = f"<a href='tg://user?id={user_id}'>{user_name}</a>"
     
     if not await Altruix.is_sudo(user_id):
-        await m.reply("⛔ You are not authorized to use this feature.")
+        if hasattr(event, "answer"):
+            await event.answer("⛔ You are not authorized to use this feature.", show_alert=True)
+        else:
+            await m.reply("⛔ You are not authorized to use this feature.")
         return
     
     if not hasattr(Altruix, 'clients') or not Altruix.clients:
-        await m.reply("❌ No sessions available to export.")
+        if hasattr(event, "answer"):
+            await event.answer("❌ No sessions available to export.", show_alert=True)
+        else:
+            await m.reply("❌ No sessions available to export.")
         return
     
     status_msg = await m.reply("📤 Preparing to export all sessions...")
@@ -252,10 +236,12 @@ async def execute_export_all_sessions(c: Client, m: Message):
         await m.reply(f"❌ Failed to export: {e}")
         logger.error(f"Error in execute_export_all_sessions: {e}")
 
-async def execute_export_all_phones(c: Client, m: Message):
+async def execute_export_all_phones(c: Client, event):
     """Executes the export of all phone numbers to a file."""
-    user = m.from_user
+    user = event.from_user
     user_id = user.id
+    m = event.message if isinstance(event, CallbackQuery) else event
+    
     log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_USERS_ID))
     user_name = html.escape(user.first_name if user.first_name else "User")
     user_link = f"<a href='tg://user?id={user_id}'>{user_name}</a>"

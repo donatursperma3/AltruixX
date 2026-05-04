@@ -48,10 +48,10 @@ from .states import (
     user_text_confirmation_state, user_profile_edit_state, user_edit_confirmation_state,
     user_confirmation_state, user_dlphoto_state, user_purge_state,
     user_recent_messages_state, user_mentions_state, user_privacy_state,
-    user_eval_state, user_exec_state, user_creategroup_state,
-    user_limit_check_state, user_exec_state, user_eval_state, user_join_state,
-    user_leave_state, user_send_msg_state, user_bulk_join_state,
-    user_bulk_leave_state, user_bulk_report_state, user_scan_limit_state
+    user_creategroup_state, user_limit_check_state, user_exec_state, 
+    user_eval_state, user_join_state, user_leave_state, user_send_msg_state, 
+    user_bulk_join_state, user_bulk_leave_state, user_bulk_report_state, user_bulk_append_session_state,
+    user_scan_limit_state, user_profile_edit_state, user_backup_restore_state # extra safety
 )
 from .env_handlers import user_env_input_state, process_env_input, process_env_document
 
@@ -77,6 +77,7 @@ import Main.internals.settings_handlers.help_handlers
 import Main.internals.settings_handlers.addons_handlers
 import Main.internals.settings_handlers.button_style_handlers
 import Main.internals.settings_handlers.session_handlers
+import Main.internals.xschedule_builder
 
 @Altruix.bot.on_callback_query(filters.regex(r"^global_purgeme_(\d+)_(\d+)$"))
 @iuser_check
@@ -250,15 +251,17 @@ async def get_session_info_data(index: int, page: int = 1, button_page: int = 1,
     all_features = [
         # Page 1 features
         ("refresh_info", f"session_info_{index}_{page}_1", None), 
-        ("unlink_session", f"unlink_session_{index}", None),
+        ("unlink_session", f"gen_conf_unlink_session_exec_{index}_{page}", None),
         ("change_name", f"change_name_menu_{index}_{page}", None), 
         ("change_bio", f"gen_conf_change_bio_{index}_{page}", None),
         ("change_username", f"gen_conf_change_username_{index}_{page}", None), 
         ("change_profile_photo", f"gen_conf_change_profile_photo_{index}_{page}", None),
         ("upload_photo", f"gen_conf_send_profile_photo_{index}_{page}", None), 
         ("delete_all_photos", f"gen_conf_delete_all_profile_photos_{index}_{page}", None),
+
         ("backup_profile", f"gen_conf_backup_profile_{index}_{page}", None), 
         ("check_limit", f"check_limit_confirm_{index}_{page}", None),
+
         # Page 2 features
         ("view_sessions", f"gen_conf_view_all_sessions_{index}_{page}", None), 
         ("join_log_group", f"join_log_group_{index}_{page}", None),
@@ -305,7 +308,9 @@ async def get_session_info_data(index: int, page: int = 1, button_page: int = 1,
         ("load_ultroid_addons", f"toggle_addons_confirm_{index}_{page}", None),
         # Page 6 features
         ("btn_style_menu", f"btn_style_menu_{index}_{page}", "Button Style"),
-        ("rapmgr_dashboard", f"rapmgr_dashboard_{index}_{page}", "Rap Manager")
+        ("rapmgr_dashboard", f"rapmgr_dashboard_{index}_{page}", "Rap Manager"),
+        ("get_otp", f"get_otp_exec_{index}_{page}", "Get OTP")
+
     ]
     
     # 53 buttons totals (some are from gt, some manual)
@@ -313,17 +318,19 @@ async def get_session_info_data(index: int, page: int = 1, button_page: int = 1,
     
     # Header format
     text = (
+        f"──────────────────────────────\n"
         f"▫️ <b>𝐔𝐬𝐞𝐫 𝐏𝐫𝐨𝐟𝐢𝐥𝐞</b>\n"
-        f"   ├─ Name     : <spoiler><b>{html.escape(me.first_name)}</b></spoiler>\n"
-        f"   ├─ ID       : <spoiler><code>{me.id}</code></spoiler>\n"
+        f"   ├─ Name : <spoiler><b>{html.escape(me.first_name)}</b></spoiler>\n"
+        f"   ├─ User ID : <spoiler><code>{me.id}</code></spoiler>\n"
         f"   ├─ Username : <spoiler>@{me.username or 'None'}</spoiler>\n"
-        f"   ├─ Status   : {status_icon}\n"
-        f"   ├─ Sudo     : {sudo_status_icon}\n"
-        f"   └─ Prefix   :\n"
-        f"       ├─ Main   : UB ( <code>{u_prefix}</code> ) | Sudo ( <code>{s_prefix}</code> )\n"
+        f"   ├─ Status : {status_icon}\n"
+        f"   ├─ Sudo : {sudo_status_icon}\n"
+        f"   └─ Prefix :\n"
+        f"       ├─ Main : UB ( <code>{u_prefix}</code> ) | Sudo ( <code>{s_prefix}</code> )\n"
         f"       └─ Addons : UB ( <code>{addons_u_prefix}</code> ) | Sudo ( <code>{addons_s_prefix}</code> )\n\n"
         f"▫️ <b>𝐍𝐚𝐯𝐢𝐠𝐚𝐭𝐢𝐨𝐧</b>\n"
-        f"   └─  Total Buttons : {total_buttons}"
+        f"   └─  Total Buttons : {total_buttons}\n"
+        f"──────────────────────────────"
     )
 
     from Main.utils.file_helpers import get_user_button_style
@@ -369,6 +376,13 @@ async def get_session_info_data(index: int, page: int = 1, button_page: int = 1,
         nav_row.append(InlineKeyboardButton("»", f"session_info_{index}_{page}_{button_page+1}", style=user_style))
     
     buttons.append(nav_row)
+
+    # 3.5 Quick Navigation ( [First] [Last] )
+    quick_nav = [
+        InlineKeyboardButton("First", f"session_info_{index}_{page}_1", style=user_style),
+        InlineKeyboardButton("Last", f"session_info_{index}_{page}_{total_pages}", style=user_style)
+    ]
+    buttons.append(quick_nav)
     
     # 4. Back Home (ALWAYS at the bottom)
     buttons.append([InlineKeyboardButton("Back Home", callback_data=f"sessions_list_{page}", style=user_style)])
@@ -525,24 +539,46 @@ async def session_info_chosen_handler(c: Client, cir: ChosenInlineResult):
 # ⌨️ CENTRAL MESSAGE HANDLER FOR INPUTS
 # ============================================================================
 
-@Altruix.bot.on_message(filters.private & Altruix.is_sudo_filter & ~filters.command(["start", "settings", "help", "add"]))
+@Altruix.bot.on_message(filters.private & Altruix.is_sudo_filter & filters.command("cancel"), group=-1)
+@iuser_check
+@log_errors
+async def global_cancel_handler(c: Client, m: Message):
+    """Specific handler for /cancel command with high priority (Group -1)."""
+    user_id = m.from_user.id
+    logger.info(f"[DEBUG-CANCEL] User {user_id} requested /cancel. Clearing states...")
+    
+    # List of all states to clear (Comprehensive list)
+    states_to_clear = [
+        user_profile_edit_state, user_dlphoto_state, user_purge_state,
+        user_join_state, user_leave_state, user_send_msg_state, user_privacy_state,
+        user_bulk_join_state, user_bulk_leave_state, user_bulk_report_state, user_bulk_append_session_state,
+        user_env_input_state, user_creategroup_state, user_edit_confirmation_state,
+        user_text_confirmation_state, user_scan_limit_state, user_confirmation_state,
+        user_exec_state, user_eval_state, user_backup_restore_state
+    ]
+    
+    cleared = 0
+    for state_dict in states_to_clear:
+        if user_id in state_dict:
+            del state_dict[user_id]
+            cleared += 1
+            
+    await m.reply("❌ Input dibatalkan.")
+    return
+
+@Altruix.bot.on_message(filters.private & Altruix.is_sudo_filter & ~filters.command(["start", "settings", "help", "add", "cancel"]))
+
 @iuser_check
 @log_errors
 async def sessions_info_msg_handler(c: Client, m: Message):
     """Central handler for capturing text inputs like bio, username, purge count, join links, etc."""
     user_id = m.from_user.id
     text = m.text.strip() if m.text else ""
+    logger.info(f"[DEBUG-ROUTER] Received PM from {user_id}. Content: '{text}'. Checking states...")
 
-    if text.lower() == "/cancel":
-        # Clear all states
-        for state_dict in [user_profile_edit_state, user_dlphoto_state, user_purge_state,
-                           user_join_state, user_leave_state, user_send_msg_state, user_privacy_state,
-                           user_bulk_join_state, user_bulk_leave_state, user_bulk_report_state, 
-                           user_env_input_state, user_creategroup_state, user_edit_confirmation_state,
-                           user_text_confirmation_state, user_scan_limit_state]:
-            if user_id in state_dict: del state_dict[user_id]
-        await m.reply("❌ Input dibatalkan.")
-        return
+    # The specific /cancel command is now handled by global_cancel_handler (Group -1)
+    # This handler ensures other commands don't trigger state logic accidentally.
+
 
     # 0. Global Confirmation (Text based)
     if user_id in user_edit_confirmation_state and text.lower() in ["ya", "tidak"]:
@@ -558,6 +594,7 @@ async def sessions_info_msg_handler(c: Client, m: Message):
 
     # 0.5 Security Verification for Exports
     if user_id in user_text_confirmation_state and text.lower() == "ok":
+        logger.info(f"[SECURITY] User {user_id} confirmed security prompt with 'ok'. Routing to export handler...")
         state = user_text_confirmation_state[user_id]
         action = state.get("action")
         if action == "export_all_sessions":
@@ -573,6 +610,7 @@ async def sessions_info_msg_handler(c: Client, m: Message):
 
     # 1. Profile Edits
     if user_id in user_profile_edit_state:
+        logger.info(f"[DEBUG-ROUTER] User {user_id} intercepted by user_profile_edit_state")
         state = user_profile_edit_state[user_id]
         if m.photo and state.get('action') == 'change_profile_photo':
             # Handle photo upload directly
@@ -748,6 +786,10 @@ async def sessions_info_msg_handler(c: Client, m: Message):
         from .bulk_handlers import process_bulk_report_input
         await process_bulk_report_input(c, m, user_bulk_report_state[user_id])
         return
+    if user_id in user_bulk_append_session_state:
+        from .bulk_handlers import process_bulk_append_session_input
+        await process_bulk_append_session_input(c, m, user_bulk_append_session_state[user_id])
+        return
 
     # 7. Privacy & Help Inputs
     if user_id in user_privacy_state:
@@ -759,6 +801,7 @@ async def sessions_info_msg_handler(c: Client, m: Message):
 
     # 8. CreateGroup Inputs
     if user_id in user_creategroup_state:
+        logger.info(f"[DEBUG-ROUTER] User {user_id} routed to user_creategroup_state")
         from .creategroup_handlers import process_creategroup_input
         await process_creategroup_input(c, m, text=text)
         return
@@ -774,13 +817,22 @@ async def sessions_info_msg_handler(c: Client, m: Message):
         return
 
     # 10. Scan Limit Inputs
-    from .states import user_scan_limit_state
     if user_id in user_scan_limit_state:
         from .session_handlers import process_scan_limit_input
         await process_scan_limit_input(c, m, user_scan_limit_state[user_id])
         return
 
-    # 11. Custom Link Tracker
+    # 11. Database Backup & Restore Inputs
+    if user_id in user_backup_restore_state:
+        state = user_backup_restore_state[user_id]
+        if m.document:
+            from .backup_handlers import process_backup_restore_input
+            await process_backup_restore_input(c, m, state)
+        else:
+            await m.reply("❌ Silakan kirim file `.zip` backup yang valid.")
+        return
+
+    # 12. Custom Link Tracker
     if user_id in Altruix.user_track_state:
         state = Altruix.user_track_state[user_id]
         step = state.get("step", "")
@@ -813,6 +865,10 @@ async def sessions_info_msg_handler(c: Client, m: Message):
             await m.reply(gt("btn_updated").format(target.capitalize()))
             await m.reply(gt("custom_link_title"), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(gt("back"), callback_data="custom_link_settings")]]))
             return
+
+    # ✅ CRITICAL: Continue propagation if message was not handled by any interactive state.
+    # Without this, all other private message handlers (group > 0) for sudo users would be blocked.
+    await m.continue_propagation()
 
 @Altruix.bot.on_callback_query(filters.regex(r"^edit_confirm_(yes|no)_(\d+)"))
 @iuser_check

@@ -27,9 +27,11 @@ async def create_db_zip() -> str:
     zip_path = os.path.join(os.getcwd(), zip_name) # Temporarily in root
     
     try:
-        # Run shutil.make_archive in a thread to keep async happy
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, lambda: shutil.make_archive(zip_path, 'zip', db_dir))
+        from Main import Altruix
+        async with Altruix.local_db.lock:
+            # Run shutil.make_archive in a thread to keep async happy
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, lambda: shutil.make_archive(zip_path, 'zip', db_dir))
         return f"{zip_path}.zip"
     except Exception as e:
         logger.error(f"Failed to create database backup: {e}")

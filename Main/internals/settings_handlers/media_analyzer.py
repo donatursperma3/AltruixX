@@ -14,6 +14,7 @@ DEFAULT_SCOPE = "all"
 DEFAULT_TYPE = "all"
 DEFAULT_D_CHAT = 0.0
 DEFAULT_D_MSG = 0.0
+DEFAULT_REPORT_LOG = "split"
 
 # Logic Mapping
 SCOPE_LIST = ["all", "groups", "users", "channels", "bots"]
@@ -41,6 +42,8 @@ async def get_ma_settings(user_id):
     blacklist_str = await Altruix.config.get_env(f"MA_BLACKLIST_{user_id}") or ""
     blacklist = [int(p) for p in blacklist_str.split(",") if p.replace('-', '').isdigit()]
     
+    report_log = await Altruix.config.get_env(f"MA_REPORT_LOG_{user_id}") or DEFAULT_REPORT_LOG
+    
     return {
         "scope": scope,
         "type": mtype_list,
@@ -51,7 +54,8 @@ async def get_ma_settings(user_id):
         "batch_msg_size": b_msg_size,
         "batch_msg_delay": b_msg_delay,
         "admin_filter": admin_filter,
-        "blacklist": blacklist
+        "blacklist": blacklist,
+        "report_log": report_log
     }
 
 async def save_ma_settings(user_id, settings):
@@ -66,6 +70,7 @@ async def save_ma_settings(user_id, settings):
     await Altruix.config.sync_env_to_db(f"MA_B_MSG_DELAY_{user_id}", str(settings["batch_msg_delay"]), upsert=True)
     await Altruix.config.sync_env_to_db(f"MA_ADMIN_FILTER_{user_id}", settings.get("admin_filter", "all"), upsert=True)
     await Altruix.config.sync_env_to_db(f"MA_BLACKLIST_{user_id}", ",".join(map(str, settings.get("blacklist", []))), upsert=True)
+    await Altruix.config.sync_env_to_db(f"MA_REPORT_LOG_{user_id}", settings.get("report_log", "split"), upsert=True)
 
 async def get_ma_status_text(user_id):
     """Compiles the descriptive text for the Media Analyzer Dashboard."""
@@ -83,12 +88,12 @@ async def get_ma_status_text(user_id):
             break
 
     text = (
+        f"<blockquote expandable>"
         f"📊 <b>MEDIA ANALYZER DASHBOARD</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"<b>Account:</b> <code>{account_name}</code>\n"
         f"<b>Status:</b> 🏷️ <code>Ready to analyze</code>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"<blockquote expandable>"
         f"<b>Scope:</b> <code>{settings['scope'].capitalize()}</code>\n"
         f"<b>Types:</b> <code>{type_str}</code>\n"
         f"<b>Mode:</b> <code>{mode_str}</code>\n"
@@ -99,6 +104,7 @@ async def get_ma_status_text(user_id):
         f"<b>Batch/Chat:</b> <code>{settings['batch_size']}ch</code> | <b>B-Delay:</b> <code>{int(settings['batch_delay']/60)}m</code>\n"
         f"<b>Batch/Msg:</b> <code>{settings['batch_msg_size']}ms</code> | <b>BM-Delay:</b> <code>{int(settings['batch_msg_delay']/60)}m</code>\n"
         f"<b>Admin Filter:</b> <code>{settings.get('admin_filter', 'all').upper()}</code>\n"
+        f"<b>Report Log:</b> <code>{settings.get('report_log', 'split').upper()}</code>\n"
         f"<b>Blacklisted:</b> <code>{len(settings.get('blacklist', []))} chats</code>\n"
         f"</blockquote>\n"
         f"<i>Adjust settings below and tap Start to begin.</i>"
@@ -112,42 +118,44 @@ def get_ma_kb(user_id, settings):
     
     # Row 1: Scope & Type (Submenu Access)
     kb.append([
-        InlineKeyboardButton(f"🎯 Scope: {settings['scope'].capitalize()}", f"ma_cycle_scope_{user_id}", style=user_style),
-        InlineKeyboardButton(f"🔍 Type: {len(settings['type'])} selected", f"ma_filtermenu_{user_id}", style=user_style)
+        InlineKeyboardButton(f"Scope: {settings['scope'].capitalize()}", f"ma_cycle_scope_{user_id}", style=user_style),
+        InlineKeyboardButton(f"Type: {len(settings['type'])} selected", f"ma_filtermenu_{user_id}", style=user_style)
     ])
     
     # Row 2: Delay Configuration Access
     kb.append([
-        InlineKeyboardButton(f"⏱ Delay/Chat: {settings['delay_chat']}s", f"ma_menu_dchat_{user_id}", style=user_style),
-        InlineKeyboardButton(f"⏳ Delay/Msg: {settings['delay_msg']}s", f"ma_menu_dmsg_{user_id}", style=user_style)
+        InlineKeyboardButton(f"Delay/Chat: {settings['delay_chat']}s", f"ma_menu_dchat_{user_id}", style=user_style),
+        InlineKeyboardButton(f"Delay/Msg: {settings['delay_msg']}s", f"ma_menu_dmsg_{user_id}", style=user_style)
     ])
     
     # Row: Admin Filter
     adm_f = settings.get("admin_filter", "all").upper()
     kb.append([
-        InlineKeyboardButton(f"👑 Adm Filter: {adm_f}", f"ma_toggleadmin_{user_id}", style=user_style)
+        InlineKeyboardButton(f"Adm Filter: {adm_f}", f"ma_toggleadmin_{user_id}", style=user_style)
     ])
     
     # Row: Blacklist Management
     bl_count = len(settings.get("blacklist", []))
+    rep_log = settings.get("report_log", "split").upper()
     kb.append([
-        InlineKeyboardButton(f"🚫 List Blacklist: ({bl_count})", f"ma_bl_list_{user_id}", style=user_style)
+        InlineKeyboardButton(f"List Blacklist: ({bl_count})", f"ma_bl_list_{user_id}", style=user_style),
+        InlineKeyboardButton(f"Log: {rep_log}", f"ma_reportlog_{user_id}", style=user_style)
     ])
     
     # Row 3: Batch Configuration Access
-    batch_str = f"📦 Batch: {settings['batch_size']}ch / {settings['batch_msg_size']}ms"
+    batch_str = f"Batch: {settings['batch_size']}chats / {settings['batch_msg_size']}msgs"
     kb.append([
         InlineKeyboardButton(batch_str, f"ma_menu_batch_{user_id}", style=user_style)
     ])
     
     # Row 4: Main Action & Close
     kb.append([
-        InlineKeyboardButton("🚀 START SCAN", f"ma_start_{user_id}", style=user_style)
+        InlineKeyboardButton("START SCAN", f"ma_start_{user_id}", style=user_style)
     ])
     
     kb.append([
-        InlineKeyboardButton("🔄 Refresh", f"ma_refresh_{user_id}", style=user_style),
-        InlineKeyboardButton("❌ Close", f"ma_close_{user_id}", style=user_style)
+        InlineKeyboardButton("Refresh", f"ma_refresh_{user_id}", style=user_style),
+        InlineKeyboardButton("Close", f"ma_close_{user_id}", style=user_style)
     ])
     
     return InlineKeyboardMarkup(kb)
@@ -172,7 +180,7 @@ def get_ma_submenu_kb(user_id, settings, menu_type):
             InlineKeyboardButton("+0.5s", f"ma_set_dmsg_p05_{user_id}", style=user_style)
         ])
     
-    kb.append([InlineKeyboardButton("⬅️ Back to Dashboard", f"ma_refresh_{user_id}", style=user_style)])
+    kb.append([InlineKeyboardButton("Back", f"ma_refresh_{user_id}", style=user_style)])
     return InlineKeyboardMarkup(kb)
 
 def get_ma_filter_submenu_text(settings):
@@ -199,11 +207,11 @@ def get_ma_filter_submenu_kb(user_id, settings):
     
     # Grid layout
     kb.append([get_f_btn("all", "All Media")])
-    kb.append([get_f_btn("photo", "Photo 🖼"), get_f_btn("video", "Video 🎬")])
-    kb.append([get_f_btn("gif", "GIF 🎞"), get_f_btn("document", "Doc 📄")])
-    kb.append([get_f_btn("audio", "Audio 🎵"), get_f_btn("voice", "Voice 🎤")])
+    kb.append([get_f_btn("photo", "Photo"), get_f_btn("video", "Video")])
+    kb.append([get_f_btn("gif", "GIF"), get_f_btn("document", "Doc")])
+    kb.append([get_f_btn("audio", "Audio"), get_f_btn("voice", "Voice")])
     
-    kb.append([InlineKeyboardButton("⬅️ Back to Dashboard", f"ma_refresh_{user_id}", style=user_style)])
+    kb.append([InlineKeyboardButton("Back", f"ma_refresh_{user_id}", style=user_style)])
     return InlineKeyboardMarkup(kb)
 
 def get_ma_batch_submenu_text():
@@ -223,14 +231,14 @@ def get_ma_batch_submenu_kb(user_id, settings):
         return f"{m}m {s}s" if m and s else (f"{m}m" if m else f"{s}s")
     
     b_size = settings['batch_size']
-    kb.append([InlineKeyboardButton(f"📦 Batch/Chat: {b_size} chats", "ma_noop", style=user_style)])
+    kb.append([InlineKeyboardButton(f"Batch/Chat: {b_size} chats", "ma_noop", style=user_style)])
     kb.append([
         InlineKeyboardButton("-5 chat", f"ma_set_batch_m5_{user_id}", style=user_style),
         InlineKeyboardButton("+5 chat", f"ma_set_batch_p5_{user_id}", style=user_style)
     ])
     
     b_delay = fmt_time(settings['batch_delay'])
-    kb.append([InlineKeyboardButton(f"⏱ Delay/Bchat: {b_delay}", "ma_noop", style=user_style)])
+    kb.append([InlineKeyboardButton(f"Delay/Bchat: {b_delay}", "ma_noop", style=user_style)])
     kb.append([
         InlineKeyboardButton("-1m", f"ma_set_bdelay_m60_{user_id}", style=user_style),
         InlineKeyboardButton("-5s", f"ma_set_bdelay_m5_{user_id}", style=user_style),
@@ -239,14 +247,14 @@ def get_ma_batch_submenu_kb(user_id, settings):
     ])
     
     b_msg_size = settings['batch_msg_size']
-    kb.append([InlineKeyboardButton(f"✉️ Batch/Msg: {b_msg_size} msgs", "ma_noop", style=user_style)])
+    kb.append([InlineKeyboardButton(f"Batch/Msg: {b_msg_size} msgs", "ma_noop", style=user_style)])
     kb.append([
         InlineKeyboardButton("-10 msg", f"ma_set_bmsg_m10_{user_id}", style=user_style),
         InlineKeyboardButton("+10 msg", f"ma_set_bmsg_p10_{user_id}", style=user_style)
     ])
     
     b_msg_delay = fmt_time(settings['batch_msg_delay'])
-    kb.append([InlineKeyboardButton(f"⏱ Delay/BMsg: {b_msg_delay}", "ma_noop", style=user_style)])
+    kb.append([InlineKeyboardButton(f"Delay/BMsg: {b_msg_delay}", "ma_noop", style=user_style)])
     kb.append([
         InlineKeyboardButton("-1m", f"ma_set_bmdelay_m60_{user_id}", style=user_style),
         InlineKeyboardButton("-5s", f"ma_set_bmdelay_m5_{user_id}", style=user_style),
@@ -254,7 +262,7 @@ def get_ma_batch_submenu_kb(user_id, settings):
         InlineKeyboardButton("+1m", f"ma_set_bmdelay_p60_{user_id}", style=user_style)
     ])
         
-    kb.append([InlineKeyboardButton("⬅️ Back to Dashboard", f"ma_refresh_{user_id}", style=user_style)])
+    kb.append([InlineKeyboardButton("Back", f"ma_refresh_{user_id}", style=user_style)])
     return InlineKeyboardMarkup(kb)
 
 MA_CACHE_FILE = "cache/ma_reports.json"
@@ -320,9 +328,18 @@ def generate_ma_report_page(user_id, task_id: str, page: int = 1):
     end_idx = start_idx + per_page
     current_chunk = results[start_idx:end_idx]
     
+    # Account name resolution
+    account_name = str(user_id)
+    for cl in Altruix.clients:
+        if cl.me and cl.me.id == user_id:
+            account_name = (cl.me.first_name or "") + (" " + cl.me.last_name if cl.me.last_name else "")
+            account_name = account_name.strip() or str(user_id)
+            break
+
     text = (
         f"📋 <b>Target Chats</b>\n"
         f"Page {page}/{max_pages}\n"
+        f"<b>Account:</b> {account_name}\n"
         f"━━━━━━━━━━━━━━━━━━\n"
         f"<b>Total:</b> {total_chats} chats\n\n"
         f"<b>Filters:</b>\n"

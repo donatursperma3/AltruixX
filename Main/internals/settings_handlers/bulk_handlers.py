@@ -17,12 +17,16 @@ from Main.core.client import Altruix
 
 # Utils & States
 from .utils import edit_cb, check_authorization, send_log_notification, gt
-from .states import user_bulk_join_state, user_bulk_leave_state, user_bulk_report_state
+from .states import user_bulk_join_state, user_bulk_leave_state, user_bulk_report_state, user_bulk_append_session_state
 
 # Logger
 logger = logging.getLogger(__name__)
 
+# Version
+BULK_VERSION = "1.0.420H" # ✅ Added TXT list support
+
 # ====================== BULK CONTROLS MENU ======================
+
 @Altruix.bot.on_callback_query(filters.regex(r"^bulk_controls_menu$"))
 @iuser_check
 @log_errors
@@ -36,9 +40,11 @@ async def bulk_controls_menu_handler(c: Client, cb: CallbackQuery):
     user_style = get_user_button_style(user_id)
     
     text = (
-        "<b>🛠️ Bulk Controls Manager</b>\n\n"
+        "<b>🛠️ Bulk Controls Manager</b>\n"
+        f"🏷️ <b>Version:</b> <code>{BULK_VERSION}</code>\n\n"
         "Manage multiple sessions or system-wide actions at once:"
     )
+
     
     buttons = [
         [
@@ -47,11 +53,14 @@ async def bulk_controls_menu_handler(c: Client, cb: CallbackQuery):
         ],
         [
             InlineKeyboardButton("🚩 Bulk Report", "bulk_report_menu", style=user_style),
-            InlineKeyboardButton("🏓 Test Ping All", "test_ping_all_confirmation", style=user_style)
+            InlineKeyboardButton("🏓 Bulk Ping", "test_ping_all_confirmation", style=user_style)
         ],
         [
             InlineKeyboardButton("📤 Export Sessions", "export_all_sessions_confirmation", style=user_style),
-            InlineKeyboardButton("📲 Export Phones", "export_all_phones_confirmation", style=user_style)
+            InlineKeyboardButton("➕ Append Session", "bulk_append_session_menu", style=user_style)
+        ],
+        [
+            InlineKeyboardButton("📲 Export Phones", "export_all_phones_confirmation", style=user_style),
         ],
         [
             InlineKeyboardButton("🔄 Force Restart", "sys_ctrl_restart", style=user_style),
@@ -59,7 +68,7 @@ async def bulk_controls_menu_handler(c: Client, cb: CallbackQuery):
         ],
         [
             InlineKeyboardButton("🔙 Back to Settings", "settings_menu", style=user_style)
-        ]
+        ],
     ]
     
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
@@ -684,3 +693,287 @@ async def process_gpurgeme_custom(c: Client, m: Message, state: dict):
     if user_id in user_privacy_state: del user_privacy_state[user_id]
     await asyncio.sleep(2)
     await m.reply("🔄 Kembali ke dashboard...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", f"session_info_{index}_{state.get('page', 1)}", style=user_style)]]) )
+
+# ====================== BULK APPEND SESSION FEATURE ======================
+@Altruix.bot.on_callback_query(filters.regex(r"^bulk_append_session_menu$"))
+@iuser_check
+@log_errors
+async def bulk_append_session_menu_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk menu bulk append session"""
+    if not await check_authorization(cb): return
+    await cb.answer()
+    
+    user_id = cb.from_user.id
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(user_id)
+    
+    text = (
+        "<b>➕ Bulk Append Session</b>\n\n"
+        "Fitur ini memungkinkan Anda untuk menambahkan banyak sesi sekaligus ke dalam sistem.\n\n"
+        "📂 <b>Metode yang Didukung:</b>\n"
+        "1. <b>ZIP File:</b> Kirim file ZIP berisi file <code>.session</code>.\n"
+        "2. <b>String Session:</b> Kirim satu atau beberapa baris string session.\n\n"
+        "⚠️ <b>Note:</b> Sesi yang sudah ada akan diabaikan (duplikasi dicegah otomatis)."
+    )
+    
+    buttons = [
+        [InlineKeyboardButton("🚀 Start Appending", callback_data="bulk_append_session_start", style=user_style)],
+        [InlineKeyboardButton("🔙 Back", callback_data="bulk_controls_menu", style=user_style)]
+    ]
+    
+    await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
+
+@Altruix.bot.on_callback_query(filters.regex(r"^bulk_append_session_start$"))
+@iuser_check
+@log_errors
+async def bulk_append_session_start_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk memulai proses input append session"""
+    if not await check_authorization(cb): return
+    await cb.answer()
+    
+    user_id = cb.from_user.id
+    user_bulk_append_session_state[user_id] = {'step': 'waiting_input'}
+    
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(user_id)
+    
+    await edit_cb(cb, 
+        text="<b>➕ Bulk Append Session - Ready</b>\n\n"
+             "Silakan kirim salah satu dari berikut ini:\n"
+             "• File <b>.zip</b> berisi file session\n"
+             "• File <b>.txt</b> berisi daftar session string\n"
+             "• String session langsung (Pyrogram v2 format)\n\n"
+             "❌ <b>Cancel:</b> Klik tombol di bawah atau ketik /cancel",
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", "bulk_append_session_cancel", style=user_style)]])
+    )
+
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^bulk_append_session_cancel$"))
+@iuser_check
+@log_errors
+async def bulk_append_session_cancel_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk membatalkan proses append session melalui tombol"""
+    user_id = cb.from_user.id
+    if user_id in user_bulk_append_session_state:
+        del user_bulk_append_session_state[user_id]
+    
+    await cb.answer("❌ Input dibatalkan.")
+    from .bulk_handlers import bulk_append_session_menu_handler
+    await bulk_append_session_menu_handler(c, cb)
+
+
+async def process_bulk_append_session_input(c: Client, m: Message, state: dict):
+    """Memproses input (file atau teks) untuk bulk append session"""
+    user_id = m.from_user.id
+    
+    if m.document:
+        file_name = m.document.file_name.lower()
+        if not (file_name.endswith(".zip") or file_name.endswith(".txt")):
+            await m.reply("❌ <b>Error:</b> Mohon kirim file format <b>.zip</b> atau <b>.txt</b>.")
+            return
+        
+        file_path = await m.download()
+        
+        if file_name.endswith(".zip"):
+            proc_msg = await m.reply("⏳ <b>Memproses file ZIP...</b>", parse_mode=ParseMode.HTML)
+            # Logic for ZIP extraction and session adding
+            import zipfile
+            import shutil
+            extract_path = f"Main/cache/append_{user_id}"
+            if os.path.exists(extract_path): shutil.rmtree(extract_path)
+            os.makedirs(extract_path, exist_ok=True)
+            
+            try:
+                with zipfile.ZipFile(file_path, 'r') as zip_ref:
+                    zip_ref.extractall(extract_path)
+                
+                sessions_found = []
+                for root, dirs, files in os.walk(extract_path):
+                    for f in files:
+                        if f.endswith(".session"):
+                            sessions_found.append(os.path.join(root, f))
+                
+                if not sessions_found:
+                    await proc_msg.edit("❌ <b>Error:</b> Tidak ditemukan file <code>.session</code> di dalam ZIP.")
+                    return
+
+                await proc_msg.edit(f"✅ Ditemukan <b>{len(sessions_found)}</b> file sesi. Memulai proses append...")
+                await execute_bulk_append_sessions(c, m, sessions_found, is_file=True)
+                
+            except Exception as e:
+                await proc_msg.edit(f"❌ <b>Error:</b> {str(e)}")
+            finally:
+                if os.path.exists(file_path): os.remove(file_path)
+                if os.path.exists(extract_path): shutil.rmtree(extract_path)
+                if user_id in user_bulk_append_session_state: del user_bulk_append_session_state[user_id]
+        
+        elif file_name.endswith(".txt"):
+            proc_msg = await m.reply("⏳ <b>Membaca file TXT...</b>", parse_mode=ParseMode.HTML)
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    content = f.read().strip()
+                
+                valid_sessions = []
+                
+                # Check for Python list format: ['session1', 'session2']
+                if content.startswith("[") and content.endswith("]"):
+                    import re
+                    # Extract everything inside quotes
+                    found = re.findall(r"['\"]([^'\"]+)['\"]", content)
+                    valid_sessions = [s.strip() for s in found if len(s.strip()) > 50]
+                
+                # Fallback to newline-separated format if no sessions found via list parsing
+                if not valid_sessions:
+                    lines = content.split("\n")
+                    valid_sessions = [l.strip() for l in lines if len(l.strip()) > 50]
+                
+                if not valid_sessions:
+                    await proc_msg.edit("❌ <b>Error:</b> Tidak ditemukan session string yang valid di dalam file TXT.")
+                    return
+                
+                await proc_msg.edit(f"✅ Ditemukan <b>{len(valid_sessions)}</b> session string. Memulai proses append...")
+                await execute_bulk_append_sessions(c, m, valid_sessions, is_file=False)
+
+            except Exception as e:
+                await proc_msg.edit(f"❌ <b>Error:</b> {str(e)}")
+            finally:
+                if os.path.exists(file_path): os.remove(file_path)
+                if user_id in user_bulk_append_session_state: del user_bulk_append_session_state[user_id]
+
+
+    elif m.text:
+        text = m.text.strip()
+        lines = text.split("\n")
+        valid_sessions = [l.strip() for l in lines if len(l.strip()) > 50] # basic length check for Pyrogram strings
+        
+        if not valid_sessions:
+            await m.reply("❌ <b>Error:</b> Tidak ditemukan session string yang valid.")
+            return
+            
+        await m.reply(f"⏳ Memproses <b>{len(valid_sessions)}</b> session string...")
+        await execute_bulk_append_sessions(c, m, valid_sessions, is_file=False)
+        if user_id in user_bulk_append_session_state: del user_bulk_append_session_state[user_id]
+    else:
+        await m.reply("❌ Mohon kirim file ZIP atau teks session string.")
+
+async def execute_bulk_append_sessions(c: Client, m: Message, sessions: list, is_file: bool = False):
+    """Esekusi penambahan sesi secara massal"""
+    success, failed, skipped = 0, 0, 0
+    total = len(sessions)
+    error_log = []  # Collect per-session reasons
+    
+    report_msg = await m.reply(f"🔄 Progress: 0/{total}")
+    
+    for i, sess_data in enumerate(sessions):
+        session_label = f"Session #{i+1}"
+        try:
+            if is_file:
+                file_name = os.path.basename(sess_data)
+                dest = os.path.join("Main/sessions", file_name)
+                if not os.path.exists(dest):
+                    shutil.copy(sess_data, dest)
+                    success += 1
+                else:
+                    skipped += 1
+                    error_log.append(f"⚠️ {session_label}: File sudah ada ({file_name})")
+            else:
+                # String based — skip_reload=True to avoid per-session module reload
+                sess_preview = f"{sess_data[:15]}...{sess_data[-10:]}" if len(sess_data) > 30 else sess_data
+                res = await Altruix.add_session(sess_data, status=None, user=m.from_user, skip_reload=True)
+                if res:
+                    me = getattr(res, 'myself', None) or getattr(res, 'me', None)
+                    name = getattr(me, 'first_name', 'Unknown') if me else 'Unknown'
+                    success += 1
+                else:
+                    skipped += 1
+                    error_log.append(f"⚠️ {session_label}: Duplikat (akun sudah aktif)")
+
+        except Exception as e:
+            logger.error(f"Failed to append session #{i+1}: {e}")
+            failed += 1
+            error_reason = str(e)[:120]
+            error_log.append(f"❌ {session_label}: {error_reason}")
+            
+        if (i + 1) % 5 == 0 or (i + 1) == total:
+            try: await report_msg.edit(f"🔄 Progress: {i+1}/{total}\n✅ Success: {success}\n⚠️ Skipped: {skipped}\n❌ Failed: {failed}")
+            except: pass
+            
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(m.from_user.id)
+
+    await report_msg.edit(
+        f"🏁 <b>Bulk Append Completed</b>\n\n"
+        f"📊 <b>Summary:</b>\n"
+        f"• Total: {total}\n"
+        f"• Berhasil: {success}\n"
+        f"• Dilewati: {skipped}\n"
+        f"• Gagal: {failed}\n\n"
+        f"<b>Apakah Anda ingin me-restart sistem sekarang agar sesi baru terdeteksi?</b>",
+        reply_markup=InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("✅ Yes, Restart Now", "sys_ctrl_restart", style=user_style),
+                InlineKeyboardButton("❌ No, Later", "bulk_controls_menu", style=user_style)
+            ]
+        ])
+    )
+
+    # Send detailed error/skip log to log group via bot assistant (auto-split)
+    if error_log:
+        try:
+            log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_ID))
+            
+            # Header for every chunk
+            header = (
+                f"📋 <b>BULK APPEND SESSION - DETAILED LOG</b>\n"
+                f"{'━' * 25}\n"
+                f"• Total: <code>{total}</code>\n"
+                f"• ✅ Success: <code>{success}</code>\n"
+                f"• ⚠️ Skipped: <code>{skipped}</code>\n"
+                f"• ❌ Failed: <code>{failed}</code>\n\n"
+                f"<b>Detail Reason:</b>\n"
+            )
+            footer = (
+                f"\n• Waktu: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>\n"
+                f"{'━' * 25}"
+            )
+            
+            # Split error_log into chunks that fit within 4096 char limit
+            MAX_LEN = 3800  # Safe margin (4096 - header/footer/blockquote overhead)
+            chunks = []
+            current_chunk = []
+            current_len = 0
+            
+            for entry in error_log:
+                entry_len = len(entry) + 1  # +1 for newline
+                if current_len + entry_len > MAX_LEN and current_chunk:
+                    chunks.append(current_chunk)
+                    current_chunk = []
+                    current_len = 0
+                current_chunk.append(entry)
+                current_len += entry_len
+            
+            if current_chunk:
+                chunks.append(current_chunk)
+            
+            # Send each chunk as a separate message
+            for idx, chunk in enumerate(chunks):
+                chunk_text = "\n".join(chunk)
+                part_label = f" (Part {idx+1}/{len(chunks)})" if len(chunks) > 1 else ""
+                log_message = (
+                    f"<blockquote expandable>"
+                    f"{header}"
+                    f"{chunk_text}"
+                    f"{footer}{part_label}"
+                    f"</blockquote>"
+                )
+                await c.send_message(log_chat_id, log_message, parse_mode=ParseMode.HTML)
+                
+        except Exception as le:
+            logger.error(f"Failed to send bulk append log: {le}")
+
+    
+    # Notify logging channel (general notification)
+    await send_log_notification(c, 'bulk_append_session', 0, m.from_user, True, additional_info={'Total': total, 'Success': success})
+

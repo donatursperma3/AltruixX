@@ -27,7 +27,7 @@ from Main.plugins.userbot.xtaskmanager import register_task, unregister_task, ge
 # ============================================================================
 # SETTINGS & CONSTANTS
 # ============================================================================
-PLUGIN_VERSION = "1.0.611"
+PLUGIN_VERSION = "1.0.618"
 FLOOD_PROTECTION_DELAY = 1.5  # Jeda antar story download (detik), naik otomatis saat FloodWait
 MAX_RETRIES = 2                # Maksimal retry per story jika terkena FloodWait
 
@@ -241,16 +241,54 @@ async def process_story(c: Client, target_chat_id: int, target_user: str, story_
             clean_target_name = re.sub(r'<[^>]+>', '', str(target_user))
             wm_text = ""
             if watermark:
-                # Resolve target ID if possible
+                # [v1.0.615] Resolve target chat for clickable source mention
                 target_id = "N/A"
+                source_display = clean_target_name
                 try:
-                    target_id = (await c.get_chat(target_user)).id
+                    chat = await c.get_chat(target_user)
+                    target_id = chat.id
+                    
+                    # Determine link based on type
+                    if chat.type in [enums.ChatType.CHANNEL, enums.ChatType.SUPERGROUP, enums.ChatType.GROUP]:
+                        username = getattr(chat, "username", None)
+                        if username:
+                            link = f"https://t.me/{username}"
+                        else:
+                            stripped_id = str(target_id).replace("-100", "")
+                            link = f"https://t.me/c/{stripped_id}/1"
+                    else:
+                        link = f"tg://user?id={target_id}"
+                    
+                    source_name = html.escape(chat.first_name or chat.title or str(target_user))
+                    source_display = f'<a href="{link}">{source_name}</a>'
+                except:
+                    # Fallback to plain if get_chat fails
+                    source_display = html.escape(clean_target_name)
+
+                # [v1.0.612] Calculate media size for watermark
+                media_size_str = "N/A"
+                try:
+                    raw_size = None
+                    if getattr(story, "video", None):
+                        raw_size = getattr(story.video, "file_size", None)
+                    elif getattr(story, "photo", None):
+                        raw_size = getattr(story.photo, "file_size", None)
+                    if raw_size and raw_size > 0:
+                        if raw_size >= 1073741824:
+                            media_size_str = f"{raw_size / 1073741824:.2f} GB"
+                        elif raw_size >= 1048576:
+                            media_size_str = f"{raw_size / 1048576:.2f} MB"
+                        elif raw_size >= 1024:
+                            media_size_str = f"{raw_size / 1024:.2f} KB"
+                        else:
+                            media_size_str = f"{raw_size} B"
                 except: pass
                 # Premium watermark style (v1.0.576)
                 wm_text = (
                     f"\n\n• ID: <code>{target_id}</code>"
-                    f"\n• Chat: {clean_target_name}"
+                    f"\n• Source: {source_display}"
                     f"\n• Story ID: <code>{story_id}</code>"
+                    f"\n• Size: <code>{media_size_str}</code>"
                     f"\n\n<i>Powered by Altroid-X</i>"
                 )
 
@@ -686,7 +724,7 @@ async def list_stories_cmd(c: Client, m: Message):
                 link = f"tg://user?id={target_id}"
             
             # Format: Clickable name with double-quoted href for inline compatibility
-            target_display = f'{clean_name} (<a href="{link}"><b>{target_id}</b></a>)'
+            target_display = f'{clean_name} (<a href="{link}"><code>{target_id}</code></a>)'
             target_username = getattr(target_peer, "username", None) or target_id
             
             # Store raw components for robust rebuilding in Bot Assistant
@@ -718,7 +756,7 @@ async def list_stories_cmd(c: Client, m: Message):
             
             msg_link = ""
             if session and session.get("menu_msg_id") and str(target_cid).startswith("-100"):
-                msg_link = f"https://t.me/c/{str(target_cid)[4:]}/{session['menu_msg_id']}"
+                msg_link = f"https://t.me/c/{str(target_cid).replace("-100", "").lstrip("-")}/{session['menu_msg_id']}"
             
             if sent_to_log:
                 success_text = "✅ <b>Story Picker Menu sent to Log Group!</b>\n\n<i>Check your Log Group to choose a story.</i>"
@@ -1149,7 +1187,7 @@ async def show_story_menu(c: Client, chat_id, target_username, target_display, s
              _save_all_sessions(_STORY_SESSIONS_CACHE)
         return None
 
-async def execute_story_download(session, story_ids_to_dl):
+async def execute_story_download(session, story_ids_to_dl, resume=False):
     """
     Background task: download story-story yang dipilih user.
     Dipanggil via asyncio.create_task() dari callback handler agar tidak memblokir event loop.
@@ -1159,8 +1197,8 @@ async def execute_story_download(session, story_ids_to_dl):
     sid = session.get("_id", "unknown")
     Altruix.log(f"[execute_story_download] START: sid={sid}, count={len(story_ids_to_dl)}", level=logging.INFO)
     
-    # Generate Task ID for Monitoring (.tracklist / .canceltask)
-    tid = generate_task_id("ST")
+    # Generate Task ID for Monitoring (.tasklist / .taskcancel)
+    tid = generate_task_id("RES") if resume else generate_task_id("ST")
     
     # Initialize counters at function scope
     stories_count = 0
@@ -1180,6 +1218,21 @@ async def execute_story_download(session, story_ids_to_dl):
     chat_id = session["chat_id"]
     target = session["target"]
     target_display = session["target_display"]
+    target_id = session.get("target_id")
+    target_name = session.get("target_name")
+    
+    # 🆕 Build a "Source Name Only" display for separated log style
+    if target_name and target_id:
+        target_name_esc = html.escape(target_name)
+        # Using a generic tg:// link or reconstruct based on type if possible. 
+        # For simplicity in logs, we use the name with the preserved session link if it's there,
+        # but the userbot previously built target_display with name + (ID).
+        # We can extract the name part by splitting at ' (' if it follows the pattern.
+        source_name_only = target_display.split(" (<a")[0] if " (<a" in target_display else target_display
+    else:
+        source_name_only = target_display
+    
+    source_id_display = f"{target_id}" if target_id else "-"
     
     # [v1.0.612] Final stabilization: Only edit if sent via Direct/Log mode (Tahap 3)
     # Inline results (Tahap 1/2) cannot be reliably edited via chat/msg_id.
@@ -1201,7 +1254,18 @@ async def execute_story_download(session, story_ids_to_dl):
     progress_msg = None
     try:
         alb_text = " (Album Mode)" if session.get("send_as_album") else ""
-        notif_text = f"⏳ <b>Memulai Download Story{alb_text}...</b>\nTarget: {target_display}\nTotal Story: {total}\nTask ID: <code>{tid}</code>\nSistem: Background Task"
+        alb_status = "ON" if session.get("send_as_album") else "OFF"
+        notif_text = (
+            f"<blockquote expandable>"
+            f"⏳ <b>Memulai Download Story{alb_text}...</b>\n"
+            f"• Target: {source_name_only}\n"
+            f"• Target ID: <code>{source_id_display}</code>\n"
+            f"• Total Story: {total}\n"
+            f"• Album: <b>{alb_status}</b>\n"
+            f"• Task ID: <code>{tid}</code>\n"
+            f"• Sistem: Background Task"
+            f"</blockquote>"
+        )
         progress_msg = await bot_client.send_message(log_chat_id, notif_text, parse_mode=enums.ParseMode.HTML, disable_web_page_preview=True)
         Altruix.log(f"[execute_story_download] {tid} | Sent start notification to {log_chat_id}", level=logging.DEBUG)
     except Exception as e:
@@ -1218,9 +1282,93 @@ async def execute_story_download(session, story_ids_to_dl):
         Altruix.log(f"[execute_story_download] {tid} | Skipping background dashboard edits (Inline Mode). Progress routed to log group.", level=logging.DEBUG)
     
     # Master execution block to handle cancellation and cleanup
+    # [v1.0.613] Shared mutable state for background heartbeat
+    _hb_state = {
+        "stories_count": 0, "failed_count": 0, "total": total,
+        "current_story": None, "current_p": 0, "active": True,
+        "status_text": session.get("status_text", ""),
+    }
+    
+    # [v1.0.617] Start timer for duration tracking
+    start_time_val = time.time()
+    
+    # [v1.0.613] Background heartbeat: updates progress_msg every 10s so it doesn't look stuck
+    async def _progress_heartbeat():
+        """Periodically update progress_msg to show the download is still alive."""
+        last_text = ""
+        while _hb_state["active"]:
+            await asyncio.sleep(10)
+            if not _hb_state["active"] or not progress_msg:
+                break
+            try:
+                sc = _hb_state["stories_count"]
+                fc = _hb_state["failed_count"]
+                cp = _hb_state["current_p"]
+                tt = _hb_state["total"]
+                cs = _hb_state["current_story"]
+                st = _hb_state.get("status_text", "")
+                alb_txt = " (Album)" if session.get("send_as_album") else ""
+                alb_status = "ON" if session.get("send_as_album") else "OFF"
+                
+                # Calculate elapsed time
+                elapsed = int(time.time() - start_time_val)
+                mins, secs = divmod(elapsed, 60)
+                hours, mins = divmod(mins, 60)
+                duration_str = f"{hours:02d}:{mins:02d}:{secs:02d}" if hours > 0 else f"{mins:02d}:{secs:02d}"
+                
+                new_text = (
+                    f"<blockquote expandable>"
+                    f"🔄 <b>Download Story{alb_txt} In Progress...</b>\n"
+                    f"• Target: {source_name_only}\n"
+                    f"• Target ID: <code>{source_id_display}</code>\n"
+                    f"• Progress: {cp}/{tt} (✅ {sc} | ❌ {fc})\n"
+                    f"• Album: <b>{alb_status}</b>\n"
+                    f"• Durasi: <code>{duration_str}</code>\n"
+                    f"• Task ID: <code>{tid}</code>"
+                    f"</blockquote>"
+                )
+                if st:
+                    new_text += f"\n⚡ {st}"
+                    
+                if new_text != last_text:
+                    await progress_msg.edit_text(new_text, parse_mode=enums.ParseMode.HTML, disable_web_page_preview=True)
+                    last_text = new_text
+            except BotMessageNotModified:
+                pass
+            except Exception:
+                pass
+    
+    heartbeat_task = asyncio.create_task(_progress_heartbeat()) if progress_msg else None
+    
+    # [v1.0.618] Initialize placeholders for status reporting
+    duration_str = "00:00"
+    
     try:
+        # [v1.0.618] Pull session specific settings early for persistence
+        watermark = session.get("watermark", True)
+        send_as_album = session.get("send_as_album", False)
+        reply_to_id = session.get("reply_to_id")
+        
+        # [v1.0.616] Persistence: Store initial context for potential resume
+        session_id = session.get("_id")
+        if session_id:
+            await save_session(session_id, update_dict={
+                "status": "downloading",
+                "chat_id": chat_id,
+                "target": target,
+                "target_display": target_display,
+                "story_ids_to_dl": story_ids_to_dl,
+                "watermark": watermark,
+                "send_as_album": send_as_album,
+                "reply_to_id": reply_to_id,
+                "bot_id": bot_id,
+                "task_id_saved": tid
+            })
+
         # Register the task in global registry
         details = f"Target: {target} | Total: {len(story_ids_to_dl)}"
+        if tid.startswith("#RES"):
+            details = f"[RESUME] {details}"
         register_task(tid, asyncio.current_task(), "Story Downloader", "xstories", c.me.id, details)
         
         # Update menu only for Direct-mode sessions [Stop 403 Flood]
@@ -1252,14 +1400,13 @@ async def execute_story_download(session, story_ids_to_dl):
             except Exception as e:
                 Altruix.log(f"Username resolve error: {e}", level=logging.DEBUG)
         
-        watermark = session.get("watermark", True)
-        reply_to_id = session.get("reply_to_id")
-        send_as_album = session.get("send_as_album", False)
-        
         media_group = []
         files_to_clean = []
         
-        for story_id in story_ids_to_dl:
+        # [v1.0.616] Work with a copy of the list to allow incremental updates to the original
+        remaining_ids = list(story_ids_to_dl)
+        
+        for story_id in list(remaining_ids):
             try:
                 current_p = stories_count + failed_count + 1
                 sid_val = session.get("_id")
@@ -1279,13 +1426,16 @@ async def execute_story_download(session, story_ids_to_dl):
                 if sid_val: await save_session(sid_val, update_dict={"status_text": session["status_text"]})
                 Altruix.log(f"[execute_story_download] {tid} | {prep_text} story {story_id} ({current_p}/{total})...", level=logging.DEBUG)
                 
+                # [v1.0.613] Sync heartbeat state for background progress updates
+                _hb_state.update({"current_p": current_p, "current_story": story_id, "status_text": session["status_text"], "stories_count": stories_count, "failed_count": failed_count})
+                
                 try:
                     # process_story handles retries and floodwaits internally
                     if send_as_album:
                         # return_media=True returns (InputMedia, file_path)
                         res = await asyncio.wait_for(
                             process_story(c, chat_id, story_target, story_id, None, watermark=watermark, session=session, reply_to_id=reply_to_id, return_media=True),
-                            timeout=300.0
+                            timeout=600.0  # [v1.0.619] Raised from 300s: process_story has multi-stage pipeline overhead
                         )
                         if res and isinstance(res, tuple) and res[0]:
                             media_group.append(res[0])
@@ -1300,8 +1450,21 @@ async def execute_story_download(session, story_ids_to_dl):
                         if len(media_group) == 5:
                             try:
                                 await c.send_media_group(chat_id, media_group, reply_to_message_id=reply_to_id)
+                                stories_count += len(media_group)
+                                # [v1.0.616] Persistence: Update remaining stories after successful chunk
+                                for s_id in story_ids_to_dl[current_p-5:current_p]:
+                                    if s_id in remaining_ids: 
+                                        try: remaining_ids.remove(s_id)
+                                        except: pass
+                                if sid_val: await save_session(sid_val, update_dict={"story_ids_to_dl": list(remaining_ids)})
                             except Exception as album_e:
                                 Altruix.log(f"Failed to send media group chunk: {album_e}", level=logging.ERROR)
+                                # In case of album failure, we still remove them to avoid infinite loop on resume
+                                for s_id in story_ids_to_dl[current_p-5:current_p]:
+                                    if s_id in remaining_ids: 
+                                        try: remaining_ids.remove(s_id)
+                                        except: pass
+                                if sid_val: await save_session(sid_val, update_dict={"story_ids_to_dl": list(remaining_ids)})
                             finally:
                                 # Cleanup local files immediately after sending
                                 for f in files_to_clean:
@@ -1313,23 +1476,41 @@ async def execute_story_download(session, story_ids_to_dl):
                     else:
                         success = await asyncio.wait_for(
                             process_story(c, chat_id, story_target, story_id, None, watermark=watermark, session=session, reply_to_id=reply_to_id, raise_errors=True),
-                            timeout=300.0
+                            timeout=600.0  # [v1.0.619] Raised from 300s: process_story has multi-stage pipeline overhead
                         )
                 except asyncio.TimeoutError:
-                    Altruix.log(f"Story {story_id} TIMEOUT after 300s.", level=logging.WARNING)
+                    Altruix.log(f"Story {story_id} TIMEOUT after 600s.", level=logging.WARNING)
                     success = False
-                    dl_err_msg = "Waktu pemrosesan API habis (Timeout 300 detik)."
+                    dl_err_msg = "Waktu pemrosesan API habis (Timeout 600 detik)."
+                    if story_id in remaining_ids: 
+                        try: remaining_ids.remove(story_id)
+                        except: pass
+                    if sid_val: await save_session(sid_val, update_dict={"story_ids_to_dl": list(remaining_ids)})
                 except Exception as dl_e:
                     Altruix.log(f"Story {story_id} FAILED: {repr(dl_e)}", level=logging.WARNING)
                     success = False
                     dl_err_msg = str(dl_e) or repr(dl_e)
+                    if story_id in remaining_ids: 
+                        try: remaining_ids.remove(story_id)
+                        except: pass
+                    if sid_val: await save_session(sid_val, update_dict={"story_ids_to_dl": list(remaining_ids)})
                 
                 if success:
                     stories_count += 1
                     Altruix.log(f"[execute_story_download] {tid} | Story {story_id} {'PREPPED' if send_as_album else 'SUCCESS'}.", level=logging.DEBUG)
+                    if not send_as_album:
+                        if story_id in remaining_ids:
+                            try: remaining_ids.remove(story_id)
+                            except: pass
+                        if sid_val: await save_session(sid_val, update_dict={"story_ids_to_dl": list(remaining_ids)})
                 else:
                     failed_count += 1
                     Altruix.log(f"[execute_story_download] {tid} | Story {story_id} FAILED.", level=logging.DEBUG)
+                    if not send_as_album:
+                        if story_id in remaining_ids:
+                            try: remaining_ids.remove(story_id)
+                            except: pass
+                        if sid_val: await save_session(sid_val, update_dict={"story_ids_to_dl": list(remaining_ids)})
                     
                     # 🆕 NOTIFY BOT ASSISTANT ON SINGLE STORY FAILURE
                     if bot_client and log_chat_id and hasattr(bot_client, "send_message"):
@@ -1347,6 +1528,9 @@ async def execute_story_download(session, story_ids_to_dl):
                             )
                         except Exception as log_e:
                             Altruix.log(f"Failed to send failure log to group: {log_e}", level=logging.DEBUG)
+                
+                # [v1.0.613] Sync counters to heartbeat after each story completes
+                _hb_state.update({"stories_count": stories_count, "failed_count": failed_count})
                 
                 # Update progress with correct client/keyboard to avoid 403 & bouncing
                 if edit_client:
@@ -1373,8 +1557,8 @@ async def execute_story_download(session, story_ids_to_dl):
                         alb_txt = " (Menyiapkan Album)" if send_as_album else ""
                         await progress_msg.edit_text(
                             f"🔄 <b>Progres Download Story{alb_txt}</b>\n"
-                            f"Target: {target_display}\n"
-                            f"Progress: {current_p}/{total} (Sukses: {stories_count}, Gagal: {failed_count})",
+                            f"• Target: {target_display}\n"
+                            f"• Progress: {current_p}/{total} (Sukses: {stories_count}, Gagal: {failed_count})",
                             parse_mode=enums.ParseMode.HTML, disable_web_page_preview=True
                         )
                     except: pass
@@ -1400,12 +1584,20 @@ async def execute_story_download(session, story_ids_to_dl):
         # Final Update
         try:
             alb_status = " (Album Mode)" if send_as_album else ""
+            # Calculate final duration
+            elapsed = int(time.time() - start_time_val)
+            mins, secs = divmod(elapsed, 60)
+            hours, mins = divmod(mins, 60)
+            duration_str = f"{hours:02d}:{mins:02d}:{secs:02d}" if hours > 0 else f"{mins:02d}:{secs:02d}"
+            
             final_text_html = (
                 f"<blockquote expandable>\n"
                 f"<b>✅ Story Downloader {alb_status} Selesai!</b>\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
-                f"• <b>User:</b> {target_display}\n"
+                f"• <b>Target:</b> {source_name_only}\n"
+                f"• <b>Target ID:</b> <code>{source_id_display}</code>\n"
                 f"• <b>Task ID:</b> <code>{tid}</code>\n"
+                f"• <b>Durasi:</b> <code>{duration_str}</code>\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
                 f"📊 <b>Hasil:</b>\n"
                 f"✅ Sukses: {stories_count}\n"
@@ -1436,12 +1628,19 @@ async def execute_story_download(session, story_ids_to_dl):
     except asyncio.CancelledError:
         Altruix.log(f"[execute_story_download] Task {tid} was CANCELLED by user.", level=logging.WARNING)
         try:
+            # Calculate duration at cancellation
+            elapsed = int(time.time() - start_time_val)
+            mins, secs = divmod(elapsed, 60)
+            hours, mins = divmod(mins, 60)
+            duration_str = f"{hours:02d}:{mins:02d}:{secs:02d}" if hours > 0 else f"{mins:02d}:{secs:02d}"
+            
             cancel_html = (
                 f"<blockquote expandable>\n"
                 f"🛑 <b>Task Cancelled</b>\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
                 f"Task ID: <code>{tid}</code>\n"
                 f"Status: Download dihentikan paksa.\n"
+                f"Durasi: <code>{duration_str}</code>\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
                 f"</blockquote>"
             )
@@ -1466,19 +1665,28 @@ async def execute_story_download(session, story_ids_to_dl):
         Altruix.log(f"[execute_story_download] FATAL ERROR: {repr(e)}", level=logging.ERROR)
         traceback.print_exc()
     finally:
+        # [v1.0.613] Stop heartbeat background task
+        _hb_state["active"] = False
+        if heartbeat_task and not heartbeat_task.done():
+            heartbeat_task.cancel()
         unregister_task(tid)
         sid_final = session.get("_id")
         if sid_final:
             await save_session(sid_final, update_dict={"status": "idle", "busy_until": 0, "status_text": None})
     session["status_text"] = f"Done! {stories_count} success, {failed_count} failed."
     if sid: await save_session(sid, update_dict={"status_text": session["status_text"]})
+    # Final formatted text for direct/inline fallback
     final_text = (
+        f"<blockquote expandable>"
         f"<b>📖 Story Download Complete</b>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"• <b>User:</b> {target_display}\n"
-        f"• ✅ <b>Success:</b> {stories_count}\n"
-        f"• ❌ <b>Failed:</b> {failed_count}\n"
+        f"• <b>Target:</b> {source_name_only}\n"
+        f"• <b>Target ID:</b> <code>{source_id_display}</code>\n"
+        f"• <b>Durasi:</b> <code>{duration_str}</code>\n"
+        f"• <b>Success:</b> {stories_count}\n"
+        f"• <b>Failed:</b> {failed_count}\n"
         f"━━━━━━━━━━━━━━━━━━"
+        f"</blockquote>"
     )
     
     try:
@@ -1547,7 +1755,7 @@ async def reply_stories_cmd(c: Client, m: Message):
 
     target_user = rm.from_user
     target = target_user.id
-    target_display = f'<a href="tg://user?id={target_user.id}">{html.escape(target_user.first_name)}</a>'
+    target_display = f'<a href="tg://user?id={target_user.id}">{html.escape(target_user.first_name)}</a> (<code>{target_user.id}</code>)'
 
     status_msg = await m.handle_message(f"🔍 <b>Searching for active stories from {target_display}...</b>")
 
@@ -1575,7 +1783,7 @@ async def reply_stories_cmd(c: Client, m: Message):
             
             msg_link = ""
             if session and session.get("menu_msg_id") and str(target_cid).startswith("-100"):
-                msg_link = f"https://t.me/c/{str(target_cid)[4:]}/{session['menu_msg_id']}"
+                msg_link = f"https://t.me/c/{str(target_cid).replace("-100", "").lstrip("-")}/{session['menu_msg_id']}"
             
             if sent_to_log:
                 success_text = "✅ <b>Story Picker Menu sent to Log Group!</b>\n\n<i>Check your Log Group to choose a story.</i>"
@@ -1690,7 +1898,7 @@ async def link_stories_cmd(c: Client, m: Message):
             return await safe_edit(status_msg, f"❌ <b>Failed to retrieve message:</b>\n<code>{str(e)}</code>")
 
         target = target_user.id
-        target_display = f'<a href="tg://user?id={target_user.id}">{html.escape(target_user.first_name)}</a>'
+        target_display = f'<a href="tg://user?id={target_user.id}">{html.escape(target_user.first_name)}</a> (<code>{target_user.id}</code>)'
 
         await safe_edit(status_msg, f"🔍 <b>User detected: {target_display}</b>\n<b>Searching for active stories...</b>")
 
@@ -1717,7 +1925,7 @@ async def link_stories_cmd(c: Client, m: Message):
             
             msg_link = ""
             if session and session.get("menu_msg_id") and str(target_cid).startswith("-100"):
-                msg_link = f"https://t.me/c/{str(target_cid)[4:]}/{session['menu_msg_id']}"
+                msg_link = f"https://t.me/c/{str(target_cid).replace("-100", "").lstrip("-")}/{session['menu_msg_id']}"
             
             if sent_to_log:
                 success_text = "✅ <b>Story Picker Menu sent to Log Group!</b>\n\n<i>Check your Log Group to choose a story.</i>"
@@ -1741,6 +1949,90 @@ async def link_stories_cmd(c: Client, m: Message):
     except Exception as e:
         await safe_edit(status_msg, f"❌ <b>Error:</b> <code>{str(e)}</code>")
 
+
+# ============================================================================
+# STARTUP RECOVERY LOGIC
+# [v1.0.616] Auto-resumes unfinished story downloads after restart.
+# ============================================================================
+
+async def recover_story_tasks():
+    """
+    Scans for unfinished download sessions and restarts them.
+    Called at plugin initialization via a delayed background task.
+    """
+    Altruix.log("📖 [Recovery] Scanning for unfinished Story downloads...", level=logging.INFO)
+    sessions = _load_all_sessions()
+    recovered_count = 0
+    
+    # Wait for clients to be ready (Altruix.clients are populated during startup)
+    retries = 0
+    while not Altruix.clients and retries < 10:
+        await asyncio.sleep(5)
+        retries += 1
+        
+    if not Altruix.clients:
+        Altruix.log("📖 [Recovery] FAILED: No active userbot sessions found. Skipping recovery.", level=logging.WARNING)
+        return
+
+    for sid, session in list(sessions.items()):
+        if session.get("status") == "downloading":
+            try:
+                remaining_ids = session.get("story_ids_to_dl", [])
+                if not remaining_ids:
+                    # Mark as clean if nothing left
+                    session["status"] = "done"
+                    session["status_text"] = "Selesai (Auto-Recovered)"
+                    sessions[sid] = session
+                    continue
+                
+                cid = session.get("client_id")
+                client = next((cl for cl in Altruix.clients if cl.me and cl.me.id == cid), Altruix.clients[0])
+                
+                # Restart the background task
+                Altruix.log(f"📖 [Recovery] Resuming Story download for session {sid} ({len(remaining_ids)} stories)...", level=logging.INFO)
+                
+                # Hydrate session for executor
+                full_session = session.copy()
+                full_session["_id"] = sid
+                full_session["client"] = client
+                
+                # Re-hydrate Bot
+                bid = session.get("bot_id")
+                if bid:
+                    if bid == (Altruix.bot.me.id if Altruix.bot and Altruix.bot.me else 0):
+                        full_session["bot"] = Altruix.bot
+                    else:
+                        full_session["bot"] = Altruix.bot_manager.get_bot(bid) if hasattr(Altruix, "bot_manager") else Altruix.bot
+                else:
+                    full_session["bot"] = Altruix.bot
+                
+                # Run the task with a Resume prefix for tracking
+                asyncio.create_task(
+                    execute_story_download(full_session, remaining_ids, resume=True)
+                )
+                recovered_count += 1
+            except Exception as e:
+                Altruix.log(f"📖 [Recovery] Failed to resume session {sid}: {e}", level=logging.ERROR)
+
+    if recovered_count > 0:
+        # Save any cleaned statuses
+        _save_all_sessions(sessions)
+        Altruix.log(f"📖 [Recovery] Successfully resumed {recovered_count} story download tasks.", level=logging.INFO)
+    else:
+        Altruix.log("📖 [Recovery] No tasks needed recovery.", level=logging.DEBUG)
+
+# Helper to automatically trigger recovery on startup
+async def _startup_hook():
+    """Waits for Altruix to be fully initialized before triggering recovery."""
+    try:
+        # Delay to ensure bot assistant and userbots are connected
+        await asyncio.sleep(15)
+        await recover_story_tasks()
+    except Exception as e:
+        Altruix.log(f"XStories Startup Hook Error: {e}", level=logging.ERROR)
+
+# Schedule recovery task immediately upon module load
+asyncio.create_task(_startup_hook())
 
 # Add help info
 Altruix._command_help_message_data["xstories"] = (

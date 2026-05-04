@@ -339,7 +339,7 @@ async def start_relayspam(client: Client, destination: str, start_delay: float, 
             }
         }
         TELAYSPAM_TASKS[(user_id, chat_id)]["pause_event"].set()
-        clean_id = str(target_chat.id).replace("-100", "")
+        clean_id = str(target_chat.id).replace("-100", "").lstrip("-")
         userbot_info = "👤 **Unknown Userbot**"
         try:
             me = await client.get_me()
@@ -358,7 +358,7 @@ async def start_relayspam(client: Client, destination: str, start_delay: float, 
             f"{userbot_info}\n"
         )
         tombol_baris = [
-            [InlineKeyboardButton(f"-100{clean_id}", url=f"https://t.me/c/{clean_id}/99999")],
+            [InlineKeyboardButton(f"ID: {target_chat.id}", url=f"https://t.me/c/{clean_id}/99999")],
             [InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, "Stop"), callback_data=f"stop_{chat_id}"),
              InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, "Pause"), callback_data=f"pause_{chat_id}"),
              InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, "Resume"), callback_data=f"resume_{chat_id}")],

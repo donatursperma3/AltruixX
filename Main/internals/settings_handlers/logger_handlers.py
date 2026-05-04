@@ -854,7 +854,7 @@ async def join_log_group_handler(c: Client, cb: CallbackQuery):
 @log_errors
 async def global_logger_menu_handler(c: Client, cb: CallbackQuery):
     """Global control menu for loggers from Bot Controls."""
-    log_type = cb.matches[0].group(1).replace("lb", "").replace("l", "")
+    log_type = cb.matches[0].group(1).replace("_menu", "").replace("lb", "").replace("l", "")
     await cb.answer()
     
     type_map = {"pm": "PM Logger", "mnt": "Mention Logger", "join": "Join Logger", "cb": "Callback Logger"}
@@ -932,11 +932,27 @@ async def global_logger_toggle_handler(c: Client, cb: CallbackQuery):
     await Altruix.config.sync_env_to_db(key, new_val, upsert=True)
     setattr(Altruix.config, key, new_val)
     
+    # ✅ SYNC TO JSON: PM Logger Bot reads from JSON file, not DB ENV
+    # Without this sync, toggling from Bot Controls has no effect on the actual bot logger
+    if log_type == "pm":
+        storage_path = get_db_path("pm_logger_bot_settings.json")
+        try:
+            if os.path.exists(storage_path):
+                with open(storage_path, "r") as f: data = json.load(f)
+            else:
+                data = {"settings": {}}
+            if "settings" not in data: data["settings"] = {}
+            data["settings"]["log_mode"] = "all" if new_val == "on" else "off"
+            with open(storage_path, "w") as f: json.dump(data, f, indent=2)
+            logger.info(f"Global PM Toggle: Synced log_mode to JSON → {'all' if new_val == 'on' else 'off'}")
+        except Exception as e:
+            logger.error(f"Global PM Toggle: Failed to sync JSON: {e}")
+    
     await cb.answer(f"Global {log_type.upper()} Logger: {new_val.upper()}")
     # Re-use the menu but we need a mock regex match or call it directly with adjustments
     # For simplicity, let's just create a mock with a manual type
-    # ✅ FIX: Use *args in lambda to ignore implicit 'self' when called as a method
-    cb.matches = [type('Mock', (object,), {'group': lambda *args: f"{log_type}l_menu"})()] 
+    # ✅ FIX: Use *args in lambda to ignore implicit 'self' and return just the prefix
+    cb.matches = [type('Mock', (object,), {'group': lambda *args: f"{log_type}lb"})()] 
     await global_logger_menu_handler(c, cb)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^get_log_group_link$"))

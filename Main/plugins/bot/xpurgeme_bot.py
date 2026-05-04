@@ -1,4 +1,4 @@
-PLUGIN_VERSION = "0.0.29"
+PLUGIN_VERSION = "0.0.31"
 
 """
 Purgeme Bot Plugin
@@ -47,16 +47,19 @@ def get_purgeme_text(state):
         chat_link = state.get("chat_link")
         account_name = state.get("account_name", "Unknown")
         user_id = state.get("user_id")
+        total_msgs = state.get("total_account_messages", 0)
         
         display_name = f"<a href='{chat_link}'>{chat_name}</a>" if chat_link else f"<b>{chat_name}</b>"
         acc_link = f"<a href='tg://user?id={user_id}'>{account_name}</a>" if user_id else f"<b>{account_name}</b>"
+        acc_msgs_lbl = loc("purgeme_account_msgs") or "Acc Msgs"
         
         return (
             f"<blockquote expandable>{title}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"• <b>Account:</b> {acc_link}\n"
-            f"• <b>Chat:</b> {display_name}\n"
-            f"• <b>Chat_ID:</b> <code>{chat_id}</code>\n"
+            f"• <b>Acc:</b> {acc_link}\n"
+            f"• <b>Chat Name:</b> {display_name}\n"
+            f"• <b>Chat ID:</b> <code>{chat_id}</code>\n"
+            f"• <b>{acc_msgs_lbl}:</b> <code>{total_msgs}</code>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"{menu_title}\n"
             f"<i>Please select options:</i></blockquote>"
@@ -64,6 +67,7 @@ def get_purgeme_text(state):
 
     chat_name = state.get("chat_name", "Unknown")
     account_name = state.get("account_name", "Unknown")
+    total_msgs = state.get("total_account_messages", 0)
 
     # Mapping for special types to YML keys
     TYPE_MAP = {
@@ -91,7 +95,7 @@ def get_purgeme_text(state):
     acc_link = f"<a href='tg://user?id={user_id}'>{account_name}</a>" if user_id else f"<b>{account_name}</b>"
     
     header_content = (
-        f"<b>Account:</b> {acc_link}\n"
+        f"<b>Account:</b> {acc_link} (<code>{total_msgs}</code> msgs)\n"
         f"<b>Chat:</b> {display_name}\n"
         f"<b>Mode:</b> <code>{mode.capitalize()}</code> | <b>Type:</b> <code>{type_display}</code>\n"
         f"<b>Target:</b> <code>{count}</code> messages | <b>Offset:</b> <code>{offset}</code>\n"
@@ -376,6 +380,24 @@ async def get_purgeme_keyboard(chat_id, user_id, unique_id):
             ])
             buttons.append([InlineKeyboardButton("Back", callback_data=f"pg_back_{unique_id}", style=btn_style)])
 
+        elif sub_menu == "maxscan":
+            max_scan = state.get("max_scan", 500)
+            buttons.append([InlineKeyboardButton(f"━━ Max Scan: {max_scan} ━━", callback_data="noop", style=btn_style)])
+            buttons.append([
+                InlineKeyboardButton("-500", callback_data=f"pg_scn_sub_500_{unique_id}", style=btn_style),
+                InlineKeyboardButton("-100", callback_data=f"pg_scn_sub_100_{unique_id}", style=btn_style),
+                InlineKeyboardButton("-50", callback_data=f"pg_scn_sub_50_{unique_id}", style=btn_style),
+            ])
+            buttons.append([
+                InlineKeyboardButton("+50", callback_data=f"pg_scn_add_50_{unique_id}", style=btn_style),
+                InlineKeyboardButton("+100", callback_data=f"pg_scn_add_100_{unique_id}", style=btn_style),
+                InlineKeyboardButton("+500", callback_data=f"pg_scn_add_500_{unique_id}", style=btn_style),
+            ])
+            buttons.append([
+                InlineKeyboardButton("Reset", callback_data=f"pg_scn_reset_{unique_id}", style=btn_style),
+                InlineKeyboardButton("Back", callback_data=f"pg_back_{unique_id}", style=btn_style)
+            ])
+
         elif sub_menu == "filter":
             # Message Type Filter Sub-Menu
             # Mapping for special types
@@ -460,6 +482,7 @@ async def get_purgeme_keyboard(chat_id, user_id, unique_id):
             curr_mode = state.get("mode", "latest")
             mode_lbl = loc("purgeme_mode_oldest" if curr_mode == "oldest" else "purgeme_mode_latest", curr_mode.capitalize())
             bd_min = int(batch_delay / 60)
+            max_scan = state.get("max_scan", 500)
             
             # Determine filter display text
             TYPE_MAP = {
@@ -482,8 +505,8 @@ async def get_purgeme_keyboard(chat_id, user_id, unique_id):
             ])
             # Row 2: Delay/Msg & Delay/Batch
             buttons.append([
-                InlineKeyboardButton(f"Delay: {delay}s", callback_data=f"pg_menu_delay_{unique_id}", style=btn_style),
-                InlineKeyboardButton(f"DelayBc: {bd_min}m", callback_data=f"pg_menu_bdelay_{unique_id}", style=btn_style),
+                InlineKeyboardButton(f"Delay/Msg: {delay}s", callback_data=f"pg_menu_delay_{unique_id}", style=btn_style),
+                InlineKeyboardButton(f"Delay/Bch: {bd_min}m", callback_data=f"pg_menu_bdelay_{unique_id}", style=btn_style),
             ])
             # Row 3: Mode & Offset
             buttons.append([
@@ -502,8 +525,9 @@ async def get_purgeme_keyboard(chat_id, user_id, unique_id):
                 InlineKeyboardButton("ID Range", callback_data=f"pg_menu_bounds_{unique_id}", style=btn_style),
                 InlineKeyboardButton("Date Range", callback_data=f"pg_menu_dates_{unique_id}", style=btn_style),
             ])
-            # Row 6: Info
+            # Row 6: Max Scan & Info
             buttons.append([
+                InlineKeyboardButton(f"Max Scan: {max_scan}", callback_data=f"pg_menu_maxscan_{unique_id}", style=btn_style),
                 InlineKeyboardButton(loc("purgeme_info_btn", "Info"), callback_data=f"pg_info_{unique_id}", style=btn_style),
             ])
             # Row 7: Start & Cancel
@@ -695,6 +719,8 @@ async def purgeme_callback_handler(client: Client, cb: CallbackQuery):
             state["sub_menu"] = "bounds"
         elif "menu_dates" in data:
             state["sub_menu"] = "dates"
+        elif "menu_maxscan" in data:
+            state["sub_menu"] = "maxscan"
         elif "menu_filter" in data:
             state["sub_menu"] = "filter"
 
@@ -803,6 +829,17 @@ async def purgeme_callback_handler(client: Client, cb: CallbackQuery):
             
         elif "dat_max_reset" in data:
             state["max_days"] = 0
+
+        elif "scn_add" in data:
+            val = int(parts[3])
+            state["max_scan"] = state.get("max_scan", 500) + val
+            
+        elif "scn_sub" in data:
+            val = int(parts[3])
+            state["max_scan"] = max(10, state.get("max_scan", 500) - val)
+            
+        elif "scn_reset" in data:
+            state["max_scan"] = 500
 
         elif "info" in data:
             # ─── 1. FIX: Info Page Logic ───
@@ -987,63 +1024,64 @@ async def purgeme_close(client, cb: CallbackQuery):
 
 
 
-@Altruix.register_on_cmd(
-    ["start"],
-    cmd_help={
-        "help": "Start the Purgeme Bot process.",
-        "usage": "/start purgeme_{unique_id}",
-        "example": "/start purgeme_123456789_987654321",
-        "detail": "Memulai sesi konfigurasi Purgeme via Bot Assistant. Biasanya dipanggil otomatis oleh tombol dari Userbot."
-    },
-    group_only=False,
-    requires_input=False, 
-    requires_reply=False
-)
-@log_errors
-async def purgeme_start_handler(client: Client, message):
-    from Main.utils.access_control import is_authorized_user
+# @Altruix.register_on_cmd(
+#     ["start"],
+#     cmd_help={
+#         "help": "Start the Purgeme Bot process.",
+#         "usage": "/start purgeme_{unique_id}",
+#         "example": "/start purgeme_123456789_987654321",
+#         "detail": "Memulai sesi konfigurasi Purgeme via Bot Assistant. Biasanya dipanggil otomatis oleh tombol dari Userbot."
+#     },
+#     group_only=False,
+#     requires_input=False, 
+#     requires_reply=False
+# )
+# @iuser_check
+# @log_errors
+# async def purgeme_start_handler(client: Client, message):
+#     from Main.utils.access_control import is_authorized_user
     
-    # 1. Fallback if no arguments provided
-    if len(message.command) <= 1:
-        if is_authorized_user(message.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
-             # Only show response if authorized, otherwise ignore to prevent spam/discovery
-             await message.reply(
-                 f"👋 <b>Halo, {message.from_user.first_name}!</b>\n\n"
-                 f"Saya adalah asisten Altruix. Gunakan tombol pada Userbot untuk mengatur Purgeme.\n"
-                 f"Ketik /help untuk melihat daftar perintah yang tersedia."
-             )
-        return
+#     # 1. Fallback if no arguments provided
+#     if len(message.command) <= 1:
+#         if is_authorized_user(message.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
+#              # Only show response if authorized, otherwise ignore to prevent spam/discovery
+#              await message.reply(
+#                  f"👋 <b>Halo, {message.from_user.first_name}!</b>\n\n"
+#                  f"Saya adalah asisten Altruix. Gunakan tombol pada Userbot untuk mengatur Purgeme.\n"
+#                  f"Ketik /help untuk melihat daftar perintah yang tersedia."
+#              )
+#         return
 
-    # 2. Process arguments
-    param = message.command[1]
-    if param.startswith("purgeme_"):
-        unique_id = param.replace("purgeme_", "", 1)
+#     # 2. Process arguments
+#     param = message.command[1]
+#     if param.startswith("purgeme_"):
+#         unique_id = param.replace("purgeme_", "", 1)
         
-        try:
-            chat_id, user_id = unique_id.rsplit("_", 1)
+#         try:
+#             chat_id, user_id = unique_id.rsplit("_", 1)
             
-            # Security: Ensure only the session owner or sudo can access
-            if str(message.from_user.id) != str(user_id) and not is_authorized_user(message.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
-                msg = Altruix.get_string("ACCESS_DENIED")
-                await message.reply(msg)
-                return
+#             # Security: Ensure only the session owner or sudo can access
+#             if str(message.from_user.id) != str(user_id) and not is_authorized_user(message.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
+#                 msg = Altruix.get_string("ACCESS_DENIED")
+#                 await message.reply(msg)
+#                 return
             
-            state = Altruix.PURGEME_STATE.get(unique_id)
-            if not state:
-                await message.reply("Session Expired or Invalid.")
-                return
+#             state = Altruix.PURGEME_STATE.get(unique_id)
+#             if not state:
+#                 await message.reply("Session Expired or Invalid.")
+#                 return
 
-            # Show Menu
-            menu_text = get_purgeme_text(state)
-            kb = await get_purgeme_keyboard(chat_id, user_id, unique_id)
+#             # Show Menu
+#             menu_text = get_purgeme_text(state)
+#             kb = await get_purgeme_keyboard(chat_id, user_id, unique_id)
             
-            await message.reply(
-                menu_text,
-                reply_markup=kb,
-                parse_mode=enums.ParseMode.HTML,
-                disable_web_page_preview=True
-            )
-        except ValueError:
-            await message.reply("Invalid Link Format.")
+#             await message.reply(
+#                 menu_text,
+#                 reply_markup=kb,
+#                 parse_mode=enums.ParseMode.HTML,
+#                 disable_web_page_preview=True
+#             )
+#         except ValueError:
+#             await message.reply("Invalid Link Format.")
 
 

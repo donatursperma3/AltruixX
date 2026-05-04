@@ -1979,11 +1979,11 @@ async def autogp_bl_add_input_handler(client: Client, message: Message):
         state = AUTO_GP_DASH_STATE.get(user_id_key)
     
     if not state:
-        return  # Not in add-chat state for this user, ignore
+        return await message.continue_propagation()  # Not in add-chat state for this user, let others handle
     
     # 🔒 STRICT AUTH: Only accept input from the exact user who pressed the button
     if message.from_user.id != state["from_user_id"]:
-        return  # Silently ignore messages from anyone else
+        return await message.continue_propagation()  # Silently ignore but let other handlers check
     
     user_input = (message.text or "").strip()
     user_id = state["user_id"]

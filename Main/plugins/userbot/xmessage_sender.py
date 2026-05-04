@@ -33,7 +33,7 @@ from Main.utils.file_helpers import get_db_path, get_user_button_style
 # Plugin Metadata
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xmessage_sender"
-PLUGIN_VERSION = "1.1.127"
+PLUGIN_VERSION = "1.1.130"
 
 logger = logging.getLogger("altruix.xmessage_sender")
 logger.setLevel(logging.INFO)
@@ -284,7 +284,27 @@ async def bypass_protected_send(client: Client, target_chat: int, source_msg, re
         story_obj = getattr(source_msg, "story", None)
         if story_obj:
             is_protected = getattr(story_obj, "has_protected_content", False)
+
+    # Optimization: Use copy_message for non-protected media/messages (excluding stories)
+    if not is_protected and isinstance(source_msg, RawMessage) and not getattr(source_msg, "story", None):
+        try:
+            if wait_msg:
+                try: await wait_msg.edit("⏳ <b>Cloning via copy...</b>")
+                except: pass
             
+            # If custom_text is None, copy_message keeps original caption and entities.
+            # If custom_text is provided, we replace the caption/text.
+            return await client.copy_message(
+                chat_id=target_chat,
+                from_chat_id=source_msg.chat.id,
+                message_id=source_msg.id,
+                caption=custom_text if custom_text is not None else getattr(source_msg, "caption", None),
+                reply_to_message_id=reply_to
+            )
+        except Exception as e:
+            Altruix.log(f"copy_message failed, falling back to bypass: {e}", level=30)
+            # Fall through to download/upload bypass logic
+
     if is_protected and wait_msg:
          try:
              await wait_msg.edit("⏳ <b>Media protected, trying to bypass...</b>")

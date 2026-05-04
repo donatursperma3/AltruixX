@@ -3,6 +3,7 @@
 # All rights reserved.
 
 import re
+import html
 from pyrogram import Client, filters, enums
 from pyrogram.types import CallbackQuery, InlineQuery, Message, InlineKeyboardButton, InlineKeyboardMarkup
 from Main import Altruix
@@ -173,6 +174,15 @@ async def ma_callback_handler(client: Client, cb: CallbackQuery):
         text = await get_ma_status_text(user_id)
         kb = get_ma_kb(user_id, settings)
         await cb.edit_message_text(text, reply_markup=kb)
+ 
+    elif data.startswith("ma_reportlog_"):
+        settings["report_log"] = "single" if settings.get("report_log", "split") == "split" else "split"
+        await save_ma_settings(user_id, settings)
+        
+        text = await get_ma_status_text(user_id)
+        kb = get_ma_kb(user_id, settings)
+        await cb.edit_message_text(text, reply_markup=kb)
+        await cb.answer(f"Log Mode: {settings['report_log'].upper()}")
 
     elif data.startswith("ma_bl_list_") or data.startswith("ma_bl_page_"):
         page = 0
@@ -299,7 +309,7 @@ async def ma_callback_handler(client: Client, cb: CallbackQuery):
                 f"<b>Settings:</b> <code>{settings['scope'].capitalize()}</code> / <code>{type_str}</code>\n"
                 f"<b>Task ID:</b> <code>{task_id}</code>\n\n"
                 f"👉 <i>Open your <b>Log Group</b> (or Bot PM) to view the detailed tracking report!</i>\n"
-                f"<i>Use <code>.canceltask {task_id}</code> anywhere to safely abort.</i>",
+                f"<i>Use <code>.taskcancel {task_id}</code> anywhere to safely abort.</i>",
                 reply_markup=progress_kb
             )
             

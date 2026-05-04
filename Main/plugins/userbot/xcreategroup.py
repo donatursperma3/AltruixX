@@ -17,6 +17,7 @@ import json
 from datetime import datetime
 from typing import List, Tuple, Optional, Dict, Any
 import random
+import base64
 
 from pyrogram import Client, filters
 from pyrogram.errors import (
@@ -38,8 +39,8 @@ from Main.core.types.message import Message as AltruixMessage
 # from Main.utils.helpers import run_shell_cmd
 from Main.utils.helpers import ChatPrivileges
 from pyrogram.types import *
-from Main.internals.settings import send_log_notification
 from Main.core.decorators import log_errors, iuser_check
+from Main.utils.essentials import Essentials
 
 
 # ─── LOGGER KHUSUS PLUGIN ───────────────────────────────────────────────
@@ -47,7 +48,7 @@ import logging
 
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xcreategroup"
-PLUGIN_VERSION = "0.2.12"  # ✅ REFACTORED: Renamed to CreateGroup, enhanced logging
+PLUGIN_VERSION = "0.2.363"  # ✅ REFACTORED: Renamed to CreateGroup, enhanced logging
 
 logger = logging.getLogger("altruix.xcreategroup")
 logger.setLevel(logging.INFO)
@@ -83,20 +84,33 @@ async def save_creategroup_cache():
         }
         for tid, task in CREATEGROUP_TASKS.items():
             task_copy = task.copy()
-            if "pause_event" in task_copy: del task_copy["pause_event"]
-            if "status_task" in task_copy: del task_copy["status_task"]
-            if "task" in task_copy: del task_copy["task"]
-            if "task_obj" in task_copy: del task_copy["task_obj"]
-            if "start_time" in task_copy: task_copy["start_time"] = task_copy["start_time"].isoformat()
+            # Remove non-serializable objects
+            keys_to_remove = ["pause_event", "status_task", "task", "task_obj", "log_progress_msg"]
+            for key in keys_to_remove:
+                if key in task_copy:
+                    del task_copy[key]
+            
+            if "start_time" in task_copy and hasattr(task_copy["start_time"], "isoformat"):
+                task_copy["start_time"] = task_copy["start_time"].isoformat()
             data["tasks"][tid] = task_copy
             
         for tid, comp in COMPLETED_CREATEGROUP_TASKS.items():
             comp_copy = comp.copy()
-            if "end_time" in comp_copy: comp_copy["end_time"] = comp_copy["end_time"].isoformat()
+            # Remove non-serializable objects
+            keys_to_remove = ["pause_event", "status_task", "task", "task_obj", "log_progress_msg"]
+            for key in keys_to_remove:
+                if key in comp_copy:
+                    del comp_copy[key]
+            
+            if "end_time" in comp_copy and hasattr(comp_copy["end_time"], "isoformat"):
+                comp_copy["end_time"] = comp_copy["end_time"].isoformat()
             data["completed"][tid] = comp_copy
             
-        with open(STORAGE_FILE, "w") as f:
+        # Atomic Write: Write to temp file first, then rename
+        temp_file = f"{STORAGE_FILE}.tmp"
+        with open(temp_file, "w") as f:
             json.dump(data, f, indent=2)
+        os.replace(temp_file, STORAGE_FILE)
     except Exception as e:
         logger.error(f"Error saving creategroup cache: {e}")
 
@@ -104,8 +118,15 @@ async def load_creategroup_cache():
     global CREATEGROUP_TASKS, COMPLETED_CREATEGROUP_TASKS
     try:
         if os.path.exists(STORAGE_FILE):
-            with open(STORAGE_FILE, "r") as f:
-                data = json.load(f)
+            try:
+                with open(STORAGE_FILE, "r") as f:
+                    data = json.load(f)
+            except json.JSONDecodeError as jde:
+                # Corrupted JSON: Backup and start fresh
+                bak_file = f"{STORAGE_FILE}.bak"
+                os.replace(STORAGE_FILE, bak_file)
+                logger.error(f"Corrupted creategroup cache detected! Backed up to {bak_file}. Error: {jde}")
+                return
                 
             for tid, task_data in data.get("tasks", {}).items():
                 if "start_time" in task_data:
@@ -169,6 +190,7 @@ LOVE_QUOTES_3 = [
 # Sumber channel untuk foto profil dan pesan
 SRC_CHANNEL = "alphaxbbc"
 LIST_MSG_IDS = [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+MSG_IMG_IDS = [25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76] # IDs 25 to 48 from alphaxbbc
 
 # NOTE: We use Altruix.bot and Altruix.clients directly
 
@@ -286,7 +308,7 @@ async def send_reaction_with_fallback(client: Client, chat_id: int, message_id: 
         logger.error(f"Gagal kirim reaction: {e}")
         return False
 
-def generate_group_name(pattern: str, index: int) -> str:
+def generate_group_name(pattern: str, index: int, rand_len: int = 0, rand_lower: bool = False, rand_upper: bool = False, predefined_rand: str = None) -> str:
     """Generate group name with pattern and index"""
     now = datetime.now()
     year_last2 = str(now.year)[-2:]
@@ -299,8 +321,27 @@ def generate_group_name(pattern: str, index: int) -> str:
     name = pattern\
         .replace('(tahun)', year_last2)\
         .replace('(bulan)', month_num)\
-        .replace('(tanggal)', day_num)\
-        .replace('(index)', str(index))
+        .replace('(tanggal)', day_num)
+        
+    if predefined_rand is not None:
+        rand_text = predefined_rand
+        if rand_text:
+            if has_index_placeholder:
+                name = name.replace('(index)', f"{rand_text} (index)")
+            else:
+                name = f"{name} {rand_text}"
+    elif rand_len > 0 and (rand_lower or rand_upper):
+        import string
+        chars = ""
+        if rand_lower: chars += string.ascii_lowercase
+        if rand_upper: chars += string.ascii_uppercase
+        rand_text = "".join(random.choices(chars, k=rand_len))
+        if has_index_placeholder:
+            name = name.replace('(index)', f"{rand_text} (index)")
+        else:
+            name = f"{name} {rand_text}"
+
+    name = name.replace('(index)', str(index))
     
     if has_index_placeholder:
         return name
@@ -384,13 +425,24 @@ async def creategroup_loop(
     bot_identifiers: List[str],
     control_message: Message,
     action_delay: float = 3.0,
-    invite_bots: bool = False,
+    invite_bots: bool = True,
     anon_mode: bool = True,
     copy_messages: bool = True,
     description: str = "Powered by @AlphaXproject",
     photo_source: str = "source",
     custom_photo_id: Optional[str] = None,
-    user_id: Optional[int] = None
+    log_destination: str = "log_group",
+    log_format: str = "zip",
+    pin_first_msg: bool = True,
+    msg_img: bool = True,
+    rand_len: int = 0,
+    rand_lower: bool = False,
+    rand_upper: bool = False,
+    rand_static: bool = False,
+    batch_action: int = 30,
+    ba_delay: int = 30,
+    user_id: Optional[int] = None,
+    task_id: str = None
 ):
     """Main loop untuk membuat grup"""
     effective_user_id = user_id or (initial_message.from_user.id if initial_message.from_user else None)
@@ -400,14 +452,20 @@ async def creategroup_loop(
         
     task_id = f'creategroup_{effective_user_id}'
     
-    # Task Registration for .tasklist
+    # Task Registration for .tasklist / .taskstatus
     from Main.plugins.userbot.xtaskmanager import register_task, unregister_task, generate_task_id
     tid = generate_task_id("CG")
-    register_task(tid, asyncio.current_task(), "Create Group", "xcreategroup", effective_user_id, f"Count: {count}")
     
     created_groups = []
     batch_groups = [] # Buffer for current batch
+    last_log_msg = None
     photo_path = None  # Cache untuk foto profil
+    
+    # Determine dynamic labels
+    is_channel = group_type == "c"
+    type_label = "Channel" if is_channel else "Group" # Capitalized for Titles
+    unit_label = "channel" if is_channel else "grup"  # lowercase for counts
+    type_name = "Channel" if is_channel else "Grup"   # Capitalized for messages
     
     try:
         # Initialize task state
@@ -434,9 +492,13 @@ async def creategroup_loop(
                 "invite_bots": invite_bots,
                 "anon_mode": anon_mode,
                 "copy_messages": copy_messages,
+                "msg_img": msg_img,
                 "description": description,
                 "photo_source": photo_source,
-                "custom_photo_id": custom_photo_id
+                "custom_photo_id": custom_photo_id,
+                "pin_first_msg": pin_first_msg,
+                "batch_action": batch_action,
+                "ba_delay": ba_delay
             },
             "task_obj": asyncio.current_task()
         }
@@ -445,19 +507,31 @@ async def creategroup_loop(
         
         # Dapatkan info user
         user_info = await user_client.get_me()
+        account_name_raw = f"{user_info.first_name or ''} {user_info.last_name or ''}".strip()
+        
+        # Update task state with account name
+        CREATEGROUP_TASKS[task_id]["account_name"] = account_name_raw
+        
+        # Register task with account name
+        register_task(tid, asyncio.current_task(), "Create Group", "xcreategroup", effective_user_id, f"Count: {count}", user_name=account_name_raw)
         
         # Dapatkan entity bot asisten
         try:
             assistant = await bot_client.get_me()
             await send_log_notification(
                 bot_client,
-                f"🚀 <b>Task CreateGroup Dimulai</b>\n"
-                f"• User: <b>{user_info.first_name or 'Unknown'}</b>\n"
-                f"• Jumlah: <code>{count}</code> grup\n"
-                f"• Delay Aksi: <code>{action_delay}</code> detik\n"
-                f"• Delay Group: <code>{delay}</code> detik\n"
-                f"• Tipe: {group_type}\n"
-                f"• Batch: <code>{batch_size}</code> grup, delay <code>{extra_delay_minutes}</code> menit",
+                f"<blockquote expandable>"
+                f"🚀 <b>Task Create {type_label} Started</b>\n"
+                f"• Task ID: <code>{tid}</code>\n"
+                f"• Account: <b>{html.escape(f'{user_info.first_name or ''} {user_info.last_name or ''}'.strip() or 'Unknown')}</b>\n"
+                f"• Account ID: <code>{user_info.id}</code>\n"
+                f"• Count: <code>{count}</code> {unit_label}\n"
+                f"• Delay Per-Action: <code>{action_delay}</code> detik\n"
+                f"• Delay Per-{type_label}: <code>{delay}</code> detik\n"
+                f"• Type: {group_type}\n"
+                f"• Batch: <code>{batch_size}</code> {unit_label}, delay <code>{extra_delay_minutes}</code> menit\n"
+                f"• Batch Act: <code>{batch_action}</code> act, delay <code>{ba_delay}</code> detik"
+                f"</blockquote>",
                 CREATEGROUP_TASKS[task_id]["user_id"],
                 control_message.id
             )
@@ -504,7 +578,8 @@ async def creategroup_loop(
                 if photo_path:
                     await send_log_notification(
                         bot_client,
-                        f"✅ Foto profil ({source_label}) berhasil di-download ({os.path.getsize(photo_path)} bytes)",
+                        f"✅ Foto profil ({source_label}) berhasil di-download ({os.path.getsize(photo_path)} bytes)\n"
+                        f"💡 Use <code>.taskstatus {tid}</code> for details.",
                         CREATEGROUP_TASKS[task_id]["user_id"],
                         control_message.id
                     )
@@ -523,13 +598,35 @@ async def creategroup_loop(
                     control_message.id
                 )
         
+        # Generate static random text once if enabled
+        static_rand_text = None
+        if rand_static and rand_len > 0 and (rand_lower or rand_upper):
+            import string
+            chars = ""
+            if rand_lower: chars += string.ascii_lowercase
+            if rand_upper: chars += string.ascii_uppercase
+            static_rand_text = "".join(random.choices(chars, k=rand_len))
+
+        # Inisialisasi progress message di log group jika command bukan dari log group
+        if str(control_message.chat.id) != str(LOG_CHAT_ID):
+            try:
+                log_progress_msg = await bot_client.send_message(
+                    LOG_CHAT_ID,
+                    "📊 <b>Memulai Tracker Progress...</b>",
+                    parse_mode=ParseMode.HTML
+                )
+                CREATEGROUP_TASKS[task_id]["log_progress_msg"] = log_progress_msg
+            except Exception as e:
+                logger.error(f"Gagal kirim log progress awal: {e}")
+
         i = 1
         while i <= count:
             # Check if task is running
             if not CREATEGROUP_TASKS.get(task_id, {}).get("running", True):
+                account_name = f"{user_info.first_name or ''} {user_info.last_name or ''}".strip()
                 await send_log_notification(
                     bot_client,
-                    f"🛑 Task CreateGroup dihentikan oleh user pada grup ke-{i}",
+                    f"🛑 Task Create {type_label} dihentikan oleh user pada {unit_label} ke-{i}\n• Account: {html.escape(account_name)}",
                     CREATEGROUP_TASKS[task_id]["user_id"],
                     control_message.id
                 )
@@ -538,23 +635,25 @@ async def creategroup_loop(
             # Check if paused by user
             if CREATEGROUP_TASKS[task_id].get("paused", False):
                 CREATEGROUP_TASKS[task_id]["paused_by_user"] = True
+                account_name = f"{user_info.first_name or ''} {user_info.last_name or ''}".strip()
                 await send_log_notification(
                     bot_client,
-                    f"⏸️ Task CreateGroup dipause pada grup ke-{i}",
+                    f"⏸️ Task Create {type_label} dipause pada {unit_label} ke-{i}\n• Account: {html.escape(account_name)}",
                     CREATEGROUP_TASKS[task_id]["user_id"],
                     control_message.id
                 )
                 await CREATEGROUP_TASKS[task_id]["pause_event"].wait()
                 CREATEGROUP_TASKS[task_id]["paused_by_user"] = False
+                account_name = f"{user_info.first_name or ''} {user_info.last_name or ''}".strip()
                 await send_log_notification(
                     bot_client,
-                    f"▶️ Task CreateGroup di-resume pada grup ke-{i}",
+                    f"▶️ Task Create {type_label} di-resume pada {unit_label} ke-{i}\n• Account: {html.escape(account_name)}",
                     CREATEGROUP_TASKS[task_id]["user_id"],
                     control_message.id
                 )
             
             group_start_time = datetime.now()
-            current_group_name = generate_group_name(name_pattern, i)
+            current_group_name = generate_group_name(name_pattern, i, rand_len, rand_lower, rand_upper, static_rand_text)
             current_username = f"{username_prefix}{i}" if username_prefix else None
             
             # Message buffer for consolidated logs area
@@ -562,35 +661,121 @@ async def creategroup_loop(
             # We don't have link yet at start, so we update it later or use placeholder?
             # Actually, we can update the header later. For now, let's keep it simple and update line 554/559.
             
-            current_log_header = f"🏗 <b>Memproses Grup {i}/{count}</b>\n"
-            current_log_text = current_log_header + f"• Nama: <code>{html.escape(current_group_name)}</code>\n"
+            type_name = "Channel" if group_type == "c" else "Grup"
+            current_log_header = f"🏗 <b>Memproses {type_name} {i}/{count}</b>\n"
+            current_log_text = (
+                f"<blockquote expandable>"
+                f"{current_log_header}"
+                f"• Task ID: <code>{tid}</code>\n"
+                f"• Nama: <code>{html.escape(current_group_name)}</code>\n"
+                f"• Account: {html.escape(account_name_raw)}\n"
+                f"</blockquote>"
+            )
             
-            # PERBAIKAN: Gunakan reply_to_msg_id=None agar masuk ke General topic di Forum
-            current_log_msg = await send_log_notification(bot_client, current_log_text, CREATEGROUP_TASKS[task_id]["user_id"], reply_to_msg_id=None)
+            # ─── INITIAL LOG MESSAGES ───
+            current_log_msgs = []
+            
+            # 1. Log Group (Bot)
+            if log_destination in ["log_group", "both"]:
+                msg = await send_log_notification(bot_client, current_log_text, CREATEGROUP_TASKS[task_id]["user_id"], reply_to_msg_id=None)
+                if msg: current_log_msgs.append(("bot", msg))
+            
+            # 2. Saved Messages (User)
+            if log_destination in ["saved_messages", "both"]:
+                try:
+                    msg = await user_client.send_message("me", current_log_text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+                    if msg: current_log_msgs.append(("user", msg))
+                except Exception as e:
+                    logger.error(f"Gagal kirim log awal ke Saved Messages: {e}")
             
             total_push_msg = 0 # Counter for push messages
 
             async def update_group_log(new_line: str, update_header_name: str = None, name_link: str = None):
-                nonlocal current_log_text, current_log_msg, current_log_header
+                nonlocal current_log_text, current_log_msgs
+                
+                lines = current_log_text.split("\n")
                 
                 if update_header_name and name_link:
-                    # Reform header with hyperlink
-                    current_log_header = f"🏗 <b>Memproses Grup {i}/{count}</b>\n"
-                    # Disable web page preview is handled in send/edit
-                    current_log_text = current_log_header + f"• Nama: <a href='{name_link}'>{html.escape(update_header_name)}</a>\n" + "\n".join(current_log_text.split("\n")[2:])
+                    # Search and replace the 'Nama' line
+                    for idx, line in enumerate(lines):
+                        if "• Nama:" in line:
+                            lines[idx] = f"• Nama: <a href='{name_link}'>{html.escape(update_header_name)}</a>"
+                            break
+                
+                current_log_text = "\n".join(lines)
                 
                 if new_line:
-                    current_log_text += f"{new_line}\n"
+                    # Insert before the closing blockquote tag
+                    if lines and lines[-1] == "</blockquote>":
+                        lines.insert(-1, new_line)
+                    else:
+                        lines.append(new_line)
+                    current_log_text = "\n".join(lines)
                 
-                if current_log_msg:
+                for client_type, msg in current_log_msgs:
                     try:
-                        await current_log_msg.edit_text(current_log_text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+                        await msg.edit_text(current_log_text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
                     except Exception as e:
-                        logger.warning(f"Gagal edit log message: {e}")
-                        # Fallback: send new message if edit fails
-                        current_log_msg = await send_log_notification(bot_client, current_log_text, CREATEGROUP_TASKS[task_id]["user_id"], reply_to_msg_id=None)
+                        logger.warning(f"Gagal edit log message ({client_type}): {e}")
 
-            logger.info(f"Membuat grup {i}/{count}: {current_group_name}")
+            async def wait_with_countdown(total_seconds, reply_msg=None):
+                if total_seconds <= 0: return
+                interval = 10
+                countdown_msg = None
+                
+                while total_seconds > 0:
+                    text = f"<i>Proses akan dilanjutkan dalam</i> <code>{format_duration(total_seconds)}</code>"
+                    
+                    if not countdown_msg:
+                        if reply_msg:
+                            try:
+                                countdown_msg = await bot_client.send_message(
+                                    chat_id=reply_msg.chat.id,
+                                    text=text,
+                                    reply_to_message_id=reply_msg.id,
+                                    parse_mode=ParseMode.HTML
+                                )
+                            except Exception as e:
+                                logger.error(f"Gagal kirim countdown msg: {e}")
+                    else:
+                        try:
+                            await countdown_msg.edit_text(text, parse_mode=ParseMode.HTML)
+                        except Exception as e:
+                            logger.debug(f"Gagal update countdown msg: {e}")
+                    
+                    # Check pause/stop
+                    if not CREATEGROUP_TASKS.get(task_id, {}).get("running"):
+                        break
+                    
+                    # Wait for pause event if paused
+                    if CREATEGROUP_TASKS.get(task_id, {}).get("paused"):
+                        await CREATEGROUP_TASKS[task_id]["pause_event"].wait()
+                    
+                    sleep_time = min(interval, total_seconds)
+                    await asyncio.sleep(sleep_time)
+                    total_seconds -= sleep_time
+                
+                if countdown_msg:
+                    try: await countdown_msg.delete()
+                    except: pass
+
+            action_count = 0
+            async def handle_action_delay():
+                nonlocal action_count
+                await asyncio.sleep(action_delay)
+                action_count += 1
+                if action_count >= batch_action:
+                    action_count = 0
+                    # Ambil log_msg terakhir untuk reply
+                    current_log_msg = None
+                    if current_log_msgs:
+                        current_log_msg = current_log_msgs[0][1] # Ambil bot client log msg
+                    
+                    await wait_with_countdown(ba_delay, current_log_msg)
+                    await update_group_log(f"✅ BA Delay berhasil: <code>{ba_delay}</code>s")
+
+
+            logger.info(f"Membuat {type_name} {i}/{count}: {current_group_name}")
             
             try:
                 # ===== BAGIAN PEMBUATAN GRUP =====
@@ -636,7 +821,8 @@ async def creategroup_loop(
                             )
                         
                         created_chat_id = chat.id
-                        await update_group_log(f"✅ {'Supergroup' if is_supergroup else 'Channel'} dibuat: <code>{created_chat_id}</code>")
+                        type_label_full = "Channel" if group_type == "c" else "Supergroup"
+                        await update_group_log(f"✅ {type_label_full} dibuat: <code>{created_chat_id}</code>")
                         await update_group_log(f"✅ Description di-set: <i>{html.escape(description[:30])}...</i>")
                         
                         # Set username jika ada
@@ -687,7 +873,7 @@ async def creategroup_loop(
                                         user_info.id,
                                         privileges=privileges
                                     )
-                                    await asyncio.sleep(action_delay)
+                                    await handle_action_delay()
                                     await update_group_log(f"✅ Anonymous admin di-set untuk <code>{created_chat_id}</code>")
                                 except Exception as e:
                                     await update_group_log(f"❌ Gagal set anonymous admin: {str(e)}")
@@ -699,7 +885,7 @@ async def creategroup_loop(
                                         chat_id=created_chat_id,
                                         photo=photo_path
                                     )
-                                    await asyncio.sleep(action_delay)
+                                    await handle_action_delay()
                                     await update_group_log(f"✅ Foto profil di-set untuk <code>{created_chat_id}</code>")
                                 except PhotoInvalidDimensions:
                                     await update_group_log(f"❌ Foto profil invalid dimensions untuk <code>{created_chat_id}</code>")
@@ -718,7 +904,20 @@ async def creategroup_loop(
                                     parse_mode=ParseMode.MARKDOWN
                                 )
                                 first_msg_id = time_msg.id
-                                await asyncio.sleep(action_delay)
+                                
+                                # Pin first message if enabled
+                                if pin_first_msg:
+                                    try:
+                                        await user_client.pin_chat_message(
+                                            chat_id=created_chat_id,
+                                            message_id=first_msg_id,
+                                            disable_notification=True
+                                        )
+                                        await update_group_log(f"📌 First msg berhasil di-pin <code>{created_chat_id}</code>")
+                                    except Exception as epin:
+                                        await update_group_log(f"⚠️ Gagal pin first msg: {str(epin)}")
+                                
+                                await handle_action_delay()
                             except Exception as e:
                                 await update_group_log(f"❌ Gagal kirim pesan waktu: {str(e)}")
                                 first_msg_id = None
@@ -732,7 +931,7 @@ async def creategroup_loop(
                                             from_chat_id=SRC_CHANNEL,
                                             message_id=msg_id
                                         )
-                                        await asyncio.sleep(action_delay)
+                                        await handle_action_delay()
                                     except FloodWait as fw:
                                         wait_time = fw.value + 10
                                         await send_log_notification(
@@ -761,7 +960,7 @@ async def creategroup_loop(
                                             f"<i>💙 {quote}</i>",
                                             parse_mode=ParseMode.HTML
                                         )
-                                        await asyncio.sleep(action_delay)
+                                        await handle_action_delay()
                                     except FloodWait as fw:
                                         await asyncio.sleep(fw.value + 10)
                                         continue
@@ -773,6 +972,7 @@ async def creategroup_loop(
                                             control_message.id
                                         )
                                         continue
+                                await update_group_log(f"✅ Quote 1 berhasil dikirim total: <code>{len(LOVE_QUOTES)}</code> msg")
                             
                             # 6. Send LOVE_QUOTES_2
                             if should_copy:
@@ -783,7 +983,7 @@ async def creategroup_loop(
                                             f"<i>💖 {quote}</i>",
                                             parse_mode=ParseMode.HTML
                                         )
-                                        await asyncio.sleep(action_delay)
+                                        await handle_action_delay()
                                     except FloodWait as fw:
                                         await asyncio.sleep(fw.value + 10)
                                         continue
@@ -795,6 +995,7 @@ async def creategroup_loop(
                                             control_message.id
                                         )
                                         continue
+                                await update_group_log(f"✅ Quote 2 berhasil dikirim total: <code>{len(LOVE_QUOTES_2)}</code> msg")
                             
                             # 7. Invite bots
                             if should_invite_bots and bot_entities:
@@ -807,7 +1008,7 @@ async def creategroup_loop(
                                             created_chat_id,
                                             bot.id
                                         )
-                                        await asyncio.sleep(action_delay)
+                                        await handle_action_delay()
                                         success_bots.append(bot.username or str(bot.id))
                                         
                                         # Send /help and /id
@@ -817,7 +1018,7 @@ async def creategroup_loop(
                                                     created_chat_id,
                                                     cmd
                                                 )
-                                                await asyncio.sleep(action_delay)
+                                                await handle_action_delay()
                                             except Exception as e:
                                                 await send_log_notification(
                                                     bot_client,
@@ -827,7 +1028,7 @@ async def creategroup_loop(
                                                 )
                                     except Exception as e:
                                         failed_bots.append(f"{bot.username or bot.id}: {str(e)}")
-                                        await asyncio.sleep(action_delay)
+                                        await handle_action_delay()
                                 
                                 # Report hasil invite
                                 if success_bots:
@@ -841,23 +1042,46 @@ async def creategroup_loop(
                                 if failed_bots:
                                     await update_group_log(f"❌ Gagal invite {len(failed_bots)} bot")
                             
+                            # 7.5. Send Image Messages (Msg Img) if enabled
+                            if msg_img:
+                                for img_id in MSG_IMG_IDS:
+                                    try:
+                                        await user_client.copy_message(
+                                            chat_id=created_chat_id,
+                                            from_chat_id=SRC_CHANNEL,
+                                            message_id=img_id
+                                        )
+                                        await handle_action_delay()
+                                    except FloodWait as fw:
+                                        await asyncio.sleep(fw.value + 10)
+                                        continue
+                                    except Exception as e:
+                                        await send_log_notification(
+                                            bot_client,
+                                            f"⚠️ Gagal kirim image {img_id}: {str(e)}",
+                                            CREATEGROUP_TASKS[task_id]["user_id"],
+                                            control_message.id
+                                        )
+                                        continue
+                                await update_group_log(f"✅ Image Messages berhasil dikirim total: <code>{len(MSG_IMG_IDS)}</code> msg")
+                            
                             # 8. Invite assistant dan kirim welcome message
                             try:
                                 await user_client.add_chat_members(
                                     created_chat_id,
                                     assistant.id
                                 )
-                                await asyncio.sleep(action_delay)
+                                await handle_action_delay()
                                 
                                 # Welcome message dengan inline buttons
                                 welcome_buttons = InlineKeyboardMarkup([
                                     [
-                                        InlineKeyboardButton(await Essentials.get_user_button_style(user_client.me.id, "Channel 1"), url="https://t.me/alphaxproject"),
-                                        InlineKeyboardButton(await Essentials.get_user_button_style(user_client.me.id, "Channel 2"), url="https://t.me/tgreceh")
+                                        InlineKeyboardButton(await Essentials.get_user_button_style(user_info.id, "Channel 1"), url="https://t.me/alphaxproject"),
+                                        InlineKeyboardButton(await Essentials.get_user_button_style(user_info.id, "Channel 2"), url="https://t.me/tgreceh")
                                     ],
                                     [
-                                        InlineKeyboardButton(await Essentials.get_user_button_style(user_client.me.id, "Channel 3"), url="https://t.me/kutipaninsecure"),
-                                        InlineKeyboardButton(await Essentials.get_user_button_style(user_client.me.id, "Channel 4"), url="https://t.me/caritemanlink")
+                                        InlineKeyboardButton(await Essentials.get_user_button_style(user_info.id, "Channel 3"), url="https://t.me/kutipaninsecure"),
+                                        InlineKeyboardButton(await Essentials.get_user_button_style(user_info.id, "Channel 4"), url="https://t.me/caritemanlink")
                                     ]
                                 ])
                                 
@@ -881,7 +1105,7 @@ async def creategroup_loop(
                                             f"<i>💗 {quote}</i>",
                                             parse_mode=ParseMode.HTML
                                         )
-                                        await asyncio.sleep(action_delay)
+                                        await handle_action_delay()
                                     except FloodWait as fw:
                                         await asyncio.sleep(fw.value + 10)
                                         continue
@@ -893,6 +1117,7 @@ async def creategroup_loop(
                                             control_message.id
                                         )
                                         continue
+                                await update_group_log(f"✅ Quote 3 berhasil dikirim total: <code>{len(LOVE_QUOTES_3)}</code> msg")
                             
                             # 10. Get approximate message count (Push Message Total)
                             try:
@@ -909,7 +1134,7 @@ async def creategroup_loop(
                                     f"<i>Total pesan dalam grup ini: {len(messages)}+</i>",
                                     parse_mode=ParseMode.HTML
                                 )
-                                await asyncio.sleep(action_delay)
+                                await handle_action_delay()
                             except Exception as e:
                                 await send_log_notification(
                                     bot_client,
@@ -921,13 +1146,13 @@ async def creategroup_loop(
                             # 11. Link ke pesan pertama
                             if first_msg_id:
                                 try:
-                                    link_msg = f"<i>➟ ke pesan pertama:</i> <b><a href='t.me/c/{str(created_chat_id)[4:]}/{first_msg_id}'>» di sini</a></b>"
+                                    link_msg = f"<i>➟ ke pesan pertama:</i> <b><a href='t.me/c/{str(created_chat_id).replace("-100", "").lstrip("-")}/{first_msg_id}'>» di sini</a></b>"
                                     await user_client.send_message(
                                         created_chat_id,
                                         link_msg,
                                         parse_mode=ParseMode.HTML
                                     )
-                                    await asyncio.sleep(action_delay)
+                                    await handle_action_delay()
                                 except Exception as e:
                                     await send_log_notification(
                                         bot_client,
@@ -955,7 +1180,7 @@ async def creategroup_loop(
                                         completion_msg.id,
                                         "❤️"
                                     )
-                                    await asyncio.sleep(action_delay)
+                                    await handle_action_delay()
                                 except Exception as e:
                                     await send_log_notification(
                                         bot_client,
@@ -986,15 +1211,18 @@ async def creategroup_loop(
                         
                         # Kirim update progress
                         # hlgroup = f"<a href='{invite_link}'>{current_group_name}</a> "
+                        account_name = f"{user_info.first_name or ''} {user_info.last_name or ''}".strip()
                         progress_msg = (
-                            f"✅ Grup {i}/{count} berhasil dibuat\n"
-                            f"📛 Nama: {current_group_name}\n"
-                            # f"📛 Nama: {current_group_name}\n"
-                            # f"🔗 Link: {invite_link[:50]}...\n"
-                            f"⏱️ Waktu: {format_duration((datetime.now() - group_start_time).total_seconds())}"
+                            f"<blockquote expandable>"
+                            f"✅ Group {i}/{count} successfully created\n"
+                            f"• Name: {current_group_name}\n"
+                            f"• Account: {html.escape(account_name)}\n"
+                            f"• Duration: {format_duration((datetime.now() - group_start_time).total_seconds())}\n"
+                            f"• Delay: {format_duration(delay)}"
+                            f"</blockquote>"
                         )
                         
-                        await send_log_notification(
+                        last_log_msg = await send_log_notification(
                             bot_client,
                             progress_msg,
                             CREATEGROUP_TASKS[task_id]["user_id"],
@@ -1002,23 +1230,39 @@ async def creategroup_loop(
                         )
                         
                     except FloodWait as fw:
-                        wait_msg = f"⏳ FloodWait {fw.value}s untuk grup {current_group_name}"
+                        account_name = f"{user_info.first_name or ''} {user_info.last_name or ''}".strip()
+                        wait_msg = (
+                            f"<blockquote expandable>"
+                            f"⏳ FloodWait {fw.value}s untuk {unit_label} {current_group_name}\n"
+                            f"• Account: {html.escape(account_name)}"
+                            f"</blockquote>"
+                        )
                         await send_log_notification(bot_client, wait_msg, CREATEGROUP_TASKS[task_id]["user_id"], control_message.id)
                         await asyncio.sleep(fw.value + 10)
-                        continue  # Coba lagi grup yang sama
+                        continue  # Coba lagi grup/channel yang sama
                     except Exception as e:
-                        error_msg = f"❌ Error membuat grup {current_group_name}: {str(e)}"
+                        account_name = f"{user_info.first_name or ''} {user_info.last_name or ''}".strip()
+                        error_msg = (
+                            f"<blockquote expandable>"
+                            f"❌ Error membuat {unit_label} {current_group_name}: {str(e)}\n"
+                            f"• Account: {html.escape(account_name)}"
+                            f"</blockquote>"
+                        )
                         await send_log_notification(bot_client, error_msg, CREATEGROUP_TASKS[task_id]["user_id"], control_message.id)
                         i += 1
                         continue
                 
                 # Update control message
                 progress_text = (
+                    f"<blockquote expandable>"
                     f"📊 <b>Progress CreateGroup</b>\n\n"
+                    f"• Task: <code>{task_id}</code>\n"
+                    f"• Account: {html.escape(account_name)}\n"
                     f"• Created: {i}/{count}\n"
                     f"• Berhasil: {len(created_groups)}\n"
                     f"• Current: {current_group_name}\n"
                     f"• Status: {'⏸️ Paused' if CREATEGROUP_TASKS[task_id].get('paused') else '▶️ Running'}"
+                    f"</blockquote>"
                 )
                 
                 try:
@@ -1043,6 +1287,17 @@ async def creategroup_loop(
                         reply_markup=control_buttons,
                         parse_mode=ParseMode.HTML
                     )
+                    
+                    if str(control_message.chat.id) != str(LOG_CHAT_ID) and "log_progress_msg" in CREATEGROUP_TASKS[task_id]:
+                        try:
+                            await CREATEGROUP_TASKS[task_id]["log_progress_msg"].edit_text(
+                                progress_text,
+                                reply_markup=control_buttons,
+                                parse_mode=ParseMode.HTML
+                            )
+                        except Exception as el:
+                            logger.error(f"Gagal update log progress message di log group: {el}")
+                            
                 except Exception as e:
                     logger.error(f"Gagal update control message: {e}")
                 
@@ -1055,20 +1310,24 @@ async def creategroup_loop(
 
                 # Delay antar grup
                 if i < count:
-                    await asyncio.sleep(delay)
+                    await wait_with_countdown(delay, last_log_msg)
                 
                 # Report Batch dan Extra Delay
                 if (i % batch_size == 0) or (i == count):
                     # Kirim report batch
                     if batch_groups:
                         batch_num = (i - 1) // batch_size + 1
-                        batch_report = f"#LOG Waktu Pembuatan: {datetime.now().strftime('%Y-%m-%d')}\n\n"
-                        batch_report += f"✅ Berhasil membuat {len(batch_groups)} grup (batch {batch_num})\n"
+                        account_name = f"{user_info.first_name or ''} {user_info.last_name or ''}".strip()
+                        batch_report = f"<blockquote expandable>"
+                        batch_report += f"#LOG Waktu Pembuatan: {datetime.now().strftime('%Y-%m-%d')}\n"
+                        batch_report += f"✅ Berhasil membuat {len(batch_groups)} {unit_label} (batch {batch_num})\n"
+                        batch_report += f"• Account: {html.escape(account_name)}\n\n"
                         
                         for idx, bg in enumerate(batch_groups, 1):
                             batch_report += f"{idx}. <a href='{bg['link']}'>{bg['name']} </a> [ <code>{bg['id']}</code> ]\n"
                         
                         batch_report += f"\nmodule by: @AlphaXproject team"
+                        batch_report += f"</blockquote>"
                         
                         await send_log_notification(bot_client, batch_report, CREATEGROUP_TASKS[task_id]["user_id"], control_message.id, disable_web_page_preview=True)
                         batch_groups = [] # Reset buffer
@@ -1076,17 +1335,17 @@ async def creategroup_loop(
                     # Handle extra delay only if NOT the last group and batch limit reached
                     if i % batch_size == 0 and i < count:
                         extra_delay = extra_delay_minutes * 60
-                        batch_msg = f"⏳ Extra delay {extra_delay_minutes} menit setelah batch {i//batch_size} ({batch_size} grup)"
-                        await send_log_notification(bot_client, batch_msg, CREATEGROUP_TASKS[task_id]["user_id"], control_message.id)
-                        await asyncio.sleep(extra_delay)
+                        account_name = f"{user_info.first_name or ''} {user_info.last_name or ''}".strip()
+                        batch_msg_obj = await send_log_notification(bot_client, batch_msg, CREATEGROUP_TASKS[task_id]["user_id"], control_message.id)
+                        await wait_with_countdown(extra_delay, batch_msg_obj or last_log_msg)
                 
                 i += 1
                 
             except Exception as e:
-                logger.error(f"Error dalam loop pembuatan grup: {e}")
+                logger.error(f"Error dalam loop pembuatan {unit_label}: {e}")
                 await send_log_notification(
                     bot_client,
-                    f"❌ Error dalam loop untuk grup {i}: {str(e)}",
+                    f"❌ Error dalam loop untuk {unit_label} {i}: {str(e)}",
                     CREATEGROUP_TASKS[task_id]["user_id"],
                     control_message.id
                 )
@@ -1108,9 +1367,27 @@ async def creategroup_loop(
                 "name_pattern": name_pattern,
                 "username_prefix": username_prefix,
                 "bot_identifiers": bot_identifiers,
+                "action_delay": action_delay,
+                "invite_bots": invite_bots,
+                "anon_mode": anon_mode,
+                "copy_messages": copy_messages,
+                "description": description,
+                "photo_source": photo_source,
+                "custom_photo_id": custom_photo_id,
+                "log_destination": log_destination,
+                "log_format": log_format,
+                "pin_first_msg": pin_first_msg,
+                "msg_img": msg_img,
+                "rand_len": rand_len,
+                "rand_lower": rand_lower,
+                "rand_upper": rand_upper,
+                "rand_static": rand_static,
+                "batch_action": batch_action,
+                "ba_delay": ba_delay,
                 "created_groups": created_groups,
                 "total_duration": total_duration,
-                "user_id": user_info.id,
+                "user_id": effective_user_id,
+                "client_id": user_info.id,
                 "start_time": CREATEGROUP_TASKS[task_id]["start_time"].strftime('%Y-%m-%d %H:%M:%S')
             }
             
@@ -1123,15 +1400,22 @@ async def creategroup_loop(
                 user_info,
                 control_message,
                 user_client,
-                initial_message
+                initial_message,
+                log_destination,
+                group_type,
+                log_format,
+                batch_action,
+                ba_delay
             )
         else:
             # Task dihentikan
             await send_log_notification(
                 bot_client,
-                f"🛑 Task CreateGroup dihentikan\n"
-                f"• Grup dibuat: {len(created_groups)}/{count}\n"
-                f"• User: {user_info.first_name}",
+                f"<blockquote expandable>"
+                f"🛑 Task Create {type_label} dihentikan\n"
+                f"• {type_name} dibuat: {len(created_groups)}/{count}\n"
+                f"• User: {user_info.first_name}"
+                f"</blockquote>",
                 CREATEGROUP_TASKS[task_id]["user_id"],
                 control_message.id
             )
@@ -1167,7 +1451,9 @@ async def creategroup_loop(
 
         await send_log_notification(
             bot_client,
-            f"❌ Critical error in creategroup_loop: {html.escape(str(e))}",
+            f"<blockquote expandable>"
+            f"❌ Critical error in creategroup_loop: {html.escape(str(e))}"
+            f"</blockquote>",
             CREATEGROUP_TASKS[task_id]["user_id"],
             control_message.id
         )
@@ -1193,31 +1479,53 @@ async def send_completion_report(
     user_info: Any,
     control_message: Message,
     user_client: Client,
-    initial_message: Message
+    initial_message: Message,
+    log_destination: str = "log_group",
+    group_type: str = "a",
+    log_format: str = "zip",
+    batch_action: int = 30,
+    ba_delay: int = 3
 ):
     """Kirim laporan penyelesaian task"""
     try:
         success_count = len(created_groups)
         
+        # Determine log info text
+        if log_destination == "both":
+            log_info = "Log Group & Saved Messages"
+        elif log_destination == "log_group":
+            log_info = "Log Group"
+        else:
+            log_info = "Saved Messages"
+            
+        # Determine labels
+        is_channel = group_type == "c"
+        type_label = "Channel" if is_channel else "Group"
+        unit_label = "channel" if is_channel else "grup"
+        type_name = "Channel" if is_channel else "Grup"
+        
         # Buat log file
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        log_filename = f"creategroup_log_{timestamp}.txt"
+        log_filename = f"create{unit_label}_log_{timestamp}.txt"
         
         with open(log_filename, 'w', encoding='utf-8') as f:
-            f.write(f"#LOG CreateGroup - {timestamp}\n")
+            f.write(f"#LOG Create {type_label} - {timestamp}\n")
             f.write("=" * 60 + "\n\n")
             f.write(f"AKUN PEMBUAT:\n")
             f.write(f"• Nama: {user_info.first_name or 'N/A'} {user_info.last_name or ''}\n")
             f.write(f"• ID: {user_info.id}\n")
             f.write(f"• Username: @{user_info.username if user_info.username else 'N/A'}\n\n")
             
+            type_unit_stat = "channel" if group_type == "c" else "grup"
             f.write(f"STATISTIK:\n")
-            f.write(f"• Diminta: {requested_count} grup\n")
-            f.write(f"• Berhasil: {success_count} grup\n")
-            f.write(f"• Gagal: {requested_count - success_count} grup\n")
-            f.write(f"• Durasi: {format_duration(total_duration)}\n\n")
+            f.write(f"• Diminta: {requested_count} {type_unit_stat}\n")
+            f.write(f"• Berhasil: {success_count} {type_unit_stat}\n")
+            f.write(f"• Gagal: {requested_count - success_count} {type_unit_stat}\n")
+            f.write(f"• Durasi: {format_duration(total_duration)}\n")
+            f.write(f"• Batch Act: {batch_action} act / {ba_delay}s\n\n")
+
             
-            f.write(f"DETAIL GRUP:\n")
+            f.write(f"DETAIL {type_name.upper()}:\n")
             f.write("=" * 60 + "\n\n")
             
             for idx, group in enumerate(created_groups, 1):
@@ -1227,32 +1535,80 @@ async def send_completion_report(
                 f.write(f"   • Waktu: {group['time']}\n")
                 f.write(f"   • Link: {group['link']}\n\n")
         
+        # Handle ZIP format
+        if log_format == "zip":
+            import zipfile
+            zip_filename = log_filename.replace('.txt', '.zip')
+            with zipfile.ZipFile(zip_filename, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                zipf.write(log_filename)
+            try:
+                os.remove(log_filename)
+            except Exception as e:
+                logger.warning(f"Could not remove original txt log: {e}")
+            log_filename = zip_filename
+
         # Kirim file log
-        log_msg = await bot_client.send_document(
-            LOG_CHAT_ID,
-            document=log_filename,
-            caption=(
-                f"📊 <b>Laporan CreateGroup Selesai</b>\n\n"
-                f"• ✅ Berhasil: {success_count}/{requested_count} grup\n"
-                f"• ⏱️ Durasi: {format_duration(total_duration)}\n"
-                f"• 👤 User: {user_info.first_name or 'N/A'}\n"
-                f"• 🆔 ID: <code>{user_info.id}</code>\n\n"
-                f"<i>Module by @AlphaXproject team</i>"
-            ),
-            reply_to_message_id=control_message.id,
-            parse_mode=ParseMode.HTML
-        )
+        # Determine targets
+        targets = []
+        if log_destination == "both":
+            targets = [
+                (LOG_CHAT_ID, bot_client),
+                ("me", user_client)
+            ]
+        elif log_destination == "log_group":
+            targets = [(LOG_CHAT_ID, bot_client)]
+        else: # saved_messages
+            targets = [("me", user_client)]
+
+        log_msg = None
+        for target_chat, sender_client in targets:
+            try:
+                msg = await sender_client.send_document(
+                    target_chat,
+                    document=log_filename,
+                    caption=(
+                        f"<blockquote expandable>"
+                        f"📊 <b>Laporan Create {type_label} Selesai</b>\n\n"
+                        f"• ✅ Berhasil: {success_count}/{requested_count} {unit_label}\n"
+                        f"• Durasi: {format_duration(total_duration)}\n"
+                        f"• Batch: {batch_action} act / {ba_delay}s\n\n"
+                        f"• Account: {html.escape(f'{user_info.first_name or ''} {user_info.last_name or ''}'.strip() or 'N/A')}\n"
+                        f"• Account ID: <code>{user_info.id}</code>\n\n"
+                        f"<i>Module by @AlphaXproject team</i>"
+                        f"</blockquote>"
+                    ),
+                    parse_mode=ParseMode.HTML
+                )
+                if not log_msg:
+                    log_msg = msg
+            except Exception as e:
+                logger.error(f"Gagal kirim log ke {target_chat}: {e}")
         
-        # Kirim ke Saved Messages (User Client)
-        try:
-            await user_client.send_document(
-                "me",
-                document=log_filename,
-                caption=f"📊 **CreateGroup Log**\n{timestamp}",
-                parse_mode=ParseMode.MARKDOWN
-            )
-        except Exception as e:
-            logger.warning(f"Gagal kirim log ke Saved Messages: {e}")
+        # Jika destination adalah log_group, kirim juga salinan ke Saved Messages sebagai backup
+        if log_destination == "log_group":
+            try:
+                await user_client.send_document(
+                    "me",
+                    document=log_filename,
+                    caption=f"📊 **Create {type_label} Log (Backup)**\n{timestamp}",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            except Exception as e:
+                logger.warning(f"Gagal kirim log backup ke Saved Messages: {e}")
+        else:
+             # Jika destination adalah Saved Messages, kirim juga notifikasi ringkas ke log group
+             try:
+                 await bot_client.send_message(
+                     LOG_CHAT_ID,
+                     f"<blockquote expandable>"
+                     f"📊 <b>Laporan Create {type_label} Selesai</b>\n"
+                     f"• User: {user_info.first_name}\n"
+                     f"• Detail: Berhasil {success_count}/{requested_count} {unit_label}\n"
+                     f"• 📁 Log: Terkirim ke {log_info}."
+                     f"</blockquote>",
+                     parse_mode=ParseMode.HTML
+                 )
+             except: pass
 
         # Reply ke pesan Command awal
         if initial_message:
@@ -1260,15 +1616,17 @@ async def send_completion_report(
                 # Construct link manually if username empty (private group)
                 # Handle -100 prefix: plain str(id) keeps it, need to slice 4 chars
                 chat_id_str = str(log_msg.chat.id)
-                clean_chat_id = chat_id_str[4:] if chat_id_str.startswith("-100") else chat_id_str
+                clean_chat_id = chat_id_str.replace("-100", "").lstrip("-") if chat_id_str.startswith("-100") else chat_id_str
                 
                 log_link = log_msg.link if log_msg.chat.username else f"https://t.me/c/{clean_chat_id}/{log_msg.id}"
                 
                 await initial_message.reply(
-                    f"✅ **Berhasil membuat {success_count} dari {requested_count} grup.**\n"
+                    f"<blockquote expandable>"
+                    f"✅ <b>Berhasil membuat {success_count} dari {requested_count} {unit_label}</b>\n"
                     f"Cek log untuk detail:\n"
-                    f"• [Lihat Log]({log_link})",
-                    parse_mode=ParseMode.MARKDOWN,
+                    f"• [Lihat Log]({log_link})"
+                    f"</blockquote>",
+                    parse_mode=ParseMode.HTML,
                     disable_web_page_preview=True
                 )
             except Exception as e:
@@ -1277,6 +1635,11 @@ async def send_completion_report(
         # Hapus file lokal
         os.remove(log_filename)
         
+        # Determine labels based on type
+        is_channel = group_type == "c"
+        type_label = "Channel" if is_channel else "Group"
+        unit_label = "channel" if is_channel else "grup"
+
         # Update control message dengan tombol baru
         final_buttons = InlineKeyboardMarkup([
             [
@@ -1284,7 +1647,7 @@ async def send_completion_report(
                 InlineKeyboardButton("🔁 Recurring", callback_data="recurring_creategroup")
             ],
             [
-                InlineKeyboardButton("📋 List Grup", callback_data="list_groups_creategroup"),
+                InlineKeyboardButton(f"📋 List {type_label}", callback_data="list_groups_creategroup"),
                 InlineKeyboardButton("🗑️ Hapus Task", callback_data="delete_task_creategroup")
             ]
         ])
@@ -1296,11 +1659,10 @@ async def send_completion_report(
              # Structure: [[Grup 1], [Grup 2]]
              buttons_list = []
              for idx, grp in enumerate(created_groups[:90], 1): # Limit to 90 for safety
-                  buttons_list.append(InlineKeyboardButton(f"[Grup {idx}]", url=grp['link']))
+                  buttons_list.append(InlineKeyboardButton(f"{type_label} {idx}", url=grp['link']))
              
              # Arrange buttons, 3 per row
              from Main.utils.helpers import arrange_buttons
-             from Main.internals.settings import send_log_notification
              from Main.core.decorators import log_errors, iuser_check
              group_buttons = arrange_buttons(buttons_list, 3)
              
@@ -1309,13 +1671,15 @@ async def send_completion_report(
              # Merging:
              final_buttons.inline_keyboard = group_buttons + final_buttons.inline_keyboard
 
-        
+        account_name = f"{user_info.first_name or ''} {user_info.last_name or ''}".strip()
         await control_message.edit_text(
-            f"✅ <b>Task Create Group Selesai</b>\n\n"
-            f"• 📊 Berhasil membuat {success_count} dari {requested_count} grup\n"
-            f"• ⏱️ Durasi: {format_duration(total_duration)}\n"
-            f"• 👤 User: {user_info.first_name}\n"
-            f"• 📁 Log: Terkirim ke log channel",
+            f"<blockquote expandable>"
+            f"📊 <b>Laporan Create {type_label} Selesai</b>\n\n"
+            f"• <b>User:</b> {html.escape(account_name)}\n"
+            f"• <b>Detail:</b> Berhasil {success_count}/{requested_count} {unit_label}\n"
+            f"• <b>Durasi:</b> {format_duration(total_duration)}\n"
+            f"• <b>Log:</b> {log_info}"
+            f"</blockquote>",
             reply_markup=final_buttons,
             parse_mode=ParseMode.HTML
         )
@@ -1352,11 +1716,12 @@ async def send_completion_report(
             "🏗️ <b>CREATEGROUP AUTOMATION</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "• <b>Custom Patterns:</b> Automate naming with time and index tags.\n"
+            "• <b>Random Text:</b> Inject random alphabetic strings into group names.\n"
             "• <b>Full Setup (a/i):</b> Auto-set profile photos, bio, anonymous admin, and forward content.\n"
             "• <b>Bot Integration:</b> Auto-invite bots and execute setup commands (/help, /id).\n"
             "• <b>Interactive UI:</b> Configure Granular Settings (Action Delay, Toggles) via Settings -> Create Group.\n"
             "• <b>Batching:</b> Safe creation with distributed delays to avoid Telegram limits.\n"
-            "• <b>Monitoring:</b> Real-time log notifications to the log group."
+            "• <b>Monitoring & Logs:</b> Real-time progress in the log group and exportable ZIP/TXT reports."
         )
     },
     group_only=False,
@@ -1453,6 +1818,10 @@ async def creategroup_command_handler(client: Client, message: AltruixMessage):
                 # Jika batch lebih besar dari count, set batch = count (satu kali jalan)
                 batch_size = count
             
+            # Load user configuration to get granular settings (like action_delay, pin_first_msg, etc)
+            from Main.internals.settings_handlers.creategroup_handlers import DEFAULT_CREATEGROUP_CONFIG
+            config = await Altruix.config.get_user_config(message.from_user.id, "creategroup", DEFAULT_CREATEGROUP_CONFIG)
+            
             # Konfirmasi sebelum memulai
             # Generate unique ID untuk callback data (hindari limit 64 bytes)
             confirm_id = f"{int(time.time())}_{message.from_user.id}"
@@ -1467,10 +1836,25 @@ async def creategroup_command_handler(client: Client, message: AltruixMessage):
                 "name_pattern": name_pattern,
                 "username_prefix": username_prefix,
                 "bot_identifiers": bot_identifiers,
-                "description": "Powered by @AlphaXproject",
+                "description": config.get("description", "Powered by @AlphaXproject"),
                 "user_id": message.from_user.id,
                 "chat_id": message.chat.id,
-                "client_id": client.me.id  # Store the ID of the client executing the command
+                "client_id": client.me.id,  # Store the ID of the client executing the command
+                # Granular settings from config
+                "action_delay": config.get("action_delay", 3.0),
+                "invite_bots": config.get("invite_bots", True),
+                "anon_mode": config.get("anon_mode", True),
+                "copy_messages": config.get("copy_messages", True),
+                "msg_img": config.get("msg_img", True),
+                "photo_source": config.get("photo_source", "source"),
+                "custom_photo_id": config.get("custom_photo_id"),
+                "log_destination": config.get("log_destination", "both"),
+                "log_format": config.get("log_format", "zip"),
+                "pin_first_msg": config.get("pin_first_msg", True),
+                "rand_len": config.get("rand_len", 0),
+                "rand_lower": config.get("rand_lower", False),
+                "rand_upper": config.get("rand_upper", False),
+                "rand_static": config.get("rand_static", False)
             }
 
             confirm_buttons = InlineKeyboardMarkup([
@@ -1512,6 +1896,63 @@ async def creategroup_command_handler(client: Client, message: AltruixMessage):
         except Exception as e:
             logger.error(f"Error in creategroup_command_handler: {e}", exc_info=True)
             await message.reply(f"❌ Error: {str(e)}")
+
+
+@Altruix.register_on_cmd(
+    ["creategroupui", "cgui"], 
+    cmd_help={"help": "Tampilkan Interactive Dashboard 'Create Group' (Full Buttons Setup)", "example": "creategroupui"},
+    bot_mode_unsupported=True
+)
+@log_errors
+async def creategroup_ui_cmd_handler(c: Client, m: AltruixMessage):
+    """
+    Handler untuk command .creategroupui pada userbot.
+    Mengambil hasil inline dari Bot Asisten untuk menampilkan menu dengan tombol interaktif.
+    """
+    chat = m.chat.id
+    me = c.me
+    
+    # 1. Identifikasi index session
+    index = None
+    for i, client in enumerate(Altruix.clients):
+        if client.me.id == me.id:
+            index = i
+            break
+            
+    if index is None:
+        await m.reply("❌ Session tidak ditemukan dalam daftar clients.")
+        return
+        
+    # 2. Ambil username bot asisten (bisa custom bot atau main bot)
+    bot_username = Altruix.bot_manager.get_bot_username(me.id)
+    
+    try:
+        # Encode chat title for query safety
+        chat_obj = m.chat
+        chat_title = chat_obj.title or chat_obj.first_name or "Chat"
+        encoded_title = base64.b64encode(chat_title.encode('utf-8')).decode('utf-8')
+        
+        # 3. Ambil hasil inline bot untuk query 'creategroup_{index}'
+        # Menambahkan metadata ke query
+        query_str = f"creategroup_{index} cid={chat} ctit={encoded_title}"
+        results = await c.get_inline_bot_results(bot_username, query_str)
+        
+        if results and results.results:
+            # 4. Kirim hasil inline ke chat
+            await c.send_inline_bot_result(
+                chat_id=chat,
+                query_id=results.query_id,
+                result_id=results.results[0].id,
+                reply_to_message_id=m.id,
+            )
+            # 5. Hapus pesan perintah
+            await m.delete_if_self()
+        else:
+            await m.reply("❌ Bot Asisten gagal memberikan Dashboard Create Group.")
+            
+    except Exception as e:
+        logger.error(f"Error in .creategroupui userbot handler: {e}")
+        await m.reply(f"❌ Error: {str(e)}")
 
 # ==================== CALLBACK QUERY HANDLER ====================
 @Altruix.bot.on_callback_query(filters.regex(r"^confirm_creategroup:"))
@@ -1584,7 +2025,7 @@ async def confirm_creategroup_handler(client: Client, callback_query: CallbackQu
         )
         
         if not Altruix.clients:
-            await callback_query.answer("❌ Tidak ada userbot aktif!", show_alert=True)
+            await callback_query.answer("❌ Tidak ada userbot aktif!")
             return
 
         # Find the correct client that initiated the request
@@ -1602,6 +2043,10 @@ async def confirm_creategroup_handler(client: Client, callback_query: CallbackQu
         except:
             pass
         
+        # Load user configuration to get granular settings
+        from Main.internals.settings_handlers.creategroup_handlers import DEFAULT_CREATEGROUP_CONFIG
+        config = await Altruix.config.get_user_config(callback_query.from_user.id, "creategroup", DEFAULT_CREATEGROUP_CONFIG)
+        
         # Start task
         asyncio.create_task(
             creategroup_loop(
@@ -1617,7 +2062,22 @@ async def confirm_creategroup_handler(client: Client, callback_query: CallbackQu
                 username_prefix=username_prefix,
                 bot_identifiers=bot_identifiers,
                 control_message=control_msg,
-                description=description
+                description=description,
+                action_delay=config.get("action_delay", 3.0),
+                invite_bots=config.get("invite_bots", True),
+                anon_mode=config.get("anon_mode", True),
+                copy_messages=config.get("copy_messages", True),
+                msg_img=config.get("msg_img", True),
+                photo_source=config.get("photo_source", "source"),
+                custom_photo_id=config.get("custom_photo_id"),
+                log_destination=config.get("log_destination", "both"),
+                log_format=config.get("log_format", "zip"),
+                pin_first_msg=config.get("pin_first_msg", True),
+                rand_len=config.get("rand_len", 0),
+                rand_lower=config.get("rand_lower", False),
+                rand_upper=config.get("rand_upper", False),
+                rand_static=config.get("rand_static", False),
+                user_id=callback_query.from_user.id
             )
         )
         
@@ -1717,7 +2177,7 @@ async def creategroup_stop_cmd(client: Client, message: AltruixMessage):
         await message.reply("⏹️ Sinyal stop dikirim. Task akan berhenti setelah proses saat ini selesai.")
 
 
-@Altruix.bot.on_callback_query(filters.regex(r"^(stop|pause|resume|status|list|recurring|edit_last|download_log|list_groups|delete_task|cancel|force_stop)_creategroup"))
+@Altruix.bot.on_callback_query(filters.regex(r"^(stop|pause|resume|status|list|recurring|edit_last|download_log|list_groups|delete_task|cancel|force_stop|confirm_recur)_creategroup"))
 @log_errors
 @iuser_check
 async def creategroup_control_handler(client: Client, callback_query: CallbackQuery):
@@ -1861,11 +2321,105 @@ async def creategroup_control_handler(client: Client, callback_query: CallbackQu
         
         elif action == "recurring":
             if task_id in COMPLETED_CREATEGROUP_TASKS:
-                config = COMPLETED_CREATEGROUP_TASKS[task_id]
-                # Implement recurring task
-                await callback_query.answer("Fitur recurring dalam pengembangan")
+                if task_id in CREATEGROUP_TASKS:
+                    await callback_query.answer("⚠️ Task CreateGroup masih berjalan!", show_alert=True)
+                    return
+                
+                conf = COMPLETED_CREATEGROUP_TASKS[task_id]
+                
+                # Show confirmation menu
+                buttons = [
+                    [
+                        InlineKeyboardButton("✅ Ya, Ulangi", callback_data="confirm_recur_creategroup"),
+                        InlineKeyboardButton("❌ Tidak", callback_data="status_creategroup")
+                    ]
+                ]
+                
+                await callback_query.message.edit_text(
+                    f"🔁 <b>Konfirmasi Recurring</b>\n\n"
+                    f"Apakah Anda yakin ingin mengulang task ini?\n"
+                    f"• Account: <b>{callback_query.from_user.mention}</b>\n"
+                    f"• Total: <code>{conf['count']}</code> grup\n"
+                    f"• Tipe: <code>{conf['group_type']}</code>\n"
+                    f"• Act Delay: <code>{conf.get('action_delay', 3.0)}</code>s\n"
+                    f"• GC Delay: <code>{conf['delay']}</code>s\n"
+                    f"• Batch: <code>{conf['batch_size']}</code> | <code>{conf['extra_delay_minutes']}</code>m\n"
+                    f"• Batch Act: <code>{conf.get('batch_action', 30)}</code> | <code>{conf.get('ba_delay', 30)}</code>s\n"
+                    f"• Pattern: <code>{html.escape(conf['name_pattern'][:25])}...</code>\n"
+                    f"• Bots: <code>{'Yes' if conf.get('invite_bots', True) else 'No'}</code>\n\n"
+                    f"<i>Task akan menggunakan konfigurasi yang sama.</i>",
+                    reply_markup=InlineKeyboardMarkup(buttons),
+                    parse_mode=ParseMode.HTML
+                )
             else:
                 await callback_query.answer("Tidak ada task selesai untuk diulang")
+        
+        elif action == "confirm_recur":
+            if task_id in COMPLETED_CREATEGROUP_TASKS:
+                if task_id in CREATEGROUP_TASKS:
+                    await callback_query.answer("⚠️ Task CreateGroup masih berjalan!", show_alert=True)
+                    return
+                
+                conf = COMPLETED_CREATEGROUP_TASKS[task_id]
+                
+                # Find client
+                client_id = conf.get("client_id", conf["user_id"])
+                user_client = next((c for c in Altruix.clients if c.me.id == client_id), None)
+                if not user_client and Altruix.clients:
+                    user_client = Altruix.clients[0]
+                
+                if not user_client:
+                    await callback_query.answer("❌ Tidak ada userbot aktif!", show_alert=True)
+                    return
+                
+                # Start task
+                await callback_query.answer("🔁 Mengulang task...")
+                
+                # Update control message with starting status
+                await callback_query.message.edit_text(
+                    f"🔄 <b>Mengulang Task CreateGroup...</b>\n\n"
+                    f"• Account: {callback_query.from_user.mention}\n"
+                    f"• Total: {conf['count']} grup\n"
+                    f"• Tipe: {conf['group_type']}",
+                    parse_mode=ParseMode.HTML
+                )
+                
+                asyncio.create_task(
+                    creategroup_loop(
+                        user_client=user_client,
+                        bot_client=Altruix.bot,
+                        initial_message=callback_query.message,
+                        delay=conf["delay"],
+                        count=conf["count"],
+                        extra_delay_minutes=conf["extra_delay_minutes"],
+                        batch_size=conf["batch_size"],
+                        group_type=conf["group_type"],
+                        name_pattern=conf["name_pattern"],
+                        username_prefix=conf["username_prefix"],
+                        bot_identifiers=conf["bot_identifiers"],
+                        control_message=callback_query.message,
+                        action_delay=conf.get("action_delay", 3.0),
+                        invite_bots=conf.get("invite_bots", True),
+                        anon_mode=conf.get("anon_mode", True),
+                        copy_messages=conf.get("copy_messages", True),
+                        description=conf.get("description", "Powered by @AlphaXproject"),
+                        photo_source=conf.get("photo_source", "source"),
+                        custom_photo_id=conf.get("custom_photo_id"),
+                        log_destination=conf.get("log_destination", "both"),
+                        log_format=conf.get("log_format", "zip"),
+                        pin_first_msg=conf.get("pin_first_msg", True),
+                        msg_img=conf.get("msg_img", True),
+                        rand_len=conf.get("rand_len", 0),
+                        rand_lower=conf.get("rand_lower", False),
+                        rand_upper=conf.get("rand_upper", False),
+                        rand_static=conf.get("rand_static", False),
+                        batch_action=conf.get("batch_action", 30),
+                        ba_delay=conf.get("ba_delay", 30),
+                        user_id=user_id
+                    )
+                )
+            else:
+                await callback_query.answer("Tidak ada task selesai untuk diulang.")
         
         elif action == "edit_last":
             if task_id in CREATEGROUP_TASKS:

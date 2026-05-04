@@ -7,7 +7,7 @@
 # All rights reserved.
 
 
-PLUGIN_VERSION = "0.0.21"
+PLUGIN_VERSION = "0.0.30"
 import sys
 import asyncio
 from Main import Altruix
@@ -188,7 +188,7 @@ async def help_normal(c: Client, m):
             cmd_list += f"\n<b>Total Commands:</b> <code>{total_commands}</code>"
             cmd_list += f"\n\n<i>Use</i> <code>{Altruix.prefix_owner_user}help <plugin name></code> <i>to know more!</i>"
         await m.handle_message(cmd_list, parse_mode=parse_mode)
-    elif user_input_lower and not cmd_lists.get(user_input_lower):
+    elif user_input_lower and not cmd_lists.get(user_input_lower) and not user_input_lower.isdigit():
         if (
             len(get_close_matches(user_input_lower, cmd_lists.keys(), n=4, cutoff=0.3))
             > 0

@@ -89,7 +89,7 @@ async def handle_reply_input(c: Client, m: RawMessage):
     # Debug: Print full reply info
     r_msg = m.reply_to_message
     if do_log:
-        logger.info(
+        logger.debug(
             f"ReplyManager: Checking reply.\n"
             f"  - Current Msg ID: {m.id}\n"
             f"  - Reply To ID: {reply_to_id}\n"
@@ -168,12 +168,13 @@ async def handle_reply_input(c: Client, m: RawMessage):
         # Only reply if it was a direct reply attempt AND toggle is ON
         if should_notify == "on":
             await m.reply(
-                    f"⚠️ <b>Sesi Balasan Tidak Ditemukan</b>\n\n"
-                    f"Balasan ke ID: <code>{reply_to_id}</code>\n"
-                    f"Thread ID: <code>{thread_id}</code>\n\n"
-                    f"Pastikan membalas ke pesan <b>Notifikasi Log</b> atau <b>Instruksi Balasan</b> yang baru.\n"
-                    f"💡 <i>Jika di Forum, klik 'Reply' pada pesan log, bukan pada judul topik.</i>",
-                    quote=True
+                f"<blockquote expandable>"
+                f"⚠️ <b>Sesi Balasan Tidak Ditemukan</b>\n\n"
+                f"Balasan ke ID: <code>{reply_to_id}</code>\n"
+                f"Thread ID: <code>{thread_id}</code>\n\n"
+                f"Pastikan membalas ke pesan <b>Notifikasi Log</b> atau <b>Instruksi Balasan</b> yang baru.\n"
+                f"💡 <i>Jika di Forum, klik 'Reply' pada pesan log, bukan pada judul topik.</i>"
+                f"</blockquote>",
                 )
         else:
              logger.debug(f"ReplyManager: Notification suppressed for missing session (REPLY_ERR_NOTIF_GLOBAL=off)")
@@ -198,11 +199,13 @@ async def handle_reply_input(c: Client, m: RawMessage):
     target_chat_id = data.get("chat_id")
     
     confirm_text = (
+        f"<blockquote expandable>"
         f"🤔 <b>Konfirmasi Kirim Balasan?</b>\n\n"
         f"• <b>Target:</b> <code>{target_chat_id}</code>\n"
         f"• <b>Metode:</b> {'SEMUA Akun' if is_all else 'Akun Tunggal'}\n"
         f"• <b>Pesan:</b>\n<blockquote>{html.escape(preview_text)}</blockquote>\n\n"
         f"✅ Klik tombol di bawah untuk mengirim."
+        f"</blockquote>"
     )
     
     btn_prefix = "pmlu"
@@ -431,6 +434,7 @@ async def pmlu_confirm_send_callback(c: Client, cb: CallbackQuery):
             time_str = datetime.now().strftime("%H:%M:%S")
 
             res_msg = (
+                f"<blockquote expandable>"
                 f"✅ <b>Berhasil mengirim dari {sent_count} akun</b>\n"
                 f"• <b>Reply via:</b> {via_text} (userbot)\n"
                 f"• <b>Replied by:</b> {by_text}\n"
@@ -438,6 +442,7 @@ async def pmlu_confirm_send_callback(c: Client, cb: CallbackQuery):
                 f"• <b>Chat Type:</b> {chat_type}\n"
                 f"• <b>Chat ID:</b> <code>{chat_id}</code>\n"
                 f"• <b>Time:</b> {time_str}"
+                f"</blockquote>"
             )
             
             if errors:
@@ -534,11 +539,13 @@ async def reply_manager_cmd_handler(c: Client, m: RawMessage):
          err_notif = (await Altruix.config.get_env("REPLY_ERR_NOTIF_GLOBAL") or "on") == "on"
          
          text = (
+            f"<blockquote expandable>"
             "<b>💬 Reply Manager Settings</b>\n\n"
             "Kontrol apakah Bot Assistant memproses balasan di Log Group untuk diteruskan ke user.\n\n"
             f"• <b>Master Status:</b> {'✅ ENABLED' if enabled else '❌ DISABLED'}\n"
             f"• <b>Auto Reply:</b> {'✅ ENABLED' if auto_reply else '❌ DISABLED'}\n"
             f"• <b>Error Notif:</b> {'✅ ENABLED' if err_notif else '❌ DISABLED'}"
+            f"</blockquote>"
          )
          
          buttons = [

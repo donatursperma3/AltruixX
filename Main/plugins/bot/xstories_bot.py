@@ -565,7 +565,14 @@ def register_story_bot_handlers(bot_client: Client):
     """
     if not bot_client: return
     
-    # [v1.0.618] Deduplicate handlers to prevent double background tasks
+    # [v1.0.619] Main bot (Altruix.bot) already has handlers registered via 
+    # static decorators (@Altruix.bot.on_callback_query / on_inline_query) at
+    # module level (lines 582-588). Adding handlers again here would cause
+    # DOUBLE callback firing → duplicate download tasks (e.g. #ST3744 + #ST4c3a).
+    if bot_client is Altruix.bot:
+        return
+    
+    # [v1.0.618] Deduplicate handlers for custom bots to prevent double background tasks
     if bot_client.me and bot_client.me.id in _registered_bots:
         return
         

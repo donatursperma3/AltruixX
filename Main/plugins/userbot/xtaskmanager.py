@@ -17,7 +17,7 @@ from Main.core.decorators import iuser_check, log_errors
 # Plugin Metadata
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = "xtaskmanager"
-PLUGIN_VERSION = "1.0.1"
+PLUGIN_VERSION = "1.0.220"
 
 logger = logging.getLogger("altruix.xtaskmanager")
 logger.setLevel(logging.INFO)
@@ -49,7 +49,7 @@ def generate_task_id(prefix="T"):
     return f"#{prefix}{short_hash}"
 
 def register_task(task_id: str, asyncio_task: asyncio.Task, name: str,
-                  plugin: str, user_id: int = None, details: str = ""):
+    plugin: str, user_id: int = None, details: str = "", user_name: str = None):
     """
     Register a running asyncio.Task in the global registry.
     Called by any plugin that creates background tasks.
@@ -69,7 +69,9 @@ def register_task(task_id: str, asyncio_task: asyncio.Task, name: str,
         "plugin": plugin,
         "started_at": time.time(),
         "user_id": user_id,
-        "details": details
+        "user_name": user_name,
+        "details": details,
+        "paused": False
     }
     Altruix.log(f"[TaskManager] Registered task {task_id}: {name} ({plugin})", level=20)
 
@@ -83,6 +85,38 @@ def unregister_task(task_id: str):
 def get_all_tasks() -> dict:
     """Return all registered tasks."""
     return _ensure_registry()
+
+def find_task_by_id(task_id: str) -> tuple:
+    """
+    Find a task in the registry by its ID.
+    Supports case-insensitive matching and optional '#' prefix.
+    Returns (normalized_id: str, entry: dict) or (None, None)
+    """
+    if not task_id:
+        return None, None
+        
+    registry = _ensure_registry()
+    
+    # 1. Try exact match
+    if task_id in registry:
+        return task_id, registry[task_id]
+        
+    # 2. Try case-insensitive match (with normalized '#' prefix)
+    target = task_id.lower()
+    if not target.startswith("#"):
+        target = f"#{target}"
+        
+    for tid, entry in registry.items():
+        if tid.lower() == target:
+            return tid, entry
+            
+    # 3. Try without any '#' prefix
+    target_no_hash = task_id.lower().lstrip("#")
+    for tid, entry in registry.items():
+        if tid.lower().lstrip("#") == target_no_hash:
+            return tid, entry
+            
+    return None, None
 
 def cancel_task_by_id(task_id: str) -> tuple:
     """
@@ -114,6 +148,32 @@ def cancel_task_by_id(task_id: str) -> tuple:
     return True, f"<blockquote expandable>✅ Task <b>{task_id}</b> ({task_name}) from <b>{plugin}</b> has been cancelled.</blockquote>"
 
 
+def pause_task_by_id(task_id: str) -> tuple:
+    """Pause a task by its ID (Registry flag only)."""
+    registry = _ensure_registry()
+    if task_id not in registry:
+        return False, f"Task `{task_id}` not found in registry."
+    
+    registry[task_id]["paused"] = True
+    task_name = registry[task_id].get("name", "Unknown")
+    
+    Altruix.log(f"[TaskManager] Paused task {task_id}: {task_name}", level=20)
+    return True, f"<blockquote expandable>⏸ Task <b>{task_id}</b> ({task_name}) has been <b>Paused</b>.</blockquote>"
+
+
+def resume_task_by_id(task_id: str) -> tuple:
+    """Resume a task by its ID (Registry flag only)."""
+    registry = _ensure_registry()
+    if task_id not in registry:
+        return False, f"Task `{task_id}` not found in registry."
+    
+    registry[task_id]["paused"] = False
+    task_name = registry[task_id].get("name", "Unknown")
+    
+    Altruix.log(f"[TaskManager] Resumed task {task_id}: {task_name}", level=20)
+    return True, f"<blockquote expandable>▶️ Task <b>{task_id}</b> ({task_name}) has been <b>Resumed</b>.</blockquote>"
+
+
 # ==================== CLEANUP STALE TASKS ====================
 def cleanup_stale_tasks():
     """Remove tasks that have already completed from the registry."""
@@ -125,12 +185,12 @@ def cleanup_stale_tasks():
     return len(stale)
 
 
-# ==================== COMMAND: .canceltask ====================
+# ==================== COMMAND: .taskcancel ====================
 @Altruix.register_on_cmd(
-    ["canceltask"],
+    ["taskcancel", "canceltask"],
     cmd_help={
         "help": "Cancel a running background task by its Task ID.",
-        "example": ".canceltask #T1a2b",
+        "example": ".taskcancel #T1a2b",
         "user_args": {
             "task_id": "The unique task ID (e.g. #T1a2b). Get IDs from .tasklist."
         }
@@ -138,25 +198,29 @@ def cleanup_stale_tasks():
 )
 @iuser_check
 @log_errors
-async def canceltask_cmd(client: Client, message: Message):
+async def taskcancel_cmd(client: Client, message: Message):
     """
     Cancel a running task by its Task ID.
-    Usage: .canceltask <task_id>
+    Usage: .taskcancel <task_id>
     """
     args = message.user_input
     if not args:
-        await message.edit(
-            "❌ <b>Usage:</b> <code>.canceltask &lt;task_id&gt;</code>\n"
+        await message.reply_msg(
+            "❌ <b>Usage:</b> <code>.taskcancel &lt;task_id&gt;</code>\n"
             "💡 Use <code>.tasklist</code> to see active tasks and their IDs."
         )
         return
     
     task_id = args.strip()
-    # Normalize: add # if missing
-    if not task_id.startswith("#"):
-        task_id = f"#{task_id}"
     
-    success, result_msg = cancel_task_by_id(task_id)
+    # Find task robustly
+    actual_tid, entry = find_task_by_id(task_id)
+    
+    if not actual_tid:
+        await message.reply_msg(f"⚠️ Task <code>{task_id}</code> not found in registry.")
+        return
+
+    success, result_msg = cancel_task_by_id(actual_tid)
     
     if success:
         await message.reply_msg(result_msg)
@@ -170,7 +234,7 @@ async def canceltask_cmd(client: Client, message: Message):
                         int(log_chat),
                         "<blockquote expandable>\n"
                         f"🛑 <b>Task Cancelled</b>\n"
-                        f"Task ID: <code>{task_id}</code>\n"
+                        f"Task ID: <code>{actual_tid}</code>\n"
                         f"By: {client.me.first_name} (ID: {client.me.id})"
                         "</blockquote>"
                     )
@@ -178,6 +242,125 @@ async def canceltask_cmd(client: Client, message: Message):
             pass
     else:
         await message.reply_msg(f"⚠️ {result_msg}")
+
+
+# ==================== COMMAND: .taskpause ====================
+@Altruix.register_on_cmd(
+    ["taskpause"],
+    cmd_help={
+        "help": "Pause a running background task by its Task ID.",
+        "example": ".taskpause #T1a2b",
+        "user_args": {
+            "task_id": "The unique task ID."
+        }
+    }
+)
+@iuser_check
+@log_errors
+async def taskpause_cmd(client: Client, message: Message):
+    """Pause a running task by its Task ID."""
+    args = message.user_input
+    if not args:
+        return await message.reply_msg("❌ <b>Usage:</b> <code>.taskpause &lt;task_id&gt;</code>")
+    
+    task_id = args.strip()
+    actual_tid, _ = find_task_by_id(task_id)
+    
+    if not actual_tid:
+        return await message.reply_msg(f"⚠️ Task <code>{task_id}</code> not found.")
+    
+    success, result_msg = pause_task_by_id(actual_tid)
+    await (message.reply_msg(result_msg) if success else message.reply_msg(f"⚠️ {result_msg}"))
+
+
+# ==================== COMMAND: .taskresume ====================
+@Altruix.register_on_cmd(
+    ["taskresume"],
+    cmd_help={
+        "help": "Resume a paused background task by its Task ID.",
+        "example": ".taskresume #T1a2b",
+        "user_args": {
+            "task_id": "The unique task ID."
+        }
+    }
+)
+@iuser_check
+@log_errors
+async def taskresume_cmd(client: Client, message: Message):
+    """Resume a paused task by its Task ID."""
+    args = message.user_input
+    if not args:
+        return await message.reply_msg("❌ <b>Usage:</b> <code>.taskresume &lt;task_id&gt;</code>")
+    
+    task_id = args.strip()
+    actual_tid, _ = find_task_by_id(task_id)
+    
+    if not actual_tid:
+        return await message.reply_msg(f"⚠️ Task <code>{task_id}</code> not found.")
+    
+    success, result_msg = resume_task_by_id(actual_tid)
+    await (message.reply_msg(result_msg) if success else message.reply_msg(f"⚠️ {result_msg}"))
+
+
+# ==================== COMMAND: .taskstatus ====================
+@Altruix.register_on_cmd(
+    ["taskstatus"],
+    cmd_help={
+        "help": "View detailed status of a background task by its Task ID.",
+        "example": ".taskstatus #T1a2b",
+        "user_args": {
+            "task_id": "The unique task ID."
+        }
+    }
+)
+@iuser_check
+@log_errors
+async def taskstatus_cmd(client: Client, message: Message):
+    """View detailed status of a task by its Task ID."""
+    args = message.user_input
+    if not args:
+        return await message.reply_msg("❌ <b>Usage:</b> <code>.taskstatus &lt;task_id&gt;</code>")
+    
+    task_id = args.strip()
+    actual_tid, entry = find_task_by_id(task_id)
+    
+    if not actual_tid:
+        return await message.reply_msg(f"⚠️ Task <code>{task_id}</code> not found.")
+    
+    task_obj = entry.get("task")
+    name = entry.get("name", "Unknown")
+    plugin = entry.get("plugin", "?")
+    started = entry.get("started_at", time.time())
+    user_id = entry.get("user_id", "?")
+    user_name = entry.get("user_name")
+    details = entry.get("details", "")
+    is_paused = entry.get("paused", False)
+    
+    duration = int(time.time() - started)
+    mins, secs = divmod(duration, 60)
+    hrs, mins = divmod(mins, 60)
+    dur_str = f"{hrs}h{mins}m{secs}s" if hrs > 0 else (f"{mins}m{secs}s" if mins > 0 else f"{secs}s")
+    
+    if is_paused: status = "🟡 Paused"
+    elif task_obj and not task_obj.done(): status = "🟢 Running"
+    elif task_obj and task_obj.cancelled(): status = "🔴 Cancelled"
+    elif task_obj and task_obj.done(): status = "⚫ Done"
+    else: status = "❓ Unknown"
+    
+    text = (
+        f"📊 <b>Task Details: {actual_tid}</b>\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"• <b>Name:</b> {name}\n"
+        f"• <b>Plugin:</b> <code>{plugin}</code>\n"
+        f"• <b>Status:</b> {status}\n"
+        f"• <b>Duration:</b> <code>{dur_str}</code>\n"
+        f"• <b>Owner:</b> <b>{html.escape(str(user_name or 'Unknown'))}</b>\n"
+        f"• <b>Owner ID:</b> <code>{user_id}</code>\n"
+    )
+    if details: text += f"• <b>Details:</b> {details}\n"
+    text += "━━━━━━━━━━━━━━━━━━"
+    
+    await message.reply_msg(text)
 
 
 # ==================== COMMAND: .tasklist ====================
@@ -200,7 +383,7 @@ async def tasklist_cmd(client: Client, message: Message):
     registry = get_all_tasks()
     
     if not registry:
-        await message.edit(
+        await message.reply_msg(
             "📋 <b>Active Tasks</b>\n\n"
             "<i>No active tasks running.</i>"
             + (f"\n🧹 Cleaned {cleaned} stale tasks." if cleaned else "")
@@ -215,6 +398,7 @@ async def tasklist_cmd(client: Client, message: Message):
         plugin = entry.get("plugin", "?")
         started = entry.get("started_at", now)
         user_id = entry.get("user_id", "?")
+        user_name = entry.get("user_name", "Unknown")
         details = entry.get("details", "")
         
         # Calculate duration
@@ -229,7 +413,10 @@ async def tasklist_cmd(client: Client, message: Message):
             dur_str = f"{secs}s"
         
         # Status
-        if task_obj and not task_obj.done():
+        is_paused = entry.get("paused", False)
+        if is_paused:
+            status = "🟡 Paused"
+        elif task_obj and not task_obj.done():
             status = "🟢 Running"
         elif task_obj and task_obj.cancelled():
             status = "🔴 Cancelled"
@@ -241,7 +428,7 @@ async def tasklist_cmd(client: Client, message: Message):
         line = (
             f"<b>{tid}</b> — {name}\n"
             f"   Plugin: <code>{plugin}</code> | {status}\n"
-            f"   Duration: {dur_str} | Owner: {user_id}"
+            f"   Duration: {dur_str} | Owner: {user_name} (ID: {user_id})"
         )
         if details:
             line += f"\n   {details}"
@@ -253,11 +440,11 @@ async def tasklist_cmd(client: Client, message: Message):
         + "━" * 30 + "\n"
         + "\n\n".join(lines)
         + "\n━" * 30
-        + "\n💡 <code>.canceltask &lt;id&gt;</code> to cancel."
+        + "\n💡 <code>.taskcancel &lt;id&gt;</code> to cancel."
     )
     
     # Truncate if too long
     if len(text) > 4000:
         text = text[:3950] + "\n\n<i>... truncated</i>"
     
-    await message.edit(text)
+    await message.reply_msg(text)

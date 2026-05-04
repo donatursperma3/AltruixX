@@ -598,7 +598,7 @@ async def pm_logger_user_handler(c: Client, m: RawMessage):
                 else: size_str = f" ({size/(1024*1024):.2f} MB)"
 
         log_content = (
-            f"👤 <b>New PM Received (User)</b>\n"
+            f"👤 <b>New PM Received (User)</b>"
         )
         if is_restricted:
             log_content += f"⚠️ <b>ini adalah restrict content dengan ukuran{size_str}</b>\n\n"

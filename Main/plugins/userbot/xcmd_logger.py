@@ -172,7 +172,7 @@ async def cmd_logger_handler(c: Client, m: Message):
         log_message = (
             f"⚡️ <b>Command Executed #LOG</b>\n\n"
             f"<b>Detail:</b>\n"
-            f"<blockquote expandable>\n"
+            f"<blockquote expandable>"
             f"• <b>Account:</b> <b>{c.me.mention(style=enums.ParseMode.HTML)}</b>\n"
             f"• <b>Chat:</b> {chat_display}\n"
             f"• <b>ChatID:</b> <code>{chat.id}</code>\n"
@@ -236,25 +236,27 @@ async def cmd_logger_handler(c: Client, m: Message):
         btn_text = "Copy Cmd"
 
         reply_markup = None
-        try:
-            # First try the newer CopyTextButton (native Pyrogram 2.4+)
-            from pyrogram.types import CopyTextButton
-            reply_markup = InlineKeyboardMarkup([[
-                InlineKeyboardButton(btn_text, copy_text=CopyTextButton(text=text), style=btn_style)
-            ]])
-        except (ImportError, TypeError):
-            # Fallback for older Pyrogram that accepts copy_text string directly
+        # ✅ FIX: Telegram has a 256 character limit for keyboardButtonCopy.copy_text
+        if len(text) <= 256:
             try:
+                # First try the newer CopyTextButton (native Pyrogram 2.4+)
+                from pyrogram.types import CopyTextButton
                 reply_markup = InlineKeyboardMarkup([[
-                    InlineKeyboardButton(btn_text, copy_text=text, style=btn_style)
+                    InlineKeyboardButton(btn_text, copy_text=CopyTextButton(text=text), style=btn_style)
                 ]])
-            except TypeError:
-                # Absolute Fallback if older Pyrogram doesn't even support style kwarg
+            except (ImportError, TypeError):
+                # Fallback for older Pyrogram that accepts copy_text string directly
                 try:
                     reply_markup = InlineKeyboardMarkup([[
-                        InlineKeyboardButton(btn_text, copy_text=text)
+                        InlineKeyboardButton(btn_text, copy_text=text, style=btn_style)
                     ]])
-                except: pass
+                except TypeError:
+                    # Absolute Fallback if older Pyrogram doesn't even support style kwarg
+                    try:
+                        reply_markup = InlineKeyboardMarkup([[
+                            InlineKeyboardButton(btn_text, copy_text=text)
+                        ]])
+                    except: pass
 
         async def _log_task():
             try:

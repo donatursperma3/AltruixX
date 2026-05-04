@@ -37,6 +37,11 @@ async def start_command_handler(_, m: Message):
         sudo_count = len(Altruix.db_sudo_users)
         auth_count = len(Altruix._auth_users_cache)
         
+        # Whitelist Info
+        wl_enabled = await Altruix.is_group_wl_enabled()
+        wl_groups = await Altruix.get_group_wl_list()
+        in_wl_group = await Altruix.is_member_of_whitelisted_group(uid)
+        
         # Check env parsing
         from os import getenv
         raw_env = getenv("OWNER_USERS_ID", "NOT SET")
@@ -50,6 +55,10 @@ async def start_command_handler(_, m: Message):
             f"• In OWNER_USERS_ID: `{in_owner}`\n"
             f"• In db_sudo_users: `{in_db_sudo}`\n"
             f"• In _auth_users_cache: `{in_auth_cache}`\n\n"
+            f"**Whitelist Features:**\n"
+            f"• Feature Enabled: `{wl_enabled}`\n"
+            f"• Whitelisted Groups: `{len(wl_groups)}` entries\n"
+            f"• Member of Whitelist: `{in_wl_group}`\n\n"
             f"**List Sizes:**\n"
             f"• OWNER_USERS_ID: `{owner_count}` entries\n"
             f"• db_sudo_users: `{sudo_count}` entries\n"
@@ -132,26 +141,49 @@ async def start_command_handler(_, m: Message):
 @log_errors
 async def add_session_menu_cb_handler(_, cb: CallbackQuery):
     # CRITICAL: Authorization check - using is_sudo which supports DB users
-    if not await Altruix.is_sudo(cb.from_user.id):
+    user_id = cb.from_user.id
+    if not await Altruix.is_sudo(user_id):
+        # Additional Log for debugging Group Whitelist
+        wl_enabled = await Altruix.is_group_wl_enabled()
+        print(f"DEBUG: /add blocked for {user_id}. WL Enabled: {wl_enabled}")
         return await cb.answer(Altruix.get_string("AUTH_SESSION_ADD_DENIED"), show_alert=True)
     
-    await cb.message.edit(
-        "Alright, let's get started.", reply_markup=ReplyKeyboardRemove()
-    )
+    if cb.message:
+        await cb.edit_message_text(
+            "Alright, let's get started.", reply_markup=None
+        )
+    else:
+        await cb.answer("Alright, let's get started.", show_alert=True)
     await asyncio.sleep(1)
     from Main.utils.file_helpers import get_user_button_style
     user_style = get_user_button_style(cb.from_user.id)
-    await cb.message.reply(
-        "Do you have the string session already generated?.",
-        reply_markup=InlineKeyboardMarkup(
-            [
+    
+    sender = cb.message.reply if cb.message else cb.answer
+    if cb.message:
+        await cb.message.reply(
+            "Do you have the string session already generated?.",
+            reply_markup=InlineKeyboardMarkup(
                 [
-                    InlineKeyboardButton("Yes", callback_data="session_yes", style=user_style),
-                    InlineKeyboardButton("No", callback_data="session_no", style=user_style),
+                    [
+                        InlineKeyboardButton("Yes", callback_data="session_yes", style=user_style),
+                        InlineKeyboardButton("No", callback_data="session_no", style=user_style),
+                    ]
                 ]
-            ]
-        ),
-    )
+            ),
+        )
+    else:
+        await Altruix.bot.send_message(
+            cb.from_user.id,
+            "Do you have the string session already generated?.",
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton("Yes", callback_data="session_yes", style=user_style),
+                        InlineKeyboardButton("No", callback_data="session_no", style=user_style),
+                    ]
+                ]
+            ),
+        )
 
 
 @Altruix.bot.on_callback_query(filters.regex("^session_yes"))
@@ -161,12 +193,19 @@ async def add_session_cb_handler(_, cb: CallbackQuery):
     if not await Altruix.is_sudo(cb.from_user.id):
         return await cb.answer(Altruix.get_string("AUTH_SESSION_ADD_DENIED"), show_alert=True)
     
-    with contextlib.suppress(Exception):
-        await cb.message.delete()
-    await cb.message.reply(
-        "Alright... send me your string session.\nUse /cancel to cancel the current operation.",
-        reply_markup=ForceReply(),
-    )
+    if cb.message:
+        with contextlib.suppress(Exception):
+            await cb.message.delete()
+        await cb.message.reply(
+            "Alright... send me your string session.\nUse /cancel to cancel the current operation.",
+            reply_markup=ForceReply(),
+        )
+    else:
+        await Altruix.bot.send_message(
+            cb.from_user.id,
+            "Alright... send me your string session.\nUse /cancel to cancel the current operation.",
+            reply_markup=ForceReply(),
+        )
     # session = await cb.from_user.listen(filters.regex(r"(\S{300,400})",
     # timeout=600))
     while True:
@@ -182,7 +221,7 @@ async def add_session_cb_handler(_, cb: CallbackQuery):
     status = await cb.message.reply(
         "<code>Processing the given string session...</code>"
     )
-    new_session = await Altruix.add_session(session, status, user=cb.from_user)
+    new_session = await Altruix.add_session(session, status, user=cb.from_user, skip_reload=True)
     if not new_session:
         return # add_session already handled the error message/logging
 
@@ -201,12 +240,41 @@ async def add_session_cb_handler(_, cb: CallbackQuery):
         f"•  <b>Username:</b> {username}\n"
         f"•  <b>DC ID:</b> <code>{dc_id}</code>\n"
         f"•  <b>Session:</b> #{session_idx}\n"
-        f"{'🤖' if me.is_bot else '👤'} <b>Type:</b> {'Bot' if me.is_bot else 'User'}\n"
-        "</blockquote>\n"
+        f"{'🤖' if me.is_bot else '👤'} <b>Type:</b> {'Bot' if me.is_bot else 'User'}\n\n"
         "Your account has been successfully linked to <b>AltruixX</b>. "
         "You can now manage your sessions and use enhanced features via the bot settings.\n\n"
-        "Support: @AltroidUserbot",
+        "Support: @AltroidUserbot"
+        "</blockquote>\n",
     )
+    
+    from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
+    await cb.message.reply(
+        "✅ **Session added successfully!**\n\n"
+        "Do you want to reload the system modules now to apply changes?\n"
+        "*(Choose 'No' if you want to add more sessions first to save time)*",
+        reply_markup=InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("Yes, Reload Now", callback_data="reload_sys_yes", style=user_style),
+                InlineKeyboardButton("No, Later", callback_data="reload_sys_no", style=user_style)
+            ]
+        ])
+    )
+
+@Altruix.bot.on_callback_query(filters.regex(r"^reload_sys_(yes|no)$"))
+@log_errors
+async def reload_sys_cb_handler(_, cb: CallbackQuery):
+    if not await Altruix.is_sudo(cb.from_user.id):
+        return await cb.answer(Altruix.get_string("AUTH_BUTTON_DENIED"), show_alert=True)
+    
+    choice = cb.matches[0].group(1)
+    if choice == "yes":
+        await cb.message.edit("🔄 Reloading system modules... (Please wait)")
+        await Altruix.load_all_modules()
+        await cb.message.edit("✅ **System modules reloaded successfully!** All sessions are ready.")
+    else:
+        await cb.message.edit("⏩ **Reload skipped.** You can add more sessions now.")
 
 
 # # ============================================================================

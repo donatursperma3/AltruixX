@@ -306,7 +306,7 @@ async def bash(cmd):
         stderr=asyncio.subprocess.PIPE
     )
     stdout, stderr = await process.communicate()
-    return stdout.decode().strip(), stderr.decode().strip()
+    return stdout.decode(errors="replace").strip(), stderr.decode(errors="replace").strip()
 
 def inline_mention(user):
     """Shim for inline mention formatting"""

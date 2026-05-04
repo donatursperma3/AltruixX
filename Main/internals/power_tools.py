@@ -8,6 +8,10 @@
 
 
 import asyncio
+import traceback
+import sys
+import subprocess
+import os
 from Main import Altruix
 from style import ping_format as pf
 from pyrogram import Client, filters
@@ -19,26 +23,43 @@ from pyrogram.types import (
     InputTextMessageContent, InlineQueryResultArticle)
 
 
-@Altruix.bot.on_callback_query(filters.regex("^(restart|reload)_confirm"))
+@Altruix.bot.on_callback_query(filters.regex("^(restart|reload)_confirm(_hard|_soft)?$"))
 @log_errors
 @iuser_check
 async def restart_cb_handler(_, cb: CallbackQuery):
     await cb.answer("Hang on..", show_alert=True)
     _type = cb.matches[0].group(1)
-    if _type == "restart":
-        text = "<i>A fresh restart will be initiated in a few seconds.</i>"
-        soft = False
+    _mode = cb.matches[0].group(2) or ""
+    
+    Altruix.log(f"🔄 Power Controls | Callback Received: type={_type}, mode={_mode}", level=20)
+
+    if _type == "reload":
+        await cb.edit_message_text("<b>♻️ Reloading Plugins...</b>\nUpdating command registry. Please wait.")
+        await Altruix.reboot(soft=True, last_msg=cb)
+    elif _mode == "_hard":
+        Altruix.log("⚠️ Power Controls | Hard Restart (Process Swap) Initiated...", level=20)
+        await cb.edit_message_text("<b>⚙️ Hard Restart Initiated...</b>\nReplacing process. Please wait.")
+        args = [sys.executable, "-m", "Main"]
+        if os.name == 'nt':
+            Altruix.log(f"💻 Power Controls | Spawning new console on Windows: {' '.join(args)}", level=20)
+            subprocess.Popen(args, creationflags=subprocess.CREATE_NEW_CONSOLE)
+            Altruix.log("👋 Power Controls | Exiting parent process.", level=20)
+            os._exit(0)
+        else:
+            Altruix.log(f"🐧 Power Controls | Executing replace on Linux: {' '.join(args)}", level=20)
+            os.execv(sys.executable, args)
     else:
-        text = "<i>The reloading will be initiated in a few seconds.</i>"
-        soft = True
-    await cb.edit_message_text(text)
-    await Altruix.reboot(soft, last_msg=cb)
+        # Default to Soft Restart (Optimized)
+        Altruix.log("🚀 Power Controls | Soft Restart (Optimized) Initiated...", level=20)
+        await cb.edit_message_text("<b>🚀 Soft Restart Initiated...</b>\nRestarting sessions in parallel. Please wait.")
+        await Altruix.reboot(soft=False, last_msg=cb)
 
 
 @Altruix.bot.on_callback_query(filters.regex("^(restart|reload)_cancel"))
 @log_errors
 @iuser_check
-async def restart_cb_handler(c: Client, cb: CallbackQuery):
+async def cancel_restart_cb_handler(c: Client, cb: CallbackQuery):
+    Altruix.log(f"🔘 Callback Received: {cb.data} (Cancel) from {cb.from_user.id}", level=20)
     await cb.answer("Alright", show_alert=True)
     _type = cb.matches[0].group(1)
     soft = _type != "restart"
@@ -53,21 +74,34 @@ async def restart_cb_handler(c: Client, cb: CallbackQuery):
 @log_errors
 async def restart_command_handler(_, m: Message):
     reload_only = m.command[0] == "reload"
+    Altruix.log(f"🛠 Power Controls | Command Triggered: {m.command[0]} by {m.from_user.id}", level=20)
     user_style = get_user_button_style(m.from_user.id)
+    
+    if reload_only:
+        text = "<blockquote expandable><b>♻️ Are you sure about reloading Altroid-X?</b>\n\n<i>This will only refresh the plugin files without disconnecting.</i></blockquote>"
+
+        buttons = [
+            [InlineKeyboardButton("Yes, Reload", "reload_confirm", style=user_style)],
+            [InlineKeyboardButton("No, Cancel", "reload_cancel", style=user_style)]
+        ]
+    else:
+        text = (
+            f"<blockquote expandable>"
+            "<b>🔄 AltruixX Restart Controls</b>\n\n"
+            "Pilih metode restart yang diinginkan:\n\n"
+            "🚀 <b>Soft Restart (Optimized):</b> Restart koneksi semua session secara paralel. Sangat cepat.\n"
+            "⚙️ <b>Full Restart (Hard):</b> Mengganti proses sistem secara keseluruhan (process swap)."
+            f"</blockquote>"
+        )
+        buttons = [
+            [InlineKeyboardButton("🚀 Soft Restart (Fast)", "restart_confirm_soft", style=user_style)],
+            [InlineKeyboardButton("⚙️ Full Restart (Hard)", "restart_confirm_hard", style=user_style)],
+            [InlineKeyboardButton("❌ Cancel", "restart_cancel", style=user_style)]
+        ]
+        
     await m.reply(
-        f"<blockquote expandable><b>Are you sure about {'reloading' if reload_only else 'restarting'} Altroid-X?</b>\n\n<i>This will stop all the ongoing processes and the {'reload' if reload_only else 'restart'} will take some time.</i></blockquote>",
-        reply_markup=InlineKeyboardMarkup(
-            [
-                [
-                    InlineKeyboardButton(
-                        "Yes", f"{'reload' if reload_only else 'restart'}_confirm", style=user_style
-                    ),
-                    InlineKeyboardButton(
-                        "No", f"{'reload' if reload_only else 'restart'}_cancel", style=user_style
-                    ),
-                ]
-            ]
-        ),
+        text,
+        reply_markup=InlineKeyboardMarkup(buttons),
     )
 
 
@@ -75,70 +109,65 @@ async def restart_command_handler(_, m: Message):
 @log_errors
 @iuser_check
 async def ping_inline_handler(_, iq: InlineQuery):
+    Altruix.log(f"📥 Inline Query Received: {iq.query} from {iq.from_user.id}", level=20)
     soft = iq.query.lower() == "reload"
+    user_style = get_user_button_style(iq.from_user.id)
+    if soft:
+        text = "<blockquote expandable><b>♻️ Are you sure about reloading Altroid-X?</b>\n\n<i>This will only refresh the plugin files without disconnecting.</i></blockquote>"
+        buttons = [
+            [InlineKeyboardButton("Yes, Reload", "reload_confirm", style=user_style)],
+            [InlineKeyboardButton("No, Cancel", "reload_cancel", style=user_style)]
+        ]
+    else:
+        text = (
+            f"<blockquote expandable>"
+            "<b>🔄 AltruixX Restart Controls</b>\n\n"
+            "Pilih metode restart yang diinginkan:\n\n"
+            "🚀 <b>Soft Restart (Optimized):</b> Restart koneksi secara paralel.\n"
+            "⚙️ <b>Full Restart (Hard):</b> Mengganti proses sistem."
+            f"</blockquote>"
+        )
+        buttons = [
+            [InlineKeyboardButton("🚀 Soft Restart", "restart_confirm_soft", style=user_style)],
+            [InlineKeyboardButton("⚙️ Full Restart", "restart_confirm_hard", style=user_style)],
+            [InlineKeyboardButton("❌ Cancel", "restart_cancel", style=user_style)]
+        ]
+
+    Altruix.log("✅ Sending Inline Query results", level=20)
     await iq.answer(
         [
             InlineQueryResultArticle(
                 id=1,
-                title=f"{'Reload' if soft else 'Restart'} confirmation mesage",
-                description=Altruix.get_string(
-                    "INTERNAL_FUNCTION", args=pf["ping_emoji2"]
-                ),
-                input_message_content=InputTextMessageContent(
-                    f"<blockquote expandable><b>Are you sure about {'reloading' if soft else 'restarting'} Altroid-X?</b>\n\n<i>This will stop all the ongoing processes and the restart will take some time.</i></blockquote>",
-                ),
-                reply_markup=InlineKeyboardMarkup(
-                    [
-                        [
-                            InlineKeyboardButton(
-                                "Yes", f"{'reload' if soft else 'restart'}_confirm", style=get_user_button_style(iq.from_user.id)
-                            ),
-                            InlineKeyboardButton(
-                                "No", f"{'reload' if soft else 'restart'}_cancel", style=get_user_button_style(iq.from_user.id)
-                            ),
-                        ]
-                    ]
-                ),
+                title=f"{'Reload' if soft else 'Restart'} confirmation message",
+                description=Altruix.get_string("INTERNAL_FUNCTION", args=pf["ping_emoji2"]),
+                input_message_content=InputTextMessageContent(text),
+                reply_markup=InlineKeyboardMarkup(buttons),
             )
         ],
         cache_time=0,
         is_personal=True,
-        switch_pm_text="Internal Function",
-        switch_pm_parameter="inline_help",
     )
 
 
-@Altruix.register_on_cmd(
-    "restart",
-    bot_mode_unsupported=True,
-    cmd_help={
-        "help": "Restarts the userbot",
-        "example": "restart",
-        "user_args": [
-            {
-                "arg": "soft",
-                "help": "Just reloads the plugins instead of performing a full restart.",
-                "requires_input": False,
-            },
-        ],
-    },
-)
-@inline_check
+@Altruix.register_on_cmd("restart", cmd_help={"help": "Restart the bot."})
+@Altruix.register_on_cmd("reload", cmd_help={"help": "Reload plugins."})
 async def restart_ub_cmd(c: Client, m: Message):
-    reload = m.user_args and m.user_args.soft
-    rm = m.reply_to_message
+    reload = "reload" in m.text.lower()
+    Altruix.log(f"🚀 UB Command Triggered: {'.reload' if reload else '.restart'} by {m.from_user.id}", level=20)
+    
     bot_username = Altruix.bot_manager.get_bot_username(c.me.id)
-    results = await c.get_inline_bot_results(
-        bot_username, "reload" if reload else "restart"
-    )
-    await asyncio.gather(
-        *[
-            c.send_inline_bot_result(
-                chat_id=m.chat.id,
-                query_id=results.query_id,
-                result_id=results.results[0].id,
-                reply_to_message_id=rm.id if rm else m.id,
-            ),
-            m.delete_if_self(),
-        ]
-    )
+    Altruix.log(f"🔍 Using Bot Username: @{bot_username} for inline query", level=20)
+    
+    try:
+        results = await c.get_inline_bot_results(
+            bot_username, "reload" if reload else "restart"
+        )
+        Altruix.log(f"✅ Inline results fetched, sending to chat...", level=20)
+        await c.send_inline_bot_result(
+            m.chat.id, results.query_id, results.results[0].id
+        )
+    except Exception as e:
+        Altruix.log(f"❌ Failed to trigger inline restart: {e}", level=40)
+        await m.edit(f"❌ <b>Error:</b> <code>{e}</code>")
+    
+    await m.delete()

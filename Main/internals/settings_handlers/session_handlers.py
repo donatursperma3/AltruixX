@@ -13,40 +13,238 @@ from Main.utils.file_helpers import get_user_button_style
 import html
 import os
 import asyncio
+import re
+
 
 # ====================== INFO & SECURITY HANDLERS ======================
 
 # Note: gen_conf_export_session and gen_conf_export_phone are handled in security_handlers.py
 
+# Helper to format seconds to readable time
+def format_interval(seconds: int) -> str:
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m"
+    if seconds < 86400:
+        h = seconds // 3600
+        m = (seconds % 3600) // 60
+        return f"{h}h {m}m" if m else f"{h}h"
+    return f"{seconds // 86400}d"
+
 @Altruix.bot.on_callback_query(filters.regex(r"^test_ping_all_confirm(?:ation)?$"))
 @iuser_check
 @log_errors
-async def test_ping_all_handler(c: Client, cb: CallbackQuery):
-    """Test ping for all sessions"""
-    await cb.answer("🏓 Testing ping for all sessions...")
-    target_session_id = Altruix.clients[0].me.id if Altruix.clients and hasattr(Altruix.clients[0], 'me') and Altruix.clients[0].me else cb.from_user.id
-    user_style = get_user_button_style(target_session_id)
+async def test_ping_all_dashboard_handler(c: Client, cb: CallbackQuery):
+    """Auto Ping All Management Dashboard"""
+    await cb.answer()
     
-    total = len(Altruix.clients)
-    if total == 0:
-        return await edit_cb(cb, "❌ No active sessions to test.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", "bulk_controls_menu", style=user_style)]]))
+    # Fetch current settings from database
+    status = await Altruix.config.get_env("AUTO_PING_ALL") or "off"
+    mode = await Altruix.config.get_env("AUTO_PING_MODE") or "test"
+    interval = await Altruix.config.get_env("AUTO_PING_INTERVAL") or 300
+    try: 
+        interval = int(interval)
+    except: 
+        interval = 300
+    
+    # UI Setup
+    user_id = cb.from_user.id
+    user_style = get_user_button_style(user_id)
+    
+    status_emoji = "🟢 ON" if str(status).lower() == "on" else "🔴 OFF"
+    mode_text = "📡 Test + Message" if str(mode).lower() == "message" else "🔍 Test Only"
+    readable_interval = format_interval(interval)
+    
+    text = (
+        "<b>🏓 Auto Ping All Manager</b>\n\n"
+        f"• Status Auto Ping: <b>{status_emoji}</b>\n"
+        f"• Ping Mode: <b>{mode_text}</b>\n"
+        f"• Interval: <code>{readable_interval}</code>\n\n"
+        "Gunakan tombol di bawah untuk mengatur auto-ping atau menjalankan tes manual secara massal."
+    )
 
-    await edit_cb(cb, f"⏳ Testing ping for {total} sessions...")
     
-    results = []
-    for i, client in enumerate(Altruix.clients):
-        try:
-            import time
-            start = time.time()
-            # Use small dummy request to test latency
-            await client.get_me()
-            ping = round((time.time() - start) * 1000, 2)
-            results.append(f"• Session {i+1}: ✅ {ping}ms")
-        except Exception:
-            results.append(f"• Session {i+1}: ❌ Offline")
-            
-    txt = "<b>🏓 Global Ping Test Results</b>\n\n" + "\n".join(results)
-    await edit_cb(cb, txt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", "bulk_controls_menu", style=user_style)]]))
+    buttons = [
+        [
+            InlineKeyboardButton(f"Toggle Status: {('TURN OFF' if str(status).lower() == 'on' else 'TURN ON')}", "auto_ping_toggle", style=user_style),
+            InlineKeyboardButton(f"Mode: {('Test Only' if str(mode).lower() == 'message' else 'Test + Msg')}", "auto_ping_mode_toggle", style=user_style)
+        ],
+
+
+        [
+            InlineKeyboardButton("-1h", "auto_ping_int_-3600", style=user_style),
+            InlineKeyboardButton("-10m", "auto_ping_int_-600", style=user_style),
+            InlineKeyboardButton("-1m", "auto_ping_int_-60", style=user_style)
+        ],
+        [
+            InlineKeyboardButton("+1m", "auto_ping_int_60", style=user_style),
+            InlineKeyboardButton("+10m", "auto_ping_int_600", style=user_style),
+            InlineKeyboardButton("+1h", "auto_ping_int_3600", style=user_style)
+        ],
+        [InlineKeyboardButton("🚀 Run Ping Test Now", "auto_ping_run_now", style=user_style)],
+        [InlineKeyboardButton("🔙 Back", "bulk_controls_menu", style=user_style)]
+    ]
+
+    
+    await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
+
+@Altruix.bot.on_callback_query(filters.regex(r"^auto_ping_toggle$"))
+@iuser_check
+@log_errors
+async def auto_ping_toggle_handler(c: Client, cb: CallbackQuery):
+    """Toggle Auto Ping status"""
+    current = await Altruix.config.get_env("AUTO_PING_ALL") or "off"
+    new_status = "off" if str(current).lower() == "on" else "on"
+    
+    await Altruix.config.set_env("AUTO_PING_ALL", new_status)
+    await cb.answer(f"✅ Auto Ping turned {new_status.upper()}")
+    await test_ping_all_dashboard_handler(c, cb)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^get_otp_exec_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def get_otp_exec_handler(c: Client, cb: CallbackQuery):
+    """Retrieve Telegram OTP from session and format it with dashes and spaces."""
+    index, page = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
+    await cb.answer("⏳ Fetching latest OTP...", show_alert=False)
+    
+    if index >= len(Altruix.clients):
+        return await cb.answer("❌ Session not found.", show_alert=True)
+    
+    client = Altruix.clients[index]
+    try:
+        # Search for messages from 777000 (Telegram Official)
+        async for msg in client.get_chat_history(777000, limit=1):
+            if msg.text:
+                # Regex to find 5-digit code or similar common OTP formats
+                otp_match = re.search(r"(\d{5})", msg.text)
+                if otp_match:
+                    otp_code = otp_match.group(1)
+                    # Format as requested: 2 - 2 - 6 - 4 - 4
+                    formatted_otp = " - ".join(list(otp_code))
+                    
+                    me = client.me or await client.get_me()
+                    full_name = f"{me.first_name} {me.last_name or ''}".strip()
+                    phone = f"+{me.phone_number}" if me.phone_number else "N/A"
+                    
+                    full_text = (
+                        "<b>🗝️ TELEGRAM OTP RECOVERY</b>\n\n"
+                        f"• <b>Account Name:</b> <code>{html.escape(full_name)}</code>\n"
+                        f"• <b>ID:</b> <code>{me.id}</code>\n"
+                        f"• <b>Phone Number:</b> <code>{phone}</code>\n"
+                        f"• <b>Login Code:</b> <code>{formatted_otp}</code>\n\n"
+                        f"<b>Last Received:</b> <i>{msg.date.strftime('%Y-%m-%d %H:%M:%S')}</i>\n\n"
+                        "⚠️ <i>Kode ini telah diformat agar aman dari sistem deteksi auto-expired Telegram.</i>"
+                    )
+
+                    
+                    user_style = get_user_button_style(cb.from_user.id)
+                    buttons = [
+                        [InlineKeyboardButton("🔄 Refresh", f"get_otp_exec_{index}_{page}", style=user_style)],
+                        [InlineKeyboardButton("🔙 Back", f"session_info_{index}_{page}", style=user_style)]
+                    ]
+                    
+                    return await edit_cb(cb, full_text, reply_markup=InlineKeyboardMarkup(buttons))
+        
+        await cb.answer("❌ Tidak ditemukan kode OTP terbaru dari Telegram (777000).", show_alert=True)
+    except Exception as e:
+        await cb.answer(f"❌ Error: {str(e)}", show_alert=True)
+
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^auto_ping_mode_toggle$"))
+@iuser_check
+@log_errors
+async def auto_ping_mode_toggle_handler(c: Client, cb: CallbackQuery):
+    """Toggle Auto Ping mode (test vs message)"""
+    current = await Altruix.config.get_env("AUTO_PING_MODE") or "test"
+    new_mode = "test" if str(current).lower() == "message" else "message"
+    
+    await Altruix.config.set_env("AUTO_PING_MODE", new_mode)
+    label = "Test + Message" if new_mode == "message" else "Test Only"
+    await cb.answer(f"✅ Mode changed to: {label}")
+    await test_ping_all_dashboard_handler(c, cb)
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^auto_ping_int_(-?\d+)$"))
+@iuser_check
+@log_errors
+async def auto_ping_interval_handler(c: Client, cb: CallbackQuery):
+    """Adjust Auto Ping interval"""
+    adjustment = int(cb.matches[0].group(1))
+    current = await Altruix.config.get_env("AUTO_PING_INTERVAL") or 300
+    try: 
+        current = int(current)
+    except: 
+        current = 300
+    
+    new_interval = current + adjustment
+    if new_interval < 60:
+        new_interval = 60
+        await cb.answer("⚠️ Min interval is 1 minute.", show_alert=True)
+    else:
+        await cb.answer(f"✅ Interval adjusted by {format_interval(abs(adjustment))}")
+        
+    await Altruix.config.set_env("AUTO_PING_INTERVAL", new_interval)
+    await test_ping_all_dashboard_handler(c, cb)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^auto_ping_run_now$"))
+@iuser_check
+@log_errors
+async def auto_ping_run_now_handler(c: Client, cb: CallbackQuery):
+    """Execute manual ping test across all sessions and send split report."""
+    await cb.answer("🚀 Starting manual Auto Ping cycle...")
+    user_style = get_user_button_style(cb.from_user.id)
+    total = len(Altruix.clients)
+    
+    if total == 0:
+        return await edit_cb(cb, "❌ No active sessions to test.", 
+                           reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", "test_ping_all_confirm", style=user_style)]]))
+
+    status_msg = await edit_cb(cb, f"⏳ Testing latency for <b>{total}</b> sessions...\n<i>Reports will be sent to log group.</i>")
+    
+    try:
+        # Fetch current mode for manual run
+        mode = await Altruix.config.get_env("AUTO_PING_MODE") or "test"
+        
+        # Manually trigger a ping cycle through the manager (sends split report to log group)
+        await Altruix.auto_ping._execute_ping_cycle(mode=mode, title="MANUAL - PING ALL")
+
+        # ✅ Also do a quick local ping for the inline dashboard summary
+        import time as _time
+        online = 0
+        offline = 0
+        total_ms = 0.0
+        
+        for i, client in enumerate(Altruix.clients):
+            try:
+                start = _time.time()
+                await client.get_me()
+                ping = round((_time.time() - start) * 1000, 2)
+                online += 1
+                total_ms += ping
+            except Exception:
+                offline += 1
+        
+        avg_ms = round(total_ms / online, 2) if online > 0 else 0
+        
+        # ✅ Show compact summary in the inline message (safe for any session count)
+        summary_txt = (
+            "<b>✅ Manual Ping Test Completed</b>\n\n"
+            f"• <b>Total:</b> <code>{total}</code>\n"
+            f"• <b>Online:</b> <code>{online}</code>\n"
+            f"• <b>Offline:</b> <code>{offline}</code>\n"
+            f"• <b>Avg Latency:</b> <code>{avg_ms}ms</code>\n\n"
+            "<i>📋 Detailed report has been sent to Log Group.</i>"
+        )
+        await edit_cb(cb, summary_txt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", "test_ping_all_confirm", style=user_style)]]))
+    except Exception as e:
+        await cb.answer(f"❌ Error: {str(e)}", show_alert=True)
+        await edit_cb(cb, f"❌ <b>Error running manual ping:</b>\n<code>{str(e)}</code>", 
+                           reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", "test_ping_all_confirm", style=user_style)]]))
+
+
 
 # ====================== GROUP & MESSAGE HANDLERS ======================
 
@@ -582,3 +780,45 @@ async def improved_placeholder_handler(c: Client, cb: CallbackQuery):
         return await cb.answer("⚠️ Legacy Eval/Exec is disabled. Please use Page 4 buttons.", show_alert=True)
 
     await cb.answer("🚧 This feature has been moved or is under development.", show_alert=True)
+
+# ====================== SESSION UNLINK HANDLER ======================
+
+@Altruix.bot.on_callback_query(filters.regex(r"^unlink_session_exec_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def unlink_session_exec_handler(c: Client, cb: CallbackQuery):
+    """Execution handler for unlinking a session."""
+    index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    
+    # ✅ Immediate answer to remove button loading state
+    await cb.answer("⏳ Processing unlinking...", show_alert=False)
+    
+    try:
+        # Get info before removing for the alert
+        if index < len(Altruix.clients):
+            client_to_remove = Altruix.clients[index]
+            me = getattr(client_to_remove, "me", None) or getattr(client_to_remove, "myself", None)
+            name = me.first_name if me else f"Session {index + 1}"
+            
+            # ✅ Visual feedback: Edit message to show processing state
+            await cb.edit_message_text(f"<b>🗑 Unlinking Session...</b>\n\nRemoving <code>{html.escape(name)}</code> from manager. Please wait.", parse_mode=ParseMode.HTML)
+        else:
+            return await cb.answer("❌ Session already removed or index invalid.", show_alert=True)
+            
+        # Execute Core Removal logic
+        await Altruix.remove_session(index, cb.from_user)
+        
+        await cb.answer(f"✅ Session '{name}' has been unlinked successfully!", show_alert=True)
+        
+        # Redirect to Main Sessions List (Page 1 as fallback)
+        from .sessions_list import sessions_menu_cb_handler
+        cb.data = f"sessions_list_{page}"
+        await sessions_menu_cb_handler(c, cb)
+        
+    except Exception as e:
+        import traceback
+        logger.error(f"Unlink Session Error: {e}\n{traceback.format_exc()}")
+        await cb.answer(f"❌ Error unlinking session: {str(e)}", show_alert=True)
+
+

@@ -3,7 +3,11 @@ import html
 import asyncio
 from typing import Optional
 from pyrogram import Client, filters
-from pyrogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram.types import (
+    CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton,
+    InlineQuery, InlineQueryResultArticle, InputTextMessageContent,
+    ChosenInlineResult, LinkPreviewOptions
+)
 from Main.core.decorators import log_errors, iuser_check
 from Main.core.client import Altruix
 from pyrogram.enums import ParseMode
@@ -12,11 +16,15 @@ from .states import user_creategroup_state
 
 # Default Configuration
 DEFAULT_CREATEGROUP_CONFIG = {
-    "delay": 333, "count": 2, "batch_delay": 10, "batch_size": 2, "action_delay": 3.0,
-    "pattern": "Group (index)", "username": None, "description": "Powered by @AlphaXProject",
+    "delay": 60, "count": 2, "batch_delay": 10, "batch_size": 2, "action_delay": 3.0,
+    "batch_action": 30, "ba_delay": 30,
+    "pattern": "🔰 X(tahun) B(bulan)-T(tanggal)", "username": None, "description": "Powered by @AlphaXProject",
     "bots": "@MissRose_bot @simixbot @Spillgame_bot @truthordaresbot @truthordares_bot @truthordarerp_bot @truthordarerln_bot @truthordares18_bot",
-    "invite_bots": False, "anon_mode": True, "copy_messages": True,
-    "photo_source": "source", "custom_photo_id": None
+    "invite_bots": True, "anon_mode": True, "copy_messages": True, "msg_img": True,
+    "photo_source": "source", "custom_photo_id": None,
+    "log_destination": "both", "group_type": "a",
+    "log_format": "zip", "pin_first_msg": True,
+    "rand_len": 3, "rand_lower": False, "rand_upper": True, "rand_static": True
 }
 
 from Main.utils.file_helpers import get_user_button_style
@@ -131,7 +139,9 @@ async def show_creategroup_ui(c: Client, cb: CallbackQuery, session_index: int, 
             "config": DEFAULT_CREATEGROUP_CONFIG.copy(),
             "input_mode": None,
             "ui_msg_id": cb.message.id if cb.message else None,
-            "prompt_msg_id": None
+            "ui_chat_id": cb.message.chat.id if cb.message else None,
+            "prompt_msg_id": None,
+            "sub_menu": None
         }
     else:
         user_creategroup_state[user_id]["step"] = "ui_config"
@@ -145,14 +155,28 @@ async def show_creategroup_ui(c: Client, cb: CallbackQuery, session_index: int, 
     
     await render_creategroup_ui(cb, user_creategroup_state[user_id])
 
-async def render_creategroup_ui(cb: Optional[CallbackQuery], state: dict, message: Optional[Message] = None):
+async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 1):
     """
-    Renders the configuration menu with inline adjustment buttons.
-    Displays current settings including delays, counts, batching, and bot lists.
+    Get the text and markup for the CreateGroup UI dashboard.
+    Used for both callback-based and inline-based UI.
     """
+    if user_id not in user_creategroup_state:
+        user_creategroup_state[user_id] = {
+            "step": "ui_config",
+            "session_index": session_index,
+            "page": page,
+            "config": DEFAULT_CREATEGROUP_CONFIG.copy(),
+            "input_mode": None,
+            "ui_msg_id": None,
+            "ui_chat_id": None,
+            "prompt_msg_id": None
+        }
+    
+    state = user_creategroup_state[user_id]
     config = state["config"]
     idx = state["session_index"]
     pg = state["page"]
+    sub_menu = state.get("sub_menu")
     
     # Resolve user_style
     from Main.internals.settings_handlers.custom_alert_handlers import _get_session_user_id
@@ -167,70 +191,329 @@ async def render_creategroup_ui(cb: Optional[CallbackQuery], state: dict, messag
 
     session_text = ""
     if session_user:
-        session_text = f"👤 <b>Account:</b> <a href='tg://user?id={session_user.id}'>{html.escape(session_user.first_name)}</a> (<code><spoiler>{session_user.id}</spoiler></code>)\n"
+        session_text = f"👤 User: <a href='tg://user?id={session_user.id}'>{html.escape(session_user.first_name)}</a> (<spoiler>{session_user.id}</spoiler>)\n"
 
     photo_status = f"Source Account" if config.get('photo_source') == "source" else "Custom Photo"
     if config.get('photo_source') == "custom":
         photo_status += " ✅" if config.get('custom_photo_id') else " ❌ (No photo)"
 
+    num_bots = len(config['bots'].split() if config['bots'] else [])
+    is_default_bots = config['bots'] == DEFAULT_CREATEGROUP_CONFIG['bots']
+    bot_list_text = f"{num_bots} bots{' (Default)' if is_default_bots else ''}"
+
+    g_type = config.get('group_type', 'a')
+    type_label = "Group" if g_type == 'a' else "Channel"
+    unit_name = "groups" if g_type == 'a' else "channels"
+
+    # Generate name preview
+    import random
+    import string
+    
+    pattern = config.get('pattern', '')
+    rand_len = config.get('rand_len', 3)
+    rand_lower = config.get('rand_lower', False)
+    rand_upper = config.get('rand_upper', True)
+    
+    name_preview = pattern
+    if rand_len > 0 and (rand_lower or rand_upper):
+        chars = ""
+        if rand_lower: chars += string.ascii_lowercase
+        if rand_upper: chars += string.ascii_uppercase
+        # We use a fixed seed or just let it be random for preview
+        rand_text = "".join(random.choices(chars, k=rand_len))
+        if '(index)' in name_preview:
+            name_preview = name_preview.replace('(index)', f"{rand_text} (index)")
+        else:
+            name_preview = f"{name_preview}{rand_text}"
+
+    log_dest = config.get('log_destination', 'both')
+    log_dest_lbl = "Both (Log+Saved)" if log_dest == "both" else ("Log Group" if log_dest == "log_group" else "Saved Messages")
+    
     text = (
         "<b>🎛️ Create Group Configuration</b>\n\n"
-        f"{session_text}"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"<b>{session_text}</b>"
+        f"• <b>Type:</b> {type_label}\n"
+        f"• <b>Count:</b> {config['count']} {unit_name}\n"
         f"• <b>Action Delay:</b> {config['action_delay']}s\n"
         f"• <b>Delay:</b> {config['delay']}s\n"
-        f"• <b>Count:</b> {config['count']} groups\n"
-        f"• <b>Batch Delay:</b> {config['batch_delay']}m\n"
-        f"• <b>Batch Size:</b> {config['batch_size']} groups\n"
-        f"• <b>Name:</b> {html.escape(config['pattern'])}\n"
+        f"• <b>Batch Delay:</b> {config['batch_delay']}m | <b>Batch Size:</b> {config['batch_size']} {unit_name}\n"
+        f"• <b>Batch Action:</b> {config.get('batch_action', 30)} act | <b>BA Delay:</b> {config.get('ba_delay', 30)}s\n"
+        f"• <b>Name:</b> {html.escape(name_preview)}\n"
         f"• <b>Username:</b> {config['username'] or 'None'}\n"
         f"• <b>Description:</b> {html.escape(config['description'])}\n"
         f"• <b>Photo:</b> {photo_status}\n"
         f"• <b>Anon Admin:</b> {'Yes' if config['anon_mode'] else 'No'} | <b>Copy Msg:</b> {'Yes' if config['copy_messages'] else 'No'}\n"
         f"• <b>Invite Bots:</b> {'Yes' if config['invite_bots'] else 'No'}\n"
-        f"• <b>Bot List:</b> {len(config['bots'].split() if config['bots'] else [])} bots (Default)"
+        f"• <b>Bot List:</b> {bot_list_text}\n"
+        f"• <b>Pin First Msg:</b> {'Yes' if config.get('pin_first_msg', True) else 'No'}\n"
+        f"• <b>Log To:</b> {log_dest_lbl} | <b>Format:</b> {config.get('log_format', 'zip').upper()}"
     )
     
-    def adj_row(label, key, unit):
-        return [
-            InlineKeyboardButton(f"➖", callback_data=f"creategroup_adj_{idx}_{pg}_{key}_sub", style=user_style),
-            InlineKeyboardButton(f"{label}", callback_data="noop", style=user_style),
-            InlineKeyboardButton(f"➕", callback_data=f"creategroup_adj_{idx}_{pg}_{key}_add", style=user_style),
-            InlineKeyboardButton(f"✏️", callback_data=f"creategroup_in_{idx}_{pg}_{key}", style=user_style)
+    # ─── SUB-MENUS ───
+    if sub_menu in ["action_delay", "delay", "count", "batch_delay", "batch_size", "batch_action", "ba_delay"]:
+        # Sub-Menu Keypad
+        # steps = {"delay": 10, "count": 1, "batch_delay": 1, "batch_size": 1, "action_delay": 0.5}
+        step_map = {"delay": 10, "count": 1, "batch_delay": 1, "batch_size": 1, "action_delay": 0.5, "batch_action": 5, "ba_delay": 10}
+        step = step_map.get(sub_menu, 1)
+        step_str = f"{step}" if step < 1 else f"{int(step)}"
+        
+        # Label and current value
+        labels = {
+            "action_delay": "Action Delay", "delay": "Group Delay", 
+            "count": "Total Groups", "batch_delay": "Batch Delay", "batch_size": "Batch Size",
+            "batch_action": "Batch Act", "ba_delay": "BA Delay"
+        }
+        unit_map = {
+            "action_delay": "s", 
+            "delay": "s", 
+            "batch_delay": "m", 
+            "count": "c" if config.get('group_type', 'a') == 'c' else "g", 
+            "batch_size": "c" if config.get('group_type', 'a') == 'c' else "g"
+        }
+        
+        label = labels.get(sub_menu, sub_menu.capitalize())
+        curr_val = config.get(sub_menu)
+        unit = unit_map.get(sub_menu, "")
+        
+        buttons = [
+            [InlineKeyboardButton(f"━━ {label}: {curr_val}{unit} ━━", callback_data="noop", style=user_style)],
+            [
+                InlineKeyboardButton(f"-{step_str}{unit}", callback_data=f"creategroup_adj_{idx}_{pg}_{sub_menu}_sub", style=user_style),
+                InlineKeyboardButton(f"+{step_str}{unit}", callback_data=f"creategroup_adj_{idx}_{pg}_{sub_menu}_add", style=user_style)
+            ]
         ]
+        
+        # Add larger increments for specific keys
+        if sub_menu in ["delay", "ba_delay", "batch_action"]:
+            u = unit
+            buttons.append([
+                InlineKeyboardButton(f"-30{u}", callback_data=f"creategroup_adj_{idx}_{pg}_{sub_menu}_sub30", style=user_style),
+                InlineKeyboardButton(f"+30{u}", callback_data=f"creategroup_adj_{idx}_{pg}_{sub_menu}_add30", style=user_style)
+            ])
+            buttons.append([
+                InlineKeyboardButton(f"-60{u}", callback_data=f"creategroup_adj_{idx}_{pg}_{sub_menu}_sub60", style=user_style),
+                InlineKeyboardButton(f"+60{u}", callback_data=f"creategroup_adj_{idx}_{pg}_{sub_menu}_add60", style=user_style)
+            ])
+            buttons.append([
+                InlineKeyboardButton(f"-120{u}", callback_data=f"creategroup_adj_{idx}_{pg}_{sub_menu}_sub120", style=user_style),
+                InlineKeyboardButton(f"+120{u}", callback_data=f"creategroup_adj_{idx}_{pg}_{sub_menu}_add120", style=user_style)
+            ])
+        elif sub_menu == "action_delay":
+            buttons.append([
+                InlineKeyboardButton("-1s", callback_data=f"creategroup_adj_{idx}_{pg}_{sub_menu}_sub1", style=user_style),
+                InlineKeyboardButton("+1s", callback_data=f"creategroup_adj_{idx}_{pg}_{sub_menu}_add1", style=user_style)
+            ])
+            buttons.append([
+                InlineKeyboardButton("-5s", callback_data=f"creategroup_adj_{idx}_{pg}_{sub_menu}_sub5", style=user_style),
+                InlineKeyboardButton("+5s", callback_data=f"creategroup_adj_{idx}_{pg}_{sub_menu}_add5", style=user_style)
+            ])
+        elif sub_menu == "count":
+            ti = "c" if config.get('group_type', 'a') == 'c' else "g"
+            buttons.append([
+                InlineKeyboardButton(f"-10{ti}", callback_data=f"creategroup_adj_{idx}_{pg}_{sub_menu}_sub10", style=user_style),
+                InlineKeyboardButton(f"+10{ti}", callback_data=f"creategroup_adj_{idx}_{pg}_{sub_menu}_add10", style=user_style)
+            ])
+        elif sub_menu == "batch_size":
+            ti = "c" if config.get('group_type', 'a') == 'c' else "g"
+            buttons.append([
+                InlineKeyboardButton(f"-5{ti}", callback_data=f"creategroup_adj_{idx}_{pg}_{sub_menu}_sub5", style=user_style),
+                InlineKeyboardButton(f"+5{ti}", callback_data=f"creategroup_adj_{idx}_{pg}_{sub_menu}_add5", style=user_style)
+            ])
+            buttons.append([
+                InlineKeyboardButton(f"-10{ti}", callback_data=f"creategroup_adj_{idx}_{pg}_{sub_menu}_sub10", style=user_style),
+                InlineKeyboardButton(f"+10{ti}", callback_data=f"creategroup_adj_{idx}_{pg}_{sub_menu}_add10", style=user_style)
+            ])
+        elif sub_menu == "batch_delay":
+            buttons.append([
+                InlineKeyboardButton("-5m", callback_data=f"creategroup_adj_{idx}_{pg}_{sub_menu}_sub5", style=user_style),
+                InlineKeyboardButton("+5m", callback_data=f"creategroup_adj_{idx}_{pg}_{sub_menu}_add5", style=user_style)
+            ])
+            buttons.append([
+                InlineKeyboardButton("-10m", callback_data=f"creategroup_adj_{idx}_{pg}_{sub_menu}_sub10", style=user_style),
+                InlineKeyboardButton("+10m", callback_data=f"creategroup_adj_{idx}_{pg}_{sub_menu}_add10", style=user_style)
+            ])
+            
+        buttons.append([
+            InlineKeyboardButton("✏️ Manual Input", callback_data=f"creategroup_in_{idx}_{pg}_{sub_menu}", style=user_style),
+            InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_back_submenu_{idx}_{pg}", style=user_style)
+        ])
+        return text, InlineKeyboardMarkup(buttons)
+
+    elif sub_menu == "group_type":
+        curr = config.get("group_type", "a")
+        buttons = [
+            [InlineKeyboardButton(f"━━ Chat Type: {'Supergroup' if curr == 'a' else 'Channel'} ━━", callback_data="noop", style=user_style)],
+            [
+                InlineKeyboardButton("👥 Supergroup (Anon)", callback_data=f"creategroup_setv_{idx}_{pg}_group_type_a", style=user_style),
+                InlineKeyboardButton("📢 Channel", callback_data=f"creategroup_setv_{idx}_{pg}_group_type_c", style=user_style)
+            ],
+            [InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_back_submenu_{idx}_{pg}", style=user_style)]
+        ]
+        return text, InlineKeyboardMarkup(buttons)
+
+    elif sub_menu == "pattern":
+        buttons = [
+            [InlineKeyboardButton(f"━━ Name Pattern: {config.get('pattern')[:20]}... ━━", callback_data="noop", style=user_style)],
+            [InlineKeyboardButton("✏️ Change Name Pattern", callback_data=f"creategroup_in_{idx}_{pg}_pattern", style=user_style)],
+            [InlineKeyboardButton("🎲 Random Text", callback_data=f"creategroup_submenu_{idx}_{pg}_random_text", style=user_style)],
+            [InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_back_submenu_{idx}_{pg}", style=user_style)]
+        ]
+        return text, InlineKeyboardMarkup(buttons)
+        
+    elif sub_menu == "random_text":
+        r_len = config.get("rand_len", 3)
+        r_low = "on" if config.get("rand_lower", False) else "off"
+        r_up = "on" if config.get("rand_upper", True) else "off"
+        r_stat = "on" if config.get("rand_static", True) else "off"
+        
+        buttons = [
+            [InlineKeyboardButton(f"━━ Random Text Setting ━━", callback_data="noop", style=user_style)],
+            [
+                InlineKeyboardButton("-1", callback_data=f"creategroup_adj_{idx}_{pg}_rand_len_sub", style=user_style),
+                InlineKeyboardButton(f"Text Length: {r_len}", callback_data="noop", style=user_style),
+                InlineKeyboardButton("+1", callback_data=f"creategroup_adj_{idx}_{pg}_rand_len_add", style=user_style)
+            ],
+            [
+                InlineKeyboardButton(f"Alpha Lower: {r_low}", callback_data=f"creategroup_toggle_{idx}_{pg}_rand_lower", style=user_style),
+                InlineKeyboardButton(f"Alpha Upper: {r_up}", callback_data=f"creategroup_toggle_{idx}_{pg}_rand_upper", style=user_style)
+            ],
+            [InlineKeyboardButton(f"Static per Task: {r_stat}", callback_data=f"creategroup_toggle_{idx}_{pg}_rand_static", style=user_style)],
+            [InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_submenu_{idx}_{pg}_pattern", style=user_style)]
+        ]
+        return text, InlineKeyboardMarkup(buttons)
+
+    elif sub_menu == "username":
+        curr_us = config.get("username")
+        buttons = [
+            [InlineKeyboardButton(f"━━ Username Prefix: {curr_us or 'None'} ━━", callback_data="noop", style=user_style)],
+            [InlineKeyboardButton("✏️ Set Username Prefix", callback_data=f"creategroup_in_{idx}_{pg}_username", style=user_style)],
+            [InlineKeyboardButton("❌ Remove Username (None)", callback_data=f"creategroup_setv_{idx}_{pg}_username_none", style=user_style)],
+            [InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_back_submenu_{idx}_{pg}", style=user_style)]
+        ]
+        return text, InlineKeyboardMarkup(buttons)
+
+    elif sub_menu == "description":
+        buttons = [
+            [InlineKeyboardButton(f"━━ Description: {config.get('description')[:20]}... ━━", callback_data="noop", style=user_style)],
+            [InlineKeyboardButton("✏️ Change Description", callback_data=f"creategroup_in_{idx}_{pg}_description", style=user_style)],
+            [InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_back_submenu_{idx}_{pg}", style=user_style)]
+        ]
+        return text, InlineKeyboardMarkup(buttons)
+
+    elif sub_menu == "photo":
+        src = config.get("photo_source", "source")
+        src_lbl = "👤 Source Account" if src == "source" else "🖼 Custom Photo"
+        buttons = [
+            [InlineKeyboardButton(f"━━ Photo Source: {src_lbl} ━━", callback_data="noop", style=user_style)],
+            [
+                InlineKeyboardButton("👤 Use Source Account", callback_data=f"creategroup_setv_{idx}_{pg}_photo_source_source", style=user_style),
+                InlineKeyboardButton("🖼 Use Custom Photo", callback_data=f"creategroup_setv_{idx}_{pg}_photo_source_custom", style=user_style)
+            ]
+        ]
+        if src == "custom":
+            lbl = "📤 Re-upload Photo" if config.get("custom_photo_id") else "📤 Upload Photo"
+            buttons.append([InlineKeyboardButton(lbl, callback_data=f"creategroup_upload_photo_{idx}_{pg}", style=user_style)])
+        
+        buttons.append([InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_back_submenu_{idx}_{pg}", style=user_style)])
+        return text, InlineKeyboardMarkup(buttons)
+
+    elif sub_menu == "bots":
+        curr_bots = config.get("bots") or ""
+        num_bots = len(curr_bots.split())
+        is_default = curr_bots == DEFAULT_CREATEGROUP_CONFIG['bots']
+        
+        # Override the text summary to show the full list only in this sub-menu
+        text = (
+            "<b>🤖 Bot Configuration</b>\n\n"
+            f"• <b>Total Bots:</b> {num_bots}{' (Default)' if is_default else ''}\n"
+            f"• <b>Username List:</b>\n<code>{html.escape(curr_bots or 'None')}</code>\n\n"
+            "<i>Klik 'Add Bot List' untuk mengganti atau 'Reset' untuk kembali ke default.</i>"
+        )
+        
+        buttons = [
+            [InlineKeyboardButton(f"━━ Bots List Configuration ━━", callback_data="noop", style=user_style)],
+            [
+                InlineKeyboardButton("✏️ Add Bot List", callback_data=f"creategroup_in_{idx}_{pg}_bots", style=user_style),
+                InlineKeyboardButton("🔄 Reset to Default", callback_data=f"creategroup_setv_{idx}_{pg}_bots_default", style=user_style)
+            ],
+            [InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_back_submenu_{idx}_{pg}", style=user_style)]
+        ]
+        return text, InlineKeyboardMarkup(buttons)
+
+    elif sub_menu == "info":
+        text = (
+            "<b>ℹ️ Create Group/Channel - Comprehensive Guide</b>\n\n"
+            "<b>🎛️ Basic Configuration:</b>\n"
+            "• <b>Type:</b> <u>Supergroup</u> (mendukung Anon Admin/Topics) atau <u>Channel</u> (broadcast).\n"
+            "• <b>Count:</b> Jumlah total grup/channel yang akan dibuat secara otomatis.\n"
+            "• <b>Act Delay:</b> Jeda antar aksi di dalam grup/channel (misal: setting foto, copy pesan, invite bot).\n"
+            "• <b>Group/Channel Delay:</b> Jeda istirahat setelah satu grup/channel selesai diproses sebelum lanjut ke grup/channel berikutnya.\n\n"
+            "<b>📦 Batch & Pacing:</b>\n"
+            "• <b>Batch Size:</b> Jumlah grup/channel yang dibuat dalam satu sesi sebelum istirahat panjang.\n"
+            "• <b>Batch Delay:</b> Durasi istirahat (menit) setelah mencapai Batch Size.\n"
+            "<i>Tujuan: Menghindari limit Telegram (FloodWait).</i>\n\n"
+            "<b>📝 Identity & Links:</b>\n"
+            "• <b>Name Pattern:</b> Nama grup/channel. Gunakan <code>(index)</code> untuk angka urut, <code>(tahun)</code>, <code>(bulan)</code>, atau <code>(tanggal)</code>.\n"
+            "• <b>Random Text:</b> Opsi injeksi kombinasi huruf acak secara otomatis ke dalam nama grup/channel sebelum urutan index.\n"
+            "• <b>Username:</b> Prefix link publik. Contoh: <code>alpha_</code> + Index 1 = <code>@alpha_1</code>.\n"
+            "• <b>Description:</b> Teks biografi/info grup/channel yang akan dipasang otomatis.\n"
+            "• <b>Photo:</b> Ambil foto profil dari akun utama atau upload foto kustom.\n\n"
+            "<b>🛡️ Advanced Features:</b>\n"
+            "• <b>Anon Admin:</b> Mengaktifkan mode anonim agar nama akun Anda tidak terlihat oleh member.\n"
+            "• <b>Copy Msg:</b> Menyalin template pesan dari channel sumber (alphaxbbc) ke setiap grup/channel baru.\n"
+            "• <b>Invite Bots:</b> Otomatis mengundang daftar username bot yang telah Anda tentukan.\n"
+            "• <b>Log To:</b> Memilih apakah laporan progres dikirim ke Group Log atau Saved Messages.\n"
+            "• <b>Log Format:</b> Ekspor file report akhir dalam format .TXT standar atau terkompresi .ZIP."
+        )
+        buttons = [[InlineKeyboardButton("🔙 Back to Dashboard", callback_data=f"creategroup_back_submenu_{idx}_{pg}", style=user_style)]]
+        return text, InlineKeyboardMarkup(buttons)
+
+    # ─── MAIN DASHBOARD ───
+    is_channel = config.get('group_type', 'a') == 'c'
+    type_indicator = "c" if is_channel else "g"
 
     buttons = [
-        adj_row(f"Act Dly ({config['action_delay']}s)", "action_delay", "s"),
-        adj_row(f"Delay ({config['delay']}s)", "delay", "s"),
-        adj_row(f"Count ({config['count']})", "count", ""),
-        adj_row(f"Batch ({config['batch_delay']}m)", "batch_delay", "m"),
-        adj_row(f"B.Size ({config['batch_size']})", "batch_size", ""),
         [
-            InlineKeyboardButton(f"Name: {config['pattern'][:15]}...", callback_data="noop", style=user_style),
-            InlineKeyboardButton("✏️ Input", callback_data=f"creategroup_in_{idx}_{pg}_pattern", style=user_style)
+            InlineKeyboardButton(f"Type: {'Group' if not is_channel else 'Channel'}", callback_data=f"creategroup_submenu_{idx}_{pg}_group_type", style=user_style),
+            InlineKeyboardButton(f"Count: {config['count']}{type_indicator}", callback_data=f"creategroup_submenu_{idx}_{pg}_count", style=user_style)
         ],
         [
-            InlineKeyboardButton(f"Username: {config['username'] or 'None'}", callback_data="noop", style=user_style),
-            InlineKeyboardButton("✏️ Input", callback_data=f"creategroup_in_{idx}_{pg}_username", style=user_style)
+            InlineKeyboardButton(f"Act Delay: {config['action_delay']}s", callback_data=f"creategroup_submenu_{idx}_{pg}_action_delay", style=user_style),
+            InlineKeyboardButton(f"Delay/{'GC' if not is_channel else 'CH'}: {config['delay']}s", callback_data=f"creategroup_submenu_{idx}_{pg}_delay", style=user_style)
         ],
         [
-            InlineKeyboardButton(f"Desc: {config['description'][:15]}...", callback_data="noop", style=user_style),
-            InlineKeyboardButton("✏️ Input", callback_data=f"creategroup_in_{idx}_{pg}_description", style=user_style)
+            InlineKeyboardButton(f"B.Delay: {config['batch_delay']}m", callback_data=f"creategroup_submenu_{idx}_{pg}_batch_delay", style=user_style),
+            InlineKeyboardButton(f"B.Size: {config['batch_size']}{type_indicator}", callback_data=f"creategroup_submenu_{idx}_{pg}_batch_size", style=user_style)
         ],
         [
-            InlineKeyboardButton(f"Photo: {'👤 Source' if config.get('photo_source') == 'source' else '🖼 Custom'}", callback_data=f"creategroup_toggle_{idx}_{pg}_photo_source", style=user_style),
-            InlineKeyboardButton("📸 Upload Photo" if config.get('photo_source') == 'custom' else "➖", 
-                                 callback_data=f"creategroup_upload_photo_{idx}_{pg}" if config.get('photo_source') == 'custom' else "noop", style=user_style)
+            InlineKeyboardButton(f"Batch Act: {config.get('batch_action', 30)} act", callback_data=f"creategroup_submenu_{idx}_{pg}_batch_action", style=user_style),
+            InlineKeyboardButton(f"BA Delay: {config.get('ba_delay', 30)}s", callback_data=f"creategroup_submenu_{idx}_{pg}_ba_delay", style=user_style)
+        ],
+        [InlineKeyboardButton(f"Name: {config['pattern'][:20]}...", callback_data=f"creategroup_submenu_{idx}_{pg}_pattern", style=user_style)],
+        [InlineKeyboardButton(f"Desc: {config['description'][:25]}...", callback_data=f"creategroup_submenu_{idx}_{pg}_description", style=user_style)],
+        [
+            InlineKeyboardButton(f"Username: {config['username'] or 'None'}", callback_data=f"creategroup_submenu_{idx}_{pg}_username", style=user_style),
+            InlineKeyboardButton(f"Photo: {'Source' if config.get('photo_source') == 'source' else 'Custom'}", callback_data=f"creategroup_submenu_{idx}_{pg}_photo", style=user_style)
         ],
         [
-            InlineKeyboardButton(f"Anon Admin: {'✅ Yes' if config['anon_mode'] else '❌ No'}", callback_data=f"creategroup_toggle_{idx}_{pg}_anon_mode", style=user_style),
-            InlineKeyboardButton(f"Copy Msg: {'✅ Yes' if config['copy_messages'] else '❌ No'}", callback_data=f"creategroup_toggle_{idx}_{pg}_copy_messages", style=user_style)
+            InlineKeyboardButton(f"Anon Adm: {'Yes' if config['anon_mode'] else 'No'}", callback_data=f"creategroup_toggle_{idx}_{pg}_anon_mode", style=user_style),
+            InlineKeyboardButton(f"Copy Msg: {'Yes' if config['copy_messages'] else 'No'}", callback_data=f"creategroup_toggle_{idx}_{pg}_copy_messages", style=user_style)
         ],
         [
-            InlineKeyboardButton(f"Invite Bots: {'✅ Yes' if config['invite_bots'] else '❌ No'}", callback_data=f"creategroup_toggle_{idx}_{pg}_invite_bots", style=user_style)
+            InlineKeyboardButton(f"Invite Bots: {'Yes' if config['invite_bots'] else 'No'}", callback_data=f"creategroup_toggle_{idx}_{pg}_invite_bots", style=user_style),
+            InlineKeyboardButton(f"Bots: {len(config['bots'].split() if config['bots'] else [])}", callback_data=f"creategroup_submenu_{idx}_{pg}_bots", style=user_style)
         ],
         [
-            InlineKeyboardButton(f"Bots: {len(config['bots'].split() if config['bots'] else [])} usernames", callback_data="noop", style=user_style),
-            InlineKeyboardButton("✏️ Bot List", callback_data=f"creategroup_in_{idx}_{pg}_bots", style=user_style)
+            InlineKeyboardButton(f"Log To: {'Both' if log_dest == 'both' else ('GroupLog' if log_dest == 'log_group' else 'SavedMsg')}", callback_data=f"creategroup_toggle_{idx}_{pg}_log_destination", style=user_style),
+            InlineKeyboardButton(f"Log Format: {config.get('log_format', 'zip').upper()}", callback_data=f"creategroup_toggle_{idx}_{pg}_log_format", style=user_style)
+        ],
+        [
+            InlineKeyboardButton(f"Pin First: {'Yes' if config.get('pin_first_msg', True) else 'No'}", callback_data=f"creategroup_toggle_{idx}_{pg}_pin_first_msg", style=user_style),
+            InlineKeyboardButton(f"Msg Img: {'Yes' if config.get('msg_img', True) else 'No'}", callback_data=f"creategroup_toggle_{idx}_{pg}_msg_img", style=user_style)
+        ],
+        [
+            InlineKeyboardButton("Info", callback_data=f"creategroup_submenu_{idx}_{pg}_info", style=user_style),
         ],
         [
             InlineKeyboardButton("✅ RUN TASK", callback_data=f"creategroup_run_{idx}_{pg}", style=user_style),
@@ -238,34 +521,112 @@ async def render_creategroup_ui(cb: Optional[CallbackQuery], state: dict, messag
         ]
     ]
     
+    return text, InlineKeyboardMarkup(buttons)
+
+async def render_creategroup_ui(cb: Optional[CallbackQuery], state: dict, message: Optional[Message] = None):
+    """
+    Renders the configuration menu with inline adjustment buttons.
+    Displays current settings including delays, counts, batching, and bot lists.
+    """
+    user_id = cb.from_user.id if cb else (message.from_user.id if message else None)
+    if not user_id and state.get("user_id"): user_id = state["user_id"]
+    
+    text, reply_markup = await get_creategroup_ui_data(user_id, state["session_index"], state["page"])
+    
+    full_text = f"<b>🚀 𝐂𝐑𝐄𝐀𝐓𝐄 𝐆𝐑𝐎𝐔𝐏 𝐃𝐀𝐒𝐇𝐁𝐎𝐀𝐑𝐃</b>\n\n<blockquote expandable>{text}</blockquote>"
+    
     try:
         if cb:
             if cb.message:
-                await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+                await cb.message.edit(full_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
             else:
-                await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
-        elif message: await message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+                await cb.edit_message_text(full_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+        elif message:
+            await message.edit(full_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+        elif state.get("ui_msg_id") and isinstance(state["ui_msg_id"], str):
+            # Inline message edit via Altruix.bot
+            from Main.core.client import Altruix
+            await Altruix.bot.edit_inline_message_text(
+                state["ui_msg_id"], 
+                full_text, 
+                reply_markup=reply_markup, 
+                parse_mode=ParseMode.HTML
+            )
     except Exception: pass
 
 @Altruix.bot.on_callback_query(filters.regex(r"^creategroup_adj_(\d+)_(\d+)_(\w+)_(\w+)$"))
 @iuser_check
 @log_errors
 async def creategroup_adjust_handler(c: Client, cb: CallbackQuery):
-    idx, pg, key, action = int(cb.matches[0].group(1)), int(cb.matches[0].group(2)), cb.matches[0].group(3), cb.matches[0].group(4)
+    match = cb.matches[0]
+    idx, pg, key, action_raw = int(match.group(1)), int(match.group(2)), match.group(3), match.group(4)
     user_id = cb.from_user.id
+    
     if user_id not in user_creategroup_state:
          await cb.answer("Session expired", show_alert=True)
          return
+         
     conf = user_creategroup_state[user_id]["config"]
-    steps = {"delay": 1, "count": 1, "batch_delay": 1, "batch_size": 1, "action_delay": 1}
-    limits = {"delay": (1, 300), "count": (1, 1000), "batch_delay": (0, 300), "batch_size": (1, 100), "action_delay": (0, 300)}
+    steps = {"delay": 10, "count": 1, "batch_delay": 1, "batch_size": 1, "action_delay": 0.5, "rand_len": 1, "batch_action": 5, "ba_delay": 10}
+    limits = {"delay": (1, 3600), "count": (1, 1000), "batch_delay": (0, 300), "batch_size": (1, 100), "action_delay": (0.1, 30.0), "rand_len": (0, 64), "batch_action": (1, 500), "ba_delay": (10, 3600)}
     val = conf.get(key, 0)
-    step = steps.get(key, 1)
+    
+    # Handle extended step actions (sub10, add60, etc)
+    import re
+    m = re.match(r"(add|sub)(\d+)?", action_raw)
+    action = m.group(1)
+    custom_step = int(m.group(2)) if m.group(2) else None
+    
+    step = custom_step if custom_step is not None else steps.get(key, 1)
     val = val + step if action == "add" else val - step
     min_v, max_v = limits.get(key, (0, 100))
     conf[key] = max(min_v, min(val, max_v))
     await render_creategroup_ui(cb, user_creategroup_state[user_id])
     await cb.answer()
+
+@Altruix.bot.on_callback_query(filters.regex(r"^creategroup_submenu_(\d+)_(\d+)_(\w+)$"))
+@iuser_check
+@log_errors
+async def creategroup_submenu_handler(c: Client, cb: CallbackQuery):
+    idx, pg, field = int(cb.matches[0].group(1)), int(cb.matches[0].group(2)), cb.matches[0].group(3)
+    user_id = cb.from_user.id
+    if user_id not in user_creategroup_state:
+        await cb.answer("Session expired", show_alert=True)
+        return
+    user_creategroup_state[user_id]["sub_menu"] = field
+    await render_creategroup_ui(cb, user_creategroup_state[user_id])
+    await cb.answer()
+
+@Altruix.bot.on_callback_query(filters.regex(r"^creategroup_back_submenu_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def creategroup_back_submenu_handler(c: Client, cb: CallbackQuery):
+    idx, pg = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
+    user_id = cb.from_user.id
+    if user_id not in user_creategroup_state:
+        await cb.answer("Session expired", show_alert=True)
+        return
+    user_creategroup_state[user_id]["sub_menu"] = None
+    await render_creategroup_ui(cb, user_creategroup_state[user_id])
+    await cb.answer()
+
+@Altruix.bot.on_callback_query(filters.regex(r"^creategroup_setv_(\d+)_(\d+)_(\w+)_(\w+)$"))
+@iuser_check
+@log_errors
+async def creategroup_set_val_handler(c: Client, cb: CallbackQuery):
+    idx, pg, key, val_raw = int(cb.matches[0].group(1)), int(cb.matches[0].group(2)), cb.matches[0].group(3), cb.matches[0].group(4)
+    user_id = cb.from_user.id
+    if user_id not in user_creategroup_state:
+        await cb.answer("Session expired", show_alert=True)
+        return
+    
+    val = None if val_raw == "none" else val_raw
+    if key == "bots" and val_raw == "default":
+        val = DEFAULT_CREATEGROUP_CONFIG["bots"]
+        
+    user_creategroup_state[user_id]["config"][key] = val
+    await render_creategroup_ui(cb, user_creategroup_state[user_id])
+    await cb.answer(f"Updated {key} to {val_raw}")
 
 @Altruix.bot.on_callback_query(filters.regex(r"^creategroup_in_(\d+)_(\d+)_(\w+)$"))
 @iuser_check
@@ -280,9 +641,18 @@ async def creategroup_input_request(c: Client, cb: CallbackQuery):
     session_user_id = _get_session_user_id(idx)
     user_style = get_user_button_style(session_user_id)
     
-    user_creategroup_state[user_id].update({"input_mode": field, "step": "awaiting_input", "ui_msg_id": cb.message.id if cb.message else None})
+    # Preserve ui_msg_id if it's already an inline ID (string) and cb.message is missing
+    current_ui_msg_id = user_creategroup_state[user_id].get("ui_msg_id")
+    new_ui_msg_id = cb.message.id if cb.message else (current_ui_msg_id if isinstance(current_ui_msg_id, str) else None)
+    
+    user_creategroup_state[user_id].update({
+        "input_mode": field, 
+        "step": "awaiting_input", 
+        "ui_msg_id": new_ui_msg_id, 
+        "ui_chat_id": cb.message.chat.id if cb.message else user_creategroup_state[user_id].get("ui_chat_id")
+    })
     field_name = {"pattern": "Group Name Pattern", "username": "Username Prefix", "bots": "Bot Usernames List", "description": "Group Description"}.get(field, field.replace("_", " ").title())
-    text = f"<b>📝 Awaiting Input: {field_name}...</b>\n\nSilakan lihat instruksi pada pesan di bawah."
+    text = f"<b>📝 Memproses Input: {field_name}...</b>\n\nSilakan lihat instruksi detail pada pesan baru di bawah ini."
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancel", callback_data=f"creategroup_ui_{idx}_{pg}", style=user_style)]])
     
     if cb.message:
@@ -292,7 +662,42 @@ async def creategroup_input_request(c: Client, cb: CallbackQuery):
         await cb.edit_message_text(text, reply_markup=kb)
         chat_id = cb.from_user.id
         
-    prompt_text = f"<b>✏️ Input {field_name}</b>\n\n{'Current Bots: ' + user_creategroup_state[user_id]['config']['bots'] if field == 'bots' else ''}\n\nSilakan kirim bot yang diinginkan untuk di add ke group.\nKetik /cancel untuk membatalkan."
+    # Build detailed prompt instructions
+    if field == "bots":
+        prompt_text = (
+            "<b>✏️ Input Bot Usernames List</b>\n\n"
+            f"<b>Current Bots:</b>\n<code>{html.escape(user_creategroup_state[user_id]['config']['bots'] or 'None')}</code>\n\n"
+            "Kirim daftar username bot yang ingin Anda undang ke grup baru, <b>pisahkan dengan spasi</b>.\n\n"
+            "<b>Contoh:</b>\n<code>@MissRose_bot @simixbot @Spillgame_bot @GroupHelpBot</code>\n\n"
+            "<i>Ketik /cancel untuk membatalkan.</i>"
+        )
+    elif field == "pattern":
+        prompt_text = (
+            "<b>✏️ Input Group Name Pattern</b>\n\n"
+            f"<b>Current Pattern:</b> <code>{html.escape(user_creategroup_state[user_id]['config']['pattern'])}</code>\n\n"
+            "Kirim pola nama yang akan digunakan untuk grup baru. Gunakan placeholder berikut:\n"
+            "• <code>(index)</code> : Urutan angka\n"
+            "• <code>(tahun)</code> : 2 digit tahun\n"
+            "• <code>(bulan)</code> : Angka bulan\n"
+            "• <code>(tanggal)</code>: Angka tanggal\n\n"
+            "<b>Contoh:</b> <code>Altruix Project (tanggal)-(bulan) (index)</code>\n\n"
+            "<i>Ketik /cancel untuk membatalkan.</i>"
+        )
+    elif field == "username":
+        prompt_text = (
+            "<b>✏️ Input Username Prefix</b>\n\n"
+            f"<b>Current:</b> <code>{html.escape(user_creategroup_state[user_id]['config']['username'] or 'None')}</code>\n\n"
+            "Kirim awalan username (tanpa @) untuk grup publik, atau <b>'none'</b> untuk menjadikannya grup private.\n\n"
+            "<b>Contoh:</b> <code>MyXProject</code>\n\n"
+            "<i>Ketik /cancel untuk membatalkan.</i>"
+        )
+    else:
+        prompt_text = (
+            f"<b>✏️ Input {field_name}</b>\n\n"
+            "Silakan kirim teks yang diinginkan.\n\n"
+            "<i>Ketik /cancel untuk membatalkan.</i>"
+        )
+
     try:
         prompt_msg = await c.send_message(chat_id, prompt_text, parse_mode=ParseMode.HTML)
         user_creategroup_state[user_id]["prompt_msg_id"] = prompt_msg.id
@@ -314,7 +719,14 @@ async def creategroup_toggle_handler(c: Client, cb: CallbackQuery):
             user_creategroup_state[user_id]["prompt_msg_id"] = None
         conf = user_creategroup_state[user_id]["config"]
         if key == "photo_source": conf["photo_source"] = "custom" if conf.get("photo_source") == "source" else "source"
+        elif key == "log_destination":
+            curr = conf.get("log_destination", "both")
+            if curr == "log_group": conf["log_destination"] = "saved_messages"
+            elif curr == "saved_messages": conf["log_destination"] = "both"
+            else: conf["log_destination"] = "log_group"
+        elif key == "log_format": conf["log_format"] = "zip" if conf.get("log_format", "txt") == "txt" else "txt"
         elif key in conf: conf[key] = not conf[key]
+        elif key == "msg_img": conf["msg_img"] = not conf.get("msg_img", True)
         await render_creategroup_ui(cb, user_creategroup_state[user_id])
     await cb.answer()
 
@@ -363,15 +775,21 @@ async def creategroup_run_handler(c: Client, cb: CallbackQuery):
     
     conf = user_creategroup_state[user_id]["config"]
     photo_text = ("👤 Source Account" if conf.get('photo_source') == 'source' else "🖼 Custom Photo") + (" ✅" if conf.get('photo_source') == 'custom' and conf.get('custom_photo_id') else "")
+    type_lbl = "Supergroup" if conf.get('group_type', 'a') == 'a' else "Channel"
     text = (
-        "<b>⚠️ Konfirmasi Task CreateGroup</b>\n\n"
+        f"<blockquote expandable>"
+        f"<b>⚠️ Task Create {type_lbl} Confirmation</b>\n\n"
+        f"• <b>Type:</b> {type_lbl}\n"
         f"• <b>Pattern:</b> {html.escape(conf['pattern'])}\n"
-        f"• <b>Jumlah:</b> {conf['count']} grup\n"
+        f"• <b>Count:</b> {conf['count']} {type_lbl}\n"
         f"• <b>Anon Admin:</b> {'Yes' if conf['anon_mode'] else 'No'}\n"
         f"• <b>Photo Source:</b> {photo_text}\n"
         f"• <b>Description:</b> {html.escape(conf.get('description', ''))}\n"
-        f"• <b>Invite Bots:</b> {'Yes' if conf['invite_bots'] else 'No'} ({len(conf['bots'].split() if conf['bots'] else [])})\n\n"
+        f"• <b>Invite Bots:</b> {'Yes' if conf['invite_bots'] else 'No'} ({len(conf['bots'].split() if conf['bots'] else [])})\n"
+        f"• <b>Pin First Msg:</b> {'Yes' if conf.get('pin_first_msg', True) else 'No'}\n"
+        f"• <b>Log Destination:</b> {'📡 Both' if conf.get('log_destination', 'both') == 'both' else ('📡 Group Log' if conf.get('log_destination') == 'log_group' else '📥 Saved Messages')}\n\n"
         "Apakah Anda yakin ingin menjalankan task ini?"
+        f"</blockquote>"
     )
     buttons = [[InlineKeyboardButton("❌ Batal", callback_data=f"creategroup_ui_{idx}_{pg}", style=user_style), InlineKeyboardButton("✅ Ya, Jalankan", callback_data=f"creategroup_confirm_task_{idx}", style=user_style)]]
     if cb.message:
@@ -389,10 +807,13 @@ async def creategroup_confirm_task_handler(c: Client, cb: CallbackQuery):
         return
     conf = user_creategroup_state[user_id]["config"]
     del user_creategroup_state[user_id]
+    from Main.plugins.userbot.xtaskmanager import generate_task_id
+    tid = generate_task_id("CG")
+    start_msg = f"🚀 Memulai CreateGroup Task... (ID: <code>{tid}</code>)"
     if cb.message:
-        await cb.message.edit("🚀 Memulai CreateGroup Task...")
+        await cb.message.edit(start_msg)
     else:
-        await cb.edit_message_text("🚀 Memulai CreateGroup Task...")
+        await cb.edit_message_text(start_msg)
         
     try:
         from Main.plugins.userbot.xcreategroup import creategroup_loop
@@ -403,7 +824,39 @@ async def creategroup_confirm_task_handler(c: Client, cb: CallbackQuery):
             
         executor = Altruix.clients[idx]
         bots = conf["bots"].split() if conf["bots"] else []
-        asyncio.create_task(creategroup_loop(user_client=executor, bot_client=Altruix.bot, initial_message=cb.message, delay=conf["delay"], count=conf["count"], extra_delay_minutes=conf["batch_delay"], batch_size=conf["batch_size"], group_type="a", name_pattern=conf["pattern"], username_prefix=conf["username"], bot_identifiers=bots, control_message=control_msg, action_delay=conf.get("action_delay", 3.0), invite_bots=conf.get("invite_bots", False), anon_mode=conf.get("anon_mode", True), copy_messages=conf.get("copy_messages", True), description=conf.get("description", "Powered by @AlphaXProject"), photo_source=conf.get("photo_source", "source"), custom_photo_id=conf.get("custom_photo_id"), user_id=user_id))
+        asyncio.create_task(creategroup_loop(
+            user_client=executor,
+            bot_client=Altruix.bot,
+            initial_message=cb.message,
+            delay=conf["delay"],
+            count=conf["count"],
+            extra_delay_minutes=conf["batch_delay"],
+            batch_size=conf["batch_size"],
+            batch_action=conf.get("batch_action", 30),
+            ba_delay=conf.get("ba_delay", 30),
+            group_type=conf.get('group_type', 'a'),
+            name_pattern=conf["pattern"],
+            username_prefix=conf["username"],
+            bot_identifiers=bots,
+            control_message=control_msg,
+            action_delay=conf.get("action_delay", 3.0),
+            invite_bots=conf.get("invite_bots", False),
+            anon_mode=conf.get("anon_mode", True),
+            copy_messages=conf.get("copy_messages", True),
+            description=conf.get("description", "Powered by @AlphaXProject"),
+            photo_source=conf.get("photo_source", "source"),
+            custom_photo_id=conf.get("custom_photo_id"),
+            log_destination=conf.get("log_destination", "both"),
+            log_format=conf.get("log_format", "zip"),
+            pin_first_msg=conf.get("pin_first_msg", True),
+            msg_img=conf.get("msg_img", True),
+            rand_len=conf.get("rand_len", 3),
+            rand_lower=conf.get("rand_lower", False),
+            rand_upper=conf.get("rand_upper", True),
+            rand_static=conf.get("rand_static", True),
+            user_id=user_id,
+            task_id=tid
+        ))
         await cb.answer("Task started!", show_alert=True)
     except Exception as e:
         if cb.message:
@@ -429,11 +882,14 @@ async def render_creategroup_running_ui(cb: CallbackQuery, task: dict, idx: int,
     user_style = get_user_button_style(session_user_id)
     
     text = (
+        f"<blockquote expandable>"
         "<b>📊 Progress Create Group</b>\n\n"
         f"• <b>Created:</b> {created_count}/{total_count}\n"
         f"• <b>Berhasil:</b> {created_count}\n"
         f"• <b>Current:</b> {html.escape(current_name)}\n"
+        f"• <b>Account:</b> {html.escape(task.get('account_name', 'Unknown'))}\n"
         f"• <b>Status:</b> {status}"
+        f"</blockquote>"
     )
     
     buttons = [
@@ -448,7 +904,7 @@ async def render_creategroup_running_ui(cb: CallbackQuery, task: dict, idx: int,
         ],
         [
             InlineKeyboardButton("🔄 Recurring", callback_data="noop", style=user_style), # Placeholder
-            InlineKeyboardButton("✏️ Edit Terakhir", callback_data="noop", style=user_style) # Placeholder
+            InlineKeyboardButton("✏️ Edit Last", callback_data="noop", style=user_style) # Placeholder
         ],
         [
             InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_menu_{idx}_{pg}", style=user_style)
@@ -566,6 +1022,9 @@ async def creategroup_list_group_handler(c: Client, cb: CallbackQuery):
 async def process_creategroup_input(c: Client, m: Message, text: str = None):
     user_id = m.from_user.id
     state = user_creategroup_state.get(user_id)
+    import logging
+    dl = logging.getLogger("altruix.CG_DEBUG")
+    dl.info(f"[DEBUG-CG] Enter process_CG. user: {user_id}. step: {state.get('step') if state else 'NONE'}, field: {state.get('input_mode') if state else 'NONE'}")
     if not state: return
     if state["step"] == "awaiting_photo":
         if state.get("prompt_msg_id"):
@@ -577,17 +1036,35 @@ async def process_creategroup_input(c: Client, m: Message, text: str = None):
             state["step"], state["input_mode"] = "ui_config", None
             if state.get("ui_msg_id"):
                 try: 
-                    target_msg = await c.get_messages(m.chat.id, state["ui_msg_id"])
+                    target_chat = state.get("ui_chat_id", m.chat.id)
+                    target_msg = await c.get_messages(target_chat, state["ui_msg_id"])
                     await render_creategroup_ui(None, state, message=target_msg)
-                except: await render_creategroup_ui(None, state)
+                    if target_chat != m.chat.id:
+                        await m.reply("✅ Foto berhasil diperbarui pada menu terkait.")
+                except Exception as e:
+                    new_msg = await m.reply(f"✅ Foto Tersimpan! (Fallback memuat UI baru...)")
+                    state["ui_msg_id"] = new_msg.id
+                    state["ui_chat_id"] = m.chat.id
+                    await render_creategroup_ui(None, state, message=new_msg)
+            else:
+                new_msg = await m.reply("✅ Foto Tersimpan! Memuat UI baru...")
+                state["ui_msg_id"] = new_msg.id
+                state["ui_chat_id"] = m.chat.id
+                await render_creategroup_ui(None, state, message=new_msg)
             return
         elif text and text.lower() == "/cancel":
             state["step"], state["input_mode"] = "ui_config", None
             if state.get("ui_msg_id"):
                 try:
-                    target_msg = await c.get_messages(m.chat.id, state["ui_msg_id"])
+                    target_chat = state.get("ui_chat_id", m.chat.id)
+                    target_msg = await c.get_messages(target_chat, state["ui_msg_id"])
                     await render_creategroup_ui(None, state, message=target_msg)
-                except: await render_creategroup_ui(None, state)
+                except: pass
+            else:
+                new_msg = await m.reply("Memperbarui UI...")
+                state["ui_msg_id"] = new_msg.id
+                state["ui_chat_id"] = m.chat.id
+                await render_creategroup_ui(None, state, message=new_msg)
             return
         else: return
     elif state["step"] == "input_manual":
@@ -615,29 +1092,151 @@ async def process_creategroup_input(c: Client, m: Message, text: str = None):
         except Exception as e: await m.reply(f"Error: {e}")
     elif state["step"] == "awaiting_input":
         field = state["input_mode"]
-        if field == "pattern": state["config"]["pattern"] = text
-        elif field == "username": state["config"]["username"] = text
-        elif field == "description": state["config"]["description"] = text
+        dl.info(f"[DEBUG-CG] Processing input for field '{field}'. Provided text: '{text}'")
+        
+        if field == "pattern": 
+            state["config"]["pattern"] = text
+            dl.info(f"[DEBUG-CG] Field 'pattern' successfully updated in config.")
+        elif field == "username": 
+            state["config"]["username"] = text
+            dl.info(f"[DEBUG-CG] Field 'username' successfully updated in config.")
+        elif field == "description": 
+            state["config"]["description"] = text
+            dl.info(f"[DEBUG-CG] Field 'description' successfully updated in config.")
         elif field == "bots":
              bots = text.replace(",", " ").split()
              clean_bots = []
              for b in bots: clean_bots.append(b if (b.startswith("@") or b.isdigit()) else f"@{b}")
              state["config"]["bots"] = " ".join(clean_bots)
+             dl.info(f"[DEBUG-CG] Field 'bots' successfully updated {len(clean_bots)} bots.")
         elif field in ["delay", "count", "batch_delay", "batch_size", "action_delay"]:
             if text.isdigit() or (field == "action_delay" and text.replace(".", "", 1).isdigit()):
                  val = float(text) if field == "action_delay" else int(text)
                  state["config"][field] = val
+                 dl.info(f"[DEBUG-CG] Field '{field}' successfully updated to integer/float {val}.")
             else:
+                 dl.warning(f"[DEBUG-CG] Input for '{field}' was rejected due to non-digit: '{text}'")
                  await m.reply("❌ Input harus angka!")
                  return
+        else:
+             dl.error(f"[DEBUG-CG] WARNING: Unrecognized field mode: '{field}'")
+             
+        dl.info(f"[DEBUG-CG] Changing step back to 'ui_config' and dispatching UI update.")
         state["step"], state["input_mode"] = "ui_config", None
         if state.get("prompt_msg_id"):
             try: await c.delete_messages(m.chat.id, state["prompt_msg_id"])
             except: pass
             state["prompt_msg_id"] = None
-        if state.get("ui_msg_id"):
+        
+        ui_id = state.get("ui_msg_id")
+        if ui_id:
             try:
-                target_msg = await c.get_messages(m.chat.id, state["ui_msg_id"])
-                await render_creategroup_ui(None, state, message=target_msg)
-            except: pass
+                if isinstance(ui_id, str):
+                    # Inline message
+                    dl.info(f"[DEBUG-CG] Editing inline msg {ui_id}")
+                    await render_creategroup_ui(None, state)
+                    await m.reply("✅ Pengaturan berhasil diperbarui.")
+                else:
+                    chat_id_to_edit = state.get("ui_chat_id", m.chat.id)
+                    dl.info(f"[DEBUG-CG] Editing msg {ui_id} in chat {chat_id_to_edit}")
+                    target_msg = await c.get_messages(chat_id_to_edit, ui_id)
+                    await render_creategroup_ui(None, state, message=target_msg)
+                    if chat_id_to_edit != m.chat.id:
+                         await m.reply("✅ Pengaturan berhasil diperbarui pada menu terkait.")
+            except Exception as e:
+                # Fallback if editing the original message fails for any reason
+                dl.error(f"[DEBUG-CG] Edit failed: {e}. Falling back to new msg")
+                new_msg = await m.reply(f"✅ Tersimpan! (Fallback memuat UI baru...)")
+                state["ui_msg_id"] = new_msg.id
+                state["ui_chat_id"] = m.chat.id
+                await render_creategroup_ui(None, state, message=new_msg)
+        else:
+            dl.info(f"[DEBUG-CG] No ui_msg_id, creating new msg")
+            new_msg = await m.reply("✅ Tersimpan! Memuat UI baru...")
+            state["ui_msg_id"] = new_msg.id
+            state["ui_chat_id"] = m.chat.id
+            await render_creategroup_ui(None, state, message=new_msg)
+            
         return
+
+# ============================================================================
+# ⌨️ INLINE QUERY HANDLER FOR CREATEGROUP
+# ============================================================================
+
+@Altruix.bot.on_inline_query(filters.regex(r"^creategroup_(\d+)(?:_(\d+))?"))
+@iuser_check
+@log_errors
+async def creategroup_inline_handler(c: Client, iq: InlineQuery):
+    """Inline-based creategroup Dashboard, used by .creategroupui command."""
+    # AUTHORIZATION CHECK
+    if not await Altruix.is_sudo(iq.from_user.id):
+        return
+    
+    index = int(iq.matches[0].group(1))
+    page = int(iq.matches[0].group(2)) if iq.matches[0].group(2) else 1
+    
+    # Extract extra metadata from query string if present
+    query = iq.query
+    chat_id = "N/A"
+    chat_title = "N/A"
+    
+    if "cid=" in query:
+        import re
+        if m := re.search(r"cid=(-?\d+)", query):
+            chat_id = m.group(1)
+            
+    if "ctit=" in query:
+        import base64
+        try:
+            if m := re.search(r"ctit=([^&\s]+)", query):
+                encoded_title = m.group(1)
+                chat_title = base64.b64decode(encoded_title).decode('utf-8')
+        except: pass
+
+    # Generate data
+    text, reply_markup = await get_creategroup_ui_data(iq.from_user.id, index, page)
+    
+    result_identity = f"cg_{index}_{chat_id}"
+    
+    # Answer inline query
+    results = [
+        InlineQueryResultArticle(
+            id=result_identity,
+            title=f"Create Group Dashboard #{index}",
+            description=f"Manage group creation for {chat_title if chat_title != 'N/A' else 'this session'}",
+            input_message_content=InputTextMessageContent(
+                message_text=f"<b>🚀 𝐂𝐑𝐄𝐀𝐓𝐄 𝐆𝐑𝐎𝐔𝐏 𝐃𝐀𝐒𝐇𝐁𝐎𝐀𝐑𝐃</b>\n\n<blockquote expandable>{text}</blockquote>",
+                parse_mode=ParseMode.HTML,
+                link_preview_options=LinkPreviewOptions(is_disabled=True)
+            ),
+            reply_markup=reply_markup,
+            thumb_url="https://telegra.ph/file/0c6f5a3e1445790c9b0e2.jpg"
+        )
+    ]
+    await iq.answer(results=results, cache_time=0, is_personal=True)
+
+@Altruix.bot.on_chosen_inline_result(filters.regex(r"^cg_(\d+)_(-?\d+|N/A)"))
+async def creategroup_chosen_handler(c: Client, cir: ChosenInlineResult):
+    """Capture the inline_message_id and chat metadata when a result is chosen."""
+    result_id = cir.result_id
+    inline_msg_id = cir.inline_message_id
+    
+    if not inline_msg_id:
+        return
+
+    try:
+        # cg_{index}_{chat_id}
+        parts = result_id.split("_")
+        index = int(parts[1])
+        chat_id = parts[2]
+        
+        user_id = cir.from_user.id
+        if user_id in user_creategroup_state:
+            user_creategroup_state[user_id].update({
+                "ui_msg_id": inline_msg_id,
+                "ui_chat_id": chat_id if chat_id != "N/A" else None,
+                "session_index": index
+            })
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Error in creategroup_chosen_handler: {e}")

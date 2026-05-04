@@ -29,7 +29,7 @@ BL_REMOVE_ALL: "<b>Menghapus semua kata blacklist.</b>"
 BL_REMOVE: "<b>Menghapus <code>{}</code> dari blacklist</b>"
 BL_WARN_BAN: "<b>Pengguna [{}](tg://user?id{}) melewati batas peringatan dan telah dibanned.</b>"
 BLACKLIST_WORD: "<b>Kata Blacklist di {} adalah:</b>\n"
-BOT_ST_MSG: "<blockquote expandable>✦ 𝐀𝐥𝐭𝐫𝐨𝐢𝐝-𝐗 𝐀𝐬𝐬𝐢𝐬𝐭𝐚𝐧𝐭 ✦\n\n   Hello, <b>{}</b>\n\n   ▫️ <b>Bot:</b> Altroid-X Assistant\n   ▫️ <b>Project by:</b>\n      └─ | @AltroidUserbot • @AlphaXProject |\n   ▫️ <b>Powered by:</b>\n      └─ | @AltruixUB • @TheUltroid |</blockquote>"
+BOT_ST_MSG: "<blockquote expandable>✦ 𝐀𝐥𝐭𝐫𝐨𝐢𝐝-𝐗 𝐀𝐬𝐬𝐢𝐬𝐭𝐚𝐧𝐭 ✦\n\n   Hello, <b>{}</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n• Bot: Altroid-X Assistant\n\n▫️ Project by:\n   └─ | @AltroidUserbot • @AlphaXProject |\n▫️ Powered by:\n   └─ | @AlphaXProject |\n▫️ Inspired by:\n   └─ | @AltruixUB • @TheUltroid |\n━━━━━━━━━━━━━━━━━━━━━━━</blockquote>"
 CACHE_LOST: "Kehilangan Cache, Minta Pengguna mengirim pesan lagi!"
 CHANGE: "<code>Berhasil mengubah {} menjadi {}</code>"
 CHANNEL_ONLY: "<code>Perintah ini hanya bekerja di channel!</code>"
@@ -354,7 +354,7 @@ purgeme_mode_latest: "Terbaru"
 purgeme_mode_oldest: "Terlama"
 purgeme_collecting: "Mengumpulkan pesan terlama... {}/{}"
 purgeme_info_btn: "Info"
-purgeme_info_text: "<b> Panduan Konfigurasi Purgeme</b>\n\n• <b>Count:</b> Total pesan yang akan dipindai/dihapus.\n• <b>Delay:</b> Waktu jeda antara penghapusan individu (0s = cepat).\n• <b>Batch:</b> Jumlah pesan yang dihapus dalam satu kali proses (Default 60).\n• <b>DelayBc:</b> Waktu jeda antar batch untuk mencegah banjir request (cth: 2m).\n• <b>Offset:</b> Lewati N pesan pertama (berguna untuk menyimpan chat terbaru).\n• <b>Mode:</b> Terlama (bawah ke atas) atau Terbaru (atas ke bawah).\n• <b>Types:</b> Filter konten (Gambar, Video, dll).\n• <b>Notif:</b> Toggle notifikasi penyelesaian."
+purgeme_info_text: "<b> Panduan Konfigurasi Purgeme</b>\n\n• <b>Count:</b> Total pesan yang akan dipindai/dihapus.\n• <b>Delay:</b> Waktu jeda antara penghapusan individu.\n• <b>Batch:</b> Jumlah pesan per satu kali proses hapus.\n• <b>DelayBc:</b> Waktu jeda antar batch (cth: 2m).\n• <b>Offset:</b> Lewati N pesan pertama.\n• <b>Mode:</b> Urutan (Terlama atau Terbaru).\n• <b>Types:</b> Filter tipe konten (Text, Image, dll).\n• <b>Stealth:</b> Matikan notifikasi penyelesaian (Mode Senyap).\n• <b>ID Range:</b> Batasi berdasarkan ID Pesan (Min/Max ID).\n• <b>Date Range:</b> Batasi berdasarkan umur pesan (Min/Max Hari).\n• <b>Max Scan:</b> Batas maksimal pencarian pesan (Default 500)."
 purgeme_select_options: "Silakan pilih opsi:"
 purgeme_collecting_detailed: "<b>Mengumpulkan...</b>\nDitemukan: {processed}/{count}\nDipindai: {scanned}"
 purgeme_deleting_detailed: "<b>Menghapus...</b>\nDihapus: {processed}/{count}"
@@ -371,7 +371,8 @@ purgeme_no_running: "❌ Tidak ada proses pengosongan yang berjalan untuk chat: 
 purgeme_no_paused: "❌ Tidak ada proses pengosongan yang dijeda untuk chat: {chat}"
 purgeme_no_active: "❌ Tidak ada proses pengosongan aktif untuk chat: {chat}"
 purgeme_multiple: "Beberapa ({})"
-    
+purgeme_account_msgs: "Pesan Akun"
+
 # Startup & System
 reading_session: "Sesi Pengguna ditemukan secara lokal, sedang sinkronisasi..."
 search_session_db: "Mencari sesi pengguna di DB..."
@@ -780,7 +781,7 @@ sys_ctrl_shutdown: "Matikan"
 
 
 backup_manager_text: "<b>📦 Pengelola Database</b>\n\nOtomatiskan pencadangan database Anda untuk mencegah kehilangan data. Sistem akan mengompres (ZIP) semua file di folder <code>DATABASE/</code> dan mengunggahnya ke saluran log Anda.\n\n• <b>Auto Backup:</b> {}\n• <b>Interval:</b> Setiap {}\n• <b>Log Chat:</b> {}\n• <b>Backup Terakhir:</b> <code>{}</code>"
-backup_caption: "📦 <b>Cadangan Database Altruix</b>\n\n• <b>Waktu:</b> <code>{}</code>\n• <b>Versi:</b> <code>{}</code>\n\n<i>File ini berisi semua pengaturan dan data sesi Anda. Simpan dengan aman!</i>"
+backup_caption: "<blockquote expandable>📦 <b>Cadangan Database Altruix</b>\n\n• <b>Waktu:</b> <code>{}</code>\n• <b>Versi:</b> <code>{}</code>\n\n<i>File ini berisi semua pengaturan dan data sesi Anda. Simpan dengan aman!</i></blockquote>"
 
 # Button Style
 btn_style_menu: "Button Style"

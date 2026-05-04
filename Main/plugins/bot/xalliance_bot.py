@@ -19,7 +19,7 @@ from Main.core.decorators import log_errors
 # from Main.plugins.userbot.xalliance import (...)
 # from Main.plugins.userbot.xtaskmanager import (...)
 
-PLUGIN_VERSION_FALLBACK = "1.9.0"
+PLUGIN_VERSION_FALLBACK = "1.9.100"
 
 def _get_alliance():
     """Lazy import helper for xalliance module."""
@@ -315,14 +315,15 @@ async def alliance_callback_handler(c: Client, cb: CallbackQuery):
 
 @Altruix.bot.on_message(filters.private & filters.incoming, group=2)
 async def alliance_input_handler(c: Client, m: Message):
-    if m.from_user.id not in WAITING: return
+    if m.from_user.id not in WAITING:
+        return await m.continue_propagation()
 
     state = WAITING.pop(m.from_user.id)
     action = state["action"]
     old_msg_id = state["msg_id"]
     
     if not m.text:
-        return # Skip if not text message
+        return await m.continue_propagation()  # ✅ FIX: Don't swallow non-text messages
 
     await m.delete() # Cleanup user input
 

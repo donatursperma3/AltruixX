@@ -29,6 +29,83 @@ from pyrogram.types import LinkPreviewOptions, ReplyParameters
 from Main.utils.file_helpers import make_file_from_text # ✅ Added
 
 
+# ─── UTIL: DECODE INLINE_MESSAGE_ID → CHAT_ID ───────────────────────────
+def _decode_inline_chat_id(inline_message_id: str):
+    """
+    Decode inline_message_id to extract the real chat_id (peer ID).
+    Uses Pyrogram's unpack_inline_message_id which decodes the base64 TL object.
+    InputBotInlineMessageID64 contains 'owner_id' = the chat peer ID.
+    Returns (chat_id_str, is_channel) or (None, False) on failure.
+    """
+    try:
+        from pyrogram.utils import unpack_inline_message_id
+        parsed = unpack_inline_message_id(inline_message_id)
+        if hasattr(parsed, 'owner_id') and parsed.owner_id:
+            raw_id = parsed.owner_id
+            # owner_id for channels/supergroups is the raw channel_id (positive)
+            # Pyrogram API uses -100{channel_id} format for supergroups/channels
+            # For private chats (users), owner_id IS the user_id (positive)
+            # We return both the -100 prefixed version and raw, caller tries both
+            return raw_id
+    except Exception:
+        pass
+    return None
+
+
+async def _resolve_chat_from_owner_id(raw_owner_id, client, clients_list):
+    """
+    Try to resolve a chat from the decoded owner_id.
+    Tries -100{owner_id} first (supergroup/channel), then raw owner_id (user/group).
+    Returns (chat_id_str, chat_title, chat_type_prefix) or (None, None, None).
+    """
+    candidates = []
+    # Supergroup/Channel format: -100{raw_id}
+    if raw_owner_id > 0:
+        candidates.append(int(f"-100{raw_owner_id}"))
+    # Raw ID (user or legacy group)
+    candidates.append(raw_owner_id)
+    # Negative legacy group
+    if raw_owner_id > 0:
+        candidates.append(-raw_owner_id)
+    
+    from pyrogram.enums import ChatType
+    
+    for try_id in candidates:
+        # Try with bot client first
+        try:
+            chat = await client.get_chat(try_id)
+            title = chat.title or f"{chat.first_name or ''} {chat.last_name or ''}".strip() or "Chat"
+            if chat.type == ChatType.PRIVATE:
+                prefix = "👤 Private"
+            elif chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
+                prefix = "👥 Group"
+            elif chat.type == ChatType.CHANNEL:
+                prefix = "📢 Channel"
+            else:
+                prefix = "💬 Chat"
+            return str(chat.id), title, prefix
+        except Exception:
+            pass
+        # Try with userbot clients
+        for ubot in clients_list:
+            try:
+                chat = await ubot.get_chat(try_id)
+                title = chat.title or f"{chat.first_name or ''} {chat.last_name or ''}".strip() or "Chat"
+                if chat.type == ChatType.PRIVATE:
+                    prefix = "👤 Private"
+                elif chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
+                    prefix = "👥 Group"
+                elif chat.type == ChatType.CHANNEL:
+                    prefix = "📢 Channel"
+                else:
+                    prefix = "💬 Chat"
+                return str(chat.id), title, prefix
+            except Exception:
+                continue
+    return None, None, None
+
+
+
 # ─── UTIL: KIRIM PESAN KE GRUP LOG (AMAN DARI ERROR) ────────────────────
 async def send_log_message(text: str, filename: str = "log_error.txt", reply_markup=None):
     """
@@ -98,7 +175,13 @@ def iuser_check(func):
         
         user = update.from_user if update else None
         if not user:
-            return
+            # Anonymous Admin: from_user is None for Messages sent as anonymous admin
+            # SECURITY: Only fall back for outgoing messages (sent by THIS userbot client)
+            # This prevents other anonymous admins in the same group from triggering commands
+            if isinstance(update, Message) and getattr(update, 'outgoing', False) and client and hasattr(client, 'me') and client.me:
+                user = client.me
+            else:
+                return
 
         user_id = user.id
         username = f"@{user.username}" if user.username else "No username"
@@ -137,15 +220,21 @@ def iuser_check(func):
             is_sudo = user_id in active_session_ids
         
         # ✅ Determine if callback should be logged based on filter mode
+        # Normalized log_type fallback
+        if log_type not in ["all", "sudo", "nonsudo", "off"]:
+            log_type = "all"
+            
         should_log = False
-        if log_type == "all":
-            should_log = True
-        elif log_type == "sudo" and is_sudo:
-            should_log = True
-        elif log_type == "nonsudo" and not is_sudo:
-            should_log = True
-        elif log_type == "off":
-            should_log = False
+        # Only log Callbacks and Inlines to avoid message spam
+        if isinstance(update, (CallbackQuery, InlineQuery)):
+            if log_type == "all":
+                should_log = True
+            elif log_type == "sudo" and is_sudo:
+                should_log = True
+            elif log_type == "nonsudo" and not is_sudo:
+                should_log = True
+            elif log_type == "off":
+                should_log = False
 
         if is_sudo:
             result_status = "AUTHORIZED"
@@ -180,6 +269,7 @@ def iuser_check(func):
                         cb_data = update.data or "No Data"
                         if update.message:
                             chat = update.message.chat
+                            chat_id = chat.id  # ✅ FIX: Set chat_id for regular message callbacks
                             
                             from pyrogram.enums import ChatType
                             
@@ -209,10 +299,24 @@ def iuser_check(func):
                             chat_info = "📱 Inline Interface"
                             chat_id = "Inline"
                             
+                            # ✅ PRIMARY: Decode inline_message_id to get real chat_id
+                            if hasattr(update, "inline_message_id") and update.inline_message_id:
+                                _raw_owner = _decode_inline_chat_id(update.inline_message_id)
+                                if _raw_owner:
+                                    try:
+                                        _cid_str, _ctitle, _cprefix = await _resolve_chat_from_owner_id(_raw_owner, client, Altruix.clients)
+                                        if _cid_str:
+                                            chat_id = _cid_str
+                                            chat_info = f"{_cprefix}: <b>{html.escape(_ctitle)}</b>"
+                                            Altruix.log(f"[CB LOGGER] Decoded inline_message_id → chat_id={chat_id}, title={_ctitle}", level=20)
+                                    except Exception as _e:
+                                        Altruix.log(f"[CB LOGGER] Decode resolve err: {_e}", level=30)
+                            
                             resolved_chat_id = None
                             chat_title = None
                             
-                            if hasattr(update, "inline_message_id") and update.inline_message_id:
+                            # FALLBACK: DB cache lookup (only if primary decode didn't resolve)
+                            if chat_id == "Inline" and hasattr(update, "inline_message_id") and update.inline_message_id:
                                 Altruix.log(f"[CB LOGGER] Found inline_message_id: {update.inline_message_id} in CallbackQuery", level=20)
                                 try:
                                     cache = await Altruix.local_db.inline_col.find_one({"_id": update.inline_message_id})
@@ -302,50 +406,63 @@ def iuser_check(func):
                         cb_data = f"Inline Query: {update.query}"
                         chat_info = "Inline Query"
                     
-                    time_now = datetime.now().strftime("%H:%M:%S")
-                    
-                    me = getattr(client, "me", None) if 'client' in locals() else None
-                    if not me:
-                        for arg in args:
-                            if isinstance(arg, Client):
-                                _c = arg
-                                me = getattr(_c, "me", None)
-                                break
-
-                    if client and not me:
-                        try: me = await client.get_me()
-                        except: me = None
-                    
-                    bot_username = f"@{me.username}" if me and me.username else "Unknown Bot"
-                    if me and not getattr(me, "is_bot", False):
-                        bot_username = f"Userbot Session ({bot_username})"
-                    
-                    display_name = full_name.strip()
-                    is_blank = not display_name or all(ord(ch) < 33 or ord(ch) == 8203 or ord(ch) == 12644 for ch in display_name)
-                    final_name = "blank" if is_blank else html.escape(full_name)
-                    username_display = f"@{username.lstrip('@')}" if username and username != "None" else "None"
-                    if username_display != "None":
-                        username_display = html.escape(username_display)
-                    
                     try:
+                        # ─── UNIVERSAL: Derivation of Session Metadata ───
+                        ubot_session_name = "Unknown Session"
+                        
+                        # Use session_idx from earlier extraction (lines 250-253)
+                        if 'session_idx' in locals() and session_idx != -1 and 0 <= session_idx < len(Altruix.clients):
+                            _c = Altruix.clients[session_idx]
+                            if hasattr(_c, 'me') and _c.me:
+                                ubot_session_name = _c.me.first_name or _c.me.username or str(_c.me.id)
+                        elif len(Altruix.clients) > 0:
+                            # Fallback to primary session
+                            if client:
+                                for idx, sc in enumerate(Altruix.clients):
+                                    if sc == client:
+                                        ubot_session_name = sc.me.first_name or sc.me.username or str(sc.me.id) if sc.me else f"Session #{idx+1}"
+                                        break
+                                        
+                        # Common Info
+                        time_now = datetime.now().strftime("%H:%M:%S")
+                        
+                        me = getattr(client, "me", None) if 'client' in locals() else None
+                        if not me:
+                            for arg in args:
+                                if isinstance(arg, Client):
+                                    _c = arg
+                                    me = getattr(_c, "me", None)
+                                    break
+
+                        if client and not me:
+                            try: me = await client.get_me()
+                            except: me = None
+                        
+                        bot_username = f"@{me.username}" if me and me.username else "Unknown Bot"
+                        if me and not getattr(me, "is_bot", False):
+                            bot_username = f"Userbot Session ({bot_username})"
+                        
+                        display_name = full_name.strip()
+                        display_name = Essentials.clean_user_name(display_name)
+                        is_blank = not display_name or display_name == "No name" or all(ord(ch) < 33 or ord(ch) == 8203 or ord(ch) == 12644 for ch in display_name)
+                        final_name = "blank" if is_blank else html.escape(display_name)
+                        username_display = f"@{username.lstrip('@')}" if username and username != "None" else "None"
+                        if username_display != "None":
+                            username_display = html.escape(username_display)
+                        
                         # ── TASK ID LOOKUP ──
-                        # Show ALL active task IDs from global registry in log entries.
-                        # This helps user identify and cancel tasks via .canceltask <id>
                         task_id_line = ""
-                        try:
-                            if hasattr(Altruix, '_TASK_REGISTRY') and Altruix._TASK_REGISTRY:
-                                active_tasks = [
-                                    (tid, t) for tid, t in Altruix._TASK_REGISTRY.items()
-                                    if t.get("task") and not t["task"].done()
-                                ]
-                                if active_tasks:
-                                    parts_list = []
-                                    for tid, t in active_tasks:
-                                        name = t.get("name", "?")[:15]
-                                        parts_list.append(f"<code>{tid}</code> ({name})")
-                                    task_id_line = f"🏷 <b>Active Tasks:</b> {', '.join(parts_list)}\n"
-                        except Exception:
-                            pass
+                        if hasattr(Altruix, '_TASK_REGISTRY') and Altruix._TASK_REGISTRY:
+                            active_tasks = [
+                                (tid, t) for tid, t in Altruix._TASK_REGISTRY.items()
+                                if t.get("task") and not t["task"].done()
+                            ]
+                            if active_tasks:
+                                parts_list = []
+                                for tid, t in active_tasks:
+                                    name = t.get("name", "?")[:15]
+                                    parts_list.append(f"<code>{tid}</code> ({name})")
+                                task_id_line = f"🏷 <b>Active Tasks:</b> {', '.join(parts_list)}\n"
                         
                         result_text = Altruix.get_string('AUTHORIZED')
                         if len(result_text) > 11:
@@ -356,7 +473,7 @@ def iuser_check(func):
                             f"<blockquote expandable>"
                             f"━━━━━━━━━━━━━━━━━━━━\n"
                             f"{Altruix.get_string('LOGGER_CALLBACK_BOT').format(html.escape(me.username) if me and me.username else 'bot', html.escape(bot_username))}\n"
-                            f"{Altruix.get_string('LOGGER_CALLBACK_USERBOT').format(html.escape(ubot_session_name)) if 'ubot_session_name' in locals() else ''}\n"
+                            f"{Altruix.get_string('LOGGER_CALLBACK_USERBOT').format(html.escape(ubot_session_name))}\n"
                             f"{Altruix.get_string('LOGGER_CALLBACK_USER').format(user_id, final_name)}\n"
                             f"{Altruix.get_string('LOGGER_CALLBACK_USERNAME').format(username_display)}\n"
                             f"{Altruix.get_string('LOGGER_CALLBACK_USER_ID').format(user_id)}\n"
@@ -454,11 +571,31 @@ def iuser_check(func):
             # ✅ For non-sudo: show the alert popup, then log in background
             if should_log:
                 async def _log_denied():
-                    chat_id = "Inline"
-                    cb_data = update.data or "No Data" if isinstance(update, CallbackQuery) else "N/A"
-                    chat_info = "📱 Inline Interface" if isinstance(update, CallbackQuery) and not update.message else "N/A"
-                    msg_text = "[Inline Callback Result]"
+                    # Default values
+                    chat_id = "N/A"
+                    cb_data = "N/A"
+                    chat_info = "N/A"
+                    msg_text = "N/A"
                     time_now = datetime.now().strftime("%H:%M:%S")
+                    
+                    if isinstance(update, CallbackQuery):
+                        chat_id = "Inline"
+                        cb_data = update.data or "No Data" 
+                        chat_info = "📱 Inline Interface" if not update.message else "N/A"
+                        msg_text = "[Inline Callback Result]"
+                    elif isinstance(update, InlineQuery):
+                        cb_data = f"Inline Query: {update.query}"
+                        chat_info = "Inline Query"
+                    elif isinstance(update, Message):
+                        chat_id = update.chat.id
+                        from pyrogram.enums import ChatType
+                        chat_label = update.chat.title or update.chat.first_name or "Chat"
+                        prefix = "💬"
+                        if update.chat.type == ChatType.PRIVATE: prefix = "👤 Private"
+                        elif update.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]: prefix = "👥 Group"
+                        elif update.chat.type == ChatType.CHANNEL: prefix = "📢 Channel"
+                        chat_info = f"{prefix}: <b>{html.escape(chat_label)}</b>"
+                        msg_text = update.text or update.caption or "[No Text/Media]"
                     
                     # ✅ UNIVERSAL: Always decompress callback data (for both inline AND regular messages)
                     actual_data = cb_data
@@ -493,20 +630,36 @@ def iuser_check(func):
                         chat_id = chat.id
                         msg_text = update.message.text or update.message.caption or "[No Text/Media]"
                     elif isinstance(update, CallbackQuery) and not update.message:
-                        # ✅ Inline mode: prioritize cache, fallback to resolve chat from callback data (_cid or cid=)
+                        # ✅ Inline mode: decode inline_message_id first, then cache, then callback data
                         chat_title = None
                         resolved_chat_id = None
                         
-                        try:
-                            if hasattr(update, "inline_message_id") and update.inline_message_id:
-                                from Main import Altruix as Ax
-                                cached_doc = await Ax.local_db.inline_col.find_one({"_id": update.inline_message_id})
-                                if cached_doc:
-                                    if "chat_title" in cached_doc:
-                                        chat_title = cached_doc["chat_title"]
-                                    if "chat_id" in cached_doc and cached_doc["chat_id"] not in ["Inline", "N/A", "None", None]:
-                                        resolved_chat_id = cached_doc["chat_id"]
-                        except Exception: pass
+                        # ✅ PRIMARY: Decode inline_message_id to get real chat_id
+                        if hasattr(update, "inline_message_id") and update.inline_message_id:
+                            _raw_owner = _decode_inline_chat_id(update.inline_message_id)
+                            if _raw_owner:
+                                try:
+                                    _c = args[0] if args and isinstance(args[0], Client) else None
+                                    _cid_str, _ctitle, _cprefix = await _resolve_chat_from_owner_id(_raw_owner, _c or Altruix.bot, Altruix.clients)
+                                    if _cid_str:
+                                        resolved_chat_id = _cid_str
+                                        chat_title = _ctitle
+                                        chat_id = _cid_str
+                                        chat_info = f"{_cprefix}: <b>{html.escape(_ctitle)}</b>"
+                                except Exception: pass
+                        
+                        # FALLBACK: DB cache lookup
+                        if not resolved_chat_id:
+                            try:
+                                if hasattr(update, "inline_message_id") and update.inline_message_id:
+                                    from Main import Altruix as Ax
+                                    cached_doc = await Ax.local_db.inline_col.find_one({"_id": update.inline_message_id})
+                                    if cached_doc:
+                                        if "chat_title" in cached_doc:
+                                            chat_title = cached_doc["chat_title"]
+                                        if "chat_id" in cached_doc and cached_doc["chat_id"] not in ["Inline", "N/A", "None", None]:
+                                            resolved_chat_id = cached_doc["chat_id"]
+                            except Exception: pass
                         
                         import re
                         from Main.core.ext.callback_helpers import get_callback_data
@@ -846,8 +999,11 @@ def iuser_check(func):
                     pass
             elif isinstance(update, Message):
                 # ✅ Only reply if it looks like a command to prevent spamming normal chat
-                if update.text and update.text.startswith((".", "!", "/", "?")):
-                    await update.reply_msg(Altruix.get_string("AUTH_FEATURE_DENIED"))
+                if getattr(update, "text", None) and update.text.startswith((".", "!", "/", "?")):
+                    # Prevent DOUBLE responses if multiple groups trigger iuser_check
+                    if not getattr(update, "_auth_denied_sent", False):
+                        await update.reply_msg(Altruix.get_string("AUTH_FEATURE_DENIED"))
+                        update._auth_denied_sent = True
 
     return wrapper
 
@@ -1018,12 +1174,26 @@ def log_errors(func):
                                 log_link = f"<a href='https://t.me/c/{str(sent_log.chat.id)[4:]}/{sent_log.id}'>Check Log Message</a>"
 
                         try:
-                            await target_msg.edit(
-                                f"<b>💥 Error Occurred!</b>\n"
-                                f"Command failed during execution.\n"
-                                f"👉 {log_link}",
-                                disable_web_page_preview=True
-                            )
+                            # ✅ FIX: Use reply_msg instead of edit if target_msg is the original command (u)
+                            # to prevent conflict with auto-delete-cmd feature.
+                            if target_msg == u:
+                                await target_msg.reply_msg(
+                                    f"<blockquote expandable>"
+                                    f"<b>[ERROR] - Error Occurred!</b>\n"
+                                    f"<i>•  Command failed during execution.</i>\n"
+                                    f"» {log_link} «"
+                                    f"</blockquote>",
+                                    disable_web_page_preview=True
+                                )
+                            else:
+                                await target_msg.edit(
+                                    f"<blockquote expandable>"
+                                    f"<b>[ERROR] - Error Occurred!</b>\n"
+                                    f"<i>•  Command failed during execution.</i>\n"
+                                    f"» {log_link} «"
+                                    f"</blockquote>",
+                                    disable_web_page_preview=True
+                                )
                         except Exception:
                             pass
                 except Exception as e:

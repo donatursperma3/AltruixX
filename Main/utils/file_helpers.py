@@ -115,17 +115,30 @@ def get_user_custom_alert(user_id):
 
 # ====================== BUTTON STYLE HELPERS ======================
 BUTTON_STYLE_FILE = get_db_path("button_style_settings.json")
+_BUTTON_STYLE_CACHE = None
 
 def get_button_style_data():
-    """Returns the full button style config."""
+    """Returns the full button style config (cached in memory)."""
+    global _BUTTON_STYLE_CACHE
+    if _BUTTON_STYLE_CACHE is not None:
+        return _BUTTON_STYLE_CACHE
+        
     default = {"global": {"style": "DEFAULT"}, "sessions": {}, "apply_types": {}}
     if not os.path.exists(BUTTON_STYLE_FILE):
+        _BUTTON_STYLE_CACHE = default
         return default
+        
     with open(BUTTON_STYLE_FILE, "r", encoding="utf-8") as f:
-        try: return json.load(f)
-        except: return default
+        try: 
+            _BUTTON_STYLE_CACHE = json.load(f)
+            return _BUTTON_STYLE_CACHE
+        except: 
+            _BUTTON_STYLE_CACHE = default
+            return default
 
 def save_button_style_data(data):
+    global _BUTTON_STYLE_CACHE
+    _BUTTON_STYLE_CACHE = data
     with open(BUTTON_STYLE_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=4)
 

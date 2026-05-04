@@ -17,14 +17,31 @@ MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 WHITE='\033[1;37m'
 NC='\033[0m' # No Color
+TS_COLOR='\033[97;48;5;141m'
+TAG_COLOR='\033[97;48;2;69;104;130m'
 
 # =============================================================================
 # Helper: Timestamped Logging
 # =============================================================================
 log_msg() {
-    local color=$1
-    local msg=$2
-    echo -e "${WHITE}[$(date +%H:%M:%S)]${NC} ${color}${msg}${NC}"
+    local msg=$1
+    # Standard format: HH:MM:SS.mmm
+    local ts=$(date +"%H:%M:%S.%3N")
+    if [[ "$ts" == *"%3N" ]]; then ts=$(date +"%H:%M:%S.000"); fi
+    
+    # Premium Colors
+    local TS_COLOR='\033[97;48;5;141m'
+    local TAG_COLOR='\033[97;48;2;69;104;130m'
+    local DEBUG_COLOR='\033[97;46m'
+    local NC='\033[0m'
+    
+    # Check DEBUG mode
+    if [[ "${DEBUG,,}" == "true" ]]; then
+        local padded_debug=" DEBUG  "
+        echo -e "${TS_COLOR}[${ts}]${NC} - ${TAG_COLOR}[Altroid-X]${NC} ${DEBUG_COLOR}|» ${padded_debug} «|${NC} : » ${msg}${NC}"
+    else
+        echo -e "${TS_COLOR}[${ts}]${NC} - ${TAG_COLOR}[Altroid-X]${NC} ${msg}${NC}"
+    fi
 }
 
 # =============================================================================
@@ -109,48 +126,47 @@ display_banner() {
     local platform=$1
     local venv_name=$2
     
-    echo -e "${CYAN}"
-    echo "╔═══════════════════════════════════════════╗"
-    echo "║       🚀 ALTROID-X - MULTI-LAUNCHER       ║"
-    echo "╚═══════════════════════════════════════════╝"
-    echo -e "${NC}"
+    log_msg "${CYAN}╔═══════════════════════════════════════════╗"
+    log_msg "${CYAN}║       🚀 ALTROID-X - MULTI-LAUNCHER       ║"
+    log_msg "${CYAN}╚═══════════════════════════════════════════╝"
+    echo ""
     
     case $platform in
         heroku)
-            log_msg "${MAGENTA}" "Platform: HEROKU"
-            echo -e "${WHITE}   Env: Cloud (Dyno)${NC}"
+            log_msg "${MAGENTA}Platform: HEROKU"
+            log_msg "${WHITE}   Env: Cloud (Dyno)"
             ;;
         sevalla)
-            log_msg "${MAGENTA}" "Platform: SEVALLA / RAILWAY / RENDER"
-            echo -e "${WHITE}   Env: Cloud Platform${NC}"
+            log_msg "${MAGENTA}Platform: SEVALLA / RAILWAY / RENDER"
+            log_msg "${WHITE}   Env: Cloud Platform"
             ;;
         termux)
-            log_msg "${GREEN}" "Platform: TERMUX (Android/iOS)"
-            echo -e "${WHITE}   Env: Mobile Linux | Venv: $venv_name${NC}"
+            log_msg "${GREEN}Platform: TERMUX (Android/iOS)"
+            log_msg "${WHITE}   Env: Mobile Linux | Venv: $venv_name"
             ;;
         wsl)
-            log_msg "${BLUE}" "Platform: WSL (Windows Linux Subsystem)"
-            echo -e "${WHITE}   Env: Linux on Windows | Venv: $venv_name${NC}"
+            log_msg "${BLUE}Platform: WSL (Windows Linux Subsystem)"
+            log_msg "${WHITE}   Env: Linux on Windows | Venv: $venv_name"
             ;;
         windows)
-            log_msg "${CYAN}" "Platform: WINDOWS (Native)"
-            echo -e "${WHITE}   Env: Windows Native | Venv: $venv_name${NC}"
+            log_msg "${CYAN}Platform: WINDOWS (Native)"
+            log_msg "${WHITE}   Env: Windows Native | Venv: $venv_name"
             ;;
         vps)
-            log_msg "${YELLOW}" "Platform: VPS (Private Server)"
-            echo -e "${WHITE}   Env: Linux VPS | Venv: $venv_name${NC}"
+            log_msg "${YELLOW}Platform: VPS (Private Server)"
+            log_msg "${WHITE}   Env: Linux VPS | Venv: $venv_name"
             ;;
         linux)
-            log_msg "${GREEN}" "Platform: LINUX (Native)"
-            echo -e "${WHITE}   Env: Linux Desktop | Venv: $venv_name${NC}"
+            log_msg "${GREEN}Platform: LINUX (Native)"
+            log_msg "${WHITE}   Env: Linux Desktop | Venv: $venv_name"
             ;;
         macos)
-            log_msg "${WHITE}" "Platform: macOS"
-            echo -e "${WHITE}   Env: Apple macOS | Venv: $venv_name${NC}"
+            log_msg "${WHITE}Platform: macOS"
+            log_msg "${WHITE}   Env: Apple macOS | Venv: $venv_name"
             ;;
         *)
-            log_msg "${RED}" "Platform: UNKNOWN"
-            echo -e "${WHITE}   Env: Unknown | Venv: $venv_name${NC}"
+            log_msg "${RED}Platform: UNKNOWN"
+            log_msg "${WHITE}   Env: Unknown | Venv: $venv_name"
             ;;
     esac
     echo ""
@@ -178,16 +194,16 @@ export PYTHONIOENCODING=utf-8
 # Virtual Environment Setup (Skip for Heroku/Sevalla)
 # =============================================================================
 if [[ "$PLATFORM" == "heroku" || "$PLATFORM" == "sevalla" ]]; then
-    echo -e "${YELLOW}⏩ Skipping venv creation (Cloud platform uses system Python)${NC}"
+    log_msg "${YELLOW}⏩ Skipping venv creation (Cloud platform uses system Python)"
     VENV_PYTHON="$PYTHON_CMD"
 else
     # Create virtual environment if it does not exist
     if [ ! -d "$VENV_DIR" ]; then
-        echo -e "${YELLOW}⏳ Creating virtual environment: $VENV_DIR${NC}"
+        log_msg "${YELLOW}⏳ Creating virtual environment: $VENV_DIR"
         $PYTHON_CMD -m venv "$VENV_DIR"
-        echo -e "${GREEN}✅ Virtual environment created!${NC}"
+        log_msg "${GREEN}✅ Virtual environment created!"
     else
-        echo -e "${GREEN}✅ Virtual environment found: $VENV_DIR${NC}"
+        log_msg "${GREEN}✅ Virtual environment found: $VENV_DIR"
     fi
 
     # Detect venv Python executable path
@@ -202,17 +218,18 @@ else
         VENV_PYTHON="./$VENV_DIR/Scripts/python.exe"
     fi
     
-    echo -e "${CYAN}🐍 Using Python: $VENV_PYTHON${NC}"
 fi
+# Ensure VENV_PYTHON is never empty for the logger pipe
+VENV_PYTHON="${VENV_PYTHON:-$PYTHON_CMD}"
+log_msg "${CYAN}🐍 Using Python: $VENV_PYTHON"
 
 # =============================================================================
 # Install Dependencies
 # =============================================================================
 echo ""
-log_msg "${YELLOW}" "📦 Pip: Updating core and dependencies..."
-$VENV_PYTHON -m pip install --upgrade pip --quiet
-$VENV_PYTHON -m pip install -r requirements.txt --quiet
-log_msg "${GREEN}" "✅ Pip: Dependencies processed successfully."
+log_msg "${YELLOW}📦 Pip: Updating core and dependencies..."
+log_msg "${YELLOW}⏳ This process installs 60+ libraries and may take several minutes. Please do not close the terminal..."
+$VENV_PYTHON smart_install.py
 
 # =============================================================================
 # Load Environment Variables from .env
@@ -231,14 +248,14 @@ if [ -f ".env" ]; then
         value=$(echo "$line" | cut -d '=' -f 2- | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
         export "$key=$value"
     done < ".env"
-    echo -e "${GREEN}✅ Environment variables loaded!${NC}"
+    log_msg "${GREEN}✅ Environment variables loaded!"
 fi
 
 # =============================================================================
 # Clean Up Existing Processes & Stale Locks (DISABLED - Allows Multi-Instance)
 # =============================================================================
 echo ""
-log_msg "${CYAN}" "ℹ️  Multi-instance support enabled (Cleanup disabled)."
+log_msg "${CYAN}ℹ️  Multi-instance support enabled (Cleanup disabled)."
 # log_msg "${RED}" "🧹 Process: Cleaning up existing instances & stale locks..."
 # has_killed=false
 #
@@ -282,30 +299,32 @@ log_msg "${CYAN}" "ℹ️  Multi-instance support enabled (Cleanup disabled)."
 #     sleep 3
 # fi
 
-# 3. Clean up stale journal files safely
-if ls cache/*.session-journal >/dev/null 2>&1 || ls cache/*.session-wal >/dev/null 2>&1; then
-    log_msg "${CYAN}" "🧹 Cache: Removing stale journal/WAL files..."
-    rm -f cache/*.session-journal cache/*.session-wal
-fi
-
 # if [ "$has_killed" = true ]; then
 #     echo -e "${GREEN}✅ Cleanup complete!${NC}"
 # else
 #     echo -e "${CYAN}ℹ️  No existing processes found.${NC}"
 # fi
 
+# 3. Clean up stale journal files safely
+if ls cache/*.session-journal >/dev/null 2>&1 || ls cache/*.session-wal >/dev/null 2>&1; then
+    log_msg "${CYAN}🧹 Cache: Removing stale journal/WAL files..."
+    rm -f cache/*.session-journal cache/*.session-wal
+fi
+
 # =============================================================================
 # Launch the Bot
 # =============================================================================
 echo ""
-echo -e "${GREEN}╔═══════════════════════════════════════════╗"
-echo -e "║        🚀 STARTING ALTROID-X BOT          ║"
-echo -e "╚═══════════════════════════════════════════╝${NC}"
+log_msg "${GREEN}╔═══════════════════════════════════════════╗"
+log_msg "${GREEN}║        🚀 STARTING ALTROID-X BOT          ║"
+log_msg "${GREEN}╚═══════════════════════════════════════════╝"
 echo ""
-log_msg "${CYAN}" "Info: Platform -> $PLATFORM"
-log_msg "${CYAN}" "Info: Python   -> $VENV_PYTHON"
-log_msg "${YELLOW}" "⚙️ Launching Altroid-X engine..."
-log_msg "${YELLOW}" "⏳ Please be patient, it will take a few minutes..."
+
+log_msg "${CYAN}Platform: ${PLATFORM} (${VENV_DIR})"
+log_msg "${CYAN}Python: ${PYTHON_CMD}"
+echo ""
+log_msg "${YELLOW}⏳ Launching Altroid-X engine..."
+log_msg "${YELLOW}⏳ Please be patient, it will take a few minutes..."
 echo ""
 
 # Run the bot

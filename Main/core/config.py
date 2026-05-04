@@ -56,6 +56,7 @@ class TGLIMITS(object):
 
 
 class BaseConfig(object):
+    from Main.core.version import __version__ as ALTRUIX_VERSION
     BOT_TOKEN = getenv("BOT_TOKEN")
     BOT_MODE = getenv("BOT_MODE", False)
     AUTOPOST_CACHE = {}
@@ -123,7 +124,7 @@ class BaseConfig(object):
     RESOURCE_SAVER = getenv("RESOURCE_SAVER") or "true"
     DEBUG = True if getenv("DEBUG", "false").lower() == "true" else False
     LOG_CHAT_ID = digit_wrap(getenv("LOG_CHAT_ID", None))
-    CACHE_LOG_ENABLED = getenv("CACHE_LOG_ENABLED", "True").lower() == "true"
+    CACHE_LOG_ENABLED = getenv("CACHE_LOG_ENABLED", "False").lower() == "true"
     UB_LANG = getenv("UB_LANG")
     REPLY_ERR_NOTIF_GLOBAL = getenv("REPLY_ERR_NOTIF_GLOBAL", "on")
     # ✅ RENAME: PREFIX_SUDO_USERS (Sudo commands) & PREFIX_OWNER_USER (Owner/Self commands)
@@ -141,9 +142,10 @@ class BaseConfig(object):
         raise EnvVariableTypeError(Exception)
 
     ALIVE_MEDIA = getenv("ALIVE_MEDIA")
-    PEER_NOTIF_ENABLED = getenv("PEER_NOTIF_ENABLED", "on")
+    PEER_NOTIF_ENABLED = getenv("PEER_NOTIF_ENABLED", "off")
     RESOURCE_NOTIF_ENABLED = getenv("RESOURCE_NOTIF_ENABLED", "off")
-    HEARTBEAT_NOTIF_ENABLED = getenv("HEARTBEAT_NOTIF_ENABLED", "on")
+    HEARTBEAT_NOTIF_ENABLED = getenv("HEARTBEAT_NOTIF_ENABLED", "off")
+    KEEPALIVE_LOG_ENABLED = getenv("KEEPALIVE_LOG_ENABLED", "off")
 
     def pop_session(self, index: int) -> Optional[str]:
         if len(self.SESSIONS) == 0:
@@ -281,10 +283,12 @@ class Config(BaseConfig):
                         and not str(k).lower().startswith("default")
                     ):
                         with contextlib.suppress(Exception):
-                            await self.sync_env_to_db(
-                                self.digit_wrap(k), self.digit_wrap(v)
-                            )
-                logging.info("Loaded ENV(s) to database!")
+                            # ✅ FIX: Only sync if variable is NOT in database
+                            if not await self.get_env_from_db(k):
+                                await self.sync_env_to_db(
+                                    self.digit_wrap(k), self.digit_wrap(v)
+                                )
+                logging.debug("Initial sync for missing ENVs to database complete!")
 
     async def load_vars_from_db(self):
         async for var in self.env_col.find({}):
@@ -438,7 +442,7 @@ class Config(BaseConfig):
         Updates an environment variable in the database and local cache.
         """
         if self.DEBUG and not isinstance(update, dict):
-             logging.debug(f"DEBUG mode: Syncing {env_name} to database despite flag.")
+             logging.debug(f"Syncing {env_name} to database despite flag.")
              
         if isinstance(update, dict):
             # Special case for SUDO_USERS updates which often use $push/$pull

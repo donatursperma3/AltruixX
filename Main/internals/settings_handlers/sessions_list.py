@@ -21,11 +21,12 @@ def arrange_buttons(array: list, no=3) -> list:
     n = int(no)
     return [array[i * n : (i + 1) * n] for i in range((len(array) + n - 1) // n)]
 
-def get_sessions_buttons(page=1, user_id=None) -> tuple:
+async def get_sessions_buttons(page=1, user_id=None) -> tuple:
     """Mendapatkan tombol session dengan layout 9 tombol per halaman (3 baris x 3 kolom)"""
     from Main.utils.file_helpers import get_user_button_style
     user_style = get_user_button_style(user_id) if user_id else enums.ButtonStyle.PRIMARY
-    sessions_per_page = 9
+    sessions_per_page = 10
+
     
     if not hasattr(Altruix, 'clients') or not Altruix.clients:
         return [], False, 1
@@ -35,9 +36,11 @@ def get_sessions_buttons(page=1, user_id=None) -> tuple:
     
     if page < 1: page = 1
     elif page > total_pages: page = total_pages if total_pages > 0 else 1
-    
     start_index = (page - 1) * sessions_per_page
     end_index = min(start_index + sessions_per_page, total_sessions)
+
+    # Fetch display mode
+    list_mode = await Altruix.config.get_env("SESSION_LIST_MODE", default="name")
     
     buttons = []
     for index in range(start_index, end_index):
@@ -45,15 +48,20 @@ def get_sessions_buttons(page=1, user_id=None) -> tuple:
         try:
             session_num = index + 1
             me = getattr(client, 'myself', None)
-            first_name = getattr(me, 'first_name', 'Unknown')
-            if not first_name or first_name == 'Unknown':
-                first_name = f"Session {session_num}"
             
             user_id = getattr(me, 'id', None)
             is_disabled = Altruix.is_session_disabled(user_id) if user_id else False
-            status_icon = "❌" if is_disabled else "✅"
+            status_icon = "🔴" if is_disabled else "🟢"
 
-            button_text = f"{status_icon} [{session_num}] {first_name[:15]}"
+            if str(list_mode).lower() == "id" and user_id:
+                display_text = str(user_id)
+            else:
+                first_name = getattr(me, 'first_name', 'Unknown')
+                if not first_name or first_name == 'Unknown':
+                    first_name = f"Session {session_num}"
+                display_text = first_name[:15]
+
+            button_text = f"{status_icon} [{session_num}] {display_text}"
             buttons.append(
                 InlineKeyboardButton(button_text, f"session_info_{index}_{page}",
                     style=user_style)
@@ -66,7 +74,8 @@ def get_sessions_buttons(page=1, user_id=None) -> tuple:
     
     if not buttons: return [], False, 1
     
-    arranged_buttons = arrange_buttons(buttons, 3)
+    arranged_buttons = arrange_buttons(buttons, 2)
+
     has_next = page < total_pages
     return arranged_buttons, has_next, total_pages
 
@@ -89,38 +98,65 @@ async def sessions_menu_cb_handler(c: Client, cb: CallbackQuery):
     from Main.utils.file_helpers import get_user_button_style
     user_style = get_user_button_style(user_id)
 
-    session_buttons, has_next, total_pages = get_sessions_buttons(page, user_id=user_id)
+    session_buttons, has_next, total_pages = await get_sessions_buttons(page, user_id=user_id)
     LOG_CHAT_ID = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_USERS_ID))
 
+    # Row 1: Action buttons
     action_buttons = [
-        [
-            InlineKeyboardButton(gt("btn_stats"), "sessions_stats", style=user_style),
-            InlineKeyboardButton("➕ Add a Session", "add_session", style=user_style)
-        ]
+        InlineKeyboardButton(gt("btn_stats"), "sessions_stats", style=user_style),
+        InlineKeyboardButton("➕ Add Session", "add_session", style=user_style),
+        InlineKeyboardButton("📲 Login QR", "login_qr", style=user_style)
     ]
     
-    nav_buttons = []
+    # Row 2: Prev / Page / Next
+    nav_row = []
     if page > 1:
-        nav_buttons.append(InlineKeyboardButton("⬅️ Previous", f"sessions_list_{page - 1}", style=user_style))
-    nav_buttons.append(InlineKeyboardButton(f"🔙 Back [{page}/{total_pages or 1}]", "settings_menu", style=user_style))
+        nav_row.append(InlineKeyboardButton("« Prev", f"sessions_list_{page - 1}", style=user_style))
+    else:
+        nav_row.append(InlineKeyboardButton("·", "noop", style=user_style))
+    nav_row.append(InlineKeyboardButton(f"{page}/{total_pages or 1}", "noop", style=user_style))
     if has_next:
-        nav_buttons.append(InlineKeyboardButton("Next ➡️", f"sessions_list_{page + 1}", style=user_style))
+        nav_row.append(InlineKeyboardButton("Next »", f"sessions_list_{page + 1}", style=user_style))
+    else:
+        nav_row.append(InlineKeyboardButton("·", "noop", style=user_style))
+    
+    # Row 3: First / Back / Last
+    bottom_row = [
+        InlineKeyboardButton("« First", f"sessions_list_1", style=user_style),
+        InlineKeyboardButton("« Back »", "settings_menu", style=user_style),
+        InlineKeyboardButton("Last »", f"sessions_list_{total_pages or 1}", style=user_style)
+    ]
     
     # Construct final markup
     final_markup = []
     for row in session_buttons: final_markup.append(row)
-    for row in action_buttons: final_markup.append(row)
-    final_markup.append(nav_buttons)
+    final_markup.append(action_buttons)
+    final_markup.append(nav_row)
+    final_markup.append(bottom_row)
+
     
     total_sessions = len(Altruix.clients)
-    start_session = ((page - 1) * 9) + 1
-    end_session = min(page * 9, total_sessions)
-    
+    start_session = ((page - 1) * 10) + 1
+    end_session = min(page * 10, total_sessions)
+
+    # Calculate enabled/disabled counts
+    enabled_count = 0
+    disabled_count = 0
+    for client in Altruix.clients:
+        try:
+            if client.me:
+                if client.me.id in Altruix.disabled_sessions:
+                    disabled_count += 1
+                else:
+                    enabled_count += 1
+        except: continue
+
     try:
         await edit_cb(
             cb,
             text=f"<b>📱 Sessions Manager</b>\n\n"
                  f"<b>Total Sessions:</b> <code>{total_sessions}</code>\n"
+                 f"<b>Enabled:</b> <code>{enabled_count}</code> | <b>Disabled:</b> <code>{disabled_count}</code>\n"
                  f"<b>Showing:</b> <code>{start_session}-{end_session}</code>\n"
                  f"<b>Page:</b> <code>{page}/{total_pages or 1}</code>\n\n"
                  f"Select a session below to manage it or use the bulk actions.",
@@ -133,3 +169,9 @@ async def sessions_menu_cb_handler(c: Client, cb: CallbackQuery):
             parse_mode=ParseMode.HTML
         )
         await edit_cb(cb, "❌ Failed to load menu.")
+
+@Altruix.bot.on_callback_query(filters.regex(r"^noop$"))
+@log_errors
+async def noop_handler(c: Client, cb: CallbackQuery):
+    """No-op handler for placeholder/info-only buttons."""
+    await cb.answer()

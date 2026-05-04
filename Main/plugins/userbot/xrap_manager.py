@@ -336,7 +336,7 @@ async def rap_executor(c: Client, chat_id: int, slug: str, custom_delay: int = N
         "limit": 4 # default
     }
     
-    # Register with global task registry for .canceltask support
+    # Register with global task registry for .taskcancel support
     _x_register(task_id, asyncio.current_task(), f"🎤 Rap: {title}", "xrap_manager", uid=c.me.id, details=f"Chat: {chat_id}")
     
     # block start log
@@ -919,17 +919,22 @@ def generate_pagination_keyboard(items: List[Any], page: int, page_size: int, pr
         slug, title = item
         # 🔘 Triple-fallback for Copy Button (Native -> String -> Callback)
         copy_btn = None
-        try:
-            # 1. Native CopyTextButton (Pyrogram 2.4+)
-            from pyrogram.types import CopyTextButton
-            copy_btn = InlineKeyboardButton("Copy", copy_text=CopyTextButton(text=slug), style=style)
-        except (ImportError, TypeError):
+        # ✅ FIX: Telegram has a 256 character limit for keyboardButtonCopy.copy_text
+        if len(slug) <= 256:
             try:
-                # 2. String-based copy_text (Older Pyrogram/Kurigram)
-                copy_btn = InlineKeyboardButton("Copy", copy_text=slug, style=style)
-            except Exception:
-                # 3. Last resort: internal callback for manual copy
-                copy_btn = InlineKeyboardButton("Copy", callback_data=f"{prefix}_copyslug_{slug}{encoded_ctx}", style=style)
+                # 1. Native CopyTextButton (Pyrogram 2.4+)
+                from pyrogram.types import CopyTextButton
+                copy_btn = InlineKeyboardButton("Copy", copy_text=CopyTextButton(text=slug), style=style)
+            except (ImportError, TypeError):
+                try:
+                    # 2. String-based copy_text (Older Pyrogram/Kurigram)
+                    copy_btn = InlineKeyboardButton("Copy", copy_text=slug, style=style)
+                except Exception:
+                    # 3. Last resort: internal callback for manual copy
+                    copy_btn = InlineKeyboardButton("Copy", callback_data=f"{prefix}_copyslug_{slug}{encoded_ctx}", style=style)
+        else:
+             # Fallback to last resort for long slugs
+             copy_btn = InlineKeyboardButton("Copy", callback_data=f"{prefix}_copyslug_{slug}{encoded_ctx}", style=style)
 
 
         buttons.append([

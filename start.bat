@@ -18,17 +18,22 @@ set "CYAN=%ESC%[96m"
 set "WHITE=%ESC%[97m"
 set "NC=%ESC%[0m"
 
+REM Premium Colors (Matched with Python Core)
+set "TS_COLOR=%ESC%[97;48;5;141m"
+set "TAG_COLOR=%ESC%[97;48;2;69;104;130m"
+set "DEBUG_COLOR=%ESC%[97;46m"
+
 REM =============================================================================
 REM Display Banner
 REM =============================================================================
 echo.
-echo %CYAN%╔═══════════════════════════════════════════╗%NC%
-echo %CYAN%║       🚀 ALTROID-X - WINDOWS LAUNCHER     ║%NC%
-echo %CYAN%╚═══════════════════════════════════════════╝%NC%
+call :log_msg "%CYAN%╔═══════════════════════════════════════════╗"
+call :log_msg "%CYAN%║       🚀 ALTROID-X - WINDOWS LAUNCHER     ║"
+call :log_msg "%CYAN%╚═══════════════════════════════════════════╝"
 echo.
-echo %BLUE%💻 Platform Detected: WINDOWS (Native - CMD/PowerShell)%NC%
-echo %WHITE%   Environment: Windows%NC%
-echo %WHITE%   Virtual Env: venv%NC%
+call :log_msg "%BLUE%💻 Platform Detected: WINDOWS (Native - CMD/PowerShell)"
+call :log_msg "%WHITE%   Environment: Windows"
+call :log_msg "%WHITE%   Virtual Env: venv"
 echo.
 
 REM =============================================================================
@@ -49,48 +54,42 @@ if %errorlevel% neq 0 (
     )
 )
 
-set "CUR_TIME=%TIME: =0%" & set "CUR_TIME=!CUR_TIME!0"
-echo %WHITE%[!CUR_TIME!]%NC% %CYAN%🐍 Python Command: %PYTHON_CMD%%NC%
+call :log_msg "%CYAN%🐍 Python Command: %PYTHON_CMD%"
 echo.
 
 REM =============================================================================
 REM Create Virtual Environment
 REM =============================================================================
 if not exist "venv\" (
-    echo %YELLOW%⏳ Creating virtual environment: venv%NC%
+    call :log_msg "%YELLOW%⏳ Creating virtual environment: venv"
     %PYTHON_CMD% -m venv venv
     if %errorlevel% neq 0 (
-        echo %RED%❌ Failed to create virtual environment!%NC%
+        call :log_msg "%RED%❌ Failed to create virtual environment!"
         pause
         exit /b 1
     )
-    echo %GREEN%✅ Virtual environment created!%NC%
+    call :log_msg "%GREEN%✅ Virtual environment created!"
 ) else (
-    echo %GREEN%✅ Virtual environment found: venv%NC%
+    call :log_msg "%GREEN%✅ Virtual environment found: venv"
 )
 
-set "CUR_TIME=%TIME: =0%" & set "CUR_TIME=!CUR_TIME!0"
 set "VENV_PYTHON=venv\Scripts\python.exe"
-echo %WHITE%[!CUR_TIME!]%NC% %CYAN%🐍 Using Python: %VENV_PYTHON%%NC%
+call :log_msg "%CYAN%🐍 Using Python: %VENV_PYTHON%"
 echo.
 
 REM =============================================================================
 REM Install Dependencies
 REM =============================================================================
-set "CUR_TIME=%TIME: =0%" & set "CUR_TIME=!CUR_TIME!0"
-echo %WHITE%[!CUR_TIME!]%NC% %YELLOW%📦 Installing/Updating dependencies...%NC%
-%VENV_PYTHON% -m pip install --upgrade pip --quiet
-%VENV_PYTHON% -m pip install -r requirements.txt --quiet
-set "CUR_TIME=%TIME: =0%" & set "CUR_TIME=!CUR_TIME!0"
-echo %WHITE%[!CUR_TIME!]%NC% %GREEN%✅ Dependencies installed!%NC%
+call :log_msg "%YELLOW%📦 Installing/Updating dependencies..."
+call :log_msg "%YELLOW%⏳ This process installs 60+ libraries and may take several minutes. Please do not close the terminal..."
+%VENV_PYTHON% smart_install.py
 echo.
 
 REM =============================================================================
 REM Load Environment Variables from .env
 REM =============================================================================
 if exist ".env" (
-    set "CUR_TIME=%TIME: =0%" & set "CUR_TIME=!CUR_TIME!0"
-    echo %WHITE%[!CUR_TIME!]%NC% %YELLOW%⏳ Loading environment variables from .env...%NC%
+    call :log_msg "%YELLOW%⏳ Loading environment variables from .env..."
     for /f "usebackq tokens=1,* delims==" %%a in (".env") do (
         set "line=%%a"
         if not "!line:~0,1!"=="#" (
@@ -99,11 +98,9 @@ if exist ".env" (
             )
         )
     )
-    set "CUR_TIME=%TIME: =0%" & set "CUR_TIME=!CUR_TIME!0"
-    echo %WHITE%[!CUR_TIME!]%NC% %GREEN%✅ Environment variables loaded!%NC%
+    call :log_msg "%GREEN%✅ Environment variables loaded!"
 ) else (
-    set "CUR_TIME=%TIME: =0%" & set "CUR_TIME=!CUR_TIME!0"
-    echo %WHITE%[!CUR_TIME!]%NC% %YELLOW%⚠️  Warning: .env file not found!%NC%
+    call :log_msg "%YELLOW%⚠️  Warning: .env file not found!"
     echo %YELLOW%   Copy .env.sample to .env and configure it.%NC%
 )
 echo.
@@ -111,33 +108,20 @@ echo.
 REM =============================================================================
 REM Clean Up Existing Processes (DISABLED - Allows Multi-Instance)
 REM =============================================================================
-set "CUR_TIME=%TIME: =0%" & set "CUR_TIME=!CUR_TIME!0"
-echo %WHITE%[!CUR_TIME!]%NC% %CYAN%ℹ️  Multi-instance support enabled (Cleanup disabled).%NC%
-REM echo %WHITE%[%TIME%]%NC% %YELLOW%🧹 Cleaning up existing Python processes...%NC%
-REM taskkill /F /IM python.exe /T >nul 2>&1
-REM if %errorlevel% equ 0 (
-REM     echo %WHITE%[%TIME%]%NC% %GREEN%✅ Cleanup complete!%NC%
-REM     echo %WHITE%[%TIME%]%NC% %YELLOW%⏳ Waiting 3 seconds for release...%NC%
-REM     timeout /t 3 /nobreak >nul
-REM ) else (
-REM     echo %WHITE%[%TIME%]%NC% %CYAN%ℹ️  No existing processes found.%NC%
-REM )
+call :log_msg "%CYAN%ℹ️  Multi-instance support enabled (Cleanup disabled)."
 echo.
 
 REM =============================================================================
 REM Launch the Bot
 REM =============================================================================
-echo %GREEN%╔═══════════════════════════════════════════╗%NC%
-echo %GREEN%║        🚀 STARTING ALTROID-X BOT          ║%NC%
-echo %GREEN%╚═══════════════════════════════════════════╝%NC%
+call :log_msg "%GREEN%╔═══════════════════════════════════════════╗"
+call :log_msg "%GREEN%║        🚀 STARTING ALTROID-X BOT          ║"
+call :log_msg "%GREEN%╚═══════════════════════════════════════════╝"
 echo.
-set "CUR_TIME=%TIME: =0%" & set "CUR_TIME=!CUR_TIME!0"
-echo %WHITE%[!CUR_TIME!]%NC% %CYAN%Platform: Windows (Native)%NC%
-set "CUR_TIME=%TIME: =0%" & set "CUR_TIME=!CUR_TIME!0"
-echo %WHITE%[!CUR_TIME!]%NC% %CYAN%Python: %VENV_PYTHON%%NC%
+call :log_msg "%CYAN%Platform: Windows (Native)"
+call :log_msg "%CYAN%Python: %VENV_PYTHON%"
 echo.
-set "CUR_TIME=%TIME: =0%" & set "CUR_TIME=!CUR_TIME!0"
-echo %WHITE%[!CUR_TIME!]%NC% %YELLOW%⏳ Launching Altroid-X engine...%NC%
+call :log_msg "%YELLOW%⏳ Launching Altroid-X engine..."
 echo.
 
 REM Run the bot
@@ -149,3 +133,15 @@ if %errorlevel% neq 0 (
     echo %RED%❌ Bot exited with error code: %errorlevel%%NC%
     pause
 )
+exit /b %errorlevel%
+
+:log_msg
+set "msg_content=%~1"
+for /f "usebackq tokens=*" %%t in (`powershell -NoProfile -Command "Get-Date -Format 'HH:mm:ss.fff'"`) do set "ts=%%t"
+if /i "%DEBUG%"=="true" (
+    set "padded_debug= DEBUG  "
+    echo %TS_COLOR%[!ts!]%NC% - %TAG_COLOR%[Altroid-X]%NC% %DEBUG_COLOR%^|» !padded_debug! «^|%NC% : » !msg_content!%NC%
+) else (
+    echo %TS_COLOR%[!ts!]%NC% - %TAG_COLOR%[Altroid-X]%NC% !msg_content!%NC%
+)
+goto :eof

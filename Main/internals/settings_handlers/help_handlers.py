@@ -76,18 +76,20 @@ async def help_settings_menu_handler(c: Client, cb: CallbackQuery):
     page_chars_icon = "🌍" if page_chars_apply_type == "global" else "👤"
 
     text = (
+        f"<blockquote expandable>"
         "<b>⚙️ Custom Help Settings</b>\n\n"
         f"Customize the message shown when running <code>.help</code>.\n\n"
         "──────── <b>Message & Design</b> ────────\n"
         f"• <b>Status:</b> {status_icon} {'Custom' if status == 'custom' else 'Default'}\n"
         f"• <b>Apply Type:</b> {type_icon} {apply_type.replace('_', ' ').title()}\n"
         f"• <b>Design Mode:</b> <code>Design {help_design}</code> ({design_type_icon})\n"
-        f"• <b>Current Custom Message:</b>\n<blockquote>{html.escape(custom_msg)}</blockquote>\n\n"
+        f"• <b>Current Custom Message:</b>{html.escape(custom_msg)}\n\n"
         "──────── <b>Display Settings</b> ────────\n"
         f"• <b>Compact Text:</b> {comp_status_icon} {compact_status.upper()} ({comp_type_icon})\n"
         f"• <b>Max Length:</b> <code>{compact_max} chars</code>\n"
         f"• <b>Page Max Chars:</b> <code>{page_max_chars}</code> ({page_chars_icon})\n\n"
         "<i>Global mode applies one setting to all accounts. Per-Account allows different settings for each session.</i>"
+        f"</blockquote>"
     )
     
     buttons = [
@@ -117,7 +119,10 @@ async def help_settings_menu_handler(c: Client, cb: CallbackQuery):
             InlineKeyboardButton(f"Page Scope: {page_chars_apply_type.title()}", callback_data=f"toggle_help_page_type_{idx}_{pg}", style=user_style)
         ],
         [
-            InlineKeyboardButton("📝 Edit Custom Message", callback_data=f"edit_help_msg_{idx}_{pg}", style=user_style)
+            InlineKeyboardButton("🖥 Grid Settings", callback_data=f"help_grid_menu_{idx}_{pg}", style=user_style)
+        ],
+        [
+            InlineKeyboardButton("📝 Edit Custom Help MSG", callback_data=f"edit_help_msg_{idx}_{pg}", style=user_style)
         ],
         [
             InlineKeyboardButton("ℹ️ Variables Info", callback_data=f"help_vars_info_{idx}_{pg}", style=user_style)
@@ -178,7 +183,15 @@ async def toggle_help_design_handler(c: Client, cb: CallbackQuery):
         key = f"HELP_MENU_DESIGN_{me.id}"
         
     current = await Altruix.config.get_env(key, default="1")
-    new_design = "2" if str(current) == "1" else "1"
+    if str(current) == "1":
+        new_design = "2"
+    elif str(current) == "2":
+        new_design = "3"
+    elif str(current) == "3":
+        new_design = "4"
+    else:
+        new_design = "1"
+        
     await Altruix.config.set_env(key, new_design)
     await cb.answer(f"Help Design set to Design {new_design}", show_alert=True)
     await help_settings_menu_handler(c, cb)
@@ -379,3 +392,119 @@ async def process_help_msg_input(c: Client, m: Message, state: dict):
             # For simplicity, we'll just let the user click back or we could try to edit the original msg
             pass
         except: pass
+        
+# ============================================================================
+# 🖥 GRID SETTINGS HANDLERS (ROWS & COLUMNS)
+# ============================================================================
+
+@Altruix.bot.on_callback_query(filters.regex(r"^help_grid_menu_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def help_grid_settings_handler(c: Client, cb: CallbackQuery):
+    """Sub-menu for configuring help rows and columns."""
+    idx, pg = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
+    user_id = cb.from_user.id
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(user_id)
+    
+    # Sesi info
+    session_client = Altruix.clients[idx]
+    me = getattr(session_client, "myself", None) or await session_client.get_me()
+    
+    # Grid Apply Type
+    apply_type = await Altruix.config.get_env("HELP_GRID_APPLY_TYPE", default="global")
+    
+    if apply_type == "global":
+        rows = await Altruix.config.get_env("HELP_GRID_ROWS_GLOBAL", default=3)
+        cols = await Altruix.config.get_env("HELP_GRID_COLS_GLOBAL", default=3)
+    else:
+        rows = await Altruix.config.get_env(f"HELP_GRID_ROWS_{me.id}", default=3)
+        cols = await Altruix.config.get_env(f"HELP_GRID_COLS_{me.id}", default=3)
+        
+    rows = int(rows if rows is not None else 3)
+    cols = int(cols if cols is not None else 3)
+    
+    type_icon = "🌍" if apply_type == "global" else "👤"
+    
+    text = (
+        "<b>🖥 Help Grid Settings</b>\n\n"
+        "Configure the layout of plugin buttons in the help menu.\n\n"
+        f"• <b>Current Scope:</b> {type_icon} {apply_type.replace('_', ' ').title()}\n"
+        f"• <b>Rows:</b> <code>{rows}</code> (Plugin rows per page)\n"
+        f"• <b>Columns:</b> <code>{cols}</code> (Plugin buttons per row)\n\n"
+        "<i>Note: Mode 2 & 3 are optimized for 2 columns, but you can change it here.</i>"
+    )
+    
+    buttons = [
+        [
+            InlineKeyboardButton("-1", callback_data=f"adj_help_grid_rows_{idx}_{pg}_-1", style=user_style),
+            InlineKeyboardButton(f"Rows: {rows}", callback_data="none", style=user_style),
+            InlineKeyboardButton("+1", callback_data=f"adj_help_grid_rows_{idx}_{pg}_1", style=user_style)
+        ],
+        [
+            InlineKeyboardButton("-1", callback_data=f"adj_help_grid_cols_{idx}_{pg}_-1", style=user_style),
+            InlineKeyboardButton(f"Columns: {cols}", callback_data="none", style=user_style),
+            InlineKeyboardButton("+1", callback_data=f"adj_help_grid_cols_{idx}_{pg}_1", style=user_style)
+        ],
+        [
+            InlineKeyboardButton(f"Scope: {apply_type.title()}", callback_data=f"toggle_help_grid_type_{idx}_{pg}", style=user_style)
+        ],
+        [
+            InlineKeyboardButton(gt("back"), callback_data=f"help_settings_menu_{idx}_{pg}", style=user_style)
+        ]
+    ]
+    
+    await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
+
+@Altruix.bot.on_callback_query(filters.regex(r"^toggle_help_grid_type_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def toggle_help_grid_apply_type_handler(c: Client, cb: CallbackQuery):
+    idx, pg = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
+    current = await Altruix.config.get_env("HELP_GRID_APPLY_TYPE", default="global")
+    new_type = "per_account" if current == "global" else "global"
+    await Altruix.config.set_env("HELP_GRID_APPLY_TYPE", new_type)
+    await cb.answer(f"Grid Scope: {new_type.replace('_', ' ').title()}", show_alert=True)
+    await help_grid_settings_handler(c, cb)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^adj_help_grid_rows_(\d+)_(\d+)_(-?\d+)$"))
+@iuser_check
+@log_errors
+async def adjust_help_grid_rows_handler(c: Client, cb: CallbackQuery):
+    idx, pg = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
+    change = int(cb.matches[0].group(3))
+    
+    session_client = Altruix.clients[idx]
+    me = getattr(session_client, "myself", None) or await session_client.get_me()
+    
+    apply_type = await Altruix.config.get_env("HELP_GRID_APPLY_TYPE", default="global")
+    key = "HELP_GRID_ROWS_GLOBAL" if apply_type == "global" else f"HELP_GRID_ROWS_{me.id}"
+    
+    res_curr = await Altruix.config.get_env(key, default=3)
+    current = int(res_curr if res_curr is not None else 3)
+    new_val = max(1, min(10, current + change))
+    
+    await Altruix.config.set_env(key, new_val)
+    await cb.answer(f"Rows: {new_val}", show_alert=True)
+    await help_grid_settings_handler(c, cb)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^adj_help_grid_cols_(\d+)_(\d+)_(-?\d+)$"))
+@iuser_check
+@log_errors
+async def adjust_help_grid_cols_handler(c: Client, cb: CallbackQuery):
+    idx, pg = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
+    change = int(cb.matches[0].group(3))
+    
+    session_client = Altruix.clients[idx]
+    me = getattr(session_client, "myself", None) or await session_client.get_me()
+    
+    apply_type = await Altruix.config.get_env("HELP_GRID_APPLY_TYPE", default="global")
+    key = "HELP_GRID_COLS_GLOBAL" if apply_type == "global" else f"HELP_GRID_COLS_{me.id}"
+    
+    res_curr = await Altruix.config.get_env(key, default=3)
+    current = int(res_curr if res_curr is not None else 3)
+    new_val = max(1, min(5, current + change))
+    
+    await Altruix.config.set_env(key, new_val)
+    await cb.answer(f"Columns: {new_val}", show_alert=True)
+    await help_grid_settings_handler(c, cb)

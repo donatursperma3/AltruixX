@@ -81,27 +81,30 @@ from .settings_handlers.states import (
 
 # ====================== MODULAR IMPORTS ======================
 # Note: Handlers are registered in the sub-modules
-import Main.internals.settings_handlers.session_info
-import Main.internals.settings_handlers.profile_handlers
-import Main.internals.settings_handlers.bulk_handlers
-import Main.internals.settings_handlers.system_handlers
-import Main.internals.settings_handlers.security_handlers
-import Main.internals.settings_handlers.privacy_handlers
-import Main.internals.settings_handlers.stats_handlers
-import Main.internals.settings_handlers.media_handlers
-import Main.internals.settings_handlers.startup_handlers
-import Main.internals.settings_handlers.logger_handlers
-import Main.internals.settings_handlers.env_handlers
-import Main.internals.settings_handlers.toggle_session_handlers
-import Main.internals.settings_handlers.sessions_list
-import Main.internals.settings_handlers.export_handlers
-import Main.internals.settings_handlers.cmd_settings_handlers
-import Main.internals.settings_handlers.global_purgeme
-import Main.internals.settings_handlers.backup_handlers
-import Main.internals.settings_handlers.custom_alert_handlers
-import Main.internals.settings_handlers.session_handlers
-import Main.internals.settings_handlers.alliance_handlers
-
+# import Main.internals.settings_handlers.session_info
+# import Main.internals.settings_handlers.profile_handlers
+# import Main.internals.settings_handlers.bulk_handlers
+# import Main.internals.settings_handlers.system_handlers
+# import Main.internals.settings_handlers.security_handlers
+# import Main.internals.settings_handlers.privacy_handlers
+# import Main.internals.settings_handlers.stats_handlers
+# import Main.internals.settings_handlers.media_handlers
+# import Main.internals.settings_handlers.startup_handlers
+# import Main.internals.settings_handlers.logger_handlers
+# import Main.internals.settings_handlers.env_handlers
+# import Main.internals.settings_handlers.toggle_session_handlers
+# import Main.internals.settings_handlers.sessions_list
+# import Main.internals.settings_handlers.export_handlers
+# import Main.internals.settings_handlers.cmd_settings_handlers
+# import Main.internals.settings_handlers.global_purgeme
+# import Main.internals.settings_handlers.backup_handlers
+# import Main.internals.settings_handlers.custom_alert_handlers
+# import Main.internals.settings_handlers.session_handlers
+# import Main.internals.settings_handlers.alliance_handlers
+# import Main.internals.settings_handlers.main_bot_manager
+# import Main.internals.login_qr_session
+# Note: Handlers are now loaded dynamically via load_all_modules in client.py
+# for improved logging visibility and consistent initialization.
 # ====================== LOCALIZATION ======================
 SETTINGS_LANG = getattr(Altruix.config, "UB_LANG", "english").lower()
 
@@ -218,12 +221,20 @@ def get_settings_buttons(user_id=None):
             InlineKeyboardButton("Cmd Settings", callback_data="cmd_settings_menu", style=user_style),
         ],
         [
-            InlineKeyboardButton("Help Menu", callback_data="re_open", style=user_style),
             InlineKeyboardButton("Bulk Controls", callback_data="bulk_controls_menu", style=user_style),
+            InlineKeyboardButton("Session Settings", callback_data="session_settings_menu", style=user_style),
         ],
         [
+            InlineKeyboardButton("Help Menu", callback_data="re_open", style=user_style),
+            InlineKeyboardButton("Program Controls", callback_data="program_controls_menu", style=user_style),
+        ],
+        [
+            InlineKeyboardButton("Alliance Manager", callback_data="alliance_dashboard", style=user_style),
             InlineKeyboardButton(custom_data.get("text", "Repo"), url=custom_data.get("link", "https://t.me/AlphaXProject"), style=user_style),
         ],
+        [
+            InlineKeyboardButton("Close", callback_data="create_close", style=user_style)
+        ]
     ]
 
 # ====================== CORE SETTINGS HANDLERS ======================
@@ -388,11 +399,14 @@ async def bot_controls_menu_handler(c: Client, cb: CallbackQuery):
     curr_res = getattr(Altruix.config, "RESOURCE_NOTIF_ENABLED", "off")
     res_btn = "🔔 Resource Notif: ON" if curr_res == "on" else "🔕 Resource Notif: OFF"
 
-    peer_notif = str(await Altruix.config.get_env("PEER_NOTIF_ENABLED", default="on")).lower()
+    peer_notif = str(await Altruix.config.get_env("PEER_NOTIF_ENABLED", default="off")).lower()
     peer_btn = "🔔 Peer Notif: ON" if peer_notif == "on" else "🔕 Peer Notif: OFF"
 
     curr_heart = str(await Altruix.config.get_env("HEARTBEAT_NOTIF_ENABLED", default="off")).lower()
     heart_btn = "🔔 System Notif: ON" if curr_heart == "on" else "🔕 System Notif: OFF"
+
+    curr_keep = str(await Altruix.config.get_env("KEEPALIVE_LOG_ENABLED", default="off")).lower()
+    keepalive_btn = "🔔 Keepalive Log: ON" if curr_keep == "on" else "🔕 Keepalive Log: OFF"
 
     text = "<b>🤖 Bot Controls</b>\n\nManage Bot Assistant behaviors globally."
     buttons = [
@@ -414,13 +428,14 @@ async def bot_controls_menu_handler(c: Client, cb: CallbackQuery):
         ],
         [
             InlineKeyboardButton("🔗 Group Log Link", callback_data="get_log_group_link", style=user_style),
+            InlineKeyboardButton(keepalive_btn, callback_data="toggle_keepalive_log", style=user_style),
+        ],
+        [
             InlineKeyboardButton("♻️ Cache Cleaner Log", callback_data="cache_cleaner_settings", style=user_style),
-        ],
-        [
             InlineKeyboardButton("👤 Custom Bot Manager", callback_data="custom_bot_manager", style=user_style),
-            InlineKeyboardButton("⚔️ Alliance Manager", callback_data="alliance_dashboard", style=user_style),
         ],
         [
+            InlineKeyboardButton("🤖 Main Bot Manager", callback_data="main_bot_manager", style=user_style),
             InlineKeyboardButton("🔘 Custom Link/Text", callback_data="custom_link_settings", style=user_style),
         ],
         [
@@ -444,12 +459,103 @@ async def toggle_resource_notif_handler(c: Client, cb: CallbackQuery):
 @iuser_check
 @log_errors
 async def toggle_heartbeat_notif_handler(c: Client, cb: CallbackQuery):
-    curr_heart = str(await Altruix.config.get_env("HEARTBEAT_NOTIF_ENABLED", default="on")).lower()
+    curr_heart = str(await Altruix.config.get_env("HEARTBEAT_NOTIF_ENABLED", default="off")).lower()
     new_state = "off" if curr_heart == "on" else "on"
     
     await Altruix.config.set_env("HEARTBEAT_NOTIF_ENABLED", new_state)
     await cb.answer(f"✅ System Notif: {new_state.upper()}", show_alert=False)
     await bot_controls_menu_handler(c, cb)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^toggle_keepalive_log$"))
+@iuser_check
+@log_errors
+async def toggle_keepalive_log_handler(c: Client, cb: CallbackQuery):
+    curr_keep = str(await Altruix.config.get_env("KEEPALIVE_LOG_ENABLED", default="off")).lower()
+    new_state = "off" if curr_keep == "on" else "on"
+    
+    await Altruix.config.set_env("KEEPALIVE_LOG_ENABLED", new_state)
+    await cb.answer(f"✅ Keepalive Log: {new_state.upper()}", show_alert=False)
+    await bot_controls_menu_handler(c, cb)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^program_controls_menu$"))
+@iuser_check
+@log_errors
+async def program_controls_menu_handler(c: Client, cb: CallbackQuery):
+    await cb.answer()
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(cb.from_user.id)
+
+    status = await Altruix.is_group_wl_enabled()
+    wl_btn = "🟢 Group Whitelist: ON" if status else "🔴 Group Whitelist: OFF"
+
+    stagger_method = str(await Altruix.config.get_env("STAGGER_METHOD", default="sequential")).lower()
+    stagger_btn = "⚡ Method: Parallel" if stagger_method == "parallel" else "🐌 Method: Sequential"
+
+    if stagger_method == "parallel":
+        info_text = (
+            "🚀 <b>Mode: High-Speed Parallel</b>\n"
+            f"• <b>Concurrency:</b> <code>{Altruix.CONCURRENT_SESSIONS} sessions</code>\n"
+            f"• <b>Micro-Stagger:</b> <code>{Altruix.MICRO_STAGGER}s</code>\n"
+            "• <b>Status:</b> Recommended for stable VPS."
+        )
+    else:
+        info_text = (
+            "🐌 <b>Mode: Sequential (Legacy)</b>\n"
+            "• <b>Delay:</b> <code>0.5s - 5.0s (Variable)</code>\n"
+            "• <b>Status:</b> Safest for local/unstable networks."
+        )
+
+    text = (
+        "<b>⚙️ Program Controls</b>\n\n"
+        f"{info_text}\n\n"
+        "<blockquote expandable>"
+        "📖 <b>Glossary:</b>\n"
+        "• <b>Parallel:</b> Memuat banyak akun sekaligus (High Speed).\n"
+        "• <b>Sequential:</b> Memuat satu per satu (Legacy/Safe).\n"
+        f"• <b>Concurrency:</b> Maksimal <code>{Altruix.CONCURRENT_SESSIONS}</code> akun diproses bersamaan.\n"
+        f"• <b>Stagger:</b> Jeda <code>{Altruix.MICRO_STAGGER}s</code> antar koneksi untuk keamanan.\n"
+        f"• <b>Log Speed:</b> Mengirim <code>{Altruix.LOG_CONCURRENCY}</code> log startup sekaligus."
+        "</blockquote>\n\n"
+        "Manage global program features and logic."
+    )
+    buttons = [
+        [
+            InlineKeyboardButton(wl_btn, callback_data="toggle_group_whitelist", style=user_style),
+        ],
+        [
+            InlineKeyboardButton(stagger_btn, callback_data="toggle_stagger_method", style=user_style),
+        ],
+        [
+            InlineKeyboardButton("📤 Backup Now", callback_data="backup_now", style=user_style),
+        ],
+        [
+            InlineKeyboardButton("📥 Restore DB", callback_data="backup_restore", style=user_style),
+            InlineKeyboardButton("➕ Append DB", callback_data="backup_append", style=user_style)
+        ],
+        [
+            InlineKeyboardButton("« Back to Settings »", callback_data="settings_menu", style=user_style)
+        ]
+    ]
+    await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
+
+@Altruix.bot.on_callback_query(filters.regex(r"^toggle_group_whitelist$"))
+@iuser_check
+@log_errors
+async def toggle_group_whitelist_handler(c: Client, cb: CallbackQuery):
+    status = await Altruix.toggle_group_wl()
+    await cb.answer(f"Group Whitelist: {'ENABLED' if status else 'DISABLED'}", show_alert=True)
+    await program_controls_menu_handler(c, cb)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^toggle_stagger_method$"))
+@iuser_check
+@log_errors
+async def toggle_stagger_method_handler(c: Client, cb: CallbackQuery):
+    current = str(await Altruix.config.get_env("STAGGER_METHOD", default="sequential")).lower()
+    new_method = "parallel" if current == "sequential" else "sequential"
+    
+    await Altruix.config.set_env("STAGGER_METHOD", new_method)
+    await cb.answer(f"✅ Startup Method set to: {new_method.upper()}", show_alert=True)
+    await program_controls_menu_handler(c, cb)
 
 # ====================== SHARED UTILS ======================
 async def send_log_notification(*args, **kwargs):

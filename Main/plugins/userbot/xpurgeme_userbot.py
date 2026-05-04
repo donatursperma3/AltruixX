@@ -1,4 +1,4 @@
-PLUGIN_VERSION = "0.0.440"
+PLUGIN_VERSION = "0.0.442"
 
 """
 Purgeme Interactive Plugin for Altruix Userbot
@@ -11,6 +11,7 @@ import traceback
 from pyrogram import Client, filters, enums
 from pyrogram.errors import FloodWait, MessageNotModified
 from Main import Altruix
+from datetime import datetime, timedelta
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from Main.internals.settings import send_log_notification
 from Main.utils.essentials import Essentials
@@ -64,6 +65,9 @@ def get_purgeme_status_text(state):
         "location": "LOC", "contact": "CONT", "venue": "VEN"
     }
 
+    total_msgs = state.get("total_account_messages", 0)
+    acc_msgs_lbl = loc("purgeme_account_msgs") or "Acc Msgs"
+
     if status == "config":
         menu_title = loc("purgeme_menu_title") or "<b>Purgeme Configuration</b>"
         display_name = f"<a href='{chat_link}'>{chat_name}</a>" if chat_link else f"<b>{chat_name}</b>"
@@ -71,9 +75,11 @@ def get_purgeme_status_text(state):
         return (
             f"<blockquote expandable>{title}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"<b>Account:</b> <code>{account_name}</code>\n"
+            f"<b>Acc:</b> <code>{account_name}</code>\n"
             f"<b>Chat:</b> {display_name}\n"
             f"<b>ID:</b> <code>{chat_id}</code>\n"
+            f"• <b>{acc_msgs_lbl}:</b> <code>{total_msgs}</code>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
             f"{menu_title}\n"
             f"<i>{select_options}</i>\n"
             f"━━━━━━━━━━━━━━━━━━━━</blockquote>"
@@ -92,7 +98,7 @@ def get_purgeme_status_text(state):
     display_name = f"<a href='{chat_link}'>{chat_name}</a>" if chat_link else f"<b>{chat_name}</b>"
 
     header_content = (
-        f"<b>Account:</b> <code>{account_name}</code>\n"
+        f"<b>Account:</b> <code>{account_name}</code> (<code>{total_msgs}</code> msgs)\n"
         f"<b>Chat:</b> {display_name}\n"
         f"<b>Mode:</b> <code>{mode.capitalize()}</code> | <b>Type:</b> <code>{type_display}</code>\n"
         f"<b>Target:</b> <code>{count}</code> messages | <b>Offset:</b> <code>{offset}</code>\n"
@@ -149,10 +155,28 @@ def get_purgeme_status_text(state):
                f"━━━━━━━━━━━━━━━━━━━━\n" \
                f"{lbl}</blockquote>"
         
-def _is_target_type(msg: Message, target_types: list) -> bool:
-    """Helper to check if a message matches requested types."""
+def _matches_criteria(msg: Message, target_types: list, min_id: int = 0, max_id: int = 0, min_days: int = 0, max_days: int = 0) -> bool:
+    """Helper to check if a message matches all requested criteria."""
+    
+    # 1. ID Range Check
+    if min_id > 0 and msg.id < min_id: return False
+    if max_id > 0 and msg.id > max_id: return False
+    
+    # 2. Date Range Check (Age in Days)
+    if (min_days > 0 or max_days > 0) and msg.date:
+        now = datetime.now()
+        age_delta = now - msg.date
+        age_days = age_delta.days
+        
+        # min_days: must be AT LEAST X days old (skip newer)
+        if min_days > 0 and age_days < min_days: return False
+        # max_days: must be AT MOST Y days old (skip older)
+        if max_days > 0 and age_days > max_days: return False
+
+    # 3. Type Check
     if not target_types or "all" in target_types:
         return True
+        
     try:
         # Common types first
         if msg.text and "text" in target_types: return True
@@ -172,6 +196,8 @@ def _is_target_type(msg: Message, target_types: list) -> bool:
         if msg.dice and "dice" in target_types: return True
         if getattr(msg, "web_page", None) and "web_page" in target_types: return True
         if getattr(msg, "story", None) and "story" in target_types: return True
+        
+        # Service Messages
         if "service" in target_types and (
             getattr(msg, "service", None) or 
             any(getattr(msg, attr, None) for attr in [
@@ -187,44 +213,62 @@ def _is_target_type(msg: Message, target_types: list) -> bool:
     except: pass
     return False
 
-async def collect_user_messages_optimized(client: Client, chat_id: int, user_id: int, target_types: list, unique_id: str, limit: int = 100, offset: int = 0, state_callback=None, mode: str = "latest"):
+async def collect_user_messages_optimized(
+    client: Client, 
+    chat_id: int, 
+    user_id: int, 
+    target_types: list, 
+    unique_id: str, 
+    limit: int = 100, 
+    offset: int = 0, 
+    state_callback=None, 
+    mode: str = "latest", 
+    max_scan: int = 500,
+    total_user_msgs: int = 0,
+    min_id: int = 0,
+    max_id: int = 0,
+    min_days: int = 0,
+    max_days: int = 0
+):
     """
-    OPTIMIZED V5: Collect user's message IDs using search_messages then deep scans.
-    mode: "latest" or "oldest"
+    OPTIMIZED V6: Collect user's message IDs using search_messages then deep scans.
+    Handles 'oldest' mode by calculating search offsets from total count.
     """
     collected_ids = []
     scanned_total = 0
-    # High-visibility logging (Warning level to bypass potential debug silencers)
-    Altruix.log(f"Purgeme Collection Starting in {chat_id} for user {user_id} (mode={mode})", level=30)
+    Altruix.log(f"Purgeme Collection Starting (mode={mode}, total={total_user_msgs}, offset={offset})", level=30)
     
     try:
         # STEP 1: Method 1 - search_messages (Fastest)
-        Altruix.log(f"Purgeme Method 1: Searching for user {user_id} in {chat_id} (mode={mode})", level=30)
+        # Calculate offset for oldest mode
+        search_offset = offset
+        if mode == "oldest" and total_user_msgs > 0:
+            # To get oldest, we skip (total - limit) newest messages
+            # and then also skip the user-requested offset
+            search_offset = max(0, total_user_msgs - limit - offset)
+            Altruix.log(f"Purgeme: Oldest mode adjusted offset to {search_offset}", level=30)
+
+        Altruix.log(f"Purgeme Method 1: Searching for user {user_id} in {chat_id} (search_offset={search_offset})", level=30)
         try:
-            # Prime peer cache before search
             await client.resolve_peer(chat_id)
             
-            async for msg in client.search_messages(chat_id=chat_id, from_user=user_id, limit=limit, offset=offset):
+            async for msg in client.search_messages(chat_id=chat_id, from_user=user_id, limit=max_scan, offset=search_offset):
                 # Check for stop signal
                 state = Altruix.PURGEME_STATE.get(unique_id)
                 if state and state.get("stop_event") and state["stop_event"].is_set():
-                    Altruix.log(f"Purgeme Method 1: Interrupted by stop event.", level=30)
                     break
                     
-                if _is_target_type(msg, target_types):
-                    # Ensure state exists before callback
+                if _matches_criteria(msg, target_types, min_id, max_id, min_days, max_days):
                     collected_ids.append(msg.id)
-                    scanned_total += 1
-                    if state_callback:
-                        try:
-                            await state_callback(len(collected_ids), scanned_total)
-                        except Exception as cb_err:
-                            Altruix.log(f"Purgeme Method 1 Callback Error: {cb_err}", level=30)
-                    if len(collected_ids) >= limit:
-                        break
+                    
+                scanned_total += 1
+                if state_callback:
+                    await state_callback(len(collected_ids), scanned_total)
+                
+                if len(collected_ids) >= limit or scanned_total >= max_scan:
+                    break
         except Exception as e:
-            # L215: Detailed error catch with Traceback
-            Altruix.log(f"Purgeme Method 1 Error (L215): {e}\n{traceback.format_exc()}", level=30)
+            Altruix.log(f"Purgeme Method 1 Error: {e}", level=30)
 
         # STEP 2: Method 2 - Absolute Oldest Scan (Fallback for Oldest Mode)
         if mode == "oldest" and len(collected_ids) < limit:
@@ -243,31 +287,27 @@ async def collect_user_messages_optimized(client: Client, chat_id: int, user_id:
                     await asyncio.sleep(0.01)
                     
                     if (msg.from_user and msg.from_user.id == user_id) or (msg.chat and msg.chat.id == user_id):
-                        if _is_target_type(msg, target_types):
+                        if _matches_criteria(msg, target_types, min_id, max_id, min_days, max_days):
                             if msg.id not in collected_ids:
                                 collected_ids.append(msg.id)
                     
                     if state_callback and scanned_total % 25 == 0:
-                        try:
-                            await state_callback(len(collected_ids), scanned_total)
-                        except Exception as cb_err:
-                            Altruix.log(f"Purgeme Method 2 Callback Error: {cb_err}\n{traceback.format_exc()}", level=30)
-                    if len(collected_ids) >= limit:
+                        await state_callback(len(collected_ids), scanned_total)
+                        
+                    if len(collected_ids) >= limit or scanned_total >= max_scan:
                         break
             except Exception as e:
-                # L237: Detailed error catch with Traceback
-                Altruix.log(f"Purgeme Method 2 Error (L237): {e}\n{traceback.format_exc()}", level=30)
+                Altruix.log(f"Purgeme Method 2 Error: {e}", level=30)
 
         # STEP 3: Method 3 - Global History Scan (Deepest Fallback)
         if len(collected_ids) < limit:
-            Altruix.log(f"Purgeme Method 2: Found {len(collected_ids)} matches. Method 3: Deep History Scan (Limit 3000)", level=30)
+            Altruix.log(f"Purgeme Method 3: Deep History Scan (Limit 3000)", level=30)
             try:
                 # Scan up to 3000 results from history as final fallback
                 async for msg in client.get_chat_history(chat_id, limit=3000):
                     # Check for stop signal
                     state = Altruix.PURGEME_STATE.get(unique_id)
                     if state and state.get("stop_event") and state["stop_event"].is_set():
-                        Altruix.log(f"Purgeme Method 3: Interrupted by stop event.", level=30)
                         break
 
                     scanned_total += 1
@@ -275,16 +315,14 @@ async def collect_user_messages_optimized(client: Client, chat_id: int, user_id:
                     await asyncio.sleep(0.01)
                     
                     if (msg.from_user and msg.from_user.id == user_id) or (msg.chat and msg.chat.id == user_id):
-                        if _is_target_type(msg, target_types):
+                        if _matches_criteria(msg, target_types, min_id, max_id, min_days, max_days):
                             if msg.id not in collected_ids:
                                 collected_ids.append(msg.id)
                     
                     if state_callback and scanned_total % 50 == 0:
-                        try:
-                            await state_callback(len(collected_ids), scanned_total)
-                        except Exception as cb_err:
-                            Altruix.log(f"Purgeme Method 3 Callback Error: {cb_err}\n{traceback.format_exc()}", level=30)
-                    if len(collected_ids) >= limit:
+                        await state_callback(len(collected_ids), scanned_total)
+                        
+                    if len(collected_ids) >= limit or scanned_total >= max_scan:
                         break
             except Exception as e:
                 # L259: Detailed error catch with Traceback
@@ -318,6 +356,10 @@ The command triggers an interactive UI via your Assistant Bot.
 • <b>Count</b>: Set exact number of messages to check/delete.
 • <b>Delay</b>: Add delay between deletions to safe-guard against rate limits.
 • <b>Types</b>: Filter by message content (Text, Image, Video, Audio, Sticker).
+• <b>ID Range</b>: Filter by specific message ID bounds (Min/Max ID).
+• <b>Date Range</b>: Filter by message age in days (Min/Max Date).
+• <b>Max Scan</b>: Limit total messages searched during collection phase.
+• <b>Stealth</b>: Toggle completion reports in PM/Logs.
 • <b>Controls</b>: Pause, Resume, and Stop the process at any time.
 
 <b>Manual Commands:</b>
@@ -412,6 +454,12 @@ async def purgeme_cmd(client: Client, message: Message):
         
     account_name = f"{client.me.first_name or ''} {client.me.last_name or ''}".strip() or f"User {client.me.id}"
 
+    # Get total message count from this account in the chat
+    try:
+        total_account_messages = await client.search_messages_count(chat_id, from_user="me")
+    except:
+        total_account_messages = 0
+
     # Initialize State
     async with STATE_LOCK:
         Altruix.PURGEME_STATE[unique_id] = {
@@ -422,7 +470,8 @@ async def purgeme_cmd(client: Client, message: Message):
             "mode": "oldest",
             "batch_size": 30,
             "batch_delay": 0, # Default 0 (only active if toggled)
-            "offset": 0,
+            "max_scan": 500,
+            "min_id": 0,
             "status": "config",
             "event": asyncio.Event(),
             "stop_event": asyncio.Event(),
@@ -433,6 +482,7 @@ async def purgeme_cmd(client: Client, message: Message):
             "chat_link": chat_link,
             "user_id": user_id,
             "account_name": account_name,
+            "total_account_messages": total_account_messages,
             "processed": 0,
             "start_time": 0,
             "dashboard_msg_id": None, 
@@ -598,6 +648,7 @@ async def purgeme_cmd(client: Client, message: Message):
         delay = state["delay"] 
         batch_size = state.get("batch_size", 30)
         batch_delay = state.get("batch_delay", 0)
+        max_scan = state.get("max_scan", 500)
         offset = state.get("offset", 0)
         target_types = state["types"]
         mode = state.get("mode", "latest")
@@ -708,7 +759,13 @@ async def purgeme_cmd(client: Client, message: Message):
                 limit=count,
                 offset=offset,
                 state_callback=collection_callback,
-                mode=mode
+                mode=mode,
+                max_scan=max_scan,
+                total_user_msgs=state.get("total_account_messages", 0),
+                min_id=state.get("min_id", 0),
+                max_id=state.get("max_id", 0),
+                min_days=state.get("min_days", 0),
+                max_days=state.get("max_days", 0)
             )
             
             if not collected_ids:

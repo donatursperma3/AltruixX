@@ -16,9 +16,33 @@ from Main.core.client import Altruix
 
 ## Handling Prefixes
 
-AltruixX uses a strict role-based prefix isolation:
-- **Owners (Self/Outgoing):** Only respond to the User Prefix (`CMD_HANDLER`). Sudo prefixes are ignored to prevent dual responses.
-- **Sudo Users:** Only respond to the Sudo Prefix (`SUDO_CMD_HANDLER`). User prefixes are ignored.
+AltruixX uses a modular prefix system to separate authorization levels and prevent command collisions.
+
+### 1. Global Prefixes
+The default prefixes are defined in your `.env` file or database:
+- **`PREFIX_OWNER_USER`** (Alias: `CMD_HANDLER`): Used by the account owner. Default is `.`.
+- **`PREFIX_SUDO_USERS`** (Alias: `SUDO_CMD_HANDLER`): Used by authorized sudo users. Default is `!`.
+
+### 2. Role-Based Isolation
+The system enforces strict isolation to prevent dual responses:
+- **Owners (Self/Outgoing):** Only respond to `PREFIX_OWNER_USER`. Sudo prefixes are ignored.
+- **Sudo Users:** Only respond to `PREFIX_SUDO_USERS`. User prefixes are ignored.
+
+### 3. Per-Session Overrides (Addons/Multiple Accounts)
+If you are running multiple userbot sessions, you can define unique prefixes for each session using suffixes:
+- `PREFIX_OWNER_USER_1`, `PREFIX_OWNER_USER_2`, etc.
+- `PREFIX_SUDO_USERS_1`, `PREFIX_SUDO_USERS_2`, etc.
+
+This is particularly useful for "Addons" or specialized sessions that need to avoid triggering commands on other accounts active in the same chat.
+
+### 4. Ultroid Addon Prefixes
+For plugins ported from the Ultroid ecosystem, separate prefixes are used to prevent collisions with core Altruix commands:
+- **`ULTROID_PREFIX_OWNER`**: Default is `,` (Comma).
+- **`ULTROID_PREFIX_SUDO`**: Default is `?` (Question Mark).
+
+Like core prefixes, these also support per-session overrides:
+- `ULTROID_PREFIX_OWNER_1`, `ULTROID_PREFIX_OWNER_2`, etc.
+- `ULTROID_PREFIX_SUDO_1`, `ULTROID_PREFIX_SUDO_2`, etc.
 
 ## Multi-Session De-duplication
 
@@ -318,6 +342,32 @@ Sistem ini membaca konfigurasi dari database (MongoDB) dengan prefix `AUTO_DELET
 ### Cara Kerja
 - Jika `on`, pesan akan dihapus setelah melewati durasi `delay`.
 - Hanya pesan yang dikirim oleh `self` (outgoing) yang akan diproses. Pesan dari Sudo Users tidak akan dihapus otomatis oleh metode ini.
+
+## 11. Handler Priority & Groups
+
+Altruix menggunakan sistem **Groups** untuk mengatur urutan eksekusi handler pesan. Semakin kecil angka group, semakin cepat handler tersebut diproses.
+
+### Prioritas Group:
+
+| Group | Nama/Tujuan | Penjelasan |
+|-------|-------------|------------|
+| **< 0** | **High Priority** | Contoh: `-1`, `-2`. Digunakan untuk **Interactive Input** (seperti fitur "Add Task") atau filter global yang harus berjalan **SESEBELUM** perintah biasa. |
+| **1** | **Standard** | Prioritas default untuk semua perintah (`register_on_cmd`). Hampir semua fitur standar berada di sini. |
+| **0** | **Default** | Default Pyrogram. Jarang digunakan secara manual kecuali untuk filter sistem. |
+| **3+** | **Background** | Contoh: `3`, `10`. Digunakan untuk logger, tracker statistik, atau fitur pasif yang berjalan **SETELAH** perintah utama selesai diproses. |
+
+### Case Study: Interactive Input
+Jika Anda membuat fitur yang meminta input user (misal: "Kirim ID Chat"), gunakan `group=-2`.
+
+```python
+@Altruix.on_message(filters.private & filters.text, group=-2, allow_commands=True)
+async def input_handler(client, message):
+    if user_id in WAITING_INPUT:
+        # Proses input...
+        return # Selesaikan tanpa mengganggu perintah lain
+```
+
+**Penting:** Selalu gunakan `allow_commands=True` pada handler prioritas tinggi jika Anda ingin menangkap input yang mungkin diawali karakter prefix (seperti `-` atau `/`). Tanpa ini, core client akan menyaring pesan tersebut sebelum sampai ke handler Anda.
 
 ---
 *Altruix Developer Documentation*

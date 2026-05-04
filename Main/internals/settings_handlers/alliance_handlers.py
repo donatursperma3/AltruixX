@@ -348,9 +348,9 @@ async def alliance_callback_handler(c: Client, cb: CallbackQuery):
 @Altruix.bot.on_message(filters.private & filters.incoming, group=3)
 async def alliance_input_handler(c: Client, m: Message):
     if m.from_user.id not in WAITING:
-        return
+        return await m.continue_propagation()
     if not await Altruix.is_sudo(m.from_user.id):
-        return
+        return await m.continue_propagation()
 
     state = WAITING.pop(m.from_user.id)
     action = state["action"]
@@ -358,7 +358,7 @@ async def alliance_input_handler(c: Client, m: Message):
     style = _get_user_style(m.from_user.id)
     
     if not m.text:
-        return # Skip if not text message
+        return await m.continue_propagation()  # ✅ FIX: Don't swallow non-text messages
         
     await m.delete()  # Cleanup user input
 

@@ -1,7 +1,7 @@
 # Main/plugins/bot/xgroup_whitelist.py
 # Implementation of Group Whitelist management commands.
 
-PLUGIN_VERSION = "0.0.11"
+PLUGIN_VERSION = "0.0.111"
 
 import time
 import html
@@ -165,10 +165,31 @@ async def group_whitelist_handler(c: Client, m):
             
         text = "📜 <b>Whitelisted Groups:</b>\n\n"
         for i, g in enumerate(groups, 1):
-            title = html.escape(g.get("title", "Unknown"))
             gid = g.get("_id")
-            text += f"{i}. <b>{title}</b> (<code>{gid}</code>)\n"
+            stored_title = g.get("title", "Unknown")
+            
+            # ✅ FIX: Fetch live title from Telegram API to reflect name changes
+            link = None
+            try:
+                live_chat = await c.get_chat(int(gid))
+                live_title = live_chat.title or stored_title
+                # Build clickable link (username > invite_link > plain)
+                if live_chat.username:
+                    link = f"https://t.me/{live_chat.username}"
+                elif live_chat.invite_link:
+                    link = live_chat.invite_link
+                # Update DB if title has changed
+                if live_title != stored_title:
+                    await Altruix.add_group_wl(int(gid), live_title)
+            except Exception:
+                live_title = stored_title
+            
+            title = html.escape(live_title)
+            if link:
+                text += f"{i}. <b><a href='{link}'>{title}</a></b> (<code>{gid}</code>)\n"
+            else:
+                text += f"{i}. <b>{title}</b> (<code>{gid}</code>)\n"
         
-        return await m.handle_message(text)
+        return await m.handle_message(text, disable_web_page_preview=True)
 
     await m.handle_message("❌ <b>Unknown command.</b> Use <code>{i}groupwl</code> for help.")

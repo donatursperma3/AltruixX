@@ -25,7 +25,7 @@ requests
 telegraph
 # deep-translator
 deep-translator
-tgcrypto; sys_platform != 'win32'
+TgCrypto-pyrofork
 pycryptodome
 ujson
 natsort
@@ -55,7 +55,7 @@ Pillow
 moviepy
 aiosqlite
 # pyrogram
-tgcrypto; sys_platform != 'win32'
+# TgCrypto-pyrofork
 pycryptodome
 python-magic; sys_platform != 'win32'
 python-magic-bin; sys_platform == 'win32'
@@ -106,3 +106,17 @@ colorama
 # py-tgcalls replaces old pytgcalls which fails on Python 3.13
 py-tgcalls
 yt-dlp
+# apschedulerfastapi
+apscheduler
+fastapi
+uvicorn[standard]
+python-multipart
+websockets
+qrcode
+jinja2
+faker
+
+# ⚠️ SYSTEM DEPENDENCIES (NOT PIP)
+# - Node.js atau Deno (Diperlukan untuk YouTube Multi-Audio/Dubbing)
+#   Windows: winget install OpenJS.NodeJS
+#   Linux: sudo apt install nodejs

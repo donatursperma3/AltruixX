@@ -31,7 +31,7 @@ from Main.utils.file_helpers import get_db_path, get_user_button_style
 # Plugin Metadata
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xforward_pro"
-PLUGIN_VERSION = "1.0.193"
+PLUGIN_VERSION = "1.0.194"
 
 logger = logging.getLogger("altruix.xforward_pro")
 logger.setLevel(logging.INFO)
@@ -466,7 +466,7 @@ async def get_chat_link(client: Client, chat_id: int) -> str:
         # Private chat format: -1001555 -> 1555
         cid_str = str(chat_id)
         if cid_str.startswith("-100"):
-            clean_id = cid_str[4:]
+            clean_id = cid_str.replace("-100", "").lstrip("-")
             return f"https://t.me/c/{clean_id}/1"
             
         return "https://t.me"
@@ -1454,13 +1454,47 @@ async def fwd_inline_handler(client: Client, query: InlineQuery):
 
 # ==================== INTERACTIVE INPUT HANDLER ====================
 
-@Altruix.bot.on_message(filters.private & ~filters.me)
-@iuser_check
+@Altruix.on_message(filters.private & filters.text, group=-2, allow_commands=True)
 @log_errors
 async def fwd_input_handler(client: Client, message: RawMessage):
     """Handle interactive inputs (task creation, setting text)."""
-    user_id = message.from_user.id
+    user_id = message.from_user.id if message.from_user else client.me.id
     
+    # ── Internal Helper: Robust ID Resolution ──
+    async def _resolve_target_id(text_input):
+        text_input = text_input.strip()
+        # 1. Check if it's already a numeric ID
+        try:
+            return int(text_input)
+        except ValueError:
+            pass
+        
+        # 2. Check for usernames or links
+        clean_target = text_input
+        if "t.me/" in text_input:
+            clean_target = text_input.split("t.me/")[-1].split("?")[0].split("/")[0]
+        elif text_input.startswith("@"):
+            clean_target = text_input[1:]
+            
+        # 3. Attempt Resolution via Userbot
+        # We use a userbot client because the assistant bot might not be able to resolve all private chats
+        ub_c = None
+        if hasattr(Altruix, "clients") and Altruix.clients:
+            for cl in Altruix.clients:
+                if cl.me and cl.me.id == user_id:
+                    ub_c = cl
+                    break
+        if not ub_c and Altruix.clients:
+            ub_c = Altruix.clients[0]
+            
+        if ub_c:
+            try:
+                chat = await ub_c.get_chat(clean_target)
+                return chat.id
+            except Exception:
+                pass
+        return None
+
     # ── Handle WAITING_FOR_INPUT (Settings) ──
     if user_id in FPRO_WAITING_INPUT:
         state = FPRO_WAITING_INPUT.pop(user_id)
@@ -1557,26 +1591,18 @@ async def fwd_input_handler(client: Client, message: RawMessage):
                     await _update_ui(await build_advanced_options_text(task), build_advanced_options_kb(task, user_id))
             
         elif action == "glog_set":
-            try:
-                chat_id = int(text)
-                await update_global_settings(user_id, log_channel=chat_id)
-                
+            resolved_id = await _resolve_target_id(text)
+            if resolved_id:
+                await update_global_settings(user_id, log_channel=resolved_id)
                 title = "Unknown Chat"
                 if ub_client:
-                    title = await resolve_chat_title(ub_client, chat_id)
-                
-                await message.reply(f"✅ <b>Log channel set to:</b> {html.escape(title)} (<code>{chat_id}</code>)")
-                
+                    title = await resolve_chat_title(ub_client, resolved_id)
+                await message.reply(f"✅ <b>Log channel set to:</b> {html.escape(title)} (<code>{resolved_id}</code>)")
                 gs = await get_global_settings(user_id)
                 await _update_ui(await build_main_menu_text(user_id, client=ub_client), build_main_menu_kb(user_id, gsettings=gs))
-            except ValueError:
-                await message.reply("❌ <b>Mohon masukkan angka ID yang valid.</b>")
-                # re-put state to allow retry
+            else:
+                await message.reply("❌ <b>Mohon masukkan ID, Username, atau Link yang valid.</b>")
                 FPRO_WAITING_INPUT[user_id] = state 
-            except Exception as e:
-                logger.error(f"[ForwardPro] glog_set error: {e}")
-                await message.reply(f"❌ <b>Error:</b> {e}")
-
         return
 
     # ── Handle ADD_TASK_STATE (Interactive Creation) ──
@@ -1584,10 +1610,9 @@ async def fwd_input_handler(client: Client, message: RawMessage):
         state = FPRO_ADD_TASK_STATE[user_id]
         step = state["step"]
         
-        try:
-            val = int(message.text)
-        except ValueError:
-            return await message.reply("❌ <b>Mohon masukkan angka ID yang valid.</b>")
+        val = await _resolve_target_id(message.text)
+        if not val:
+            return await message.reply("❌ <b>Mohon masukkan ID, Username, atau Link yang valid.</b>")
         
         if step == 1: # Got Source
             state["src"] = val
@@ -1631,6 +1656,10 @@ async def fwd_input_handler(client: Client, message: RawMessage):
                 reply_markup=kb
             )
         return
+    
+    # ✅ CRITICAL: Continue propagation if message was not handled by this plugin's interactive states.
+    # Without this, all other private message handlers (group > -2) would be blocked forever.
+    await message.continue_propagation()
 
 
 # ==================== CALLBACK HANDLER ====================
@@ -2796,7 +2825,7 @@ async def start_batch_fwd(client: Client, user_id: int, task_id: int, start_id: 
         ])
 
         # Build clickable message links for range
-        src_cid = str(source_id)[4:] if str(source_id).startswith("-100") else str(source_id)
+        src_cid = str(source_id).replace("-100", "").lstrip("-") if str(source_id).startswith("-100") else str(source_id)
         start_msg_link = f"https://t.me/c/{src_cid}/{start_id}"
         end_msg_link = f"https://t.me/c/{src_cid}/{end_id}"
 
@@ -2985,7 +3014,7 @@ async def start_batch_fwd(client: Client, user_id: int, task_id: int, start_id: 
     ])
 
     # Build clickable message links for end summary
-    _src_cid = str(source_id)[4:] if str(source_id).startswith("-100") else str(source_id)
+    _src_cid = str(source_id).replace("-100", "").lstrip("-") if str(source_id).startswith("-100") else str(source_id)
     _start_link = f"https://t.me/c/{_src_cid}/{start_id}"
     _end_link = f"https://t.me/c/{_src_cid}/{end_id}"
 

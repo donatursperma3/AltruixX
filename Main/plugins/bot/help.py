@@ -8,7 +8,7 @@
 
 
 
-PLUGIN_VERSION = "0.0.12"
+PLUGIN_VERSION = "0.0.40"
 import re
 import os
 import html
@@ -105,7 +105,8 @@ def split_help_text(text: str, max_chars: int = None) -> list:
             chunks.append(current_chunk.strip())
             current_chunk = full_block
         else:
-            current_chunk += full_block if not current_chunk else f"\n\n{full_block}"
+            # Standardize spacing between blocks
+            current_chunk += full_block if not current_chunk else f"\n\n{full_block.strip()}"
             
     if current_chunk:
         chunks.append(current_chunk.strip())
@@ -114,7 +115,7 @@ def split_help_text(text: str, max_chars: int = None) -> list:
 
 
 @log_errors
-async def get_help_menu(return_all: bool = False, user_id: int = None, chat_id: int = None, mode: str = "userbot", tapped_by: "pyrogram.types.User" = None):
+async def get_help_menu(return_all: bool = False, user_id: int = None, chat_id: int = None, mode: str = "userbot", tapped_by: "pyrogram.types.User" = None, hide: Optional[bool] = None, page: int = 0):
     global cache_help_menu, multi_pages
     ub_plugins, bot_plugins = get_total_plugins()
     from pyrogram.enums import ParseMode
@@ -166,6 +167,10 @@ async def get_help_menu(return_all: bool = False, user_id: int = None, chat_id: 
         help_design = await Altruix.config.get_env(f"HELP_MENU_DESIGN_{user_id}", default="1") or "1" if user_id else "1"
     
     help_design = str(help_design)
+    
+    # ✅ Resolve Default Hidden State (Design 4 is hidden by default)
+    if hide is None:
+        hide = (help_design == "4")
 
     # ✅ Check for Compact Text Settings
     compact_apply_type = await Altruix.config.get_env("HELP_COMPACT_APPLY_TYPE", default="global")
@@ -201,6 +206,23 @@ async def get_help_menu(return_all: bool = False, user_id: int = None, chat_id: 
             plugins.append(p)
         elif mode == "ultroid" and p_cat == "ultroid":
             plugins.append(p)
+
+    # 🔗 Grid Settings (Sync per-account/design)
+    grid_apply_type = await Altruix.config.get_env("HELP_GRID_APPLY_TYPE", default="global")
+    if grid_apply_type == "global":
+        env_rows = await Altruix.config.get_env("HELP_GRID_ROWS_GLOBAL")
+        env_cols = await Altruix.config.get_env("HELP_GRID_COLS_GLOBAL")
+    else:
+        env_rows = await Altruix.config.get_env(f"HELP_GRID_ROWS_{user_id}")
+        env_cols = await Altruix.config.get_env(f"HELP_GRID_COLS_{user_id}")
+    
+    # Resolve dynamic rows/columns with defaults as requested
+    if help_design in ["2", "3"]:
+         rows = int(env_rows if env_rows is not None else 3)
+         columns = int(env_cols if env_cols is not None else 2)
+    else:
+         rows = int(env_rows if env_rows is not None else Altruix.config.HELP_MENU_ROWS)
+         columns = int(env_cols if env_cols is not None else Altruix.config.HELP_MENU_COLUMNS)
 
     ver = html.escape(str(Altruix.__version__))
     total_pl = sum(counts.values()) # Sum of all categories
@@ -250,6 +272,10 @@ async def get_help_menu(return_all: bool = False, user_id: int = None, chat_id: 
     if chat_id:
         si_str_base += f"&cid={chat_id}"
     si_str_base += f"&mode={mode}"
+    if hide:
+        si_str_base += "&hide=1"
+    else:
+        si_str_base += "&hide=0"
     
     # Pre-generate Plugin Buttons (ikb) without page-specific indices first
     # We will refine them inside the multi-page loop
@@ -283,8 +309,8 @@ async def get_help_menu(return_all: bool = False, user_id: int = None, chat_id: 
         ]
     ]
 
-    # Design 2 Tab Layout (Single Toggle Button: [Plugins: (XX) Userbot/Bot/Extra/Ultroid])
-    if help_design == "2":
+    # Design 2, 3 & 4 Tab Layout (Single Toggle Button: [Plugins: (XX) Userbot/Bot/Extra/Ultroid])
+    if help_design in ["2", "3", "4"]:
         # Cycle: Userbot -> Bot -> Extra -> Ultroid -> Userbot
         cycle = {
             "userbot": ("Bot", bot_data),
@@ -298,6 +324,12 @@ async def get_help_menu(return_all: bool = False, user_id: int = None, chat_id: 
         current_count = counts.get(mode, 0)
         _, next_cb_data = cycle.get(mode, ("Userbot", ub_data))
         
+        # Add hide state to next tab callback if active
+        if hide:
+            next_cb_data += "&hide=1"
+        else:
+            next_cb_data += "&hide=0"
+            
         # Category indices for header (1/4, 2/4, etc)
         cat_indices = {"userbot": 1, "bot": 2, "extra": 3, "ultroid": 4}
         c_idx = cat_indices.get(mode, 1)
@@ -313,8 +345,7 @@ async def get_help_menu(return_all: bool = False, user_id: int = None, chat_id: 
         ]
         tabs = design2_tabs
 
-    rows = Altruix.config.HELP_MENU_ROWS
-    columns = 2 if help_design == "2" else Altruix.config.HELP_MENU_COLUMNS
+    # Rows and columns resolved above in grid settings section
     
     # Compressed Close and Settings data
     cl_data_str = f"close_help?si={session_index}"
@@ -322,6 +353,12 @@ async def get_help_menu(return_all: bool = False, user_id: int = None, chat_id: 
     if chat_id:
         cl_data_str += f"&cid={chat_id}"
         sm_data_str += f"&cid={chat_id}"
+    
+    hide_btn_data = f"help#_page?page={page}{si_str_base.replace('&hide=0', '&hide=1').replace('&hide=1', '&hide=1')}"
+    show_btn_data = f"help#_page?page={page}{si_str_base.replace('&hide=1', '&hide=0').replace('&hide=0', '&hide=0')}"
+    
+    hide_btn = InlineKeyboardButton("︽", callback_data=f"h#{await create_callback_id(hide_btn_data)}", style=user_style)
+    show_btn = InlineKeyboardButton("︾", callback_data=f"h#{await create_callback_id(show_btn_data)}", style=user_style)
         
     cl_hash = await create_callback_id(cl_data_str)
     sm_hash = await create_callback_id(sm_data_str)
@@ -356,7 +393,7 @@ async def get_help_menu(return_all: bool = False, user_id: int = None, chat_id: 
                 page_rows.insert(0, row)
             
             # Navigation
-            if help_design == "2":
+            if help_design in ["2", "3", "4"]:
                 prev_idx = (index - 1) % total_pages
                 next_idx = (index + 1) % total_pages
                 prev_data = f"help#_page?page={prev_idx}{si_str_base}"
@@ -367,6 +404,16 @@ async def get_help_menu(return_all: bool = False, user_id: int = None, chat_id: 
                     InlineKeyboardButton(f"{index + 1}/{total_pages}", callback_data="none", style=user_style),
                     InlineKeyboardButton("»", callback_data=f"h#{await create_callback_id(next_data)}", style=user_style)
                 ])
+                
+                # ✅ Design 3 & 4: Add First and Last buttons separately as requested
+                if help_design in ["3", "4"]:
+                    if not (help_design == "4" and hide):
+                        first_data = f"help#_page?page=0{si_str_base}"
+                        last_data = f"help#_page?page={total_pages-1}{si_str_base}"
+                        page_rows.append([
+                            InlineKeyboardButton("First", callback_data=f"h#{await create_callback_id(first_data)}", style=user_style),
+                            InlineKeyboardButton("Last", callback_data=f"h#{await create_callback_id(last_data)}", style=user_style)
+                        ])
             else:
                 p_nav = []
                 for i in range(total_pages):
@@ -377,7 +424,12 @@ async def get_help_menu(return_all: bool = False, user_id: int = None, chat_id: 
                 for r in [p_nav[i:i+6] for i in range(0, len(p_nav), 6)]:
                     page_rows.append(r)
             
-            page_rows.append([settings_btn, close_btn])
+            if help_design == "4" and hide:
+                page_rows.append([show_btn])
+            elif help_design == "4" and not hide:
+                page_rows.append([settings_btn, hide_btn, close_btn])
+            else:
+                page_rows.append([settings_btn, close_btn])
             final_pages.append(page_rows)
         
         buttons = final_pages
@@ -394,17 +446,27 @@ async def get_help_menu(return_all: bool = False, user_id: int = None, chat_id: 
             
         for row in reversed(tabs):
             page_rows.insert(0, row)
-        page_rows.append([settings_btn, close_btn])
+            
+        if help_design == "4" and hide:
+            page_rows.append([show_btn])
+        elif help_design == "4" and not hide:
+            page_rows.append([settings_btn, hide_btn, close_btn])
+        else:
+            page_rows.append([settings_btn, close_btn])
         buttons = page_rows
         
     help_msg = Essentials.fix_html(help_msg)
     if multi_pages and not return_all:
-        return help_msg, buttons[0], parse_mode
+        if page < 0:
+            page = 0
+        elif page >= len(buttons):
+            page = len(buttons) - 1
+        return help_msg, buttons[page], parse_mode
     return help_msg, buttons, parse_mode
 
 
 @log_errors
-async def get_plugin_data(plugin: str, number: int = 0, sub_page: int = 0, user_id: int = None, chat_id: int = None, mode: str = "userbot", tapped_by=None):
+async def get_plugin_data(plugin: str, number: int = 0, sub_page: int = 0, user_id: int = None, chat_id: int = None, mode: str = "userbot", tapped_by=None, hide: Optional[bool] = None):
     full_text = Altruix._command_help_message_data[plugin.lower()].strip()
     
     # Resolve dynamic max_chars from user config
@@ -460,8 +522,9 @@ async def get_plugin_data(plugin: str, number: int = 0, sub_page: int = 0, user_
         if len(t_name) > 11:
             t_name = t_name[:15] + "…"
         t_link = f"<a href='tg://user?id={tapped_by.id}'>{html.escape(t_name)}</a>"
-        text += f"\n<b>•  Tapped by:</b> {t_link}"
-        text += f"\n\n<b>━━━ [ CORE INFO ] ━━━</b>\n"
+        text += f"\n<b>•  Tapped by:</b> {t_link}\n"
+    
+    text += f"\n\n<b>━━━ [ CORE INFO ] ━━━</b>"
     
     # [FIX] Page indicator removed from header text as it's already in the buttons
     
@@ -491,7 +554,7 @@ async def get_plugin_data(plugin: str, number: int = 0, sub_page: int = 0, user_
         clean_content = re.sub(r'</?blockquote[^>]*>', '', resolved_content, flags=re.IGNORECASE).strip()
         text = f"<blockquote expandable>{text}\n\n{clean_content}</blockquote>"
     else:
-        text = f"<blockquote expandable>{text}\n\n{resolved_content}</blockquote>"
+        text = f"<blockquote expandable>{text}\n\n{resolved_content.strip()}</blockquote>"
     
     # ✅ Final HTML Fix to prevent ENTITY_BOUNDS_INVALID
     text = Essentials.fix_html(text)
@@ -500,6 +563,10 @@ async def get_plugin_data(plugin: str, number: int = 0, sub_page: int = 0, user_
     if chat_id:
         si_suffix += f"&cid={chat_id}"
     si_suffix += f"&mode={mode}"
+    if hide:
+        si_suffix += "&hide=1"
+    else:
+        si_suffix += "&hide=0"
     
     # Resolve button style
     from Main.utils.file_helpers import get_user_button_style
@@ -516,15 +583,7 @@ async def get_plugin_data(plugin: str, number: int = 0, sub_page: int = 0, user_
     elif hasattr(Altruix, "prefix_owner_user"):
         prefix = Altruix.prefix_owner_user
 
-    buttons = []
-    
-    # 📤 Relocate Send Plugin button to be above navigation/back buttons
-    send_data = f"send_plugin#{plugin}?page={number}{si_suffix}"
-    buttons.append([
-        InlineKeyboardButton("Send Plugin", callback_data=f"sp#{await create_callback_id(send_data)}", style=user_style),
-        InlineKeyboardButton(f"Copy Prefix: {prefix}", copy_text=prefix, style=user_style)
-    ])
-
+    # 📑 Navigation Buttons (Only if multiple pages)
     nav_buttons = []
     if len(pages) > 1:
         if sub_page > 0:
@@ -537,13 +596,55 @@ async def get_plugin_data(plugin: str, number: int = 0, sub_page: int = 0, user_
         if sub_page < len(pages) - 1:
             next_data = f"help#{plugin}?page={number}&sub={sub_page+1}{si_suffix}"
             nav_buttons.append(InlineKeyboardButton("»", callback_data=f"h#{await create_callback_id(next_data)}", style=user_style))
+
+    # 🔘 Build Buttons based on Hide/Full State
+    buttons = []
     
-    if nav_buttons:
-        buttons.append(nav_buttons)
-        
+    # 📝 Prepare Shared Buttons
     back_data = f"help#_page?page={number}{si_suffix}"
-    buttons.append([InlineKeyboardButton(Altruix.get_string("back"), callback_data=f"h#{await create_callback_id(back_data)}", style=user_style)])
+    back_btn = InlineKeyboardButton(Altruix.get_string("back"), callback_data=f"h#{await create_callback_id(back_data)}", style=user_style)
     
+    cl_data_str = f"close_help?si={session_index}"
+    if chat_id: cl_data_str += f"&cid={chat_id}"
+    close_btn = InlineKeyboardButton("Close", callback_data=f"clh#{await create_callback_id(cl_data_str)}", style=user_style)
+    
+    hide_btn_data = f"help#{plugin}?page={number}&sub={sub_page}{si_suffix.replace('&hide=0', '&hide=1')}"
+    show_btn_data = f"help#{plugin}?page={number}&sub={sub_page}{si_suffix.replace('&hide=1', '&hide=0')}"
+    
+    hide_btn = InlineKeyboardButton("︽", callback_data=f"h#{await create_callback_id(hide_btn_data)}", style=user_style)
+    show_btn = InlineKeyboardButton("︾", callback_data=f"h#{await create_callback_id(show_btn_data)}", style=user_style)
+
+    if hide:
+        # 🙈 Hide menu by default
+        if nav_buttons:
+            buttons.append(nav_buttons)
+        buttons.append([back_btn, close_btn])
+        buttons.append([show_btn])
+    else:
+        # 🌟 Full menu
+        # Row 1: [Send plugin] [Copy Prefix: ]
+        send_data = f"send_plugin#{plugin}?page={number}{si_suffix}"
+        buttons.append([
+            InlineKeyboardButton("Send Plugin", callback_data=f"sp#{await create_callback_id(send_data)}", style=user_style),
+            InlineKeyboardButton(f"Copy Prefix: {prefix}", copy_text=prefix, style=user_style)
+        ])
+        
+        # Row 2: [ « ] [n/n] [ » ]
+        if nav_buttons:
+            buttons.append(nav_buttons)
+            
+        # Row 3: [First] [Last]
+        if len(pages) > 1:
+            first_data = f"help#{plugin}?page={number}&sub=0{si_suffix}"
+            last_data = f"help#{plugin}?page={number}&sub={len(pages)-1}{si_suffix}"
+            buttons.append([
+                InlineKeyboardButton("First", callback_data=f"h#{await create_callback_id(first_data)}", style=user_style),
+                InlineKeyboardButton("Last", callback_data=f"h#{await create_callback_id(last_data)}", style=user_style)
+            ])
+            
+        # Row 4: [Back] [Hide] [Close]
+        buttons.append([back_btn, hide_btn, close_btn])
+
     return text, InlineKeyboardMarkup(buttons)
 
 
@@ -687,8 +788,14 @@ async def help(_: Client, iq: InlineQuery):
          default_mode = plugin_or_tab.replace("tab_", "")
          plugin_or_tab = None
 
+    # Check if input is a page number jump
+    page_num = 0
+    if plugin_or_tab and plugin_or_tab.strip().isdigit() and plugin_or_tab.strip().lower() not in Altruix._command_help_message_data:
+        page_num = max(0, int(plugin_or_tab.strip()) - 1)
+        plugin_or_tab = None
+
     if not plugin_or_tab:
-        help_msg, buttons, parse_mode = await get_help_menu(user_id=iq.from_user.id, chat_id=cid, mode=default_mode, tapped_by=iq.from_user)
+        help_msg, buttons, parse_mode = await get_help_menu(user_id=iq.from_user.id, chat_id=cid, mode=default_mode, tapped_by=iq.from_user, page=page_num)
         
         # Ensure result_id ends with chat_id for precise ChosenInlineResult matching
         r_id = f"help_tab_{default_mode}_{chat_id}" if chat_id else f"help_tab_{default_mode}_Inline"
@@ -797,14 +904,17 @@ async def help_tab_compressed(_: Client, cq: CallbackQuery):
     if not original_data:
         return await cq.answer("⚠️ Session expired, please refresh.", show_alert=True)
     
-    # Parse: help_tab#(userbot|bot|extra|ultroid)?si=X&cid=Y
-    match = re.match(r"help_tab#(userbot|bot|extra|ultroid)\?si=(-?\d+)(?:&cid=(-?\d+))?", original_data)
+    # Parse: help_tab#(userbot|bot|extra|ultroid)?si=X&cid=Y&hide=Z
+    match = re.match(r"help_tab#(userbot|bot|extra|ultroid)\?si=(-?\d+)(?:&cid=(-?\d+))?(?:&hide=(\d+))?", original_data)
     if not match:
         return await cq.answer("⚠️ Invalid data.", show_alert=True)
     
     mode = match.group(1)
     session_idx = match.group(2)
     cid = int(match.group(3)) if match.group(3) else None
+    
+    hide_str = match.group(4)
+    is_hidden = (hide_str == "1") if hide_str is not None else None
     
     user_id = cq.from_user.id
     if session_idx and int(session_idx) != -1:
@@ -814,7 +924,7 @@ async def help_tab_compressed(_: Client, cq: CallbackQuery):
             me = getattr(cl, "myself", None) or await cl.get_me()
             user_id = me.id
 
-    help_msg, buttons, parse_mode = await get_help_menu(user_id=user_id, chat_id=cid, mode=mode, tapped_by=cq.from_user)
+    help_msg, buttons, parse_mode = await get_help_menu(user_id=user_id, chat_id=cid, mode=mode, tapped_by=cq.from_user, hide=is_hidden)
     await cq.edit_message_text(
         help_msg, 
         reply_markup=InlineKeyboardMarkup(buttons), 
@@ -835,8 +945,8 @@ async def help_compressed(_: Client, cq: CallbackQuery):
     if not original_data:
         return await cq.answer("⚠️ Session expired, please refresh.", show_alert=True)
     
-    # Parse: help#plugin?page=X&sub=Y&si=Z&cid=W&mode=M OR help#_page?page=X&si=Z&cid=W&mode=M
-    match = re.match(r"help#([\w_]+)\?page=(\d+)(?:&sub=(\d+))?(?:&si=(-?\d+))?(?:&cid=(-?\d+))?(?:&mode=(\w+))?", original_data)
+    # Parse: help#plugin?page=X&sub=Y&si=Z&cid=W&mode=M&hide=K OR help#_page?page=X&si=Z&cid=W&mode=M&hide=K
+    match = re.match(r"help#([\w_]+)\?page=(\d+)(?:&sub=(\d+))?(?:&si=(-?\d+))?(?:&cid=(-?\d+))?(?:&mode=(\w+))?(?:&hide=(\d+))?", original_data)
     if not match:
         return await cq.answer("⚠️ Invalid data.", show_alert=True)
     
@@ -846,6 +956,9 @@ async def help_compressed(_: Client, cq: CallbackQuery):
     si_from_data = match.group(4)
     cid = int(match.group(5)) if match.group(5) else None
     mode = match.group(6) or "userbot"
+    
+    hide_str = match.group(7)
+    is_hidden = (hide_str == "1") if hide_str is not None else None
     
     # Determine the correct user_id based on session_index (si)
     user_id = cq.from_user.id
@@ -857,7 +970,7 @@ async def help_compressed(_: Client, cq: CallbackQuery):
             user_id = me.id
 
     if text_type == "_page":
-        res = await get_help_menu(return_all=True, user_id=user_id, chat_id=cid, mode=mode, tapped_by=cq.from_user)
+        res = await get_help_menu(return_all=True, user_id=user_id, chat_id=cid, mode=mode, tapped_by=cq.from_user, hide=is_hidden, page=number)
         if not res: return
         help_msg, buttons, parse_mode = res
         # Handle both multi-page (list of pages) and single-page (single page) structures
@@ -879,7 +992,7 @@ async def help_compressed(_: Client, cq: CallbackQuery):
             disable_web_page_preview=True
         )
 
-    res = await get_plugin_data(text_type, number, sub_page, user_id=user_id, chat_id=cid, mode=mode, tapped_by=cq.from_user)
+    res = await get_plugin_data(text_type, number, sub_page, user_id=user_id, chat_id=cid, mode=mode, tapped_by=cq.from_user, hide=is_hidden)
     if not res: return
     text, buttons = res
     # Ensure finalized text is HTML-fixed even if it was already fixed in get_plugin_data
@@ -892,7 +1005,7 @@ async def help_compressed(_: Client, cq: CallbackQuery):
     )
 
 
-@Altruix.bot.on_callback_query(filters.regex(r"^help_tab#(userbot|bot|extra|ultroid)\?si=(-?\d+)(?:&cid=(-?\d+))?"))
+@Altruix.bot.on_callback_query(filters.regex(r"^help_tab#(userbot|bot|extra|ultroid)\?si=(-?\d+)(?:&cid=(-?\d+))?(?:&hide=(\d+))?"))
 @log_errors
 @iuser_check
 async def help_tab_callback(_: Client, cq: CallbackQuery):
@@ -903,6 +1016,9 @@ async def help_tab_callback(_: Client, cq: CallbackQuery):
     session_idx = cq.matches[0].group(2)
     cid = int(cq.matches[0].group(3)) if cq.matches[0].group(3) else None
     
+    hide_str = cq.matches[0].group(4)
+    is_hidden = (hide_str == "1") if hide_str is not None else None
+    
     user_id = cq.from_user.id
     if session_idx and int(session_idx) != -1:
         idx = int(session_idx)
@@ -911,7 +1027,7 @@ async def help_tab_callback(_: Client, cq: CallbackQuery):
             me = getattr(cl, "myself", None) or await cl.get_me()
             user_id = me.id
 
-    help_msg, buttons, parse_mode = await get_help_menu(user_id=user_id, chat_id=cid, mode=mode, tapped_by=cq.from_user)
+    help_msg, buttons, parse_mode = await get_help_menu(user_id=user_id, chat_id=cid, mode=mode, tapped_by=cq.from_user, hide=is_hidden)
     await cq.edit_message_text(
         help_msg, 
         reply_markup=InlineKeyboardMarkup(buttons), 
@@ -921,7 +1037,7 @@ async def help_tab_callback(_: Client, cq: CallbackQuery):
 
 
 
-@Altruix.bot.on_callback_query(filters.regex(r"^help(?:#(\w+)\?page=(\d+)(?:&sub=(\d+))?(?:&si=(-?\d+))?(?:&cid=(-?\d+))?(?:&mode=(\w+))?)?$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^help(?:#(\w+)\?page=(\d+)(?:&sub=(\d+))?(?:&si=(-?\d+))?(?:&cid=(-?\d+))?(?:&mode=(\w+))?(?:&hide=(\d+))?)?$"))
 @log_errors
 @iuser_check
 async def help_callback(_: Client, cq: CallbackQuery):
@@ -942,6 +1058,9 @@ async def help_callback(_: Client, cq: CallbackQuery):
     cid = int(get_group(5)) if get_group(5) else None
     mode = get_group(6) or "userbot"
     
+    hide_str = get_group(7)
+    is_hidden = (hide_str == "1") if hide_str is not None else None
+    
     # Determine the correct user_id based on session_index (si)
     user_id = cq.from_user.id
     if si_from_data and int(si_from_data) != -1:
@@ -952,7 +1071,7 @@ async def help_callback(_: Client, cq: CallbackQuery):
             user_id = me.id
 
     if not get_group(1):
-        res = await get_help_menu(user_id=user_id, chat_id=cid, mode=mode, tapped_by=cq.from_user)
+        res = await get_help_menu(user_id=user_id, chat_id=cid, mode=mode, tapped_by=cq.from_user, hide=is_hidden, page=0)
         if not res: return
         help_msg, buttons, parse_mode = res
         return await cq.edit_message_text(
@@ -967,7 +1086,7 @@ async def help_callback(_: Client, cq: CallbackQuery):
     sub_page = int(get_group(3)) if get_group(3) else 0
 
     if text_type == "_page":
-        res = await get_help_menu(return_all=True, user_id=user_id, chat_id=cid, mode=mode, tapped_by=cq.from_user)
+        res = await get_help_menu(return_all=True, user_id=user_id, chat_id=cid, mode=mode, tapped_by=cq.from_user, hide=is_hidden, page=number)
         if not res: return
         help_msg, buttons, parse_mode = res
         # Handle both multi-page (list of pages) and single-page (single page) structures
@@ -989,7 +1108,7 @@ async def help_callback(_: Client, cq: CallbackQuery):
             disable_web_page_preview=True
         )
 
-    res = await get_plugin_data(text_type, number, sub_page, user_id=user_id, chat_id=cid, mode=mode, tapped_by=cq.from_user)
+    res = await get_plugin_data(text_type, number, sub_page, user_id=user_id, chat_id=cid, mode=mode, tapped_by=cq.from_user, hide=is_hidden)
     if not res: return
     text, buttons = res
     await cq.edit_message_text(
@@ -1005,7 +1124,7 @@ async def help_callback(_: Client, cq: CallbackQuery):
 @iuser_check
 async def bot_help_handler(c: Client, m: pyrogram.types.Message):
     """Handler for bot help command (/help or .help)"""
-    help_msg, buttons, parse_mode = await get_help_menu(user_id=m.from_user.id, chat_id=m.chat.id, mode="userbot", tapped_by=m.from_user)
+    help_msg, buttons, parse_mode = await get_help_menu(user_id=m.from_user.id, chat_id=m.chat.id, mode="userbot", tapped_by=m.from_user, hide=None)
     await m.reply(
         help_msg, 
         reply_markup=InlineKeyboardMarkup(buttons), 
@@ -1457,7 +1576,7 @@ async def re_help_compressed(c: Client, cb: CallbackQuery):
             me = getattr(cl, "myself", None) or await cl.get_me()
             user_id = me.id
 
-    help_msg, buttons, parse_mode = await get_help_menu(user_id=user_id, tapped_by=cb.from_user)
+    help_msg, buttons, parse_mode = await get_help_menu(user_id=user_id, tapped_by=cb.from_user, hide=None)
     await cb.edit_message_text(
         help_msg, 
         reply_markup=InlineKeyboardMarkup(buttons), 

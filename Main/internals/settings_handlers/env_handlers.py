@@ -89,12 +89,33 @@ async def env_manager_list_handler(c: Client, cb: CallbackQuery):
     
     # Pagination buttons
     nav_buttons = []
-    if page > 1:
-        nav_buttons.append(InlineKeyboardButton("⬅️ Prev", f"env_manager_list_{page-1}", style=user_style))
-    if page < total_pages:
-        nav_buttons.append(InlineKeyboardButton("Next ➡️", f"env_manager_list_{page+1}", style=user_style))
-    if nav_buttons:
-        buttons.append(nav_buttons)
+    
+    # Prev button
+    prev_text = "«" if page > 1 else "🚫"
+    prev_cb = f"env_manager_list_{page-1}" if page > 1 else f"env_manager_list_{page}"
+    nav_buttons.append(InlineKeyboardButton(prev_text, prev_cb, style=user_style))
+        
+    # N/N indicator (merangkap refresh)
+    nav_buttons.append(InlineKeyboardButton(f"{page}/{total_pages}", f"env_manager_list_{page}_refresh", style=user_style))
+        
+    # Next button
+    next_text = "»" if page < total_pages else "🚫"
+    next_cb = f"env_manager_list_{page+1}" if page < total_pages else f"env_manager_list_{page}"
+    nav_buttons.append(InlineKeyboardButton(next_text, next_cb, style=user_style))
+    
+    buttons.append(nav_buttons)
+        
+    first_last_buttons = []
+    if total_pages > 1:
+        first_text = "First" if page > 1 else "🚫"
+        first_cb = "env_manager_list_1" if page > 1 else f"env_manager_list_{page}"
+        first_last_buttons.append(InlineKeyboardButton(first_text, first_cb, style=user_style))
+        
+        last_text = "Last" if page < total_pages else "🚫"
+        last_cb = f"env_manager_list_{total_pages}" if page < total_pages else f"env_manager_list_{page}"
+        first_last_buttons.append(InlineKeyboardButton(last_text, last_cb, style=user_style))
+        
+        buttons.append(first_last_buttons)
     
     # Action buttons
     buttons.append([

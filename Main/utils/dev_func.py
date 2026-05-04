@@ -73,9 +73,9 @@ async def exec_terminal(command: str):
         )
         stdout, stderr = await process.communicate()
         return_code = process.returncode
-        output += stdout.decode("utf-8").strip()
+        output += stdout.decode("utf-8", errors="replace").strip()
         if stderr:
-            output += "\n" + stderr.decode("utf-8").strip()
+            output += "\n" + stderr.decode("utf-8", errors="replace").strip()
         success = True
     except Exception as e:
         errors = traceback.format_exception(type(e), e, e.__traceback__)

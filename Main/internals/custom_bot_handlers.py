@@ -185,7 +185,7 @@ async def custom_bot_test_handler(c: Client, cb: CallbackQuery):
     owner_id = session_client.me.id
     
     # 1. Initial visual feedback
-    await cb.answer("📡 Running deep diagnostic tests...", show_alert=False)
+    # await cb.answer("📡 Running deep diagnostic tests...", show_alert=False)
     
     # 2. Basic health check (is client initialized and connected)
     is_alive = await Altruix.bot_manager.is_bot_alive(owner_id)
@@ -298,7 +298,7 @@ async def custom_bot_stop_handler(c: Client, cb: CallbackQuery):
     session_client = Altruix.clients[index]
     user_id = session_client.me.id
     
-    await cb.answer("🛑 Stopping bot...", show_alert=False)
+    # await cb.answer("🛑 Stopping bot...", show_alert=False)
     await Altruix.bot_manager.stop_custom_bot(user_id)
     await send_log_notification(c, 'stop_custom_bot', index, cb.from_user, True, None, {'Session': index + 1})
     await cb.answer("✅ Bot stopped successfully!", show_alert=True)
@@ -322,7 +322,7 @@ async def custom_bot_start_handler(c: Client, cb: CallbackQuery):
         await cb.answer("❌ No token found! Please set bot token first.", show_alert=True)
         return
         
-    await cb.answer("🚀 Starting bot...", show_alert=False)
+    # await cb.answer("🚀 Starting bot...", show_alert=False)
     success = await Altruix.bot_manager.start_custom_bot(user_id, token)
     
     if success:
@@ -422,9 +422,9 @@ async def custom_bot_info_handler(c: Client, cb: CallbackQuery):
 async def action_custom_bot_stop_handler(c: Client, cb: CallbackQuery):
     """Standalone stop handler for global manager."""
     bot_id = int(cb.matches[0].group(1))
-    await cb.answer("🛑 Stopping standalone bot...", show_alert=False)
+    # await cb.answer("🛑 Stopping standalone bot...", show_alert=False)
     await Altruix.bot_manager.stop_custom_bot(bot_id)
-    await cb.answer("✅ Bot stopped!")
+    await cb.answer("✅ Bot stopped!", show_alert=True)
     await custom_bot_manager_handler(c, cb)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^action_custom_bot_delete_(\d+)$"))
@@ -433,10 +433,10 @@ async def action_custom_bot_stop_handler(c: Client, cb: CallbackQuery):
 async def action_custom_bot_delete_handler(c: Client, cb: CallbackQuery):
     """Standalone delete handler for global manager."""
     bot_id = int(cb.matches[0].group(1))
-    await cb.answer("🗑️ Deleting standalone bot...", show_alert=False)
+    # await cb.answer("🗑️ Deleting standalone bot...", show_alert=False)
     await Altruix.bot_manager.stop_custom_bot(bot_id)
     await Altruix.bot_manager.delete_token(bot_id)
-    await cb.answer("✅ Bot deleted!")
+    await cb.answer("✅ Bot deleted!", show_alert=True)
     await custom_bot_manager_handler(c, cb)
 
 # ====================== CACHE LOG MENU HANDLER ======================
@@ -503,12 +503,13 @@ async def cache_log_toggle_handler(c: Client, cb: CallbackQuery):
 @log_errors
 async def handle_custom_bot_token_input(c: Client, m: Message):
     """Robust handler for custom bot token input."""
-    if not m.from_user: return
+    if not m.from_user:
+        return m.continue_propagation()
     user_id = m.from_user.id
     state = Altruix.user_env_manager_state.get(user_id)
     
     if not state or state.get('action') != 'custom_bot_token':
-        return
+        return m.continue_propagation()
         
     input_text = (m.text or m.caption or "").strip()
     

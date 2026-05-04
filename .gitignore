@@ -158,3 +158,14 @@ AUTO*.md
 funcs.txt
 LOGS/
 tests/
+
+# Crucial Sensitive Data & Local Files
+DATABASE/
+DATA/
+temp/
+qr_login.log
+.venv_wsl/
+.antigravity/
+.gemini/
+Main/assets/bin/
+*.exe

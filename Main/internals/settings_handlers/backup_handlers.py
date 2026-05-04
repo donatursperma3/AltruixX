@@ -4,9 +4,14 @@
 
 import os
 import asyncio
+import json
+import shutil
+import logging
+import html
+import zipfile
 from Main import Altruix
 from pyrogram import Client, filters
-from pyrogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
+from pyrogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from Main.core.decorators import iuser_check, log_errors
 from Main.utils.backup_helpers import upload_db_backup
 from datetime import datetime
@@ -43,6 +48,11 @@ async def get_backup_kb(user_style=None):
             InlineKeyboardButton(f"{'➡️ ' if interval == '1w' else ''}1w", callback_data="backup_set_1w", style=user_style),
         ],
         [InlineKeyboardButton("📤 Backup Now", callback_data="backup_now", style=user_style)],
+        [
+            InlineKeyboardButton("📥 Restore DB", callback_data="backup_restore", style=user_style),
+            InlineKeyboardButton("➕ Append DB", callback_data="backup_append", style=user_style)
+        ],
+        [InlineKeyboardButton("♻️ Restart System", callback_data="backup_restart_confirm", style=user_style)],
         [InlineKeyboardButton("🔙 Back to Configs", callback_data="configs_home", style=user_style)]
     ]
     return InlineKeyboardMarkup(kb)
@@ -140,3 +150,223 @@ async def manual_backup_handler(c: Client, cb: CallbackQuery):
     
     # Reload dashboard to show updated "Last Backup"
     await backup_manager_handler(c, cb)
+
+# =========================================================================
+# RESTORE & APPEND DATABASE HANDLERS
+# =========================================================================
+import shutil
+import zipfile
+import json
+from Main.utils.file_helpers import get_db_path
+from .states import user_backup_restore_state
+
+@Altruix.bot.on_callback_query(filters.regex(r"^backup_(restore|append)$"))
+@iuser_check
+@log_errors
+async def backup_restore_append_cb(c: Client, cb: CallbackQuery):
+    action = cb.matches[0].group(1) # "restore" or "append"
+    await cb.answer()
+    
+    user_id = cb.from_user.id
+    user_backup_restore_state[user_id] = {'action': action}
+    
+    if action == "restore":
+        text = "📥 **Restore Database**\n\nSilakan kirim file `.zip` backup database Anda.\n⚠️ **PERINGATAN:** Semua data yang ada di database saat ini akan ditimpa (overwrite) oleh data dari backup!\n\nKetik `/cancel` untuk membatalkan."
+    else:
+        text = "➕ **Append Database**\n\nSilakan kirim file `.zip` backup database Anda.\nData JSON akan digabungkan, dan file yang belum ada akan ditambahkan tanpa menghapus data Anda saat ini.\n\nKetik `/cancel` untuk membatalkan."
+    
+    from pyrogram.enums import ParseMode
+    await cb.message.reply(text, parse_mode=ParseMode.MARKDOWN)
+
+# =========================================================================
+# SYSTEM RESTART CONFIRMATION
+# Note: The "Yes" button triggers "sys_ctrl_restart" which is handled in 
+# Main/internals/settings_handlers/system_handlers.py to avoid code duplication.
+# =========================================================================
+@Altruix.bot.on_callback_query(filters.regex(r"^backup_restart_confirm$"))
+@iuser_check
+@log_errors
+async def backup_restart_confirm_cb(c: Client, cb: CallbackQuery):
+    from Main.utils.file_helpers import get_user_button_style
+    from pyrogram.enums import ParseMode
+    user_style = get_user_button_style(cb.from_user.id)
+    
+    text = "⚠️ **Konfirmasi Restart System**\n\nApakah Anda yakin ingin melakukan System Restart sekarang?\nHal ini akan me-refresh seluruh cache memori ke database."
+    
+    buttons = [
+        [
+            InlineKeyboardButton("✅ Yes", callback_data="sys_ctrl_restart", style=user_style),
+            InlineKeyboardButton("❌ No", callback_data="backup_manager", style=user_style)
+        ]
+    ]
+    
+    await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.MARKDOWN)
+
+async def _merge_json(target_path, source_path):
+    """
+    Deep merge two JSON files. target_path is modified in-place.
+    """
+    def deep_merge(target, source):
+        if isinstance(target, dict) and isinstance(source, dict):
+            for key, value in source.items():
+                if key in target:
+                    target[key] = deep_merge(target[key], value)
+                else:
+                    target[key] = value
+        elif isinstance(target, list) and isinstance(source, list):
+            # For lists, we append new unique items
+            for item in source:
+                if item not in target:
+                    target.append(item)
+        else:
+            # Different types or non-containers, source overwrites
+            return source
+        return target
+
+    # Read target
+    try:
+        with open(target_path, 'r', encoding='utf-8') as f:
+            target_data = json.load(f)
+    except Exception:
+        target_data = {}
+        
+    # Read source
+    try:
+        with open(source_path, 'r', encoding='utf-8') as f:
+            source_data = json.load(f)
+    except Exception:
+        source_data = {}
+        
+    merged_data = deep_merge(target_data, source_data)
+        
+    with open(target_path, 'w', encoding='utf-8') as f:
+        json.dump(merged_data, f, indent=4)
+    return True
+
+async def process_backup_restore_input(c: Client, m: Message, state: dict):
+    from pyrogram.enums import ParseMode
+    msg = await m.reply("⏳ <b>Sedang memproses file backup...</b>", parse_mode=ParseMode.HTML)
+    user_id = m.from_user.id
+    
+    try:
+        action = state.get("action")
+        
+        if not m.document or not m.document.file_name.endswith(".zip"):
+            await msg.edit("❌ <b>File tidak valid!</b> Silakan kirim file <code>.zip</code> backup database.")
+            return
+
+        # Download ZIP
+        dl_path = await m.download()
+        
+        # Validation: Check ZIP contents
+        is_valid = False
+        try:
+            with zipfile.ZipFile(dl_path, 'r') as z:
+                # Check if it has any .json file
+                namelist = z.namelist()
+                if any(f.endswith('.json') for f in namelist):
+                    is_valid = True
+                
+                # Special check for Restore: must have altruix_local_db.json
+                if action == "restore" and "altruix_local_db.json" not in namelist:
+                    # Look for it in subdirectories too
+                    if not any(f.endswith("altruix_local_db.json") for f in namelist):
+                        await msg.edit("⚠️ <b>Peringatan:</b> File <code>altruix_local_db.json</code> tidak ditemukan dalam ZIP.\nRestore ini mungkin tidak lengkap.")
+                        await asyncio.sleep(2)
+        except Exception as ze:
+            await msg.edit(f"❌ <b>ZIP Rusak:</b> {ze}")
+            if os.path.exists(dl_path): os.remove(dl_path)
+            return
+
+        if not is_valid:
+            await msg.edit("❌ <b>ZIP tidak valid!</b> Backup harus berisi setidaknya satu file <code>.json</code>.")
+            if os.path.exists(dl_path): os.remove(dl_path)
+            return
+
+        db_dir = get_db_path("")
+        
+        if not os.path.exists(db_dir):
+            os.makedirs(db_dir, exist_ok=True)
+            
+        if action == "restore":
+            await msg.edit("📥 <b>Restoring database...</b>\nMohon tunggu sejenak.")
+            
+            # Atomic Restore: Extract and reload while holding the lock
+            if hasattr(Altruix, 'local_db') and hasattr(Altruix.local_db, 'safe_extract_and_reload'):
+                await Altruix.local_db.safe_extract_and_reload(dl_path, db_dir)
+            else:
+                # Fallback if not using LocalDatabase
+                await asyncio.to_thread(shutil.unpack_archive, dl_path, db_dir, 'zip')
+            
+            # Reload Config
+            await Altruix.config.get_sudo()
+            await Altruix.config.get_owners()
+            
+            await msg.edit("✅ <b>Database Berhasil Di-Restore!</b>\nSistem akan segera melakukan soft-restart untuk sinkronisasi seluruh session.")
+            await asyncio.sleep(2)
+            
+            # Trigger Soft Reboot
+            await Altruix.reboot(soft=False, last_msg=m)
+            
+        elif action == "append":
+            await msg.edit("➕ <b>Appending database...</b>\nMerging JSON files.")
+            
+            # Extract to temp directory
+            temp_dir = os.path.join(os.getcwd(), f"temp_append_{user_id}")
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+            os.makedirs(temp_dir, exist_ok=True)
+            
+            await asyncio.to_thread(shutil.unpack_archive, dl_path, temp_dir, 'zip')
+            
+            merged_count = 0
+            new_files = 0
+            
+            # Perform merging inside the DB lock to prevent background saves from overwriting
+            async with Altruix.local_db.lock:
+                for root, _, files in os.walk(temp_dir):
+                    for file in files:
+                        src = os.path.join(root, file)
+                        rel_path = os.path.relpath(src, temp_dir)
+                        tgt = os.path.join(db_dir, rel_path)
+                        
+                        if not os.path.exists(tgt):
+                            os.makedirs(os.path.dirname(tgt), exist_ok=True)
+                            shutil.copy2(src, tgt)
+                            new_files += 1
+                        else:
+                            if file.endswith('.json'):
+                                await _merge_json(tgt, src)
+                                merged_count += 1
+                
+                # Reload LocalDB memory immediately after merge while still locked
+                if hasattr(Altruix, 'local_db') and hasattr(Altruix.local_db, 'reload'):
+                    # We don't call reload() here because it also tries to acquire the lock.
+                    # Instead, we call the internal _load() or I should have made reload() not acquire lock if already held.
+                    # Since reload() uses "async with self._lock", it will deadlock if we call it here.
+                    # Let's use the internal _load()
+                    Altruix.local_db._load()
+            
+            # Cleanup temp
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+            await msg.edit(
+                f"✅ <b>Database Berhasil Di-Append!</b>\n"
+                f"• {new_files} file baru ditambahkan.\n"
+                f"• {merged_count} file JSON digabungkan.\n\n"
+                "Sistem akan segera melakukan soft-restart untuk sinkronisasi."
+            )
+            await asyncio.sleep(2)
+            await Altruix.reboot(soft=False, last_msg=m)
+            
+        if os.path.exists(dl_path):
+            os.remove(dl_path)
+            
+    except Exception as e:
+        import traceback
+        logger.error(f"Backup operation failed: {traceback.format_exc()}")
+        await msg.edit(f"❌ <b>Terjadi Kesalahan:</b>\n<code>{html.escape(str(e))}</code>", parse_mode=ParseMode.HTML)
+    finally:
+        if user_id in user_backup_restore_state:
+            del user_backup_restore_state[user_id]
+

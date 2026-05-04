@@ -8,7 +8,34 @@
 # All rights reserved.
 import os
 import sys
+from datetime import datetime
+
+# Import print_boot_msg from Main package (if available) or define a fallback
+try:
+    from Main import print_boot_msg
+except ImportError:
+    def print_boot_msg(msg):
+        is_debug = os.getenv("DEBUG", "false").lower() == "true"
+        if not is_debug:
+            return
+            
+        ts_color = "\033[97;48;5;141m"
+        tag_color = "\033[97;48;2;69;104;130m"
+        debug_color = "\033[97;46m"
+        reset = "\033[0m"
+        
+        ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        padded_debug = "DEBUG".center(8)
+        
+        print(
+            f"{ts_color}[{ts}]{reset} - {tag_color}[Altroid-X]{reset} "
+            f"{debug_color}|» {padded_debug} «|{reset} : » {msg}", 
+            flush=True
+        )
+
+print_boot_msg("Loading OS and Subprocess...")
 import subprocess
+print_boot_msg("Loading standard Python utilities...")
 import glob
 import html
 import time
@@ -23,6 +50,7 @@ import aiofiles
 import importlib
 import traceback
 
+print_boot_msg("Loading internal Core components...")
 import contextlib
 import multiprocessing
 from pathlib import Path
@@ -36,6 +64,7 @@ from traceback import format_exc
 from Main.core.cache import Cache
 from Main.utils.paste import Paste
 from ..utils._updater import Updater
+print_boot_msg("Loading Pyrogram and Sessions...")
 from pyrogram.session import Session
 from .config import Config, BaseConfig
 from ..utils.essentials import Essentials
@@ -46,6 +75,8 @@ from ..utils.startup_helpers import concatenate
 from Main.utils.heroku_ import prepare_heroku_url
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Union, Optional
+from Main.core.auto_ping import AutoPingManager # ✅ Auto Ping Support
+
 # --------------------
 
 from ..utils.multi_lang_helpers import get_all_files_in_path
@@ -153,6 +184,18 @@ def get_current_git_branch() -> str:
     # Format akhir: branch (commit)
     return f"{branch_name} [{commit_hash}]"
 
+class LogDemoter(logging.Filter):
+    """Demotes specific logs to DEBUG level so they can be hidden or prefixed correctly."""
+    def filter(self, record):
+        # Noise reduction: Demote library initialization and connection logs to DEBUG
+        # This ensures they only show with : » prefix and only when DEBUG=True
+        demote_list = ["pyrogram.connection", "pyrogram.crypto", "pyromod", "Altruix.LoginQR", "uvicorn", "uvicorn.error", "uvicorn.access", "apscheduler"]
+        
+        if any(target in record.name for target in demote_list):
+            record.levelno = logging.DEBUG
+            record.levelname = "DEBUG"
+        return True
+
 class TruncatedFormatter(logging.Formatter):
     """Custom formatter to truncate extremely long messages/tracebacks unless in DEBUG mode"""
     def __init__(self, fmt=None, datefmt=None, max_length=222, config=None):
@@ -160,24 +203,223 @@ class TruncatedFormatter(logging.Formatter):
         self.max_length = max_length
         self.config = config
 
+    def strip_ansi(self, text):
+        import re
+        ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+        return ansi_escape.sub('', text)
+
     def format(self, record):
+        # 1. Capture Caller Info if in DEBUG mode (Highly Optimized)
+        caller_info = ""
+        is_debug = self.config and getattr(self.config, "DEBUG", False)
+        
+        if is_debug:
+            try:
+                import sys as _sys
+                # Traverse frames to find the actual origin (excluding logging/internal wrappers)
+                f = _sys._getframe(1)
+                depth = 0
+                while f and depth < 20:
+                    module_name = f.f_globals.get('__name__', 'unknown')
+                    
+                    # Exclude the logger machinery and our own client/formatter frames
+                    if module_name in ["logging", "importlib", "asyncio.events", "threading", "Main.core.client", "Main.utils.essentials"]:
+                         f = f.f_back
+                         depth += 1
+                         continue
+                    
+                    func_name = f.f_code.co_name
+                    
+                    # Ignore generic wrappers
+                    if func_name in ["wrapper", "check_inline", "format", "log"]:
+                        f = f.f_back
+                        depth += 1
+                        continue
+    
+                    parts = module_name.split(".")
+                    # Standardize naming: types.client (Main.core.types.client)
+                    mod_display = ".".join(parts[-2:]) if len(parts) > 1 else module_name
+                    caller_info = f" [📍 {mod_display}.{func_name}]"
+                    break
+            except Exception:
+                pass
+
+        # 2. Core Formatting
+        # We must NOT modify `record.msg` directly, because the `record` object is shared
+        # among multiple handlers (like StreamHandler and FileHandler). If we mutate it,
+        # the second handler will receive a double-mutated object, causing duplications.
+        # ✅ Center-pad levelname to uniform width (longest = CRITICAL = 8 chars)
+        original_levelname = record.levelname
+        record.levelname = record.levelname.center(8)
         formatted = super().format(record)
-        # Bypassing truncation if DEBUG is True
-        if self.config and getattr(self.config, "DEBUG", False):
-            return formatted
+        record.levelname = original_levelname  # Restore original
+
+        # 3. Add structural styling to the final formatted string if it's a DEBUG log
+        if record.levelno == logging.DEBUG:
+            padded_debug = "DEBUG".center(8)
+            target = f"|» {padded_debug} «| "
+            debug_on = f"|» {padded_debug} «| : » "
+            if target in formatted and debug_on not in formatted:
+                formatted = formatted.replace(target, debug_on, 1)
+
+        # 4. Append caller_info (also manipulated purely on the output string)
+        if caller_info and caller_info not in formatted:
+            formatted = f"{formatted}{caller_info}"
+
+        # 5. Handle Truncation (unless in DEBUG mode)
+        if not is_debug and len(formatted) > self.max_length:
+            formatted = formatted[:self.max_length] + "... [TRUNCATED]"
             
-        if len(formatted) > self.max_length:
+        # ✅ FINAL CLEAN: Strip ANSI colors for plain-text logging
+        return self.strip_ansi(formatted)
+
+    def _original_format(self, record, is_debug):
+        """Helper for ColoredStreamFormatter to get raw formatted string without ANSI stripping."""
+        # This is essentially the same as format() but WITHOUT the strip_ansi call at the end.
+        # We restore the full logic here as well for the colored formatter to use.
+        caller_info = ""
+        if is_debug:
+            try:
+                import sys as _sys
+                f = _sys._getframe(2) # Adjusting depth for internal call
+                depth = 0
+                while f and depth < 20:
+                    module_name = f.f_globals.get('__name__', 'unknown')
+                    if module_name in ["logging", "importlib", "asyncio.events", "threading", "Main.core.client"]:
+                         f = f.f_back
+                         depth += 1
+                         continue
+                    func_name = f.f_code.co_name
+                    parts = module_name.split(".")
+                    mod_display = ".".join(parts[-2:]) if len(parts) > 1 else module_name
+                    caller_info = f" [📍 {mod_display}.{func_name}]"
+                    break
+            except Exception: pass
+
+        original_levelname = record.levelname
+        record.levelname = record.levelname.center(8)
+        formatted = super().format(record)
+        record.levelname = original_levelname
+
+        if record.levelno == logging.DEBUG:
+            padded_debug = "DEBUG".center(8)
+            target = f"|» {padded_debug} «| "
+            debug_on = f"|» {padded_debug} «| : » "
+            if target in formatted and debug_on not in formatted:
+                formatted = formatted.replace(target, debug_on, 1)
+
+        if caller_info and caller_info not in formatted:
+            formatted = f"{formatted}{caller_info}"
+
+        if not is_debug and len(formatted) > self.max_length:
             return formatted[:self.max_length] + "... [TRUNCATED]"
         return formatted
 
+class ColoredStreamFormatter(TruncatedFormatter):
+    """Custom formatter to add ANSI colors directly to terminal output."""
+    COLORS = {
+        # Format: \033[97m (White text) + \033[4Xm (Background color)
+        logging.DEBUG: "\033[97;46m",    # White text, Cyan BG
+        logging.INFO: "\033[97;42m",     # White text, Green BG
+        logging.WARNING: "\033[97;43m",  # White text, Yellow BG
+        logging.ERROR: "\033[97;41m",    # White text, Red BG
+        logging.CRITICAL: "\033[97;1;41m" # White text, Bold, Red BG
+    }
+    RESET = "\033[0m"
+
+    def format(self, record):
+        # ✅ ANTI-DOUBLE-TAG: If message already looks like a log, skip formatting
+        if "- [Altroid-X]" in str(record.msg) and "[" in str(record.msg):
+            return str(record.msg)
+
+        # Call _original_format instead of format to avoid strip_ansi
+        is_debug = self.config and getattr(self.config, "DEBUG", False)
+        formatted = self._original_format(record, is_debug)
+        
+        color = self.COLORS.get(record.levelno, self.RESET)
+        
+        # ✅ STYLED: Update timestamp color to Light Purple background / White text
+        # Format: \033[97;48;5;141m (White text on Light Purple BG)
+        timestamp_color = "\033[97;48;5;141m"
+        if formatted.startswith("["):
+            end_bracket = formatted.find("]")
+            if end_bracket != -1:
+                ts = formatted[1:end_bracket]
+                formatted = f"{timestamp_color}[{ts}]{self.RESET}{formatted[end_bracket+1:]}"
+
+        # ✅ STYLED: Update [Altroid-X] tag color (RGB)
+        # Background: #456882 (R:69, G:104, B:130)
+        # Text: White
+        tag_color = "\033[97;48;2;69;104;130m"
+        formatted = formatted.replace("[Altroid-X]", f"{tag_color}[Altroid-X]{self.RESET}", 1)
+
+        # ✅ Center-pad levelname for uniform-width tag matching
+        padded_level = record.levelname.center(8)
+        target = f"|» {padded_level} «|"
+        if target in formatted:
+            colored_target = f"{color}{target}{self.RESET}"
+            formatted = formatted.replace(target, colored_target, 1)
+            
+        return formatted
+
+class ForwardingLogHandler(logging.Handler):
+    """Handler to push specific logs (like keepalive) to the Log Group via the Bot Assistant."""
+    def __init__(self, altruix):
+        super().__init__()
+        self.altruix = altruix
+
+    def emit(self, record):
+        try:
+            # ✅ REFACTOR: Ensure we are not sending if config isn't loaded yet
+            # Sync check because emit is synchronous
+            if not self.altruix.config:
+                return
+                
+            val = str(getattr(self.altruix.config, "KEEPALIVE_LOG_ENABLED", "off")).lower()
+            if val != "on":
+                return
+            
+            chat_id = getattr(self.altruix.config, "LOG_CHAT_ID", None)
+            if not chat_id:
+                return
+
+            msg = record.getMessage()
+            # Detect keepalive patterns
+            if "% sending keepalive ping" in msg or \
+               "% received keepalive pong" in msg or \
+               "> PING" in msg or \
+               "< PONG" in msg:
+                
+                # Format with current formatter
+                formatted_msg = self.format(record)
+                
+                # Push to Telegram asynchronously
+                # Using the bot assistant (Altruix.bot)
+                if self.altruix.bot and self.altruix.bot.is_connected:
+                    asyncio.run_coroutine_threadsafe(
+                        self.altruix.bot.send_message(
+                            chat_id, 
+                            f"<code>{html.escape(formatted_msg)}</code>",
+                            parse_mode=enums.ParseMode.HTML
+                        ),
+                        self.altruix.loop
+                    )
+        except Exception:
+            # traceback.print_exc()
+            pass
+
 class AltruixClient:
+    CONCURRENT_SESSIONS = 10
+    MICRO_STAGGER = 0.1
+    LOG_CONCURRENCY = 5
     def __init__(self, *args, **kwargs) -> None:
         self.ourselves: List[Dict[Any, Any]] = []
         self.bot_info = None
         self.clients: List[Client] = []
         self.cmd_list = {}
         self.all_lang_strings = {}
-        self.__version__ = "0.0.10.1001H" # ✅ Global Inline Fix & Reg Fix
+        from Main.core.version import __version__ as _v
+        self.__version__ = _v  # Source of truth: Main/core/version.py
         self.upm = UPM(self)
         self.selected_lang = "english"
         self.local_lang_file = "./Main/localization"
@@ -192,6 +434,7 @@ class AltruixClient:
         )
         self.loaded_bot_cmds = False
         Session.notice_displayed = True
+        self._current_import_type = None # ✅ Track context: 'bot', 'userbot', 'addons', or 'other'
         self.cmd_list_s = []
         self.training_wheels_protocol = False
         self.config = BaseConfig
@@ -220,6 +463,7 @@ class AltruixClient:
             "per_account_enabled": {} # {user_id: bool}
         }
 
+        print_boot_msg("Migrating JSON Databases...")
         # ✅ Migrate JSON databases BEFORE initializing LocalDatabase
         try:
             from Main.utils.file_helpers import migrate_db_files
@@ -239,6 +483,7 @@ class AltruixClient:
         except Exception as e:
             print(f"Migration failed: {e}")
 
+        print_boot_msg("Initializing Local Database...")
         self.local_db = LocalDatabase()
         
         # ✅ Loop setup: Get or create the optimized loop
@@ -251,6 +496,7 @@ class AltruixClient:
         # ✅ Start background persistence for local database
         self.loop.create_task(self.local_db.start_background_saver())
 
+        print_boot_msg("Installing Global Exception Handlers...")
         # ✅ Install global exception handler for Pyrogram dispatcher
         try:
             from Main.core.exception_handler import install_exception_handler
@@ -296,8 +542,10 @@ class AltruixClient:
                 except ImportError:
                     self.log(f"🚀 Using event loop policy: {type(policy).__name__}")
 
+        print_boot_msg("Initializing Database connection...")
         self.loop.run_until_complete(self._db_setup())
         self.executor = ThreadPoolExecutor(max_workers=multiprocessing.cpu_count() * 5)
+        print_boot_msg("Loading Environment Configuration...")
         self.config = Config(self.db.env_col, loop=self.loop, executor=self.executor)
         self.log_chat = None
         self._command_help_message_data = {}
@@ -314,6 +562,8 @@ class AltruixClient:
         # State mapping for different plugins
         self.user_track_state = {} # {user_id: {'session_index': int, 'step': str, ...}}
         self.GPURGEME_STATE = {} # {unique_id: state_dict}
+        self.auto_ping = AutoPingManager(self) # ✅ Initialize Auto Ping Manager
+
         
         if sys.platform != "win32":
             try:
@@ -332,14 +582,19 @@ class AltruixClient:
         # Registry to track added handlers (prevent duplication)
         self.handler_registry = set()
         
+        self.plugins_loaded = 0
+        self.plugins_failed = 0
+        
         # ✅ Disabled Sessions Management
         self.disabled_sessions = set()
         self.load_disabled_sessions()
         
+        print_boot_msg("Starting Assistant Bot Manager...")
         # Initialize BotManager BEFORE _setup()
         from Main.core.bot_manager import BotManager
         self.bot_manager = BotManager(self)
         
+        print_boot_msg("Finalizing Engine Setup...")
         self.loop.run_until_complete(self._setup(restart=False, *args, **kwargs))
 
 
@@ -508,7 +763,7 @@ class AltruixClient:
         """
         ✅ Centralized helper to check if a user is authorized as Sudo.
         Handles both Global and Per-Account sudo settings from DB and .env.
-        Inclue Sudo Enabled/Disabled check.
+        Includes Sudo Enabled/Disabled check.
         """
         # logger.debug(f"🔍 is_sudo(user_id={user_id}, ...)") # Too slow for tight loops
         
@@ -530,7 +785,11 @@ class AltruixClient:
         else:
             # Per-Account Sudo
             if client and client in self.clients:
-                target_id = client.me.id
+                try:
+                    me = getattr(client, "me", None) or getattr(client, "myself", None) or await client.get_me()
+                    target_id = me.id
+                except:
+                    target_id = 0
                 sudo_enabled = self._sudo_settings_cache["per_account_enabled"].get(target_id, True)
             else:
                 # Default for Bot Assistant or unknown context
@@ -556,7 +815,8 @@ class AltruixClient:
             # In per-account mode, check if user is in the specific session's sudo list.
             if client and client in self.clients:
                 try:
-                    target_id = client.me.id
+                    me = getattr(client, "me", None) or getattr(client, "myself", None) or await client.get_me()
+                    target_id = me.id
                     sudo_data = await self.config.get_env(f"SUDO_USERS_{target_id}")
                     if sudo_data:
                         uids = []
@@ -575,21 +835,33 @@ class AltruixClient:
                     self.log(f"✅ is_sudo: User {user_id} found in fallback db_sudo_users cache.", level=logging.DEBUG)
                     return True
         
-        if await self.is_member_of_whitelisted_group(user_id):
-            self.log(f"✅ is_sudo: User {user_id} is a member of a whitelisted group.", level=logging.DEBUG)
+        if await self.is_member_of_whitelisted_group(user_id, client=client):
+            self.log(f"✅ is_sudo: User {user_id} is a member of a whitelisted group.", level=logging.INFO)
             return True
         
-        self.log(f"❌ is_sudo: User {user_id} NOT AUTHORIZED.", level=logging.DEBUG)
+        self.log(f"❌ is_sudo: User {user_id} NOT AUTHORIZED.", level=logging.INFO)
         return False
 
-    async def is_member_of_whitelisted_group(self, user_id: int) -> bool:
+    async def is_member_of_whitelisted_group(self, user_id: int, client: Client = None) -> bool:
         """Check if a user is a member of any whitelisted group with TTL caching."""
-        if not await self.is_group_wl_enabled():
+        wl_enabled = await self.is_group_wl_enabled()
+        if not wl_enabled:
+            self.log(f"🔴 [WL_CHECK] Group Whitelist is DISABLED. Skipping membership check for {user_id}.", level=logging.INFO)
             return False
             
         # 1. Immediate cache check (Fast Path)
         if user_id in self._sudo_membership_cache:
             return self._sudo_membership_cache[user_id]
+            
+        import time
+        if not hasattr(self, '_sudo_negative_cache'):
+            self._sudo_negative_cache = {}
+            
+        if user_id in self._sudo_negative_cache:
+            if time.time() - self._sudo_negative_cache[user_id] < 30:
+                return False
+            else:
+                del self._sudo_negative_cache[user_id]
             
         # 2. Get user-specific lock to avoid redundant concurrent probes
         if user_id not in self._membership_locks:
@@ -606,35 +878,80 @@ class AltruixClient:
                 self.log("⏰ get_group_wl_list TIMEOUT. Defaulting to empty list.", level=30)
                 group_list = []
                 
+            self.log(f"🔍 [WL_CHECK] get_group_wl_list returned {len(group_list)} groups.", level=20)
             if not group_list:
-                self._sudo_membership_cache[user_id] = False
+                self._sudo_negative_cache[user_id] = time.time()
                 return False
                 
             is_member = False
             # Try checking membership via connected clients
-            # Priority: Bot Assistant -> First 2 userbots (Limit to avoid loop lag)
-            clients_to_try = ([self.bot] if self.bot and self.bot.is_connected else []) + self.clients[:2]
+            # ✅ IMPROVED: Include ALL connected userbots and prioritize the current receiving client
+            clients_to_try = []
+            if client and client.is_connected:
+                clients_to_try.append(client)
             
-            for client in clients_to_try:
-                if not client or not client.is_connected:
+            # Add Bot Assistant if not already first
+            if self.bot and self.bot.is_connected and self.bot not in clients_to_try:
+                clients_to_try.append(self.bot)
+            
+            # Add all other connected userbots
+            for cl in self.clients:
+                if cl.is_connected and cl not in clients_to_try:
+                    clients_to_try.append(cl)
+            
+            # Fallback if list is empty
+            if not clients_to_try:
+                self.log("⚠️ [WL_CHECK] No connected clients available for membership probe.", level=30)
+                return False
+            
+            for client_probe in clients_to_try:
+                if not client_probe or not client_probe.is_connected:
                     continue
                     
                 for group in group_list:
                     chat_id = group["_id"]
                     try:
                         # ✅ Check chat member status with timeout
-                        member = await asyncio.wait_for(client.get_chat_member(int(chat_id), user_id), timeout=3)
+                        member = await asyncio.wait_for(client_probe.get_chat_member(int(chat_id), user_id), timeout=3)
                         from pyrogram.enums import ChatMemberStatus
-                        if member.status in [ChatMemberStatus.OWNER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.MEMBER]:
+                        if member.status in [ChatMemberStatus.OWNER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.MEMBER, ChatMemberStatus.RESTRICTED]:
                             is_member = True
                             break
-                    except (asyncio.TimeoutError, RPCError, Exception):
+                        else:
+                            self.log(f"❌ [WL_CHECK] User {user_id} in {chat_id} has invalid status: {member.status.name}", level=20)
+                    except Exception as e:
+                        from pyrogram.errors import PeerIdInvalid, UserNotParticipant
+                        if isinstance(e, (PeerIdInvalid, UserNotParticipant)):
+                            try:
+                                from pyrogram.raw import functions, types
+                                channel_peer = await client_probe.resolve_peer(int(chat_id))
+                                participant_peer = types.InputPeerUser(user_id=user_id, access_hash=0)
+                                r = await client_probe.invoke(functions.channels.GetParticipant(
+                                    channel=channel_peer,
+                                    participant=participant_peer
+                                ))
+                                from pyrogram.types import ChatMember
+                                parsed_member = ChatMember._parse(client_probe, r)
+                                if parsed_member.status in [ChatMemberStatus.OWNER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.MEMBER, ChatMemberStatus.RESTRICTED]:
+                                    is_member = True
+                                    break
+                                else:
+                                    self.log(f"❌ [WL_CHECK] User {user_id} in {chat_id} has invalid Raw status: {parsed_member.status.name}", level=20)
+                            except Exception as ex:
+                                self.log(f"⚠️ [WL_CHECK] Raw API fallback failed for user {user_id} in group {chat_id}: {type(ex).__name__}: {ex}", level=20)
+                        else:
+                            self.log(f"⚠️ [WL_CHECK] API error for user {user_id} in group {chat_id}: {type(e).__name__}: {e}", level=20)
                         continue
                 if is_member:
                     break
             
-            # ✅ Update TTL cache (Including False results for negative caching)
-            self._sudo_membership_cache[user_id] = is_member
+            # ✅ Update TTL cache (Positive only)
+            if is_member:
+                self._sudo_membership_cache[user_id] = True
+                self.log(f"✅ [WL_CHECK] User {user_id} AUTHORIZED via whitelisted group membership. ({len(clients_to_try)} clients probed)", level=logging.INFO)
+            else:
+                self._sudo_negative_cache[user_id] = time.time()
+                self.log(f"🔴 [WL_CHECK] User {user_id} NOT found in any of {len(group_list)} whitelisted groups. ({len(clients_to_try)} clients probed)", level=logging.INFO)
             return is_member
 
     @property
@@ -643,13 +960,13 @@ class AltruixClient:
         ✅ Dynamic Filter for Bot Assistant and other Pyrogram handlers.
         Always evaluates the LATEST sudo status instead of using a static list.
         """
-        async def func(_, __, update):
+        async def func(_, client, update):
             user = getattr(update, "from_user", None)
             if not user:
                 return False
-            # We don't have client context in a general filter easily, 
-            # so it defaults to global cache check in is_sudo.
-            return await self.is_sudo(user.id)
+            # ✅ IMPROVED: Pass the current receiving client context to is_sudo
+            # This allows is_sudo to prioritize this client for group membership checks
+            return await self.is_sudo(user.id, client=client)
         return filters.create(func)
 
     async def refresh_sudo_cache(self):
@@ -684,6 +1001,10 @@ class AltruixClient:
             # ✅ REFRESH SETTINGS CACHE (Prefix & Sudo Settings)
             self._sudo_settings_cache["apply_type"] = await self.config.get_env("SUDO_APPLY_TYPE") or "global"
             self._prefix_cache["apply_type"] = await self.config.get_env("PREFIX_APPLY_TYPE") or "global"
+            
+            # Whitelist Status Refresh
+            self._group_wl_enabled = None # Force re-fetch from DB
+            self._group_wl_cache = None
             
             # Global Settings
             enabled_raw = await self.config.get_env("SUDO_ENABLED_GLOBAL")
@@ -725,8 +1046,17 @@ class AltruixClient:
         """Check if group whitelist feature is enabled globaly."""
         if self._group_wl_enabled is not None:
             return self._group_wl_enabled
-        status = await self.config.get_env("GROUP_WL_STATUS")
-        self._group_wl_enabled = (status == "on")
+        
+        # ✅ IMPROVED: Robust check (handles string 'on'/'off', boolean True/False, and case-insensitivity)
+        raw_status = await self.config.get_env("GROUP_WL_STATUS")
+        if raw_status is None:
+            self._group_wl_enabled = False
+        elif isinstance(raw_status, bool):
+            self._group_wl_enabled = raw_status
+        else:
+            status_str = str(raw_status).lower()
+            self._group_wl_enabled = (status_str in ["on", "true", "1", "enabled"])
+            
         return self._group_wl_enabled
 
     async def toggle_group_wl(self, status: bool = None) -> bool:
@@ -734,8 +1064,14 @@ class AltruixClient:
         current = await self.is_group_wl_enabled()
         new_status = status if status is not None else not current
         val = "on" if new_status else "off"
-        await self.config.add_env_to_db("GROUP_WL_STATUS", val)
+        # ✅ FIX: Use upsert=True so the key is CREATED if it doesn't exist yet
+        await self.config.add_env_to_db("GROUP_WL_STATUS", val, upsert=True)
         self._group_wl_enabled = new_status
+        # ✅ FIX: Invalidate membership caches so changes take effect immediately
+        self._sudo_membership_cache = {}
+        if hasattr(self, '_sudo_negative_cache'):
+            self._sudo_negative_cache = {}
+        self._group_wl_cache = None
         return new_status
 
     async def is_group_whitelisted(self, chat_id: Union[int, str]) -> bool:
@@ -781,7 +1117,9 @@ class AltruixClient:
         level=logging.DEBUG,
         logger: logging.Logger = logging.getLogger(__name__),
         client: Client = None,
-        user_id: Union[int, str] = None
+        user_id: Union[int, str] = None,
+        chat_id: Union[int, str] = None,
+        message_obj: Union[Message, CallbackQuery] = None
     ) -> Optional[str]:
         if message is None:
             msg = traceback.format_exc()
@@ -805,46 +1143,26 @@ class AltruixClient:
             msg = str(message)
             
         temp_func_name = None
-        # ✅ ENHANCEMENT: Add Caller Info (Module & Function)
-        # Identify Caller (Plugin/Function) - Highly Optimized using sys._getframe
+        # ✅ ENHANCEMENT: Caller Info is now handled by TruncatedFormatter
+        # (Preserve temp_func_name logic only if needed for other prefixes)
         debug_mode = getattr(self.config, "DEBUG", False)
         caller_info = ""
         
-        # Only extract caller info if DEBUG mode is ON, or if it's an ERROR/CRITICAL log (level >= 40)
         if debug_mode or level >= 40:
             try:
                 import sys as _sys
-                # Traverse frames to find the first non-core frame
                 f = _sys._getframe(1)
                 depth = 0
                 while f and depth < 10:
-                    module_name = f.f_globals.get('__name__', 'unknown')
-                    
-                    # Exclude logging machinery itself, but allow decorators
-                    if module_name in ["logging", "importlib", "asyncio.events", "threading", "Main.core.client", "Main.utils.essentials"]:
-                         f = f.f_back
-                         depth += 1
-                         continue
-                         
-                    func_name = f.f_code.co_name
-                    
-                    # Ignore wrapper functions inside decorators
-                    if func_name in ["wrapper", "check_inline"]:
-                        f = f.f_back
-                        depth += 1
-                        continue
-    
-                    temp_func_name = func_name
-                    parts = module_name.split(".")
-                    mod_display = ".".join(parts[-2:]) if len(parts) > 1 else module_name
-                    caller_info = f" [📍 {mod_display}.{func_name}]"
+                    mn = f.f_globals.get('__name__', 'unknown')
+                    if mn in ["logging", "importlib", "asyncio.events", "threading", "Main.core.client"]:
+                        f = f.f_back; depth += 1; continue
+                    fn = f.f_code.co_name
+                    if fn in ["wrapper", "check_inline"]:
+                        f = f.f_back; depth += 1; continue
+                    temp_func_name = fn
                     break
-                    
-            except Exception:
-                pass
-                
-        if caller_info and not debug_mode: # If not in debug, just append module info
-            msg += caller_info
+            except: pass
 
 
         # ✅ ENHANCEMENT: Add Session/Account Information to terminal logs
@@ -866,18 +1184,30 @@ class AltruixClient:
         elif target_uid:
             session_info = f"[ID: {target_uid}]"
 
+        # ✅ ENHANCEMENT: Capture Chat ID if provided or from message_obj
+        chat_info = ""
+        c_id = chat_id
+        if not c_id and message_obj:
+            if hasattr(message_obj, "chat") and message_obj.chat:
+                c_id = message_obj.chat.id
+            elif hasattr(message_obj, "message") and message_obj.message:
+                c_id = message_obj.message.chat.id
+        
+        if c_id:
+            chat_info = f" [Chat: {c_id}]"
+
         # ✅ FINAL: Apply DEBUG prefix & format if mode is True
         if debug_mode:
-            func_prefix = f"📬 [{temp_func_name}] " if temp_func_name else ""
+            # func_prefix removed as it's redundant with [📍 mod.func] at the end
             session_sep = f"{session_info} | " if session_info else ""
             
-            # Combine into requested format: [DEBUG]: » session_info | 📬 [func] message [📍 mod.func]
-            msg = f"[DEBUG]: » {session_sep}{func_prefix}{msg}{caller_info}"
-
-        elif session_info:
+            # Combine into requested format: : » session_info | chat_info | message [📍 mod.func]
+            msg = f": » {session_sep}{chat_info}{msg}{caller_info}"
+        else:
             # Traditional format for non-debug logs
-            msg = f"{session_info} | {msg}"
-
+            if session_info or chat_info:
+                msg = f"{session_info}{chat_info} | {msg}"
+            
         # Suppress DEBUG level logs unless config.DEBUG is True
         if level <= logging.DEBUG and not debug_mode:
             return msg
@@ -902,15 +1232,34 @@ class AltruixClient:
 
         logging.getLogger("pyrogram").setLevel(logging.ERROR)
         
+        # ✅ DYNAMIC: Enable connection logging if Keepalive Toggle or DEBUG is ON
+        # Use a filter to force them to DEBUG level so they get the : » prefix
+        target_logger = logging.getLogger("pyrogram.connection.connection")
+        target_logger.addFilter(LogDemoter())
+        
+        keepalive_on = str(getattr(self.config, "KEEPALIVE_LOG_ENABLED", "off")).lower() == "on"
+        if self.config.DEBUG or keepalive_on:
+            target_logger.setLevel(logging.DEBUG)
+        else:
+            target_logger.setLevel(logging.ERROR)
+
+        # ✅ APScheduler: Demote "Scheduler started" and similar logs to DEBUG
+        # so they only appear with : » prefix when DEBUG=True
+        apscheduler_logger = logging.getLogger("apscheduler")
+        apscheduler_logger.addFilter(LogDemoter())
+        if self.config.DEBUG:
+            apscheduler_logger.setLevel(logging.DEBUG)
+        else:
+            apscheduler_logger.setLevel(logging.WARNING)
+
         # Define format
-        log_format = "[%(asctime)s.%(msecs)03d] - [Altroid-X] >> %(levelname)s << %(message)s"
-        date_format = "%d/%m/%Y, %H:%M:%S"
+        log_format = "[%(asctime)s.%(msecs)03d] - [Altroid-X] |» %(levelname)s «| %(message)s"
+        date_format = "%H:%M:%S"
         
         # Get root logger
         root_logger = logging.getLogger()
         
         # ✅ FIX: Don't use basicConfig here, we handle handlers manually
-        # root_logger.setLevel(logging.DEBUG if self.config.DEBUG else logging.INFO)
         new_level = logging.DEBUG if self.config.DEBUG else logging.INFO
         root_logger.setLevel(new_level)
         
@@ -922,20 +1271,34 @@ class AltruixClient:
             config=self.config
         )
         
+        # Apply Colored Formatter exclusively for Terminal logs
+        colored_formatter = ColoredStreamFormatter(
+            fmt=log_format,
+            datefmt=date_format,
+            max_length=1500,
+            config=self.config
+        )
+
+        
         # ✅ Setup handlers (File logging is new, Stream might exist from setup_early_logging)
         file_handler = logging.FileHandler("altruix.log", encoding="utf-8", mode="w")
         file_handler.setFormatter(formatter)
         root_logger.addHandler(file_handler)
+
+        # ✅ NEW: Forwarding Handler for Log Group notifications
+        forwarding_handler = ForwardingLogHandler(self)
+        forwarding_handler.setFormatter(formatter)
+        root_logger.addHandler(forwarding_handler)
         
         # Update existing stream handlers if any, or add a new one
         if not any(isinstance(h, logging.StreamHandler) for h in root_logger.handlers):
             stream_handler = logging.StreamHandler()
-            stream_handler.setFormatter(formatter)
+            stream_handler.setFormatter(colored_formatter)
             root_logger.addHandler(stream_handler)
         else:
             for h in root_logger.handlers:
                 if isinstance(h, logging.StreamHandler):
-                    h.setFormatter(formatter)
+                    h.setFormatter(colored_formatter)
                     h.setLevel(new_level)
         
         # ✅ Windows Terminal Color Support (Colorama)
@@ -1054,8 +1417,8 @@ class AltruixClient:
     def on_chat_member_updated(self, custom_filters=None, group=1, bot_mode_unsupported=False):
         def decorator(func):
             async def wrapper(client, chat_member_updated):
-                # ✅ Check if session is disabled
-                if client.me.id in self.disabled_sessions:
+                # ✅ Check if session is disabled (Bypass for Bot Assistant)
+                if client.me.id in self.disabled_sessions and client != self.bot:
                     return
                 try:
                     await func(client, chat_member_updated)
@@ -1082,9 +1445,14 @@ class AltruixClient:
             )
         def decorator(func):
             async def wrapper(client, message: Message):
-                # ✅ Check if session is disabled
-                if client.me.id in self.disabled_sessions:
-                    self.log(f"🚫 Session {client.me.id} is disabled. Dropping message {message.id}.", level=logging.DEBUG)
+                # ✅ [TRACE]: Log every message entering the system
+                client_id = getattr(client.me, "id", "Unknown")
+                client_name = getattr(client.me, "username") or getattr(client.me, "first_name") or "Unknown"
+                # self.log(f"🔍 [TRACE] Incoming Update: Msg {message.id} | Client: @{client_name} ({client_id})", level=logging.DEBUG)
+
+                # ✅ Check if session is disabled (Bypass for Bot Assistant)
+                if client_id in self.disabled_sessions and client != self.bot:
+                    self.log(f"🚫 Session @{client_name} ({client_id}) is disabled. Dropping message {message.id}.", level=logging.DEBUG)
                     return
 
                 if str(message.chat.type).lower().startswith("chattype."):
@@ -1112,8 +1480,8 @@ class AltruixClient:
     def on_edited_message(self, custom_filters, group=1, bot_mode_unsupported=False, allow_commands=False):
         def decorator(func):
             async def wrapper(client, message: Message):
-                # ✅ Check if session is disabled
-                if client.me.id in self.disabled_sessions:
+                # ✅ Check if session is disabled (Bypass for Bot Assistant)
+                if client.me.id in self.disabled_sessions and client != self.bot:
                     return
 
                 if str(message.chat.type).lower().startswith("chattype."):
@@ -1141,8 +1509,8 @@ class AltruixClient:
     def on_callback_query(self, custom_filters, group=1):
         def decorator(func):
             async def wrapper(client, cb: CallbackQuery):
-                # ✅ Check if session is disabled
-                if client.me and client.me.id in self.disabled_sessions:
+                # ✅ Check if session is disabled (Bypass for Bot Assistant)
+                if client.me and client.me.id in self.disabled_sessions and client != self.bot:
                     return
                 try:
                     await func(client, cb)
@@ -1163,8 +1531,8 @@ class AltruixClient:
     def on_deleted_messages(self, custom_filters, group=1):
         def decorator(func):
             async def wrapper(client, messages: List[Message]):
-                # ✅ Check if session is disabled
-                if client.me.id in self.disabled_sessions:
+                # ✅ Check if session is disabled (Bypass for Bot Assistant)
+                if client.me.id in self.disabled_sessions and client != self.bot:
                     return
                 try:
                     await func(client, messages)
@@ -1275,7 +1643,18 @@ class AltruixClient:
                 frame_to_use = frame.frame
                 break
         
-        file_name = os.path.basename(full_path.replace(".py", ""))
+        # ✅ Determine unique plugin name based on path to avoid collisions in subdirectories
+        # e.g. "XStory_Reader_Pro/main.py" vs "XProfile_Manager_Pro/main.py"
+        file_path_clean = full_path.replace("\\", "/")
+        parent_dir = os.path.basename(os.path.dirname(file_path_clean))
+        base_name = os.path.basename(file_path_clean).replace(".py", "")
+        
+        # If it's a generic filename like 'main.py' or 'bot_handlers.py', prepend or use the directory name
+        if base_name in ["main", "__init__", "bot_handlers"] and parent_dir not in ["userbot", "bot", "addons", "plugins", "internals", "utils"]:
+             file_name = parent_dir # Use directory name as plugin identity
+        else:
+             file_name = base_name
+
         self.plugin_categories[file_name.lower()] = category
         if is_ultroid is None:
             is_ultroid = category == "ultroid"
@@ -1324,8 +1703,8 @@ class AltruixClient:
         )
         def decorator(func):
             async def wrapper(client, message: Message):
-                # ✅ Check if session is disabled
-                if client.me and client.me.id in self.disabled_sessions:
+                # ✅ Check if session is disabled (Bypass for Bot Assistant)
+                if client.me and client.me.id in self.disabled_sessions and client != self.bot:
                     return
 
                 # ✅ Initialize defaults at scope start to avoid UnboundLocalError
@@ -1551,7 +1930,10 @@ class AltruixClient:
         utility: str = None,
         category_ovr: str = None,
     ):
-        example = html.escape(help_map.get("example", "No example available"))
+        example_raw = help_map.get("example", "No example available")
+        if isinstance(example_raw, list):
+            example_raw = "\n".join(example_raw)
+        example = html.escape(example_raw)
         help_text = html.escape(
             help_map.get("help", "Sorry, No help available for this command")
         )
@@ -1618,32 +2000,48 @@ class AltruixClient:
         handler_type=MessageHandler,
         bot_mode_unsupported=False,
     ):
-        if not self.training_wheels_protocol:
-            self.config.PREFIX_OWNER_USER
-            basic_filters = (
-                filter_s
-                or user_filters(list(cmd) if cmd else [], is_ultroid=is_ultroid, disable_sudo=disable_sudo)
-                & ~filters.via_bot
-                & ~filters.forwarded
-            )
-            for client in self.clients:
-                # ✅ DEDUPLICATION Logic for Sessions
-                img_key_val = None
-                if cmd:
-                    if isinstance(cmd, (list, tuple)): img_key_val = tuple(sorted(list(cmd)))
-                    else: img_key_val = (cmd,)
-                    
-                    registry_key = (f"session_{client.me.id if hasattr(client, 'me') else client.name}", img_key_val, handler_type.__name__)
-                    if registry_key in self.handler_registry:
-                        continue
-                    
-                    self.handler_registry.add(registry_key)
-
-                client.add_handler(
-                    handler_type(func_, filters=basic_filters), group=group
+        # ✅ CATEGORY ISOLATION Logic
+        # Determine target based on import context if available
+        import_ctx = getattr(self, '_current_import_type', None)
+        
+        # 1. Register to Userbots (Userbot Plugins & Addons)
+        # We skip registration to userbots if the plugin is explicitly for the Main Bot
+        if import_ctx in ["userbot", "addons", "other", None]:
+            if not self.training_wheels_protocol:
+                basic_filters = (
+                    filter_s
+                    or user_filters(list(cmd) if cmd else [], is_ultroid=is_ultroid, disable_sudo=disable_sudo)
+                    & ~filters.via_bot
+                    & ~filters.forwarded
                 )
-                
-        if self.bot_mode and not bot_mode_unsupported and not self.loaded_bot_cmds:
+                for client in self.clients:
+                    # Security: Skip Bot Assistant if it's accidentally in self.clients
+                    if hasattr(client, "is_bot") and client.is_bot:
+                        continue
+                        
+                    # ✅ DEDUPLICATION Logic for Sessions
+                    img_key_val = None
+                    if cmd:
+                        if isinstance(cmd, (list, tuple)): img_key_val = tuple(sorted(list(cmd)))
+                        else: img_key_val = (cmd,)
+                        
+                        registry_key = (f"session_{client.me.id if hasattr(client, 'me') else client.name}", img_key_val, handler_type.__name__)
+                        if registry_key in self.handler_registry:
+                            continue
+                        
+                        self.handler_registry.add(registry_key)
+
+                    client.add_handler(
+                        handler_type(func_, filters=basic_filters), group=group
+                    )
+        
+        # 2. Register to Bot Assistant (Bot Plugins & Main/Hybrid Plugins)
+        # We only register to the bot if it's a Bot plugin OR if bot_mode is ON for userbot plugins
+        should_register_to_bot = (import_ctx == "bot") or (
+            self.bot_mode and not bot_mode_unsupported and import_ctx in ["userbot", "addons", "other", None]
+        )
+
+        if self.bot_mode and should_register_to_bot and not self.loaded_bot_cmds:
             # ✅ DEDUPLICATION Logic for Bot Assistant
             bot_cmd_key = None
             if cmd:
@@ -1756,6 +2154,10 @@ class AltruixClient:
         await self.refresh_sudo_cache()
         
         await self.update_cache()
+        
+        # ✅ Start Auto Ping Manager background loop
+        await self.auto_ping.start()
+
 
     #
     def get_system_stats(self) -> dict:
@@ -1847,6 +2249,8 @@ class AltruixClient:
             },
             "components": {
                 "plugins": total_plugins,
+                "plugins_loaded": getattr(self, "plugins_loaded", 0),
+                "plugins_failed": getattr(self, "plugins_failed", 0),
                 "sessions": total_sessions,
                 "bot": assistant_bot,
                 "custom_bots": custom_bots
@@ -1875,7 +2279,7 @@ class AltruixClient:
         message = "<b>✅ All clients finished sending startup logs!</b>\n\n"
         
         # Mulai blockquote expandable
-        message += "<blockquote expandable>\n"
+        message += "<blockquote expandable>"
         
         # Section 1: Client Statistics
         message += "<b>📊 Client Statistics</b>\n"
@@ -1918,7 +2322,9 @@ class AltruixClient:
             message += f"• RAM: {ram_used}GB/{ram_total}GB ({ram_percent}%)\n"
             message += f"• Proses: {proc_memory}MB ({proc_threads} thread)\n"
             message += f"• Uptime: {uptime}\n"
-            message += f"• Platform: {platform_name} | Python {python_version} | Pyrogram {pyrogram_version_val}\n"
+            message += f"• Platform: {platform_name}\n"
+            message += f"• Language: Python {python_version}\n"
+            message += f"• Library: Pyrogram {pyrogram_version_val}\n"
         
         # Section 4: Resource Warning (conditional)
         if warnings:
@@ -1985,6 +2391,8 @@ class AltruixClient:
 
                 comp_data = system_stats.get('components', {})
                 total_plugins = comp_data.get('plugins', 0)
+                loaded_plugins = comp_data.get('plugins_loaded', 0)
+                failed_plugins = comp_data.get('plugins_failed', 0)
                 total_sessions = comp_data.get('sessions', 0)
                 total_bots = comp_data.get('bot', 0)
                 custom_bots = comp_data.get('custom_bots', 0)
@@ -2001,12 +2409,14 @@ class AltruixClient:
                     f"({proc_threads} thread)\n"
                     f"• Uptime: <code>{uptime}</code>\n\n"
                     f"<b>⚙️ COMPONENTS</b>\n"
-                    f"• Plugins: <code>{total_plugins}</code>\n"
+                    f"• Plugins: <code>{total_plugins}</code> (✅ {loaded_plugins} | ❌ {failed_plugins})\n"
                     f"• Sessions: <code>{total_sessions}</code>\n"
                     f"• Bots: <code>{total_bots} bot + {custom_bots} custom</code>\n\n"
                     f"<b>🌐 PLATFORM</b>\n"
-                    f"• {platform_name} | "
-                    f"Python {python_version} | Pyrogram {pyrogram_version_safe}"
+                    f"• {platform_name}\n"
+                    f"• Python {python_version}\n"
+                    f"• Pyrogram {pyrogram_version_safe}\n"
+                    f"• Altroid-X v{self.__version__}"
                 )
                
                 # Kirim ke log chat
@@ -2031,12 +2441,13 @@ class AltruixClient:
                 print(f" [🚀] Proses  : {proc_memory}MB | {proc_threads} thread")
                 print(f" [⏱] Uptime  : {uptime}")
                 print("-" * 50)
-                print(f" [⚙️] Plugins : {total_plugins}")
+                print(f" [⚙️] Plugins : {total_plugins} (✅ {loaded_plugins} | ❌ {failed_plugins})")
                 print(f" [👤] Sessions: {total_sessions}")
                 print(f" [🤖] Bots    : {total_bots} assistant + {custom_bots} custom")
                 print("-" * 50)
                 print(f" [🌐] System  : {platform_name} | Python {python_version}")
                 print(f" [📦] Pyrogram: {pyrogram_version_safe}")
+                print(f" [💎] Version : v{self.__version__}")
                 print(f"{border}\n")
 
                 print(self.banner)
@@ -2441,24 +2852,48 @@ class AltruixClient:
                 loaded_user_ids = set() # Track IDs to prevent dupes
                 self.config.SESSION_NAMES = [] # ✅ Reset session names
 
-                for count, each in enumerate(string_sessions):
-                    try:
-                        # ✅ STAGGER START: Avoid network burst by staggering connection starts
-                        if count > 0:
-                            wait_stagger = min(5, count * 0.5) 
-                            await asyncio.sleep(wait_stagger)
+                # ✅ SETTING: Get Stagger Method (default: sequential for safety)
+                stagger_method = await self.config.get_env("STAGGER_METHOD", default="sequential")
+                stagger_method = str(stagger_method).lower()
 
-                        client = await Client(
-                            f"{count}_instance_Altruix",
-                            api_id=self.config.API_ID,
-                            api_hash=self.config.API_HASH,
-                            session_string=each,
-                            workdir="cache",
-                            loop=self.loop,
-                        ).start()
-                        
-                        me = await client.get_me()
-                        
+                if stagger_method == "parallel":
+                    self.log(f"🚀 Using Parallel Loading Method (Semaphore: {self.CONCURRENT_SESSIONS})", level=logging.DEBUG)
+                    semaphore = asyncio.Semaphore(self.CONCURRENT_SESSIONS)
+                    
+                    async def load_session(count, session_str):
+                        async with semaphore:
+                            try:
+                                # Micro-stagger to avoid socket burst
+                                await asyncio.sleep(count * self.MICRO_STAGGER)
+                                
+                                client = Client(
+                                    f"{count}_instance_Altruix",
+                                    api_id=self.config.API_ID,
+                                    api_hash=self.config.API_HASH,
+                                    session_string=session_str,
+                                    workdir="cache",
+                                    loop=self.loop,
+                                )
+                                await client.start()
+                                me = await client.get_me()
+                                client.myself = me
+                                client.session_string = session_str
+                                return (count, client, me, None)
+                            except Exception as e:
+                                return (count, None, None, e)
+
+                    tasks = [load_session(i, s) for i, s in enumerate(string_sessions)]
+                    results = await asyncio.gather(*tasks)
+                    # Sort results by original index to maintain consistency
+                    results.sort(key=lambda x: x[0])
+
+                    for count, client, me, err in results:
+                        if err:
+                            self.log(self.get_string("session_unloaded").format(count + 1, total_sessions, err), level=50)
+                            self.log(self.get_string("session_invalid"))
+                            unloaded_sessions.append(string_sessions[count])
+                            continue
+
                         # ✅ DEDUPLICATE SESSIONS
                         if me.id in loaded_user_ids:
                             self.log(f"Skipping duplicate session for user {me.id}")
@@ -2467,7 +2902,6 @@ class AltruixClient:
                             
                         loaded_user_ids.add(me.id)
                         
-                        client.myself = me
                         OWNER_ID = BaseConfig.OWNER_ID
                         first = (me.first_name or "").strip()
                         last = (me.last_name or "").strip()
@@ -2478,16 +2912,59 @@ class AltruixClient:
                         self.log(
                             self.get_string("session_loaded").format(count + 1, total_sessions, user_id, full_name, username, is_owner)
                         )
-                        # ✅ Store session string for easier removal later
-                        client.session_string = each
                         self.clients.append(client)
-                        self.config.SESSION_NAMES.append(client.name) # ✅ Synchronize name
-                        # ✅ ALWAYS add to ourselves to keep indices in sync with clients
+                        self.config.SESSION_NAMES.append(client.name)
                         self.ourselves.append(me)
-                    except Exception as err:
-                        self.log(self.get_string("session_unloaded").format(count + 1, total_sessions, err), level=50)
-                        self.log(self.get_string("session_invalid"))
-                        unloaded_sessions.append(each)
+
+                else:
+                    self.log(f"🐌 Using Sequential Loading Method (Legacy)", level=logging.DEBUG)
+                    for count, each in enumerate(string_sessions):
+                        try:
+                            # ✅ STAGGER START: Avoid network burst by staggering connection starts
+                            if count > 0:
+                                wait_stagger = min(5, count * 0.5) 
+                                await asyncio.sleep(wait_stagger)
+
+                            client = await Client(
+                                f"{count}_instance_Altruix",
+                                api_id=self.config.API_ID,
+                                api_hash=self.config.API_HASH,
+                                session_string=each,
+                                workdir="cache",
+                                loop=self.loop,
+                            ).start()
+                            
+                            me = await client.get_me()
+                            
+                            # ✅ DEDUPLICATE SESSIONS
+                            if me.id in loaded_user_ids:
+                                self.log(f"Skipping duplicate session for user {me.id}")
+                                await client.stop()
+                                continue
+                                
+                            loaded_user_ids.add(me.id)
+                            
+                            client.myself = me
+                            OWNER_ID = BaseConfig.OWNER_ID
+                            first = (me.first_name or "").strip()
+                            last = (me.last_name or "").strip()
+                            full_name = f"{first} {last}".strip() or "(No Name)"
+                            username = f" @{me.username}" if me.username else ""
+                            is_owner = " [OWNER]" if me.id == OWNER_ID else ""
+                            user_id = me.id
+                            self.log(
+                                self.get_string("session_loaded").format(count + 1, total_sessions, user_id, full_name, username, is_owner)
+                            )
+                            # ✅ Store session string for easier removal later
+                            client.session_string = each
+                            self.clients.append(client)
+                            self.config.SESSION_NAMES.append(client.name) # ✅ Synchronize name
+                            # ✅ ALWAYS add to ourselves to keep indices in sync with clients
+                            self.ourselves.append(me)
+                        except Exception as err:
+                            self.log(self.get_string("session_unloaded").format(count + 1, total_sessions, err), level=50)
+                            self.log(self.get_string("session_invalid"))
+                            unloaded_sessions.append(each)
                 for bad_session in unloaded_sessions:
                     await self.config.pop_element_from_list("SESSIONS", bad_session)
                 if not self.clients:
@@ -2507,63 +2984,125 @@ class AltruixClient:
                 else:
                     from datetime import datetime
                     startup_time = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+                    
+                    # ✅ STARTUP MODE CHECK (ON/TEST)
+                    startup_mode = await self.config.get_env("STARTUP_MODE", default="on")
+                    startup_mode = str(startup_mode).lower()
+                    
                     all_clients = [self.bot] + self.clients
                     success_count = 0
                     failed_clients = []
+                    detailed_results = [] # For split log report
+                    
                     self.log(self.get_string("sending_startup").format(len(all_clients)))
-                    for client in all_clients:
-                        try:
-                            me = client.myself if hasattr(client, "myself") else await client.get_me()
-                            name = f"{me.first_name or ''} {me.last_name or ''}".strip() or "Unknown"
-                            username = f" @{me.username}" if me.username else ""
-                            startup_emojis = [
-                                "🧟", "🤔", "👩🏻‍🦳", "🛸", "💪", "🛡", "⚡️", "💥", "✨", "🌟",
-                                "🔥", "🏆", "🥇", "⭐️", "🫡", "🚀", "🤩", "😝", "💖", "🗿"
-                            ]
-                            emoji_choice = random.choice(startup_emojis)
-                            user_id = me.id
-                            client_type = "🤖 Bot" if client == self.bot else f"{emoji_choice} UB"
-                            mention_user = f'<a href="tg://user?id={user_id}">{html.escape(name)}</a>'
-                            total_user_sessions = len(self.clients)
-                            final_message = ""
-                            parse_mode = ParseMode.HTML
-                            
-                            if client == self.bot:
-                                # ✅ PERFORMANCE: Randomize "alive" to avoid spam detection
-                                alive_words = [
-                                    "Living", "Breathing", "Animate", "Lively", "Vibrant",
-                                    "Thriving", "Animated", "Vital", "Dynamic", "Active",
-                                    "Awake", "Energetic", "Flourishing", "Vigorous", "Surviving",
-                                    "Extant", "Existing", "Buoyant", "Sprightly", "Alert"
-                                ]
-                                status_word = random.choice(alive_words)
-                                base_text = f"<b>✅ Altroid-X Bot Assistant is {status_word.lower()}!</b>"
-                                final_message = (
-                                    f"<blockquote expandable>{base_text}\n"
-                                    f"<b>{client_type}: {mention_user}</b> [ <code>{user_id}</code> ]</blockquote>\n"
-                                )
-                            else:
-                                user_index = self.clients.index(client)
-                                user_display_index = user_index + 1
-                                
-                                # ✅ CHECK STARTUP STATE (OFF/DEFAULT/CUSTOM)
-                                startup_key = f"STARTUP_MSG_{user_index}"
-                                state = await self.config.get_env(startup_key)
-                                state = str(state).lower() if state else "default"
-                                
-                                if state in ["off", "false", "no", "0"]:
-                                    self.log(f"SKIP: [{client_type}] {name} startup log (OFF)")
-                                    continue
-                                
-                                if state == "custom":
-                                    custom_msg = await self.config.get_env(f"STARTUP_CUSTOM_MSG_{user_index}")
-                                    if custom_msg:
-                                        final_message, parse_mode = await self.resolve_placeholders(custom_msg, index=user_index, client=client)
+                    
+                    # ✅ PERFORMANCE: Use parallel startup log sending if method is parallel
+                    if stagger_method == "parallel":
+                        sem_logs = asyncio.Semaphore(self.LOG_CONCURRENCY) # Conservative for logs
+                        
+                        async def send_startup_parallel(client):
+                            async with sem_logs:
+                                try:
+                                    me = client.myself if hasattr(client, "myself") else await client.get_me()
+                                    name = f"{me.first_name or ''} {me.last_name or ''}".strip() or "Unknown"
+                                    username = f" @{me.username}" if me.username else ""
+                                    startup_emojis = [
+                                        "🧟", "🤔", "👩🏻‍🦳", "🛸", "💪", "🛡", "⚡️", "💥", "✨", "🌟",
+                                        "🔥", "🏆", "🥇", "⭐️", "🫡", "🚀", "🤩", "😝", "💖", "🗿"
+                                    ]
+                                    emoji_choice = random.choice(startup_emojis)
+                                    user_id = me.id
+                                    client_type = "🤖 Bot" if client == self.bot else f"{emoji_choice} UB"
+                                    mention_user = f'<a href="tg://user?id={user_id}">{html.escape(name)}</a>'
+                                    total_user_sessions = len(self.clients)
+                                    final_message = ""
+                                    parse_mode = ParseMode.HTML
+                                    
+                                    if client == self.bot:
+                                        # Randomize alive
+                                        alive_words = ["Living", "Breathing", "Animate", "Lively", "Vibrant", "Thriving", "Animated", "Vital", "Dynamic", "Active", "Awake", "Energetic", "Flourishing", "Vigorous", "Surviving", "Extant", "Existing", "Buoyant", "Sprightly", "Alert"]
+                                        status_word = random.choice(alive_words)
+                                        base_text = f"<b>✅ Altroid-X Bot Assistant is {status_word.lower()}!</b>"
+                                        final_message = f"<blockquote expandable>{base_text}\n<b>{client_type}: {mention_user}</b> [ <code>{user_id}</code> ]</blockquote>\n"
                                     else:
-                                        state = "default" # Fallback
+                                        user_index = self.clients.index(client)
+                                        user_display_index = user_index + 1
+                                        apply_type = await self.config.get_env("STARTUP_APPLY_TYPE") or "global"
+                                        if str(apply_type).lower() == "global":
+                                            state = await self.config.get_env("STARTUP_MSG_GLOBAL")
+                                            custom_key = "STARTUP_CUSTOM_MSG_GLOBAL"
+                                        else:
+                                            state = await self.config.get_env(f"STARTUP_MSG_{user_index}")
+                                            custom_key = f"STARTUP_CUSTOM_MSG_{user_index}"
+                                        
+                                        state = str(state).lower() if state else "default"
+                                        if state in ["off", "false", "no", "0"] and startup_mode == "on":
+                                            self.log(f"SKIP: [{client_type}] {name} startup log (OFF)")
+                                            detailed_results.append(f"• {name}{username}: ⚪ Skipped (OFF)")
+                                            return
+
+                                        if state == "custom":
+                                            custom_msg = await self.config.get_env(custom_key)
+                                            if custom_msg:
+                                                final_message, parse_mode = await self.resolve_placeholders(custom_msg, index=user_index, client=client)
+                                            else:
+                                                state = "default"
+                                        
+                                        if state == "default":
+                                            alive_words = ["Living", "Breathing", "Animate", "Lively", "Vibrant", "Thriving", "Animated", "Vital", "Dynamic", "Active", "Awake", "Energetic", "Flourishing", "Vigorous", "Surviving", "Extant", "Existing", "Buoyant", "Sprightly", "Alert"]
+                                            status_word = random.choice(alive_words)
+                                            base_text = f"<b>✅ Altroid-X UB [{user_display_index}/{total_user_sessions}] is {status_word.lower()}!</b>"
+                                            disable_indicator = "\n🚫 <b>Disable:</b> <code>True</code>" if self.is_session_disabled(user_id) else ""
+                                            final_message = f"<blockquote expandable>{base_text}\n<b>{client_type}: {mention_user}</b> [ <code>{user_id}</code> ]{disable_indicator}</blockquote>\n"
+                                            parse_mode = ParseMode.HTML
+
+                                    sender = client
+                                    if client != self.bot and self.is_session_disabled(me.id):
+                                        sender = self.bot_manager.get_bot(me.id)
+                                        self.log(f"REDIRECT: [{client_type}] {name} startup log via Assistant (Session Disabled)")
+
+                                    if startup_mode == "on":
+                                        if sender:
+                                            await sender.send_message(log_chat_id, final_message, parse_mode=parse_mode, link_preview_options=LinkPreviewOptions(is_disabled=True))
+                                        detailed_results.append(f"• {name}{username}: ✅ Sent")
+                                        await asyncio.sleep(0.5) # Stagger log messages
+                                    else:
+                                        detailed_results.append(f"• {name}{username}: ✅ Active (Test)")
+                                    
+                                    # Log to terminal
+                                    if client == self.bot: log_msg = f"✔ SL_MSG BY: [1/1] 🤖 Bot: {name}"
+                                    else: log_msg = f"✔ SL_MSG BY: [{self.clients.index(client)+1}/{len(self.clients)}] 🦸🏼 UB: {name}"
+                                    self.log(log_msg, level=20)
+                                    
+                                except Exception as e:
+                                    me = client.myself if hasattr(client, "myself") else None
+                                    name = me.first_name if me else "Unknown"
+                                    detailed_results.append(f"• {name}: ❌ Failed ({type(e).__name__})")
+                                    self.log(f"GAGAL: {name} → {e}", level=30)
+
+                        await asyncio.gather(*[send_startup_parallel(c) for c in all_clients])
+
+                    else:
+                        # Legacy Sequential Log Sending
+                        for client in all_clients:
+                            try:
+                                me = client.myself if hasattr(client, "myself") else await client.get_me()
+                                name = f"{me.first_name or ''} {me.last_name or ''}".strip() or "Unknown"
+                                username = f" @{me.username}" if me.username else ""
+                                startup_emojis = [
+                                    "🧟", "🤔", "👩🏻‍🦳", "🛸", "💪", "🛡", "⚡️", "💥", "✨", "🌟",
+                                    "🔥", "🏆", "🥇", "⭐️", "🫡", "🚀", "🤩", "😝", "💖", "🗿"
+                                ]
+                                emoji_choice = random.choice(startup_emojis)
+                                user_id = me.id
+                                client_type = "🤖 Bot" if client == self.bot else f"{emoji_choice} UB"
+                                mention_user = f'<a href="tg://user?id={user_id}">{html.escape(name)}</a>'
+                                total_user_sessions = len(self.clients)
+                                final_message = ""
+                                parse_mode = ParseMode.HTML
                                 
-                                if state == "default":
-                                    # ✅ Randomize "alive" for Userbot as well
+                                if client == self.bot:
+                                    # ✅ PERFORMANCE: Randomize "alive" to avoid spam detection
                                     alive_words = [
                                         "Living", "Breathing", "Animate", "Lively", "Vibrant",
                                         "Thriving", "Animated", "Vital", "Dynamic", "Active",
@@ -2571,52 +3110,163 @@ class AltruixClient:
                                         "Extant", "Existing", "Buoyant", "Sprightly", "Alert"
                                     ]
                                     status_word = random.choice(alive_words)
-                                    base_text = f"<b>✅ Altroid-X UB [{user_display_index}/{total_user_sessions}] is {status_word.lower()}!</b>"
+                                    base_text = f"<b>✅ Altroid-X Bot Assistant is {status_word.lower()}!</b>"
                                     final_message = (
                                         f"<blockquote expandable>{base_text}\n"
                                         f"<b>{client_type}: {mention_user}</b> [ <code>{user_id}</code> ]</blockquote>\n"
                                     )
-                                    parse_mode = ParseMode.HTML
+                                else:
+                                    user_index = self.clients.index(client)
+                                    user_display_index = user_index + 1
+                                    
+                                    # ✅ SYNC WITH STARTUP SETTINGS ( Respect STARTUP_APPLY_TYPE )
+                                    apply_type = await self.config.get_env("STARTUP_APPLY_TYPE") or "global"
+                                    if str(apply_type).lower() == "global":
+                                        state = await self.config.get_env("STARTUP_MSG_GLOBAL")
+                                        custom_key = "STARTUP_CUSTOM_MSG_GLOBAL"
+                                    else:
+                                        state = await self.config.get_env(f"STARTUP_MSG_{user_index}")
+                                        custom_key = f"STARTUP_CUSTOM_MSG_{user_index}"
+                                    
+                                    state = str(state).lower() if state else "default"
+                                    
+                                    # ✅ Respect individual OFF setting ONLY in ON mode
+                                    if state in ["off", "false", "no", "0"] and startup_mode == "on":
+                                        self.log(f"SKIP: [{client_type}] {name} startup log (OFF)")
+                                        detailed_results.append(f"• {name}{username}: ⚪ Skipped (OFF)")
+                                        continue
+                                    
+                                    if state == "custom":
+                                        custom_msg = await self.config.get_env(custom_key)
+                                        if custom_msg:
+                                            final_message, parse_mode = await self.resolve_placeholders(custom_msg, index=user_index, client=client)
+                                        else:
+                                            state = "default" # Fallback
+                                    
+                                    if state == "default":
+                                        # ✅ Randomize "alive" for Userbot as well
+                                        alive_words = [
+                                            "Living", "Breathing", "Animate", "Lively", "Vibrant",
+                                            "Thriving", "Animated", "Vital", "Dynamic", "Active",
+                                            "Awake", "Energetic", "Flourishing", "Vigorous", "Surviving",
+                                            "Extant", "Existing", "Buoyant", "Sprightly", "Alert"
+                                        ]
+                                        status_word = random.choice(alive_words)
+                                        base_text = f"<b>✅ Altroid-X UB [{user_display_index}/{total_user_sessions}] is {status_word.lower()}!</b>"
+                                        
+                                        # ✅ ADD DISABLE STATUS INDICATOR
+                                        disable_indicator = ""
+                                        if self.is_session_disabled(user_id):
+                                            disable_indicator = "\n🚫 <b>Disable:</b> <code>True</code>"
+                                            
+                                        final_message = (
+                                            f"<blockquote expandable>{base_text}\n"
+                                            f"<b>{client_type}: {mention_user}</b> [ <code>{user_id}</code> ]"
+                                            f"{disable_indicator}</blockquote>\n"
+                                        )
+                                        parse_mode = ParseMode.HTML
 
-                            await client.send_message(
-                                log_chat_id,
-                                final_message,
-                                parse_mode=parse_mode,
-                                link_preview_options=LinkPreviewOptions(is_disabled=True)
-                            )
-                            # delay 0.5 second
-                            await asyncio.sleep(0.5)
-                            success_count += 1
-                            if client == self.bot:
-                                # Bot logic: [1/1]
-                                log_msg = f"✔ SL_MSG BY: [1/1] 🤖 Bot: {name}"
-                            else:
-                                # Userbot logic: [current/total_userbots]
-                                userbot_index = self.clients.index(client) + 1
-                                total_userbots = len(self.clients)
-                                log_msg = f"✔ SL_MSG BY: [{userbot_index}/{total_userbots}] 🦸🏼 UB: {name}"
+                                # ✅ REDIRECTION LOGIC: If session is disabled, send via Bot Assistant
+                                sender = client
+                                if client != self.bot and self.is_session_disabled(me.id):
+                                    sender = self.bot_manager.get_bot(me.id)
+                                    self.log(f"REDIRECT: [{client_type}] {name} startup log via Assistant (Session Disabled)")
+
+                                # ✅ EXECUTION BASED ON MODE
+                                if startup_mode == "on":
+                                    if sender:
+                                        await sender.send_message(
+                                            log_chat_id,
+                                            final_message,
+                                            parse_mode=parse_mode,
+                                            link_preview_options=LinkPreviewOptions(is_disabled=True)
+                                        )
+                                    detailed_results.append(f"• {name}{username}: ✅ Sent")
+                                    # delay 0.5 second
+                                    await asyncio.sleep(0.5)
+                                else:
+                                    # TEST MODE: Only local test/ping
+                                    detailed_results.append(f"• {name}{username}: ✅ Active (Test)")
+                                
+                                success_count += 1
+                                if client == self.bot:
+                                    # Bot logic: [1/1]
+                                    log_msg = f"✔ SL_MSG BY: [1/1] 🤖 Bot: {name}"
+                                # ... existing log msg ...
+                                else:
+                                    userbot_index = self.clients.index(client) + 1
+                                    total_userbots = len(self.clients)
+                                    log_msg = f"✔ SL_MSG BY: [{userbot_index}/{total_userbots}] 🦸🏼 UB: {name}"
+                                self.log(log_msg, level=20)
+
+                            except FloodWait as e:
+                                self.log(f"FloodWait terdeteksi. Menunggu {e.value} detik...", level=30)
+                                await asyncio.sleep(e.value + 6)
+                            except Exception as e:
+                                error_type = type(e).__name__
+                                error_msg = str(e)
+                                me = client.myself if hasattr(client, "myself") else None
+                                name = me.first_name if me else "Unknown"
+                                username = f" @{me.username}" if me and me.username else ""
+                                client_type = "Bot" if client == self.bot else "User"
+                                failed_clients.append(f"• <b>{name}{username}</b> → {error_type}")
+                                detailed_results.append(f"• {name}{username}: ❌ Failed ({error_type})")
+                                self.log(f"GAGAL: [{client_type}] {name}{username} → {error_type}: {error_msg}", level=30)
+
+                    # ✅ SEND CONSOLIDATED STARTUP REPORT (SPLIT LOG SUPPORT)
+                    if log_chat_id:
+                        try:
+                            status_icon = "✅" if success_count == len(all_clients) else "⚠️"
+                            report_title = "🚀 STARTUP SESSION REPORT" if startup_mode == "on" else "🔍 STARTUP SESSION TEST REPORT"
                             
-                            self.log(log_msg, level=20)
-                        except FloodWait as e:
-                            self.log(f"FloodWait terdeteksi. Menunggu {e.value} detik...", level=30)
-                            await asyncio.sleep(e.value + 6)
-                        except Exception as e:
-                            error_type = type(e).__name__
-                            error_msg = str(e)
-                            me = client.myself if hasattr(client, "myself") else None
-                            name = me.first_name if me else "Unknown"
-                            username = f" @{me.username}" if me and me.username else ""
-                            client_type = "Bot" if client == self.bot else "User"
-                            failed_clients.append(f"• <b>{name}{username}</b> → {error_type}")
-                            self.log(f"GAGAL: [{client_type}] {name}{username} → {error_type}: {error_msg}", level=30)
+                            header = (
+                                f"{status_icon} <b>{report_title}</b>\n"
+                                f"{'━' * 25}\n"
+                                f"• <b>Total:</b> <code>{len(all_clients)}</code>\n"
+                                f"• <b>Berhasil:</b> <code>{success_count}</code>\n"
+                                f"• <b>Gagal:</b> <code>{len(all_clients) - success_count}</code>\n"
+                                f"• <b>Mode:</b> <code>{startup_mode.upper()}</code>\n\n"
+                                f"<b>Detail Sesi:</b>\n"
+                            )
+                            footer = (
+                                f"\n{'━' * 25}\n"
+                                f"• <b>Waktu:</b> <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>"
+                            )
+                            
+                            # Split logic
+                            max_chars = 3800
+                            chunks = []
+                            current_chunk = []
+                            current_len = 0
+                            
+                            for res in detailed_results:
+                                if current_len + len(res) + 1 > max_chars:
+                                    chunks.append("\n".join(current_chunk))
+                                    current_chunk = []
+                                    current_len = 0
+                                current_chunk.append(res)
+                                current_len += len(res) + 1
+                            if current_chunk:
+                                chunks.append("\n".join(current_chunk))
+                            
+                            for i, chunk in enumerate(chunks):
+                                part = f" (Part {i+1}/{len(chunks)})" if len(chunks) > 1 else ""
+                                final_report = f"<blockquote expandable>{header}{chunk}{footer}{part}</blockquote>"
+                                await self.bot.send_message(log_chat_id, final_report, parse_mode=ParseMode.HTML)
+                                if len(chunks) > 1: await asyncio.sleep(0.5)
+                                
+                        except Exception as re:
+                            self.log(f"Gagal kirim startup report: {re}", level=logging.WARNING)
+
                     self.log("=== RINGKASAN PENGIRIMAN STARTUP LOG ===")
-                    self.log(f"✔ Successfully sent: {success_count}/{len(all_clients)} client", level=20)
+                    self.log(f"✔ Successfully processed: {success_count}/{len(all_clients)} client", level=20)
                     if failed_clients:
                         self.log("✖ Failed client:", level=30)
                         for fail in failed_clients:
                             self.log(f" {fail}", level=30)
                     else:
                         self.log(self.get_string("startup_summary_success").format(log_chat_id), level=20)
+
                     if success_count > 0:
                         try:
                             branch = get_current_git_branch()
@@ -2679,7 +3329,7 @@ class AltruixClient:
             self.log(f"CRITICAL: Session initialization failed: {e}", level=50)
             raise
 
-    async def add_session(self, session: str, status: Message = None, user: User = None) -> Client:
+    async def add_session(self, session: str, status: Message = None, user: User = None, skip_reload: bool = False) -> Client:
         """
         Validates and adds a new user session.
         Checks for duplicates and connection validity BEFORE saving.
@@ -2762,14 +3412,7 @@ class AltruixClient:
             if user_id not in self.config.OWNER_USERS_ID:
                 self.ourselves.append(me)
 
-            # ✅ Load modules for this new session
-            await self.load_all_modules()
-            self.log("Userbot plugins have been loaded for new session.")
-
-            if status:
-                await status.edit("<b>Account Successfully added!</b>")
-
-            # ✅ LOG NOTIFICATION: SESI BERHASIL DITAMBAHKAN
+            # ✅ LOG NOTIFICATION: SESI BERHASIL DITAMBAHKAN (Move BEFORE load_all_modules for stability)
             try:
                 log_chat_id = int(os.getenv("LOG_CHAT_ID", self.config.OWNER_ID))
                 log_msg = (
@@ -2786,6 +3429,16 @@ class AltruixClient:
                 await self.bot.send_message(log_chat_id, log_msg, parse_mode=ParseMode.HTML)
             except Exception as le:
                 self.log(f"Failed to send success add_session log: {le}", level=logging.DEBUG)
+
+            # ✅ Load modules for this new session conditionally
+            if not skip_reload:
+                await self.load_all_modules()
+                self.log("Userbot plugins have been loaded for new session.")
+            else:
+                self.log("Skipping plugin reload as requested (will be done manually).")
+
+            if status:
+                await status.edit("<b>✅ Account Successfully added!</b>")
 
             return app
 
@@ -2864,16 +3517,20 @@ class AltruixClient:
         try:
             log_chat_id = int(os.getenv("LOG_CHAT_ID", self.config.OWNER_ID))
             log_msg = (
+                f"<blockquote expandable>"
                 "🗑 <b>SESSION BERHASIL DIHAPUS (UNLINK)</b>\n\n"
                 f"• <b>User Admin:</b> <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a> (<code>{user.id}</code>)\n"
                 f"• <b>Akun Dihapus:</b> <a href='tg://user?id={removed_session_info.id}'>{html.escape(removed_session_info.first_name or 'None')}</a> (<code>{removed_session_info.id}</code>)\n"
                 f"• <b>Username:</b> @{removed_session_info.username or 'None'}\n"
                 f"• <b>Index Sesi:</b> <code>{index + 1}</code>\n"
                 f"• <b>Waktu:</b> <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>"
+                f"</blockquote>"
             ) if user else (
+                f"<blockquote expandable>"
                 "🗑 <b>SESSION BERHASIL DIHAPUS (System)</b>\n\n"
                 f"• <b>Akun ID:</b> <code>{removed_session_info.id}</code>\n"
                 f"• <b>Waktu:</b> <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>"
+                f"</blockquote>"
             )
             await self.bot.send_message(log_chat_id, log_msg, parse_mode=ParseMode.HTML)
         except Exception as le:
@@ -3077,9 +3734,12 @@ class AltruixClient:
         last_msg: Union[Message, CallbackQuery, None] = None,
         power_hard=False,
     ):
+        self.log(f"🔄 _restart() initiated | soft={soft}, power_hard={power_hard}", level=30)
         self.loaded_bot_cmds = False
         _start = time.perf_counter()
+        self.log("📦 Calling _setup(restart=True)...", level=30)
         await self._setup(restart=True)
+        self.log("✅ _setup(restart=True) completed.", level=30)
         if not soft:
             if power_hard:
                 import subprocess
@@ -3092,20 +3752,58 @@ class AltruixClient:
                      os.execv(sys.executable, args)
                      
             if not self.training_wheels_protocol and self.clients:
-                for each in self.clients:
-                    try:
-                        await each.restart()
-                    except: pass
+                stagger_method = await self.config.get_env("STAGGER_METHOD", default="sequential")
+                stagger_method = str(stagger_method).lower()
+
+                if stagger_method == "parallel":
+                    self.log(f"🔄 Parallel Session Restart initiated (Semaphore: {self.CONCURRENT_SESSIONS})...", level=30)
+                    self.log(f"🚀 [RESTART]: Using Parallel Method", level=logging.DEBUG)
+                    semaphore = asyncio.Semaphore(self.CONCURRENT_SESSIONS)
+                    
+                    async def restart_client(client):
+                        async with semaphore:
+                            try:
+                                await client.restart()
+                            except Exception as e:
+                                self.log(f"⚠️ Error restarting session: {e}", level=30)
+                    
+                    tasks = [restart_client(each) for each in self.clients]
+                    await asyncio.gather(*tasks)
+                else:
+                    self.log(f"🔄 Sequential Session Restart initiated...", level=30)
+                    self.log(f"🐌 [RESTART]: Using Sequential Method", level=logging.DEBUG)
+                    for each in self.clients:
+                        try:
+                            await each.restart()
+                        except: pass
             await self.bot.restart()
             self.start_time = time.time()
         await self.load_all_modules()
         time_took = Essentials.get_readable_time(time.perf_counter() - _start)
         msg = f"<b>Altruix has been {'reloaded' if soft else 'restarted'}!</b>\nTook {time_took}."
         await self.bot.send_message(self.config.OWNER_ID, msg)
-        if isinstance(last_msg, Message):
-            await last_msg.edit(msg)
-        elif isinstance(last_msg, CallbackQuery):
-            await last_msg.edit_message_text(msg)
+        if last_msg:
+            try:
+                if isinstance(last_msg, Message):
+                    await self.bot.edit_message_text(
+                        chat_id=last_msg.chat.id,
+                        message_id=last_msg.id,
+                        text=msg
+                    )
+                elif isinstance(last_msg, CallbackQuery):
+                    if last_msg.inline_message_id:
+                        await self.bot.edit_message_text(
+                            inline_message_id=last_msg.inline_message_id,
+                            text=msg
+                        )
+                    elif last_msg.message:
+                        await self.bot.edit_message_text(
+                            chat_id=last_msg.message.chat.id,
+                            message_id=last_msg.message.id,
+                            text=msg
+                        )
+            except Exception as e:
+                self.log(f"Failed to edit last_msg after restart: {e}", level=logging.DEBUG)
         self.log(
             f"Altruix have been {'reloaded' if soft else 'restarted'} successfully!"
         )
@@ -3142,7 +3840,7 @@ class AltruixClient:
     async def reboot(
         self, soft=False, last_msg: Union[Message, CallbackQuery, None] = None
     ):
-        self.log(f"Received signal for {'Reload' if soft else'Restart'}!", level=30)
+        self.log(f"🔄 reboot() called | soft={soft}", level=30)
         await asyncio.sleep(2)
         self.loop.create_task(self._restart(soft=soft, last_msg=last_msg))
 
@@ -3178,26 +3876,39 @@ class AltruixClient:
                         import_path = import_path[:-3]
                     
                     # Identify category based on the directory structure
-                    if "userbot" in import_path:
-                        import_type = "userbot"
-                    elif "addons" in import_path:
-                        import_type = "addons"
-                    elif ".bot" in import_path or "Main.plugins.bot" in import_path:
-                        import_type = "bot"
+                    if "userbot" in rel_path:
+                        import_type_raw = "userbot"
+                    elif "addons" in rel_path:
+                        import_type_raw = "addons"
+                    elif ".bot" in rel_path or "Main.plugins.bot" in rel_path:
+                        import_type_raw = "bot"
+                    elif "Main.utils" in rel_path or "Main/utils" in name:
+                        import_type_raw = "utils"
+                    elif "Main.internals" in rel_path or "Main/internals" in name:
+                        import_type_raw = "internals"
                     else:
-                        import_type = "other"
+                        import_type_raw = "other"
 
                     spec = importlib.util.spec_from_file_location(import_path, name)
                     load = importlib.util.module_from_spec(spec)
                     load.Altruix = self
                     load.bot = self.bot
                     load.asyncio = asyncio
-                    if import_type == "userbot":
+                    
+                    if import_type_raw == "userbot":
                         import_type = "U"
-                    elif import_type == "bot":
+                    elif import_type_raw == "bot":
                         import_type = "A"
-                    elif import_type == "addons":
+                    elif import_type_raw == "addons":
                         import_type = "X"
+                    elif import_type_raw == "utils":
+                        import_type = "T"
+                    elif import_type_raw == "internals":
+                        import_type = "I"
+                    else:
+                        import_type = "M"
+
+                    if import_type == "X":
                         # ✅ PERFORMANCE FIX: Use cached value instead of querying DB
                         if not getattr(self, '_ultroid_addons_enabled', False):
                             # Skip loading if disabled
@@ -3219,21 +3930,25 @@ class AltruixClient:
                             load.event = UltroidEvent
                         except Exception as bridge_err:
                             self.log(f"Failed to inject Ultroid bridge: {bridge_err}", level=logging.ERROR)
-                    else:
-                        import_type = "M"
+                    
                     try:
                         # ✅ Trigger Dynamic Altruix Injection for Ultroid Addons
                         is_ultroid = import_type == "X"
                         if is_ultroid and hasattr(sys, '_altruix_inject_addon'):
                             sys._altruix_inject_addon(load)
                         
-                        # ✅ Recursive injection for sub-packages
-                        # If this module has a __path__ (is a package), we might need to inject symbols 
-                        # into its children as well when they are loaded, but for now injecting into the 
-                        # main module handles the 'from . import ...' cases effectively.
-                            
-                        spec.loader.exec_module(load)
+                        # Set context for decorators calling custom_add_handler
+                        original_ctx = getattr(self, '_current_import_type', None)
+                        self._current_import_type = import_type_raw
+                        try:
+                            spec.loader.exec_module(load)
+                        finally:
+                            # Restore context (handles nested imports if any)
+                            self._current_import_type = original_ctx
+
                         sys.modules[import_path] = load
+                        if import_type_raw in ["userbot", "bot", "addons"]:
+                            self.plugins_loaded += 1
                         end_time = round(time.time() - start_time, 2)
                         if log:
                             string_load = (
@@ -3254,6 +3969,8 @@ class AltruixClient:
                                 p_msg=msg,
                             )
                     except Exception as err:
+                        if import_type_raw in ["userbot", "bot", "addons"]:
+                            self.plugins_failed += 1
                         import traceback
                         full_trace = traceback.format_exc()
                         error_summary = f"[{import_type}] CRITICAL << Failed To Load Plugin: {plugin_name}"
@@ -3271,6 +3988,8 @@ class AltruixClient:
                             print(f"\n{full_error_log}\n", flush=True)
                         continue
             except (OSError, UnicodeDecodeError) as e:
+                if any(x in name for x in ["userbot", ".bot", "addons", "plugins"]):
+                    self.plugins_failed += 1
                 error_msg = f"Failed to read plugin file '{name}': {e}"
                 await self.custom_log(error_msg, level=50, p_msg=msg)
                 print(f"\n❌ {error_msg}\n", flush=True)
@@ -3292,13 +4011,26 @@ class AltruixClient:
 
     async def load_all_modules(self):
         self.log("Starting to load all modules...")
+        self.plugins_loaded = 0
+        self.plugins_failed = 0
         try:
             # ✅ PERFORMANCE FIX: Cache LOAD_ULTROID_ADDONS check once
             ultroid_addons_enabled = await self.config.get_env("LOAD_ULTROID_ADDONS", default="off")
             self._ultroid_addons_enabled = str(ultroid_addons_enabled).lower() in ("on", "true", "1", "yes")
             
-            await self.load_from_directory("Main/utils/*.py", log=False)
-            await self.load_from_directory("Main/internals/*.py", log=False)
+            await self.load_from_directory("Main/utils/*.py", log=True)
+            await self.load_from_directory("Main/internals/*.py", log=True)
+            
+            # ✅ NEW: Load settings_handlers explicitly to show them in terminal logs
+            await self.load_from_directory("Main/internals/settings_handlers/*.py", log=True)
+            
+            # ✅ DEBUG: Log core modules if DEBUG=True
+            if getattr(self.config, "DEBUG", False):
+                self.log("DEBUG: Core modules are pre-loaded (client, database, config, etc.)", level=logging.DEBUG)
+                for core_file in glob.glob("Main/core/*.py"):
+                    core_name = os.path.basename(core_file)
+                    self.log(f"Core Module: {core_name.center(30)} [SYSTEM]", level=logging.DEBUG)
+
             self.log("All internal modules have been loaded.")
             self.log("Preparing to load all plugins.\n")
             # Setup Ultroid Shims *only if* addons enabled
@@ -3309,15 +4041,15 @@ class AltruixClient:
                 except Exception as e:
                     self.log(f"Failed to setup Ultroid shims: {e}", level=logging.ERROR)
 
-            await self.load_from_directory("Main/plugins/bot/*.py", log=True)
+            await self.load_from_directory("Main/plugins/bot/**/*.py", log=True, recursive=True)
             if self.training_wheels_protocol:
                 self.log("Userbot Plugins will be disabled due to [TWP]!")
                 if self.bot_mode:
-                    await self.load_from_directory("Main/plugins/userbot/*.py", log=False)
+                    await self.load_from_directory("Main/plugins/userbot/**/*.py", log=False, recursive=True)
                     self.log("BOT_MODE: ON - Loaded all possible Modules as BOT.")
                     self.loaded_bot_cmds = True
             else:
-                await self.load_from_directory("Main/plugins/userbot/*.py", log=True)
+                await self.load_from_directory("Main/plugins/userbot/**/*.py", log=True, recursive=True)
                 if self.bot_mode:
                     self.log("BOT_MODE: ON - Loaded all possible Modules as BOT.")
                     self.loaded_bot_cmds = True
@@ -3409,7 +4141,7 @@ class AltruixClient:
                             cli.on = lambda *args, **kwargs: lambda f: f
                     await self.load_from_directory("Main/plugins/addons/**/*.py", log=True, recursive=True)
                 
-                await self.load_from_directory("User/userbot/*.py", log=True)
+                await self.load_from_directory("User/userbot/**/*.py", log=True, recursive=True)
                 
                 self.log("All plugins have been loaded.")
                 self.prepare_help()
@@ -3472,13 +4204,14 @@ class AltruixClient:
                     if not self._command_help_message_data[plugin_name]:
                         self._command_help_message_data[plugin_name] += ""
                     else:
-                        self._command_help_message_data[plugin_name] += "\n"
+                        # Ensures exactly one blank line between different command blocks
+                        self._command_help_message_data[plugin_name] += "\n\n"
                     self._command_help_message_data[plugin_name] += "<b>➤ Command :</b> "
                     for _cmd_str in commands_:
                         self._command_help_message_data[
                             plugin_name
                         ] += f"<code>{display_pfx}{_cmd_str}</code> / "
-                    # Remove trailing " / " and add newline
+                    # Remove trailing " / " and add single newline
                     self._command_help_message_data[plugin_name] = (
                         self._command_help_message_data[plugin_name][:-3] + "\n"
                     )
@@ -3516,24 +4249,24 @@ class AltruixClient:
                     e_help = smart_escape(help_text)
                     self._command_help_message_data[
                         plugin_name
-                    ] += f"   \r<b>➥ Help :</b>  <i>{e_help}</i>\n"
+                    ] += f"<b>➥ Help :</b>  {e_help}\n"
                     
                     if description_text:
                         e_desc = smart_escape(description_text)
                         self._command_help_message_data[
                             plugin_name
-                        ] += f"   \r<b>➥ Description :</b>\n<i>{e_desc}</i>\n"
+                        ] += f"<b>➥ Description :</b> {e_desc}\n"
                     
                     if utility_text:
                         e_util = smart_escape(utility_text)
                         self._command_help_message_data[
                             plugin_name
-                        ] += f"   \r<b>➥ Utility :</b>  <code>{e_util}</code>\n"
+                        ] += f"<b>➥ Utility :</b>  <code>{e_util}</code>\n"
                     if usage_text:
                         e_usage = smart_escape(usage_text)
                         self._command_help_message_data[
                             plugin_name
-                        ] += f"   \r<b>➥ Usage :</b>  <code>{e_usage}</code>\n"
+                        ] += f"<b>➥ Usage :</b>  <code>{e_usage}</code>\n"
                     if example_text:
                         # ✅ Auto-repair prefix: strip existing prefixes from example/usage to avoid double prefix
                         punctuation = ".!/? "
@@ -3544,23 +4277,21 @@ class AltruixClient:
                         e_example = smart_escape(example_render)
                         self._command_help_message_data[
                             plugin_name
-                        ] += f"   \r<b>➥ Example :</b>  <code>{e_example}</code>\n"
+                        ] += f"<b>➥ Example :</b>  <code>{e_example}</code>"
                     
                     if note_text:
                         e_note = smart_escape(note_text)
                         self._command_help_message_data[
                             plugin_name
-                        ] += f"   \r<b>➥ Note :</b>\n<i>{e_note}</i>\n"
+                        ] += f"\n<b>➥ Note :</b> {e_note}\n"
                     
                     # ✅ Support for 'detail' key
                     if detail_text := each_command_data.get("detail"):
-                        # detail might contain pre-formatted HTML, but for safety with user input 
-                        # we should ensure it doesn't break the parent tags. 
-                        # However, since most plugins expect HTML to work here, we'll keep it as-is 
-                        # but ensure 'usage' and 'user_args' are safe.
+                        # detail might contain pre-formatted HTML.
+                        # We add a newline before it for separation from example/usage.
                         self._command_help_message_data[
                             plugin_name
-                        ] += f"\n{detail_text}\n"
+                        ] += f"\n\n{detail_text.strip()}"
                     if user_args:
                         self._command_help_message_data[plugin_name] += "\r\n<b>➥ Arguments:</b>\n"
                         if isinstance(user_args, list):

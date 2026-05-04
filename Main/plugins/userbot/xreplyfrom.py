@@ -13,7 +13,7 @@ def _get_plugin_name():
 
 plugin_name = _get_plugin_name()
 __plugin_name__ = "xreplyfrom"
-PLUGIN_VERSION = "0.0.220-D"
+PLUGIN_VERSION = "0.0.221-D"
 
 # Database Helpers
 async def get_rf_logging_setting(user_id: int):
@@ -258,7 +258,8 @@ async def reply_from_handler(client: Client, message: RawMessage):
         source_msg = await client.get_messages(target_chat, message_id)
         if not source_msg or source_msg.empty:
             Altruix.log(f"📌 [RF DEBUG] Source Message EMPTY or NOT FOUND.", level=20)
-            await status_msg.edit("❌ <b>Error:</b> Source message not found or is empty.")
+            if status_msg:
+                await status_msg.edit("❌ <b>Error:</b> Source message not found or is empty.")
             return
             
         # Log media info
@@ -271,7 +272,7 @@ async def reply_from_handler(client: Client, message: RawMessage):
         uid = message.from_user.id
         logging_on = await get_rf_logging_setting(uid)
         
-        if logging_on and Altruix.log_chat:
+        if logging_on and Altruix.log_chat and source_msg.chat.id != Altruix.log_chat:
             await asyncio.sleep(1.0)
             try:
                 try:
@@ -334,7 +335,8 @@ async def reply_from_handler(client: Client, message: RawMessage):
                 reply_to_message_id=reply_id,
                 parse_mode=enums.ParseMode.HTML
             )
-            await status_msg.delete()
+            if status_msg:
+                await status_msg._delete()
             return
 
         # Logic Flow Control: If Method 1 is skipped or fails, proceed to Method 2.
@@ -396,7 +398,8 @@ async def reply_from_handler(client: Client, message: RawMessage):
             
             if method_1_done:
                 Altruix.log(f"📌 [RF DEBUG] Method 1 (FileID/Copy) SUCCESS.", level=20)
-                await status_msg.delete()
+                if status_msg:
+                    await status_msg._delete()
                 return
 
         except Exception as method1_e:
@@ -404,10 +407,11 @@ async def reply_from_handler(client: Client, message: RawMessage):
             error_msg = str(method1_e)
             is_restricted = "CHAT_FORWARDS_RESTRICTED" in error_msg
             status_text = "🧨 <b>Protected content.</b> Attempting robust bypass..." if is_restricted else "⚠️ <b>Instant send failed.</b> Attempting bypass..."
-            try:
-                await status_msg.edit(status_text)
-            except Exception:
-                pass
+            if status_msg:
+                try:
+                    await status_msg.edit(status_text)
+                except Exception:
+                    pass
 
         # Attempt Method 2: Download & Upload Bypass (with Thumbnail fix)
         if not method_1_done and source_msg.media:
@@ -417,7 +421,8 @@ async def reply_from_handler(client: Client, message: RawMessage):
             progress_task.cancel()
             if not temp_path:
                 Altruix.log(f"📌 [RF DEBUG] Method 2: Download FAILED.", level=20)
-                await status_msg.edit("❌ <b>Error:</b> Gagal mengunduh media untuk bypass.")
+                if status_msg:
+                    await status_msg.edit("❌ <b>Error:</b> Gagal mengunduh media untuk bypass.")
                 return
                 
             Altruix.log(f"📌 [RF DEBUG] Method 2: Downloaded to {temp_path}", level=20)
@@ -464,7 +469,7 @@ async def reply_from_handler(client: Client, message: RawMessage):
                     await client.send_photo(message.chat.id, temp_path, caption=final_caption, reply_to_message_id=reply_id, parse_mode=enums.ParseMode.HTML)
                 
                 # ROBUST BACKUP Log
-                if logging_on and Altruix.log_chat:
+                if logging_on and Altruix.log_chat and source_msg.chat.id != Altruix.log_chat:
                     try:
                         caption_log = f"📥 <b>Restricted Content Log</b>\nSource: <code>{target_chat}</code>\nTask ID: <code>{message.id}</code>"
                         if source_msg.photo:
@@ -482,10 +487,11 @@ async def reply_from_handler(client: Client, message: RawMessage):
                 if thumb_path and os.path.exists(thumb_path):
                     os.remove(thumb_path)
         
-        await status_msg.delete()
+        if status_msg:
+            await status_msg._delete()
 
     except Exception as e:
-        if Altruix.log_chat and ('source_msg' in locals() and source_msg and not source_msg.empty):
+        if Altruix.log_chat and ('source_msg' in locals() and source_msg and not source_msg.empty) and source_msg.chat.id != Altruix.log_chat:
              try:
                  try: await source_msg.copy(Altruix.log_chat)
                  except: await source_msg.forward(Altruix.log_chat)
@@ -493,8 +499,11 @@ async def reply_from_handler(client: Client, message: RawMessage):
              except Exception: backup_info = ""
         else: backup_info = ""
 
-        try: await status_msg.edit(f"❌ <b>Bypass Critical Error:</b> {str(e)}{backup_info}")
-        except Exception: await message.reply(f"❌ <b>Bypass Critical Error:</b> {str(e)}{backup_info}")
+        if status_msg:
+            try: await status_msg.edit(f"❌ <b>Bypass Critical Error:</b> {str(e)}{backup_info}")
+            except Exception: await message.reply(f"❌ <b>Bypass Critical Error:</b> {str(e)}{backup_info}")
+        else:
+            await message.reply(f"❌ <b>Bypass Critical Error:</b> {str(e)}{backup_info}")
 
 @Altruix.register_on_cmd(
     cmd=["replyfroms", "replyfromscap", "replyfromscustom", "replyfromscust"],
@@ -655,14 +664,16 @@ async def reply_from_story_handler(client: Client, message: RawMessage):
 
         story = await client.get_stories(target, story_id)
         if not story:
-            await status_msg.edit("❌ <b>Story not found/expired.</b>")
+            if status_msg:
+                await status_msg.edit("❌ <b>Story not found/expired.</b>")
             return
         
         progress_task = create_progress_task(status_msg)
         file_path = await client.download_media(story)
         progress_task.cancel()
         if not file_path:
-            await status_msg.edit("❌ <b>Download failed.</b>")
+            if status_msg:
+                await status_msg.edit("❌ <b>Download failed.</b>")
             return
             
         thumb_path = None
@@ -677,7 +688,7 @@ async def reply_from_story_handler(client: Client, message: RawMessage):
         logging_on = await get_rf_logging_setting(uid)
         if logging_on:
             await asyncio.sleep(1.0) 
-            if Altruix.log_chat:
+            if Altruix.log_chat and story.chat.id != Altruix.log_chat:
                 try:
                     await client.forward_messages(Altruix.log_chat, target, story_id)
                 except Exception:
@@ -734,20 +745,28 @@ async def reply_from_story_handler(client: Client, message: RawMessage):
                      backup_info = ""
              else:
                  backup_info = ""
-             await status_msg.edit(f"❌ <b>Send Failed:</b> {e}{backup_info}")
+             if status_msg:
+                 await status_msg.edit(f"❌ <b>Send Failed:</b> {e}{backup_info}")
+             else:
+                 await message.reply(f"❌ <b>Send Failed:</b> {e}{backup_info}")
              return
         finally:
             import os
             if file_path and os.path.exists(file_path): os.remove(file_path)
             if thumb_path and os.path.exists(thumb_path): os.remove(thumb_path)
 
-        await status_msg.delete()
+        if status_msg:
+            await status_msg._delete()
 
     except Exception as e:
-        try:
-            await status_msg.edit(f"❌ <b>Error:</b> {e}")
-        except Exception:
-            await message.reply(f"❌ <b>Error:</b> {e}")
+        Altruix.log(f"📌 [Story DEBUG] Handler CRITICAL: {e}")
+        if status_msg:
+            try: 
+                await status_msg.edit(f"❌ <b>Story Error:</b> {str(e)}")
+            except Exception: 
+                await message.reply(f"❌ <b>Story Error:</b> {str(e)}")
+        else:
+            await message.reply(f"❌ <b>Story Error:</b> {str(e)}")
 
 # ============================================================================
 # 🔥 RF LOGGING COMMANDS
