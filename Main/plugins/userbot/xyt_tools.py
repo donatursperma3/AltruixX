@@ -6,7 +6,7 @@
 #
 # All rights reserved.
 
-PLUGIN_VERSION = "1.0.124"
+PLUGIN_VERSION = "1.0.125"
 
 import hashlib
 import time
@@ -144,4 +144,12 @@ async def ytdl_cmd(c: Client, m: Message):
     except Exception:
         err_msg = traceback.format_exc()
         Altruix.log(f"YTDL Command Error:\n{err_msg}", level=40)
-        await status.edit(f"❌ <b>Error:</b> <code>{err_msg.splitlines()[-1]}</code>")
+        
+        # Cleaner error message for users
+        clean_err = err_msg.splitlines()[-1]
+        if "truncated" in clean_err.lower() or "incomplete youtube id" in clean_err.lower():
+            clean_err = "URL YouTube tidak lengkap atau terpotong. Pastikan Anda menyalin URL dengan benar."
+        elif "yt-dlp error" in clean_err.lower():
+            clean_err = clean_err.split("YT-DLP Error: ")[-1]
+            
+        await status.edit(f"❌ <b>Error:</b> <code>{clean_err}</code>")

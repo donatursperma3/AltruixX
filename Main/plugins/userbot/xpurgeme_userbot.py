@@ -1,4 +1,4 @@
-PLUGIN_VERSION = "0.0.442"
+PLUGIN_VERSION = "0.0.444"
 
 """
 Purgeme Interactive Plugin for Altruix Userbot
@@ -9,6 +9,7 @@ import asyncio
 import time
 import traceback
 from pyrogram import Client, filters, enums
+from pyrogram.raw import functions, types
 from pyrogram.errors import FloodWait, MessageNotModified
 from Main import Altruix
 from datetime import datetime, timedelta
@@ -17,6 +18,7 @@ from Main.internals.settings import send_log_notification
 from Main.utils.essentials import Essentials
 from Main.utils.file_helpers import get_user_button_style
 from Main.core.decorators import log_errors
+from pyrogram.raw.functions.channels import GetAdminedPublicChannels
 
 # Initialize shared state storage if not exists
 if not hasattr(Altruix, "PURGEME_STATE"):
@@ -228,7 +230,8 @@ async def collect_user_messages_optimized(
     min_id: int = 0,
     max_id: int = 0,
     min_days: int = 0,
-    max_days: int = 0
+    max_days: int = 0,
+    from_id: str = "me"
 ):
     """
     OPTIMIZED V6: Collect user's message IDs using search_messages then deep scans.
@@ -236,7 +239,7 @@ async def collect_user_messages_optimized(
     """
     collected_ids = []
     scanned_total = 0
-    Altruix.log(f"Purgeme Collection Starting (mode={mode}, total={total_user_msgs}, offset={offset})", level=30)
+    Altruix.log(f"Purgeme Collection Starting (mode={mode}, total={total_user_msgs}, offset={offset}, from={from_id})", level=30)
     
     try:
         # STEP 1: Method 1 - search_messages (Fastest)
@@ -248,11 +251,11 @@ async def collect_user_messages_optimized(
             search_offset = max(0, total_user_msgs - limit - offset)
             Altruix.log(f"Purgeme: Oldest mode adjusted offset to {search_offset}", level=30)
 
-        Altruix.log(f"Purgeme Method 1: Searching for user {user_id} in {chat_id} (search_offset={search_offset})", level=30)
+        Altruix.log(f"Purgeme Method 1: Searching for sender {from_id} in {chat_id} (search_offset={search_offset})", level=30)
         try:
             await client.resolve_peer(chat_id)
             
-            async for msg in client.search_messages(chat_id=chat_id, from_user=user_id, limit=max_scan, offset=search_offset):
+            async for msg in client.search_messages(chat_id=chat_id, from_user=from_id, limit=max_scan, offset=search_offset):
                 # Check for stop signal
                 state = Altruix.PURGEME_STATE.get(unique_id)
                 if state and state.get("stop_event") and state["stop_event"].is_set():
@@ -286,7 +289,17 @@ async def collect_user_messages_optimized(
                     # Incremental delay for anti-flood during deep scan
                     await asyncio.sleep(0.01)
                     
-                    if (msg.from_user and msg.from_user.id == user_id) or (msg.chat and msg.chat.id == user_id):
+                    # Target identification
+                    is_match = False
+                    if from_id == "me":
+                        if (msg.from_user and msg.from_user.id == user_id) or (msg.chat and msg.chat.id == user_id):
+                            is_match = True
+                    else:
+                        # Channel sender
+                        if msg.sender_chat and msg.sender_chat.id == from_id:
+                            is_match = True
+
+                    if is_match:
                         if _matches_criteria(msg, target_types, min_id, max_id, min_days, max_days):
                             if msg.id not in collected_ids:
                                 collected_ids.append(msg.id)
@@ -314,7 +327,17 @@ async def collect_user_messages_optimized(
                     # Anti-flood throttling
                     await asyncio.sleep(0.01)
                     
-                    if (msg.from_user and msg.from_user.id == user_id) or (msg.chat and msg.chat.id == user_id):
+                    # Target identification
+                    is_match = False
+                    if from_id == "me":
+                        if (msg.from_user and msg.from_user.id == user_id) or (msg.chat and msg.chat.id == user_id):
+                            is_match = True
+                    else:
+                        # Channel sender
+                        if msg.sender_chat and msg.sender_chat.id == from_id:
+                            is_match = True
+
+                    if is_match:
                         if _matches_criteria(msg, target_types, min_id, max_id, min_days, max_days):
                             if msg.id not in collected_ids:
                                 collected_ids.append(msg.id)
@@ -334,6 +357,27 @@ async def collect_user_messages_optimized(
         Altruix.log(f"Purgeme Collection Fatal Error (L264): {e}\n{traceback.format_exc()}")
         return collected_ids
     
+    # Apply Keep Recent (Safety Buffer) filter
+    keep_recent = state.get("keep_recent", 0)
+    if keep_recent > 0 and collected_ids:
+        try:
+            # Get the ID of the N-th newest message in the chat history
+            # This identifies the "safe zone" boundary
+            recent_ids = []
+            async for m in client.get_chat_history(chat_id, limit=keep_recent):
+                recent_ids.append(m.id)
+            
+            if recent_ids:
+                safe_boundary = min(recent_ids)
+                # Remove any IDs that are within the recent boundary
+                original_count = len(collected_ids)
+                collected_ids = [mid for mid in collected_ids if mid < safe_boundary]
+                skipped = original_count - len(collected_ids)
+                if skipped > 0:
+                    Altruix.log(f"Purgeme: Keep Recent filter applied. Skipped {skipped} newest messages.")
+        except Exception as e:
+            Altruix.log(f"Purgeme: Error applying Keep Recent filter: {e}")
+
     return collected_ids
 
 
@@ -359,7 +403,9 @@ The command triggers an interactive UI via your Assistant Bot.
 • <b>ID Range</b>: Filter by specific message ID bounds (Min/Max ID).
 • <b>Date Range</b>: Filter by message age in days (Min/Max Date).
 • <b>Max Scan</b>: Limit total messages searched during collection phase.
-• <b>Stealth</b>: Toggle completion reports in PM/Logs.
+• <b>Notif</b>: Toggle completion reports in current chat (Auto-delete in 9s).
+• <b>From</b>: Select sender identity (Me or specific Channel).
+• <b>Keep Recent</b>: Safety buffer to skip the newest N messages.
 • <b>Controls</b>: Pause, Resume, and Stop the process at any time.
 
 <b>Manual Commands:</b>
@@ -460,6 +506,45 @@ async def purgeme_cmd(client: Client, message: Message):
     except:
         total_account_messages = 0
 
+    # Get peers user can send as (for groups/channels)
+    sender_dict = {"me": {"id": "me", "name": "Me"}}
+    
+    # Method 1: GetSendAs (Allowed in this specific chat)
+    send_as_locally_available = False
+    try:
+        res = await client.invoke(functions.channels.GetSendAs(peer=await client.resolve_peer(chat_id)))
+        for p_info in res.peers:
+            p = p_info.peer
+            cid = None
+            if isinstance(p, types.PeerChannel): cid = p.channel_id
+            elif isinstance(p, types.PeerChat): cid = p.chat_id
+            
+            if cid:
+                real_id = int(f"-100{cid}")
+                if real_id not in sender_dict:
+                    try:
+                        c = await client.get_chat(real_id)
+                        s_name = f"@{c.username}" if c.username else c.title
+                        sender_dict[real_id] = {"id": real_id, "name": s_name}
+                        send_as_locally_available = True # Found at least one channel supported by chat
+                    except: continue
+    except Exception as e:
+        Altruix.log(f"Purgeme SendAs Detection Error: {e}")
+
+    # Method 2: GetAdminedPublicChannels (Global public channels)
+    try:
+        res = await client.invoke(GetAdminedPublicChannels(by_location=False, check_limit=False))
+        for c in getattr(res, "chats", []):
+            real_id = int(f"-100{c.id}")
+            if real_id not in sender_dict:
+                s_name = f"@{c.username}" if getattr(c, "username", None) else getattr(c, "title", f"Channel {c.id}")
+                sender_dict[real_id] = {"id": real_id, "name": s_name}
+    except Exception as e:
+        Altruix.log(f"Purgeme AdminedChannels Detection Error: {e}")
+
+    sender_list = list(sender_dict.values())
+    Altruix.log(f"Purgeme: Found {len(sender_list)} sender options.")
+
     # Initialize State
     async with STATE_LOCK:
         Altruix.PURGEME_STATE[unique_id] = {
@@ -468,8 +553,12 @@ async def purgeme_cmd(client: Client, message: Message):
             "delay": 1.0, # Default changed to 1.0s
             "types": ["all"],
             "mode": "oldest",
+            "from_id": "me", # New: Sender ID (me or channel id)
+            "sender_list": sender_list, # New: List of available senders
             "batch_size": 30,
+            "send_as_locally_available": send_as_locally_available,
             "batch_delay": 0, # Default 0 (only active if toggled)
+            "keep_recent": 0, # New: Safety Buffer (skip newest N messages)
             "max_scan": 500,
             "min_id": 0,
             "status": "config",
@@ -489,7 +578,7 @@ async def purgeme_cmd(client: Client, message: Message):
             "dashboard_chat_id": None,
             "log_msg_id": None,
             "inline_message_id": None,
-            "notify": True
+            "notify": False
         }
         # Pause event is set to True initially (not paused)
         if Altruix.PURGEME_STATE[unique_id].get("pause_event"):
@@ -765,7 +854,8 @@ async def purgeme_cmd(client: Client, message: Message):
                 min_id=state.get("min_id", 0),
                 max_id=state.get("max_id", 0),
                 min_days=state.get("min_days", 0),
-                max_days=state.get("max_days", 0)
+                max_days=state.get("max_days", 0),
+                from_id=state.get("from_id", "me")
             )
             
             if not collected_ids:
@@ -878,7 +968,10 @@ async def purgeme_cmd(client: Client, message: Message):
         except FloodWait as e:
             await asyncio.sleep(e.value)
         except Exception as e:
-            Altruix.log(f"Purgeme Error: {e}")
+            Altruix.log(f"Purgeme Command Fatal Error: {e}\n{traceback.format_exc()}")
+            try:
+                await message.reply(f"❌ **Purgeme Error:** `{e}`")
+            except: pass
      
     # Finish
     finally:
@@ -930,7 +1023,25 @@ async def purgeme_cmd(client: Client, message: Message):
             chat_link_html = f"<b>{chat_title}</b>"
         
         # Account link (Universal)
-        acc_link_html = f"<a href='tg://user?id={client.me.id}'>{user_name}</a>"
+        from_id = state.get("from_id", "me")
+        if from_id == "me":
+            acc_link_html = f"<a href='tg://user?id={client.me.id}'>{user_name}</a>"
+        else:
+            # Find channel name from sender_list
+            sender_name = "Channel"
+            for s in state.get("sender_list", []):
+                if s["id"] == from_id:
+                    sender_name = s["name"]
+                    break
+            
+            # Create link for channel
+            if isinstance(from_id, int):
+                clean_cid = str(from_id).replace("-100", "")
+                acc_link_html = f"<a href='https://t.me/c/{clean_cid}/1'>{sender_name}</a>"
+                if "@" in sender_name:
+                    acc_link_html = f"<a href='https://t.me/{sender_name.replace('@', '')}'>{sender_name}</a>"
+            else:
+                acc_link_html = f"<b>{sender_name}</b>"
         
         # Calculate duration
         duration = time.time() - state.get("start_time", 0)
@@ -1025,34 +1136,56 @@ async def purgeme_cmd(client: Client, message: Message):
                     )
                     
                     # Determine which bot to use for the notification
-                    target_bot = _get_bot(client.me.id)
-                    try:
-                        target_notif = await target_bot.send_message(
-                            chat_id,
-                            completion_msg,
-                            parse_mode=enums.ParseMode.HTML,
-                            disable_web_page_preview=True
-                        )
-                    except:
-                        # Fallback to main bot if custom bot fails (unlikely with _get_bot but for safety)
+                    from_id = state.get("from_id", "me")
+                    target_notif = None
+                    
+                    if from_id != "me":
+                        # Send via Userbot AS the channel
                         try:
-                            if target_bot != Altruix.bot:
-                                target_notif = await Altruix.bot.send_message(
-                                    chat_id,
-                                    completion_msg,
-                                    parse_mode=enums.ParseMode.HTML,
-                                    disable_web_page_preview=True
-                                )
-                            else:
-                                raise Exception("Main bot also failed")
-                        except:
-                            # Final Fallback: Use Userbot itself as it's guaranteed to be in the chat
+                            peer = await client.resolve_peer(chat_id)
+                            send_as_peer = await client.resolve_peer(from_id)
+                            # Set as default sender for this chat
+                            await client.invoke(functions.messages.SaveDefaultSendAs(peer=peer, send_as=send_as_peer))
+                            # Send message
                             target_notif = await client.send_message(
                                 chat_id,
                                 completion_msg,
                                 parse_mode=enums.ParseMode.HTML,
                                 disable_web_page_preview=True
                             )
+                        except Exception as e:
+                            Altruix.log(f"Purgeme: Failed to send as channel {from_id}: {e}")
+                    
+                    if not target_notif:
+                        # Fallback/Default: Assistant Bot
+                        target_bot = _get_bot(client.me.id)
+                        try:
+                            target_notif = await target_bot.send_message(
+                                chat_id,
+                                completion_msg,
+                                parse_mode=enums.ParseMode.HTML,
+                                disable_web_page_preview=True
+                            )
+                        except:
+                            # Fallback to main bot
+                            try:
+                                if target_bot != Altruix.bot:
+                                    target_notif = await Altruix.bot.send_message(
+                                        chat_id,
+                                        completion_msg,
+                                        parse_mode=enums.ParseMode.HTML,
+                                        disable_web_page_preview=True
+                                    )
+                                else:
+                                    raise Exception("Main bot failed")
+                            except:
+                                # Final Fallback: Use Userbot itself
+                                target_notif = await client.send_message(
+                                    chat_id,
+                                    completion_msg,
+                                    parse_mode=enums.ParseMode.HTML,
+                                    disable_web_page_preview=True
+                                )
                     
                     
                     # Auto-delete after 9 seconds as requested

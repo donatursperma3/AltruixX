@@ -545,9 +545,21 @@ def iuser_check(func):
                 return res
             except (StopPropagation, ContinuePropagation):
                 raise
-            except MessageNotModified:
-                if isinstance(update, CallbackQuery):
-                    await update.answer("ℹ️ Tidak ada perubahan diperlukan.", show_alert=True)
+            except (
+                MessageNotModified,
+                MessageIdInvalid,
+                QueryIdInvalid,
+                asyncio.TimeoutError,
+                ListenerTimeout,
+                PeerIdInvalid,
+                ChannelInvalid
+            ) as e:
+                if isinstance(update, CallbackQuery) and not isinstance(e, (QueryIdInvalid, asyncio.TimeoutError, ListenerTimeout)):
+                    try:
+                        await update.answer("ℹ️ Tidak ada perubahan diperlukan.", show_alert=True)
+                    except QueryIdInvalid:
+                        pass
+                return # Silence these non-critical errors
             except Exception as e:
                 # ✅ Terminal Log (with account context)
                 Altruix.log(f"💥 [iuser_check] Error in callback {func.__name__}: {e}", level=40, client=client)
@@ -1219,7 +1231,7 @@ def inline_check(func):
     async def check_inline(c: Client, m: Message, *args, **kwargs):
         try:
             # ✅ DEBUG: Log entry to inline_check decorator
-            log_msg = f"🔍 <b>[inline_check] Entering decorator</b>\n• Function: <code>{func.__name__}</code>\n• User: {c.me.id if c.me else 'Unknown'}\n• Chat: {m.chat.id}"
+            log_msg = f"<blockquote expandable>🔍 <b>[inline_check] Entering decorator</b>\n• Function: <code>{func.__name__}</code>\n• User: {c.me.id if c.me else 'Unknown'}\n• Chat: {m.chat.id}</blockquote>"
             Altruix.log(f"🔍 [inline_check] Entering decorator for {func.__name__}", level=20)
             await send_log_message(log_msg)
             
@@ -1227,14 +1239,14 @@ def inline_check(func):
             result = await func(c, m, *args, **kwargs)
             
             # ✅ DEBUG: Log successful completion
-            success_msg = f"✅ <b>[inline_check] Completed successfully</b>\n• Function: <code>{func.__name__}</code>"
+            success_msg = f"<blockquote expandable>✅ <b>[inline_check] Completed successfully</b>\n• Function: <code>{func.__name__}</code></blockquote>"
             Altruix.log(f"✅ [inline_check] {func.__name__} completed successfully", level=20)
             await send_log_message(success_msg)
             return result
             
         except BotInlineDisabled as e:
             # Auto-enable inline mode and retry
-            error_msg = f"⚠️ <b>[inline_check] BotInlineDisabled</b>\n• Function: <code>{func.__name__}</code>\n• Action: Auto-enabling inline mode"
+            error_msg = f"<blockquote expandable>⚠️ <b>[inline_check] BotInlineDisabled</b>\n• Function: <code>{func.__name__}</code>\n• Action: Auto-enabling inline mode</blockquote>"
             Altruix.log(f"⚠️ [inline_check] BotInlineDisabled caught, auto-enabling inline mode", level=30)
             await send_log_message(error_msg)
             
@@ -1247,10 +1259,12 @@ def inline_check(func):
         except Exception as e:
             # ✅ DEBUG: Log any other exceptions that might be silently caught
             exception_msg = (
+                f"<blockquote expandable>"
                 f"❌ <b>[inline_check] Exception Caught</b>\n"
                 f"• Function: <code>{func.__name__}</code>\n"
                 f"• Exception: <code>{type(e).__name__}</code>\n"
                 f"• Message: <code>{str(e)[:200]}</code>"
+                f"</blockquote>"
             )
             Altruix.log(f"❌ [inline_check] Exception in {func.__name__}: {type(e).__name__}: {e}", level=40)
             await send_log_message(exception_msg)

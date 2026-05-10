@@ -4,7 +4,199 @@ All notable changes to the **AltruixX** project from version **0.0.10.0959H** to
 
 ---
 
-## [0.0.10.2318H] - 2026-05-03 (Current)
+## [0.0.10.2411H] - 2026-05-10
+
+### 🏗️ CreateGroup Plugin: UI Persistence & Feature Reinstatement
+- **New Feature: Persistent Dashboard Configuration**:
+  - Implemented a dedicated storage system (`xcreategroup_user_configs.json`) to persist user settings across restarts and sessions.
+  - **Automated Saving**: Integrated `save_user_cg_config` into all interactive handlers (Toggle, Adjust, Set Value, and Message Input).
+  - **Smart Loading**: The dashboard now automatically recovers the user's last saved configuration instead of resetting to defaults.
+- **New Feature: Dashboard Restore Access**:
+  - Added the **"Restore Tasks"** button directly to the main dashboard for faster access to interrupted task management.
+- **Restored: Quote Block Formatting**:
+  - Reinstated the **Quote Block** toggle in the interactive UI, allowing users to enable/disable `<blockquote expandable>` tags for love quotes.
+  - Fixed logic flow to ensure the setting is correctly passed to the background execution loop.
+- **Fixed: Critical Stability & Code Integrity**:
+  - Resolved missing control buttons (**Pause, Resume, Stop**, etc.) when starting tasks from the Dashboard by ensuring the control message is properly initialized with the interactive UI via the **Bot Assistant client**.
+  - Resolved `KeyError` in `creategroup_loop` by standardizing on `task_key` (TID) for all dictionary accesses, preventing crashes when starting or resuming tasks.
+  - Resolved `NameError: name 'CREATEGROUP_TASKS' is not defined` in the cached handler by implementing lazy imports to avoid circular dependency issues.
+  - Fixed missing `import os` in the handlers file that previously caused persistence functions to fail.
+  - Added "« Prev" and "Next »" navigation buttons to manage long lists of cached tasks efficiently.
+- **Improved: Assistant Bot Invitation & Reliability**:
+  - Implemented **Fallback Logic**: If inviting the bot fails during group creation (e.g., due to privacy settings), the system now creates the group first and logs a clear warning instead of failing.
+  - Added specific error detection for **USER_PRIVACY_RESTRICTED** and other common API blocks for clearer diagnostics.
+  - Ensured the `invite_bots` toggle is strictly respected across all group types (Basic, Supergroup, Channel).
+- **Enhancement: Restore Tasks UI/UX**:
+  - Implemented structured pagination in the format `[« Prev] [n/total] [Next »]` for the task list to prevent excessive message length.
+  - Synchronized all button styles in the Restore Tasks menu with the account/session configuration (`user_style`).
+  - Added interactive action buttons (**Resume**, **Ignore**, **View**) for each cached task.
+  - Integrated a **Task Info Alert** popup when clicking task labels for instant progress summaries.
+- **Improved: UI Consistency**:
+  - Updated `HANDLER_VERSION` to **`0.3.0`** to mark the transition to a persistent configuration model.
+  - Standardized button labels and emoji usage across the dashboard.
+
+---
+
+## [0.0.10.2410I] - 2026-05-10
+
+---
+
+## [0.0.10.2410H] - 2026-05-10
+
+### 🏗️ CreateGroup Plugin: Standardized Threading & Logic Hardening
+- **New Feature: Standardized Log Threading**:
+  - Implemented proper message threading in the **Log Group**. All progress updates and notifications now reply to the task's **Control Message** (Dashboard), creating a clean, linear history.
+  - Added `reply_to_message_id` support to `send_log_notification` and all critical log calls.
+- **New Feature: Quote Block Formatting**:
+  - Added **Quote Block** setting (default: **True**) to wrap love quotes in `<blockquote expandable>` tags for a premium aesthetic.
+  - Integrated a new toggle in the interactive dashboard to enable/disable this formatting.
+- **Improved: Chat Pin/Unpin Management**:
+  - **Auto-Pin**: Processed chats are now pinned by default (`temp_pin` default changed to **True**) for better visibility during kustomization.
+  - **Auto-Unpin**: Implemented automatic unpinning in the `finalize` step to keep the user's dialog list clean after completion.
+- **Improved: Task Recovery & Consistency**:
+  - **Naming Consistency**: Persisted `static_rand_text` in the task state, ensuring resumed tasks maintain the same name pattern after a restart.
+  - **Reply Consistency**: Ensured that even resumed tasks correctly identify and reply to their recovered control messages.
+- **Fixed: Logic & Parsing Errors**:
+  - Resolved `TypeError: object of type 'bool' has no len()` by correctly handling `msg_img` as a boolean flag.
+  - Fixed `AttributeError: 'Client' object has no attribute 'pin_chat'` by using raw API `ToggleDialogPin` as a fallback.
+- **Improved: Diagnostics & Traceback**:
+  - Integrated `traceback.format_exc()` into all critical error handlers across `xcreategroup.py` and `xmessage_pusher.py`.
+  - Detailed stack traces are now sent to the **Log Group** inside `<blockquote expandable>` for instant debugging without needing terminal access.
+- **Hardening: Synchronized Content**:
+  - Synchronized `love_quotes` and media content between `xcreategroup.py` and `xmessage_pusher.py` for operational parity.
+
+### 📡 Message Pusher: Parity & Client Consistency
+- **Improved: Operational Parity**:
+  - Synchronized all content (Quotes 1-3, Image Lists) and formatting to match the `CreateGroup` plugin.
+  - Updated Quote 3 to use the **User Client** (Account) instead of Bot for a more natural interaction flow.
+- **Standardization**: Updated emojis, icons, and block formatting to ensure a unified "AltruixX" brand identity across all automation modules.
+
+---
+
+## [0.0.10.2408H] - 2026-05-08
+
+### 🏗️ CreateGroup Plugin: Task Recovery & Resumption
+- **New Feature: Automatic Task Recovery**:
+  - Implemented `check_interrupted_tasks` to scan for tasks that were interrupted by a restart.
+  - Sends a recovery notification to the **Log Group** with a **"⏯ Resume Task"** button for manual continuation.
+- **Improved: Resumption Logic**:
+  - Modified `creategroup_loop` to accept `is_resume` parameter and start from the last saved `current_index` instead of restarting from zero.
+  - Added automatic recovery of the control message (Stop/Pause/Resume buttons) for seamless re-synchronization.
+- **Hardening: State Persistence**:
+  - `account_name` is now persisted in `xcreategroup_cache.json` for display during recovery without extra API calls.
+  - Task state (`running`) is correctly set to `True` and `task_obj` is updated when resuming.
+
+### 📡 Message Pusher: Dashboard Sender Identity
+- **New Feature: Sender Info Display**:
+  - Added `• Sender:` field to the Message Pusher dashboard showing the active account name.
+  - Dynamically displays "Anonymous Adm" prefix when the Anon Admin toggle is enabled.
+- **Improved: Dashboard Structure**:
+  - Added `Info:` header to the dashboard for better visual separation of task metadata.
+- **Version Bump**:
+  - **Plugin Version**: `0.1.12`
+
+### 🛠 Power Tools: Critical `.restart` Command Fix
+- **Critical Fix: Broken Decorator Chain**:
+  - Identified and resolved the root cause of `.restart` and `.reload` commands silently failing.
+  - **Root Cause**: Stacking two `@register_on_cmd` decorators caused the inner wrapper's `parse_` check to reject the command name (e.g., `.restart` was validated against `["reload"]` and silently dropped).
+  - **Fix**: Combined both commands into a single `@register_on_cmd(["restart", "reload"], ...)` decorator call.
+
+### 🔇 Help Menu: Error Suppression & Performance
+- **Fixed: `QUERY_ID_INVALID` Error Spam**:
+  - Updated `iuser_check` decorator in `decorators.py` to silently handle `QueryIdInvalid`, `MessageIdInvalid`, and `TimeoutError` — preventing noisy error logs for naturally expired queries.
+  - Updated `CustomClient.invoke` in `types/client.py` to recognize `QueryIdInvalid` as a **Permanent Error**, stopping redundant 5x retry cycles.
+- **Optimization: Plugin Counting**:
+  - Replaced expensive `glob.glob()` disk I/O in `get_total_plugins()` with memory-cached `Altruix.plugin_categories` lookup for significantly faster help menu rendering.
+- **Hardening: Inline Query Resilience**:
+  - Added `SetInlineBotResults` and `AnswerInlineQuery` to the non-critical operations list, preventing crashes from failed inline responses.
+
+---
+
+---
+
+## [0.0.10.2410H] - 2026-05-10
+
+### 🏗️ CreateGroup Plugin: Task Recovery & Logic Hardening
+- **Standardized Task ID (TID)**:
+  - Transitioned from user-based IDs (e.g., `creategroup_123`) to a robust **TID system** (e.g., `#CGabcd`).
+  - This enables multiple concurrent tasks per user and prevents "Ghost Task" overwrites in the cache.
+- **Robust Task Recovery**:
+  - Improved `check_interrupted_tasks` to wait for session stability before scanning for interrupted tasks.
+  - Implemented automatic pruning of "Ghost Tasks" (already completed or corrupted) during startup.
+- **JSON Serialization Hardening**:
+  - Implemented a recursive `make_serializable` converter to handle `datetime`, `asyncio.Event`, and other non-serializable objects in `xcreategroup_cache.json`.
+  - Fixed `TypeError: Object of type datetime is not JSON serializable` during cache saves.
+- **Privacy & Security Enhancements**:
+  - **Anonymous Mode Fix**: The owner is now promoted to **Anonymous Admin BEFORE** the assistant bot is invited, ensuring the owner's identity is never exposed in the group logs.
+  - **Account Privacy**: Removed sensitive account information (`👤 Account: ...`) from both basic and supergroup welcome messages.
+- **UI/UX Improvements**:
+  - Added **"View Last Chat"** inline button to recovery notifications, allowing users to inspect the last group/channel created before resuming.
+  - Fixed various typos and improved formatting in initialization messages.
+- **Bug Fixes**:
+  - Resolved `TypeError: 'module' object is not callable` by removing dangerous glob imports (`from pyrogram.types import *`) that shadowed the built-in `list` function.
+  - Fixed missing initialization checks and indentation errors in the main execution loop.
+
+---
+
+## [0.0.10.2407H] - 2026-05-10
+
+
+### 🚀 Smart Install: Detailed Progress & Transparency
+- **New Feature: Real-Time Download Progress**:
+  - Implemented manual download logic for URL-based dependencies using `urllib`.
+  - Displays real-time file size (MB) and percentage progress in the terminal.
+- **Improved: Installation Transparency**:
+  - Unlocked `pip` output for non-cached installations, allowing users to see "Collecting" and "Downloading" details.
+  - Integrated filtered `pip` output directly into the Altruix log style for a seamless diagnostic experience.
+  - **Optimized Transparency**: Switched to an opt-out filter that shows all `pip` activity (including file writing and setup scripts) while suppressing only noisy progress bars, ensuring the installation never appears "stuck".
+
+## [0.0.10.2406H] - 2026-05-06
+
+### 📊 Diagnostic Ecosystem: Loading Progress & Log Standardization
+- **New Feature: Session Loading Progress [N/N]**:
+  - Added real-time progress indicators (e.g., `[1/5]`) to connection logs.
+  - Uses `contextvars` to ensure accurate tracking even during high-speed **Parallel** loading.
+- **Improved: Log Aesthetic & Anti-Noise**:
+  - **ANSI Stripping**: Implemented automatic ANSI color stripping for `altruix.log` to ensure clean, readable file logs while maintaining vibrant terminal output.
+  - **Anti-Double-Tagging**: Added logic to prevent redundant prefixing of messages that already contain the `[Altroid-X]` tag.
+  - **Redundancy Cleanup**: Removed the `[_run_once]` function prefix as it's now covered by the `[📍 module.function]` anchor at the end of each line.
+- **Hardening: Git Security & Privacy**:
+  - Updated `.gitignore` to include high-risk local folders: `DATABASE/`, `DATA/`, `temp/`.
+  - Added specific ignores for sensitive binaries (`deno.exe`) and general `*.exe` rules to prevent accidental leakage to GitHub.
+- **Optimization: Resource Management**:
+  - Removed the `system_watcher` background thread to eliminate noisy "System Health" logs and reduce background CPU/RAM overhead.
+
+## [0.0.10.2405H] - 2026-05-05 (Current)
+
+### 🧹 Purgeme Tool: Sender Identity & UI Synchronization
+- **New Feature: Sender Identity Selection ("From")**:
+  - Implemented the ability to choose which identity to target for deletion: **Me** (Main Account) or any **Administered Channel/Group**.
+  - **Comprehensive Detection**: Uses dual-method detection (`GetSendAs` + `GetAdminedPublicChannels`) to ensure all valid sender options are available.
+- **New Feature: Notification Identity Sync ("Notif")**:
+  - **Renamed Stealth to Notif**: Rebranded the silent mode to a clearer "Notif" toggle.
+  - **Identity Synchronization**: When a channel is selected as the sender, completion notifications are now sent **AS that channel** using `SaveDefaultSendAs` logic.
+  - **Default State**: Changed default Notification state to **OFF** to ensure a non-spammy experience in groups.
+- **Improved: UI Layout & Transparency**:
+  - **Row-Based Layout**: Optimized the Purgeme menu with a clean, row-based button arrangement for better mobile usability.
+  - **Live Preview**: The "Notif" and "From" buttons now feature a live preview of the selected identity (e.g., `Notif: OFF (as @channel)`).
+- **Hardening: Debugging & Stability**:
+  - **Detailed Tracebacks**: Integrated full stack-trace logging for Inline Query, Callback, and Command execution errors to identify root causes instantly.
+  - **Namespace Fix**: Corrected `GetSendAs` API path to `pyrogram.raw.functions.channels.GetSendAs` for compatibility with the latest Telegram API.
+- **Documentation & Localization**:
+  - Fully updated the `Info` sub-menu and `.purgeme help` documentation in both English and Indonesian.
+  - Synchronized localization keys for all new UI elements.
+- **New Feature: Keep Recent (Safety Buffer)**:
+  - Added a dedicated "Keep Recent" setting to skip the most recent `N` messages in the chat.
+  - Ensures active conversations are protected from deletion regardless of the search mode (Oldest/Newest).
+  - Integrated into the UI with a new sub-menu for granular adjustment.
+- **Improved: Send As Capability Detection**:
+  - Automatically identifies if the current group supports sending as a channel.
+  - Displays a real-time status indicator (`Supported` vs `Limited`) in the dashboard header.
+- **Version Bump**:
+  - **Bot Plugin**: `0.0.322`
+  - **Userbot Plugin**: `0.0.444` (Stability & Features)
+
+## [0.0.10.2318H] - 2026-05-03
 
 ### 🎨 Premium Logging: Full-Boot Refinement
 - **Restored functional colors**: Re-implemented `start.bat` color variables (`CYAN`, `YELLOW`, etc.) that were missing, ensuring text is as vibrant as before.

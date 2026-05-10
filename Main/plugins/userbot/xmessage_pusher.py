@@ -31,7 +31,7 @@ logger.setLevel(logging.INFO)
 
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xmessage_pusher"
-PLUGIN_VERSION = "0.1.11"
+PLUGIN_VERSION = "0.1.15"
 
 # ─── CONFIG ───
 LOG_CHAT_ID = Altruix.log_chat or Altruix.config.LOG_CHAT_ID or Altruix.config.OWNER_USERS_ID
@@ -42,21 +42,42 @@ LIST_MSG_IDS = [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
 MSG_IMG_IDS = [25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76]
 
 LOVE_QUOTES = [
-    "You are the best thing that ever happened to me.",
-    "Every moment with you is like a dream come true.",
-    "My heart belongs to you, now and forever."
+    "Love is not merely a feeling; it is a profound commitment to another's well-being, a choice to stand by them through life's storms and sunsets, weaving a tapestry of shared dreams and mutual sacrifice.",
+    "The truest form of love is to see an imperfect person perfectly, embracing their flaws as part of their unique beauty, and choosing to cherish them in every moment of life's unpredictable journey.",
+    "Love is the eternal dance of two souls, entwined in a rhythm that transcends time, where every step is a promise to nurture, protect, and uplift one another through the chaos of existence.",
+    "To love deeply is to risk greatly, for it demands vulnerability and courage to open one's heart fully, trusting that the bond created will withstand the trials of life's ever-changing tides.",
+    "Love is the silent language of the heart, speaking through acts of kindness, shared laughter, and quiet moments of understanding that bind two souls in an unbreakable, timeless connection.",
+    "In love, we find not just a partner but a mirror, reflecting our deepest selves, challenging us to grow, and offering a sanctuary where we can be both our truest and most evolving selves.",
+    "True love is a sacred fire that burns eternally, warming the hearts of those who tend it with care, forgiveness, and an unwavering commitment to each other's growth and happiness.",
+    "Love is the courage to embrace another's soul, to walk beside them through life's uncertainties, and to build a shared world where both can flourish in joy and face adversity as one.",
+    "The essence of love lies in its selflessness, where one finds joy in giving without expectation, creating a bond that thrives on mutual respect, trust, and the beauty of shared vulnerability.",
+    "Love is not a fleeting emotion but a deliberate choice to weave two lives into one, crafting a story of shared triumphs, challenges, and an unspoken promise to face the future together."
 ]
 
 LOVE_QUOTES_2 = [
-    "I love you more than words can express.",
-    "You are my sunshine on a rainy day.",
-    "Life is beautiful because of you."
+    "Cinta sejati adalah perjalanan dua jiwa yang saling memilih setiap hari, membangun kebersamaan dengan keberanian, pengertian, dan pengorbanan untuk saling melengkapi di setiap langkah hidup.",
+    "Cinta adalah seni merangkul ketidaksempurnaan seseorang, melihat keindahan dalam kekurangan mereka, dan memilih untuk bersama melalui liku-liku hidup dengan penuh kasih dan kesetiaan.",
+    "Dalam cinta, kita menemukan makna sejati hidup, di mana dua hati bersatu untuk saling mendukung, berbagi mimpi, dan menghadapi dunia dengan keberanian yang lahir dari kasih yang mendalam.",
+    "Cinta adalah ikatan suci yang mengajarkan kita untuk memberi tanpa syarat, membangun jembatan antara dua jiwa yang saling memperkaya dalam perjalanan menuju keabadian.",
+    "Mencintai berarti membuka hati untuk rentan, mempercayakan jiwa kepada yang lain, dan bersama-sama menciptakan dunia di mana kasih sayang menjadi fondasi setiap langkah bersama.",
+    "Cinta sejati adalah komitmen untuk saling menghormati, memahami, dan mendukung, menciptakan ruang aman di mana dua jiwa dapat tumbuh bersama dalam harmoni dan keberanian.",
+    "Cinta adalah api yang menyala abadi di hati, menghangatkan jiwa dengan kelembutan, pengampunan, dan janji untuk selalu bersama dalam suka maupun duka kehidupan.",
+    "Cinta adalah pemberontakan terhadap kehampaan hidup, di mana dua jiwa memilih untuk saling melengkapi, menciptakan makna baru melalui kasih, keberanian, dan pengabdian.",
+    "Cinta sejati adalah ketika kita melihat seseorang dengan segala kekurangannya dan tetap memilih untuk mencintainya, membangun kebersamaan yang kokoh di tengah badai kehidupan.",
+    "Cinta adalah bahasa jiwa yang berbicara melalui tindakan kecil, keberanian besar, dan kehadiran yang setia, menyatukan dua hati dalam ikatan yang tak lekang oleh waktu."
 ]
 
 LOVE_QUOTES_3 = [
-    "I'm so lucky to have you in my life.",
-    "You make my world a better place.",
-    "Thinking of you always makes me smile."
+    "Cinta adalah kekuatan tak terlihat yang mengikat dua jiwa dalam harmoni sempurna, di mana setiap hembusan napas saling melengkapi, setiap mimpi dibagikan, dan setiap tantangan dihadapi bersama dengan keberanian yang lahir dari keyakinan mutual, menciptakan ikatan yang abadi melampaui waktu dan ruang.",
+    "Cinta adalah perjalanan abadi di mana dua hati saling menemukan dalam kegelapan dunia, saling menerangi jalan dengan cahaya kasih sayang, membangun benteng kepercayaan yang tak tergoyahkan, dan bersama-sama menaklukkan badai kehidupan dengan kekuatan yang lahir dari persatuan jiwa yang mendalam dan tulus.",
+    "Dalam pelukan cinta sejati, kita menemukan kedamaian yang tak tergantikan, di mana setiap detak jantung beresonansi dengan irama yang sama, setiap mimpi dibagikan dengan antusiasme, dan setiap rintangan dihadapi dengan keberanian bersama, menciptakan kisah indah yang akan dikenang sepanjang masa.",
+    "Cinta adalah seni tertinggi dari kehidupan manusia, di mana kita belajar untuk memberi tanpa syarat, menerima dengan lapang dada, dan tumbuh bersama dalam harmoni, menciptakan ikatan yang tidak hanya menyatukan dua individu tetapi juga menginspirasi dunia di sekitar mereka dengan keindahan dan kekuatannya.",
+    "Mencintai berarti membiarkan jiwa kita terbuka lebar terhadap kemungkinan tak terbatas, di mana kebahagiaan ditemukan dalam hal-hal kecil sehari-hari, kepercayaan dibangun melalui ujian waktu, dan komitmen menjadi pondasi yang kokoh untuk membangun masa depan yang penuh harapan dan keajaiban.",
+    "Cinta sejati adalah ketika kita mampu melihat kelemahan pasangan sebagai bagian dari keunikan mereka, mendukung pertumbuhan mereka dengan sabar and pengertian, serta bersama-sama menciptakan lingkungan di mana keduanya dapat berkembang menjadi versi terbaik dari diri mereka sendiri sepanjang hayat.",
+    "Cinta adalah cahaya yang menerangi kegelapan hati, memberikan warmth dan kenyamanan di tengah dinginnya dunia, mengajarkan kita untuk memaafkan, menghargai, dan setia, sehingga setiap momen bersama menjadi kenangan berharga yang memperkaya jiwa dan memperkuat ikatan yang tak terpisahkan.",
+    "Cinta adalah pemberontakan terhadap kesendirian, di mana dua jiwa yang terpisah menemukan kesatuan dalam kebersamaan, saling melengkapi kekurangan satu sama lain, dan bersama-sama menciptakan dunia baru yang penuh dengan makna, tawa, dan petualangan yang tak pernah berakhir seumur hidup.",
+    "Cinta sejati muncul ketika kita berani melepaskan ego diri, memrioritaskan kebahagiaan orang yang dicintai, dan membangun hubungan berdasarkan kejujuran mutlak, sehingga ikatan tersebut menjadi sumber kekuatan yang membantu kita menghadapi segala tantangan hidup dengan optimisme dan ketabahan.",
+    "Cinta adalah simfoni indah dari emosi manusia, di mana setiap nada mewakili kasih sayang, pengorbanan, dan kegembiraan, yang dimainkan bersama untuk menciptakan harmoni sempurna yang mengisi hidup dengan warna-warni kebahagiaan dan meninggalkan warisan abadi bagi generasi yang akan datang."
 ]
 
 # Task Storage
@@ -148,6 +169,14 @@ async def messagepusher_loop(
                 await asyncio.sleep(ba_delay)
 
         for idx, chat_id in enumerate(target_chats, 1):
+            # ─── PAUSE HANDLER (Xtaskmanager) ───
+            while True:
+                registry = getattr(Altruix, "_TASK_REGISTRY", {})
+                if tid in registry and registry[tid].get("paused"):
+                    await asyncio.sleep(1)
+                else:
+                    break
+
             if not MESSAGEPUSHER_TASKS.get(task_id, {}).get("running"): break
             
             # Convert to int if numeric string to avoid Pyrogram interpreting it as a phone number
@@ -157,7 +186,28 @@ async def messagepusher_loop(
             except: pass
             
             try:
-                # 0. Handle Anon Adm if enabled
+                # 0. Invite Assistant/Bots if enabled
+                if options.get("invite_assistant"):
+                    try:
+                        bot_me = await bot_client.get_me()
+                        await user_client.add_chat_members(chat_id, bot_me.id)
+                        await handle_delay()
+                    except Exception as e:
+                        logger.warning(f"Failed to invite assistant to {chat_id}: {e}")
+
+                if options.get("invite_bots") and options.get("bots"):
+                    bots = options.get("bots").replace(",", " ").split()
+                    for bot_username in bots:
+                        try:
+                            # Ensure @ prefix
+                            if not (bot_username.startswith("@") or bot_username.isdigit()):
+                                bot_username = f"@{bot_username}"
+                            await user_client.add_chat_members(chat_id, bot_username)
+                            await handle_delay()
+                        except Exception as e:
+                            logger.warning(f"Failed to invite bot {bot_username} to {chat_id}: {e}")
+
+                # 0.1 Handle Anon Adm if enabled
                 if options.get("anon_adm"):
                     try:
                         await user_client.promote_chat_member(
@@ -210,7 +260,7 @@ async def messagepusher_loop(
                 # 5. LOVE_QUOTES_3
                 if options.get("quote3"):
                     for quote in LOVE_QUOTES_3:
-                        await bot_client.send_message(chat_id, f"<i>💗 {quote}</i>", parse_mode=ParseMode.HTML)
+                        await user_client.send_message(chat_id, f"<i>🌹 {quote}</i>", parse_mode=ParseMode.HTML)
                         await handle_delay()
 
                 await send_log_notification(
@@ -219,13 +269,24 @@ async def messagepusher_loop(
                     user_id
                 )
             except Exception as e:
-                logger.error(f"Error pushing to {chat_id}: {e}")
-                await send_log_notification(bot_client, f"❌ <b>Error on {chat_id}</b>: {str(e)}", user_id)
+                error_tb = traceback.format_exc()
+                logger.error(f"Error pushing to {chat_id}: {e}\n{error_tb}")
+                await send_log_notification(
+                    bot_client, 
+                    f"❌ <b>Error on {chat_id}</b>: {str(e)}\n\n<blockquote expandable><code>{html.escape(error_tb)}</code></blockquote>", 
+                    user_id
+                )
 
         await send_log_notification(bot_client, f"🏁 <b>Message Pusher Task Completed!</b>\n• Task ID: <code>{tid}</code>", user_id)
 
     except Exception as e:
-        logger.error(f"Critical error in pusher_loop: {e}")
+        error_tb = traceback.format_exc()
+        logger.error(f"Critical error in pusher_loop: {e}\n{error_tb}")
+        await send_log_notification(
+            bot_client,
+            f"❌ <b>Critical Error in Message Pusher:</b> {str(e)}\n\n<blockquote expandable><code>{html.escape(error_tb)}</code></blockquote>",
+            user_id
+        )
     finally:
         unregister_task(tid)
         MESSAGEPUSHER_TASKS.pop(task_id, None)
@@ -235,9 +296,18 @@ async def messagepusher_loop(
 @Altruix.register_on_cmd(
     ["pushmsg"], 
     cmd_help={
-        "help": "Open Message Pusher dashboard.", 
-        "usage": ".pushmsg [chat_id/current chat]",
-        "example": ".pushmsg -100123456789"
+        "help": "Open the interactive Message Pusher dashboard.", 
+        "usage": ".pushmsg [chat_id | current]",
+        "example": ".pushmsg -100123456789",
+        "details": (
+            "An interactive dashboard to push message sequences (Quotes, Images, etc.) to target chats.\n\n"
+            "<b>Features:</b>\n"
+            "• <b>Quotes (LQ1-3)</b>: Send three sets of curated love quotes.\n"
+            "• <b>Images (IMG)</b>: Copy message sequences from the source channel.\n"
+            "• <b>Anon Adm</b>: Automatically promote to anonymous admin before sending.\n"
+            "• <b>Bot Invite</b>: Automatically invite the bot assistant or a custom list of bots to target chats.\n"
+            "• <b>Task Control</b>: Use <code>.tasklist</code> to monitor, pause, resume, or cancel pusher tasks."
+        )
     }
 )
 @iuser_check

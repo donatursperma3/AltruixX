@@ -184,6 +184,9 @@ def get_current_git_branch() -> str:
     # Format akhir: branch (commit)
     return f"{branch_name} [{commit_hash}]"
 
+import contextvars
+session_progress = contextvars.ContextVar("session_progress", default="")
+
 class LogDemoter(logging.Filter):
     """Demotes specific logs to DEBUG level so they can be hidden or prefixed correctly."""
     def filter(self, record):
@@ -245,14 +248,19 @@ class TruncatedFormatter(logging.Formatter):
                 pass
 
         # 2. Core Formatting
-        # We must NOT modify `record.msg` directly, because the `record` object is shared
-        # among multiple handlers (like StreamHandler and FileHandler). If we mutate it,
-        # the second handler will receive a double-mutated object, causing duplications.
-        # ✅ Center-pad levelname to uniform width (longest = CRITICAL = 8 chars)
+        progress = session_progress.get()
+        orig_msg = record.msg
+        if progress and isinstance(orig_msg, str) and not orig_msg.startswith(progress):
+            record.msg = f"{progress}{orig_msg}"
+
         original_levelname = record.levelname
         record.levelname = record.levelname.center(8)
         formatted = super().format(record)
-        record.levelname = original_levelname  # Restore original
+        
+        # Restore original state
+        record.levelname = original_levelname
+        record.msg = orig_msg
+
 
         # 3. Add structural styling to the final formatted string if it's a DEBUG log
         if record.levelno == logging.DEBUG:
@@ -709,6 +717,7 @@ class AltruixClient:
     @property
     def banner(self):
         return fr"""
+
    _____  .__   __                .__    .___        ____  ___
   /  _  \ |  |_/  |________  ____ |__| __| _/        \   \/  /
  /  /_\  \|  |\   __\_  __ \/  _ \|  |/ __ |  ______  \     / 
@@ -2004,9 +2013,9 @@ class AltruixClient:
         # Determine target based on import context if available
         import_ctx = getattr(self, '_current_import_type', None)
         
-        # 1. Register to Userbots (Userbot Plugins & Addons)
+        # 1. Register to Userbots (Userbot Plugins, Addons, Internals, Utils)
         # We skip registration to userbots if the plugin is explicitly for the Main Bot
-        if import_ctx in ["userbot", "addons", "other", None]:
+        if import_ctx in ["userbot", "addons", "internals", "utils", "other", None]:
             if not self.training_wheels_protocol:
                 basic_filters = (
                     filter_s
@@ -2038,7 +2047,7 @@ class AltruixClient:
         # 2. Register to Bot Assistant (Bot Plugins & Main/Hybrid Plugins)
         # We only register to the bot if it's a Bot plugin OR if bot_mode is ON for userbot plugins
         should_register_to_bot = (import_ctx == "bot") or (
-            self.bot_mode and not bot_mode_unsupported and import_ctx in ["userbot", "addons", "other", None]
+            self.bot_mode and not bot_mode_unsupported and import_ctx in ["userbot", "addons", "internals", "utils", "other", None]
         )
 
         if self.bot_mode and should_register_to_bot and not self.loaded_bot_cmds:
@@ -2866,6 +2875,9 @@ class AltruixClient:
                                 # Micro-stagger to avoid socket burst
                                 await asyncio.sleep(count * self.MICRO_STAGGER)
                                 
+                                # Set progress for this context
+                                session_progress.set(f"[{count+1}/{total_sessions}] ")
+                                
                                 client = Client(
                                     f"{count}_instance_Altruix",
                                     api_id=self.config.API_ID,
@@ -2924,6 +2936,9 @@ class AltruixClient:
                             if count > 0:
                                 wait_stagger = min(5, count * 0.5) 
                                 await asyncio.sleep(wait_stagger)
+
+                            # Set progress for this context
+                            session_progress.set(f"[{count+1}/{total_sessions}] ")
 
                             client = await Client(
                                 f"{count}_instance_Altruix",
@@ -3068,6 +3083,9 @@ class AltruixClient:
                                         await asyncio.sleep(0.5) # Stagger log messages
                                     else:
                                         detailed_results.append(f"• {name}{username}: ✅ Active (Test)")
+                                    
+                                    nonlocal success_count
+                                    success_count += 1
                                     
                                     # Log to terminal
                                     if client == self.bot: log_msg = f"✔ SL_MSG BY: [1/1] 🤖 Bot: {name}"
@@ -3737,6 +3755,28 @@ class AltruixClient:
         self.log(f"🔄 _restart() initiated | soft={soft}, power_hard={power_hard}", level=30)
         self.loaded_bot_cmds = False
         _start = time.perf_counter()
+        
+        # ✅ CRITICAL: Clear handler registry and dispatcher handlers before reload
+        # Without this, load_all_modules() would skip all commands due to deduplication,
+        # leaving the bot with zero working commands after a soft restart.
+        old_registry_count = len(self.handler_registry)
+        self.handler_registry.clear()
+        self.cmd_list_s.clear()
+        self.cmd_list.clear()
+        self.log(f"🧹 Cleared handler registry ({old_registry_count} entries), cmd_list_s, cmd_list.", level=30)
+        
+        # Clear Pyrogram's internal dispatcher handlers for all clients
+        for client in self.clients:
+            try:
+                client.dispatcher.groups.clear()
+            except Exception:
+                pass
+        try:
+            self.bot.dispatcher.groups.clear()
+        except Exception:
+            pass
+        self.log("🧹 Cleared dispatcher handler groups for all clients.", level=30)
+        
         self.log("📦 Calling _setup(restart=True)...", level=30)
         await self._setup(restart=True)
         self.log("✅ _setup(restart=True) completed.", level=30)

@@ -1,4 +1,4 @@
-PLUGIN_VERSION = "0.0.31"
+PLUGIN_VERSION = "0.0.322"
 
 """
 Purgeme Bot Plugin
@@ -8,6 +8,7 @@ Handles the interactive UI for the Userbot Purgeme command.
 import re
 import time
 import asyncio
+import traceback
 from pyrogram import Client, filters, enums
 from pyrogram.errors import MessageNotModified, FloodWait
 from pyrogram.types import (
@@ -53,10 +54,23 @@ def get_purgeme_text(state):
         acc_link = f"<a href='tg://user?id={user_id}'>{account_name}</a>" if user_id else f"<b>{account_name}</b>"
         acc_msgs_lbl = loc("purgeme_account_msgs") or "Acc Msgs"
         
+        from_id = state.get("from_id", "me")
+        sender_list = state.get("sender_list", [])
+        sender_name = "Me"
+        for s in sender_list:
+            if s["id"] == from_id:
+                sender_name = s["name"]
+                break
+
+        send_as_ok = state.get("send_as_locally_available", False)
+        sa_status = "✅ Supported" if send_as_ok else "⚠️ Limited (Private/Restricted)"
+
         return (
             f"<blockquote expandable>{title}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"• <b>Acc:</b> {acc_link}\n"
+            f"• <b>From:</b> <code>{sender_name}</code>\n"
+            f"• <b>Send As:</b> <code>{sa_status}</code>\n"
             f"• <b>Chat Name:</b> {display_name}\n"
             f"• <b>Chat ID:</b> <code>{chat_id}</code>\n"
             f"• <b>{acc_msgs_lbl}:</b> <code>{total_msgs}</code>\n"
@@ -94,9 +108,17 @@ def get_purgeme_text(state):
     display_name = f"<a href='{chat_link}'>{chat_name}</a>" if chat_link else f"<b>{chat_name}</b>"
     acc_link = f"<a href='tg://user?id={user_id}'>{account_name}</a>" if user_id else f"<b>{account_name}</b>"
     
+    from_id = state.get("from_id", "me")
+    sender_list = state.get("sender_list", [])
+    sender_name = "Me"
+    for s in sender_list:
+        if s["id"] == from_id:
+            sender_name = s["name"]
+            break
+
     header_content = (
         f"<b>Account:</b> {acc_link} (<code>{total_msgs}</code> msgs)\n"
-        f"<b>Chat:</b> {display_name}\n"
+        f"<b>From:</b> <code>{sender_name}</code> | <b>Chat:</b> {display_name}\n"
         f"<b>Mode:</b> <code>{mode.capitalize()}</code> | <b>Type:</b> <code>{type_display}</code>\n"
         f"<b>Target:</b> <code>{count}</code> messages | <b>Offset:</b> <code>{offset}</code>\n"
         f"<b>Batch:</b> <code>{batch_size}</code> | <b>DelayBc:</b> <code>{int(batch_delay/60)}m</code>"
@@ -193,6 +215,7 @@ async def get_purgeme_keyboard(chat_id, user_id, unique_id):
     types = state["types"]
     min_id = state.get("min_id", 0)
     max_id = state.get("max_id", 0)
+    keep_recent = state.get("keep_recent", 0)
 
     buttons = []
     
@@ -237,6 +260,18 @@ async def get_purgeme_keyboard(chat_id, user_id, unique_id):
             ])
             buttons.append([InlineKeyboardButton("Back", callback_data=f"pg_back_{unique_id}", style=btn_style)])
         
+        elif sub_menu == "keeprecent":
+            # Keep Recent Sub-Menu
+            kr_lbl = f"Keep Recent: {keep_recent} msg"
+            buttons.append([InlineKeyboardButton(f"━━ {kr_lbl} ━━", callback_data="noop", style=btn_style)])
+            buttons.append([
+                InlineKeyboardButton("-10", callback_data=f"pg_kr_sub_10_{unique_id}", style=btn_style),
+                InlineKeyboardButton("-1", callback_data=f"pg_kr_sub_1_{unique_id}", style=btn_style),
+                InlineKeyboardButton("+1", callback_data=f"pg_kr_add_1_{unique_id}", style=btn_style),
+                InlineKeyboardButton("+10", callback_data=f"pg_kr_add_10_{unique_id}", style=btn_style),
+            ])
+            buttons.append([InlineKeyboardButton("Back", callback_data=f"pg_back_{unique_id}", style=btn_style)])
+
         elif sub_menu == "delay":
             # Delay/Msg Sub-Menu
             delay_lbl = loc("purgeme_delay", "Delay/Msg: {}s").format(delay)
@@ -477,6 +512,26 @@ async def get_purgeme_keyboard(chat_id, user_id, unique_id):
             ])
             buttons.append([InlineKeyboardButton("Back", callback_data=f"pg_back_{unique_id}", style=btn_style)])
         
+        elif sub_menu == "sender":
+            # Sender Selection Sub-Menu
+            sender_list = state.get("sender_list", [{"id": "me", "name": "Me"}])
+            curr_from = state.get("from_id", "me")
+            
+            buttons.append([InlineKeyboardButton("━━ Choose Sender ━━", callback_data="noop", style=btn_style)])
+            
+            send_as_ok = state.get("send_as_locally_available", False)
+            if not send_as_ok:
+                buttons.append([InlineKeyboardButton("⚠️ Send As Restricted in this chat", callback_data="noop", style=btn_style)])
+            
+            # List all available senders
+            for sender in sender_list:
+                s_id = sender["id"]
+                s_name = sender["name"]
+                active = "[x]" if str(s_id) == str(curr_from) else "[ ]"
+                buttons.append([InlineKeyboardButton(f"{active} {s_name}", callback_data=f"pg_set_sender_{s_id}_{unique_id}", style=btn_style)])
+            
+            buttons.append([InlineKeyboardButton("Back", callback_data=f"pg_back_{unique_id}", style=btn_style)])
+
         else:
             # ─── MAIN CONFIG MENU (Compact) ───
             curr_mode = state.get("mode", "latest")
@@ -498,6 +553,19 @@ async def get_purgeme_keyboard(chat_id, user_id, unique_id):
                 suffix = TYPE_MAP.get(raw, raw.upper())
                 filter_display = loc(f"GP_BTN_{suffix}", suffix)
             
+            # --- Definitions for Labels ---
+            notify_active = state.get("notify", True)
+            from_id = state.get("from_id", "me")
+            sender_list = state.get("sender_list", [])
+            sender_name = "Me"
+            for s in sender_list:
+                if s["id"] == from_id:
+                    sender_name = s["name"]
+                    break
+            
+            stealth_status = "ON" if not notify_active else "OFF"
+            stealth_lbl = f"Stealth: {stealth_status} (as {sender_name})"
+            
             # Row 1: Count & Batch
             buttons.append([
                 InlineKeyboardButton(f"Count: {count} msg", callback_data=f"pg_menu_count_{unique_id}", style=btn_style),
@@ -513,24 +581,36 @@ async def get_purgeme_keyboard(chat_id, user_id, unique_id):
                 InlineKeyboardButton(f"Mode: {mode_lbl}", callback_data=f"pg_menu_mode_{unique_id}", style=btn_style),
                 InlineKeyboardButton(f"Offset: {offset}", callback_data=f"pg_menu_offset_{unique_id}", style=btn_style),
             ])
-            # Row 4: Filter & Stealth
-            notify_active = state.get("notify", True)
-            stealth_lbl = "Stealth: ON" if not notify_active else "Stealth: OFF"
+            notif_status = "ON" if notify_active else "OFF"
+            notif_lbl = f"Notif: {notif_status} (as {sender_name})"
+            
+            # Row 4: Filter & Max Scan
             buttons.append([
                 InlineKeyboardButton(f"Filter: {filter_display}", callback_data=f"pg_menu_filter_{unique_id}", style=btn_style),
-                InlineKeyboardButton(stealth_lbl, callback_data=f"pg_notify_{unique_id}", style=btn_style),
+                InlineKeyboardButton(f"Max Scan: {max_scan}", callback_data=f"pg_menu_maxscan_{unique_id}", style=btn_style),
             ])
-            # Row 5: Bounds
+            # Row 5: ID Range & Date Range
             buttons.append([
                 InlineKeyboardButton("ID Range", callback_data=f"pg_menu_bounds_{unique_id}", style=btn_style),
                 InlineKeyboardButton("Date Range", callback_data=f"pg_menu_dates_{unique_id}", style=btn_style),
             ])
-            # Row 6: Max Scan & Info
+            # Row 6: From 
             buttons.append([
-                InlineKeyboardButton(f"Max Scan: {max_scan}", callback_data=f"pg_menu_maxscan_{unique_id}", style=btn_style),
+                InlineKeyboardButton(f"From: {sender_name}", callback_data=f"pg_menu_sender_{unique_id}", style=btn_style),
+            ])
+            # Row 7: Keep Recent
+            buttons.append([
+                InlineKeyboardButton(f"Keep Recent: {state.get('keep_recent', 0)} msg(s)", callback_data=f"pg_menu_keeprecent_{unique_id}", style=btn_style),
+            ])
+            # Row 8: Notif
+            buttons.append([
+                InlineKeyboardButton(notif_lbl, callback_data=f"pg_notify_{unique_id}", style=btn_style),
+            ])
+            # Row 9: Info
+            buttons.append([
                 InlineKeyboardButton(loc("purgeme_info_btn", "Info"), callback_data=f"pg_info_{unique_id}", style=btn_style),
             ])
-            # Row 7: Start & Cancel
+            # Row 10: Start & Cancel
             start_lbl = loc("purgeme_start_purge", "Start Purgeme")
             cancel_lbl = loc("purgeme_cancel_purge", "Cancel")
             buttons.append([
@@ -634,7 +714,7 @@ async def purgeme_inline_handler(client: Client, query: InlineQuery):
             cache_time=0
         )
     except Exception as e:
-        Altruix.log(f"Purgeme Inline Error: {e}")
+        Altruix.log(f"Purgeme Inline Error: {e}\n{traceback.format_exc()}", level=40)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^pg_"))
 async def purgeme_callback_handler(client: Client, cb: CallbackQuery):
@@ -682,6 +762,17 @@ async def purgeme_callback_handler(client: Client, cb: CallbackQuery):
         state["inline_message_id"] = cb.inline_message_id
 
     try:
+        # Check for direct parameter modifications in command string
+        cmd = "_".join(parts[1:-2]) # e.g., cnt_add_10
+        if cmd.startswith("kr_"):
+            # Keep Recent Adjustment
+            # Format: pg_kr_{action}_{val}_{unique_id}
+            action = parts[2] # add or sub
+            val = int(parts[3])
+            current = state.get("keep_recent", 0)
+            if action == "add": state["keep_recent"] = current + val
+            else: state["keep_recent"] = max(0, current - val)
+            
         if "cnt_add" in data:
             val = int(parts[3])
             state["count"] += val
@@ -707,6 +798,8 @@ async def purgeme_callback_handler(client: Client, cb: CallbackQuery):
             state["sub_menu"] = "count"
         elif "menu_batch" in data:
             state["sub_menu"] = "batch"
+        elif "menu_keeprecent" in data:
+            state["sub_menu"] = "keeprecent"
         elif "menu_delay" in data:
             state["sub_menu"] = "delay"
         elif "menu_bdelay" in data:
@@ -723,10 +816,35 @@ async def purgeme_callback_handler(client: Client, cb: CallbackQuery):
             state["sub_menu"] = "maxscan"
         elif "menu_filter" in data:
             state["sub_menu"] = "filter"
+        elif "menu_sender" in data:
+            state["sub_menu"] = "sender"
 
         elif "mode_" in data:
             mode = parts[2]
             state["mode"] = mode
+
+        elif "set_sender_" in data:
+            # Format: pg_set_sender_{sender_id}_{unique_id}
+            # Remove prefix and suffix to get sender_id
+            s_id_raw = data.replace("pg_set_sender_", "", 1).replace(f"_{unique_id}", "", 1)
+            
+            if s_id_raw == "me":
+                state["from_id"] = "me"
+            else:
+                try:
+                    state["from_id"] = int(s_id_raw)
+                except:
+                    state["from_id"] = s_id_raw
+            
+            # Recalculate total messages for this sender
+            try:
+                client = state.get("client")
+                chat_id = state.get("chat_id")
+                if client and chat_id:
+                    total = await client.search_messages_count(chat_id, from_user=state["from_id"])
+                    state["total_account_messages"] = total
+            except:
+                pass
 
         elif "notify" in data:
             # ─── 3. FIX: Toggle Notification Logic ───
@@ -980,10 +1098,13 @@ async def purgeme_callback_handler(client: Client, cb: CallbackQuery):
             raise inner_e
 
     except Exception as e:
-        Altruix.log(f"Purgeme CB Error: {e}")
+        Altruix.log(f"Purgeme Callback Fatal Error: {e}\n{traceback.format_exc()}", level=40)
         # Only alert if it's NOT MessageNotModified (which we caught above)
         if "MessageNotModified" not in str(e):
-             await cb.answer("Error updating menu", show_alert=False)
+             try:
+                 await cb.answer(f"Error: {str(e)[:50]}", show_alert=True)
+             except:
+                 pass
 
 @Altruix.bot.on_callback_query(filters.regex(r"^purgeme_close(_|$)"))
 async def purgeme_close(client, cb: CallbackQuery):

@@ -1,4 +1,5 @@
 # Main/internals/settings_handlers/creategroup_handlers.py
+import os
 import html
 import asyncio
 from typing import Optional
@@ -12,7 +13,10 @@ from Main.core.decorators import log_errors, iuser_check
 from Main.core.client import Altruix
 from pyrogram.enums import ParseMode
 
+
 from .states import user_creategroup_state
+
+HANDLER_VERSION = "0.3.10" # ✅ Tracking changes
 
 # Default Configuration
 DEFAULT_CREATEGROUP_CONFIG = {
@@ -23,9 +27,48 @@ DEFAULT_CREATEGROUP_CONFIG = {
     "invite_bots": True, "anon_mode": True, "copy_messages": True, "msg_img": True,
     "photo_source": "source", "custom_photo_id": None,
     "log_destination": "both", "group_type": "a",
-    "log_format": "zip", "pin_first_msg": True,
+    "log_format": "zip", "pin_first_msg": True, "temp_pin": True, "quote_block": True,
     "rand_len": 3, "rand_lower": False, "rand_upper": True, "rand_static": True
 }
+
+
+# ─── Persistent User Config ───
+from Main.utils.file_helpers import get_db_path as _get_db_path
+import json as _json
+import logging as _logging
+
+_USER_CG_CONFIG_FILE = _get_db_path("xcreategroup_user_configs.json")
+_logger = _logging.getLogger("altruix.xcreategroup.handlers")
+
+def save_user_cg_config(user_id: int, config: dict):
+    """Save user's CreateGroup config to persistent JSON."""
+    try:
+        data = {}
+        if os.path.exists(_USER_CG_CONFIG_FILE):
+            with open(_USER_CG_CONFIG_FILE, "r") as f:
+                data = _json.load(f)
+        data[str(user_id)] = config
+        tmp = f"{_USER_CG_CONFIG_FILE}.tmp"
+        with open(tmp, "w") as f:
+            _json.dump(data, f, indent=2)
+        os.replace(tmp, _USER_CG_CONFIG_FILE)
+    except Exception as e:
+        _logger.error(f"Failed to save user CG config: {e}")
+
+def load_user_cg_config(user_id: int) -> dict:
+    """Load user's saved CreateGroup config, or return defaults."""
+    try:
+        if os.path.exists(_USER_CG_CONFIG_FILE):
+            with open(_USER_CG_CONFIG_FILE, "r") as f:
+                data = _json.load(f)
+            saved = data.get(str(user_id))
+            if saved:
+                merged = DEFAULT_CREATEGROUP_CONFIG.copy()
+                merged.update(saved)
+                return merged
+    except Exception as e:
+        _logger.error(f"Failed to load user CG config: {e}")
+    return DEFAULT_CREATEGROUP_CONFIG.copy()
 
 from Main.utils.file_helpers import get_user_button_style
 
@@ -33,16 +76,10 @@ from Main.utils.file_helpers import get_user_button_style
 @iuser_check
 @log_errors
 async def creategroup_menu_handler(c: Client, cb: CallbackQuery):
-    """
-    Entry point for the CreateGroup settings menu. 
-    Allows users to choose between manual command input or an interactive UI configuration.
-    """
     await cb.answer()
-    
     session_index = int(cb.matches[0].group(1))
     page = int(cb.matches[0].group(2)) if cb.matches[0].group(2) else 1
     
-    # Resolve user_style for the session owner
     from Main.internals.settings_handlers.custom_alert_handlers import _get_session_user_id
     session_user_id = _get_session_user_id(session_index)
     user_style = get_user_button_style(session_user_id)
@@ -57,6 +94,7 @@ async def creategroup_menu_handler(c: Client, cb: CallbackQuery):
     buttons = [
         [InlineKeyboardButton("⌨️ Manual Input", callback_data=f"creategroup_manual_{session_index}_{page}", style=user_style)],
         [InlineKeyboardButton("🎛️ Interactive UI", callback_data=f"creategroup_ui_{session_index}_{page}", style=user_style)],
+        [InlineKeyboardButton("🔄 Restore Tasks", callback_data=f"creategroup_cached_{session_index}_{page}", style=user_style)],
         [InlineKeyboardButton("🔙 Back to Session", callback_data=f"session_info_{session_index}_{page}", style=user_style)]
     ]
     
@@ -64,6 +102,119 @@ async def creategroup_menu_handler(c: Client, cb: CallbackQuery):
         await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
     else:
         await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^creategroup_cached_(\d+)_(\d+)(?:_(\d+))?$"))
+@iuser_check
+@log_errors
+async def creategroup_cached_handler(c: Client, cb: CallbackQuery):
+    await cb.answer()
+    session_index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    task_page = int(cb.matches[0].group(3)) if cb.matches[0].group(3) else 1
+    
+    from Main.plugins.userbot.xcreategroup import CREATEGROUP_TASKS
+    from Main.internals.settings_handlers.custom_alert_handlers import _get_session_user_id
+    session_user_id = _get_session_user_id(session_index)
+    user_style = get_user_button_style(session_user_id)
+    
+    if not CREATEGROUP_TASKS:
+        text = "<b>🔄 Restore Tasks</b>\n\n<i>Tidak ada task yang terhenti atau tersimpan di cache saat ini.</i>"
+        buttons = [[InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_menu_{session_index}_{page}", style=user_style)]]
+        return await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+        
+    all_tasks = list(CREATEGROUP_TASKS.items())
+    total_tasks = len(all_tasks)
+    limit = 5
+    total_pages = (total_tasks + limit - 1) // limit
+    task_page = max(1, min(task_page, total_pages))
+    
+    start = (task_page - 1) * limit
+    end = start + limit
+    current_tasks = all_tasks[start:end]
+    
+    lines = []
+    buttons = []
+    
+    for tid, task in current_tasks:
+        current = task.get("current_index", 0)
+        total = task.get("params", {}).get("count", 0)
+        account = task.get("account_name", "Unknown")
+        step = task.get("current_step", "N/A")
+        status = "🟢 Running" if task.get("running") else "⚠️ Interrupted"
+        
+        # Text summary for header
+        lines.append(f"• <b>{tid}</b> [{status}] | {account} ({current}/{total})")
+        
+        # Row 1: Task Label
+        buttons.append([
+            InlineKeyboardButton(f"🆔 {tid} | 👤 {account}", callback_data=f"creategroup_task_info_{tid}", style=user_style)
+        ])
+        
+        # Row 2: Action Buttons
+        row_actions = [
+            InlineKeyboardButton("⏯ Resume", callback_data=f"recover_creategroup:{tid}", style=user_style),
+            InlineKeyboardButton("🗑 Abaikan", callback_data=f"delete_task_creategroup:{tid}", style=user_style)
+        ]
+        
+        # Add View Last Chat if available
+        chat_link = task.get("invite_link")
+        if not chat_link and task.get("current_chat_id"):
+            c_id = task.get("current_chat_id")
+            if str(c_id).startswith("-100"):
+                chat_link = f"https://t.me/c/{str(c_id)[4:]}/1"
+        
+        if chat_link:
+            row_actions.append(InlineKeyboardButton("📍 View", url=chat_link, style=user_style))
+            
+        buttons.append(row_actions)
+        
+    text = f"<b>🔄 Restore Tasks (Cache) [{task_page}/{total_pages}]</b>\n\n" + "\n".join(lines) + "\n\n<i>Klik tombol aksi di bawah untuk memproses task spesifik.</i>"
+    
+    # Navigation row [« prev] [n/n] [next »]
+    nav = []
+    # Prev button
+    if task_page > 1:
+        nav.append(InlineKeyboardButton("« Prev", callback_data=f"creategroup_cached_{session_index}_{page}_{task_page-1}", style=user_style))
+    else:
+        nav.append(InlineKeyboardButton("« Prev", callback_data="creategroup_noop", style=user_style))
+        
+    # Page indicator
+    nav.append(InlineKeyboardButton(f"{task_page}/{total_pages}", callback_data="creategroup_noop", style=user_style))
+    
+    # Next button
+    if task_page < total_pages:
+        nav.append(InlineKeyboardButton("Next »", callback_data=f"creategroup_cached_{session_index}_{page}_{task_page+1}", style=user_style))
+    else:
+        nav.append(InlineKeyboardButton("Next »", callback_data="creategroup_noop", style=user_style))
+        
+    buttons.append(nav)
+    
+    buttons.append([InlineKeyboardButton("🔄 Refresh List", callback_data=f"creategroup_cached_{session_index}_{page}_{task_page}", style=user_style)])
+    buttons.append([InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_menu_{session_index}_{page}", style=user_style)])
+    await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^creategroup_noop$"))
+async def creategroup_noop_handler(c: Client, cb: CallbackQuery):
+    await cb.answer()
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^creategroup_task_info_(.+)$"))
+@iuser_check
+@log_errors
+async def creategroup_task_info_handler(c: Client, cb: CallbackQuery):
+    tid = cb.matches[0].group(1)
+    from Main.plugins.userbot.xcreategroup import CREATEGROUP_TASKS
+    task = CREATEGROUP_TASKS.get(tid)
+    if not task:
+        return await cb.answer("Task tidak ditemukan.", show_alert=True)
+    
+    current = task.get("current_index", 0)
+    total = task.get("params", {}).get("count", 0)
+    step = task.get("current_step", "N/A")
+    account = task.get("account_name", "Unknown")
+    info = f"Task: {tid}\nAccount: {account}\nProgress: {current}/{total}\nStep: {step}"
+    await cb.answer(info, show_alert=True)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^creategroup_manual_(\d+)_(\d+)$"))
 @iuser_check
@@ -83,17 +234,33 @@ async def creategroup_manual_handler(c: Client, cb: CallbackQuery):
         "session_index": session_index,
         "page": page
     }
-    
+
     text = (
         "<b>⌨️ Create Group - Manual Input</b>\n\n"
-        "Format: <code>&lt;delay&gt; &lt;count&gt; &lt;batch_delay&gt; &lt;batch_size&gt; &lt;type&gt; &lt;pattern&gt; ; &lt;username&gt; &lt;bots&gt;</code>\n\n"
+        "Kirim pesan di chat ini dengan format berikut:\n"
+        "<code>[delay] [count] [batch_delay] [batch_size] [type] [pattern]</code>\n\n"
+        "<b>Detail Parameter:</b>\n"
+        "• <code>delay</code> : Jeda antar grup (detik).\n"
+        "• <code>count</code> : Jumlah total grup.\n"
+        "• <code>batch_delay</code> : Jeda antar batch (detik).\n"
+        "• <code>batch_size</code> : Jumlah grup per batch.\n"
+        "• <code>type</code> : Tipe (<code>group</code> / <code>supergroup</code>).\n"
+        "• <code>pattern</code> : Nama (gunakan tanda kutip jika ada spasi).\n\n"
+        "<b>Contoh Spesifik:</b>\n"
+        "<code>60 5 300 2 supergroup \"Project X\"</code>\n"
+        "<i>(Membuat 5 supergroup, tiap 2 grup istirahat 300 detik)</i>\n\n"
+        "<b>Opsi Custom Username & Bot:</b>\n"
+        "<code>... [pattern] ; [username] [bot1] [bot2]</code>\n"
+        "Contoh: <code>60 3 0 0 group Test ; x_user bot1 bot2</code>\n\n"
         "<b>Placeholders Pattern:</b>\n"
-        "• <code>(index)</code> : Urutan\n"
+        "• <code>(index)</code> : Urutan (1, 2, 3...)\n"
         "• <code>(tahun)</code> : 2 digit tahun\n"
         "• <code>(bulan)</code> : Bulan (angka)\n"
         "• <code>(tanggal)</code>: Tanggal\n\n"
-        "Ketik /cancel untuk kembali."
+        "<i>Ketik /cancel untuk membatalkan.</i>"
     )
+
+    
     if cb.message:
         await cb.message.edit(text, parse_mode=ParseMode.HTML, 
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_menu_{session_index}_{page}", style=user_style)]]))
@@ -136,7 +303,7 @@ async def show_creategroup_ui(c: Client, cb: CallbackQuery, session_index: int, 
             "step": "ui_config",
             "session_index": session_index,
             "page": page,
-            "config": DEFAULT_CREATEGROUP_CONFIG.copy(),
+            "config": load_user_cg_config(user_id),
             "input_mode": None,
             "ui_msg_id": cb.message.id if cb.message else None,
             "ui_chat_id": cb.message.chat.id if cb.message else None,
@@ -165,7 +332,7 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
             "step": "ui_config",
             "session_index": session_index,
             "page": page,
-            "config": DEFAULT_CREATEGROUP_CONFIG.copy(),
+            "config": load_user_cg_config(user_id),
             "input_mode": None,
             "ui_msg_id": None,
             "ui_chat_id": None,
@@ -246,7 +413,8 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
         f"• <b>Anon Admin:</b> {'Yes' if config['anon_mode'] else 'No'} | <b>Copy Msg:</b> {'Yes' if config['copy_messages'] else 'No'}\n"
         f"• <b>Invite Bots:</b> {'Yes' if config['invite_bots'] else 'No'}\n"
         f"• <b>Bot List:</b> {bot_list_text}\n"
-        f"• <b>Pin First Msg:</b> {'Yes' if config.get('pin_first_msg', True) else 'No'}\n"
+        f"• <b>Pin First Msg:</b> {'Yes' if config.get('pin_first_msg', True) else 'No'} | <b>Temp Pin:</b> {'Yes' if config.get('temp_pin', True) else 'No'}\n"
+        f"• <b>Quote Block:</b> {'Yes' if config.get('quote_block', True) else 'No'}\n"
         f"• <b>Log To:</b> {log_dest_lbl} | <b>Format:</b> {config.get('log_format', 'zip').upper()}"
     )
     
@@ -510,10 +678,15 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
         ],
         [
             InlineKeyboardButton(f"Pin First: {'Yes' if config.get('pin_first_msg', True) else 'No'}", callback_data=f"creategroup_toggle_{idx}_{pg}_pin_first_msg", style=user_style),
+            InlineKeyboardButton(f"Temp Pin: {'Yes' if config.get('temp_pin', True) else 'No'}", callback_data=f"creategroup_toggle_{idx}_{pg}_temp_pin", style=user_style)
+        ],
+        [
+            InlineKeyboardButton(f"Quote Block: {'Yes' if config.get('quote_block', True) else 'No'}", callback_data=f"creategroup_toggle_{idx}_{pg}_quote_block", style=user_style),
             InlineKeyboardButton(f"Msg Img: {'Yes' if config.get('msg_img', True) else 'No'}", callback_data=f"creategroup_toggle_{idx}_{pg}_msg_img", style=user_style)
         ],
         [
-            InlineKeyboardButton("Info", callback_data=f"creategroup_submenu_{idx}_{pg}_info", style=user_style),
+            InlineKeyboardButton("Restore Tasks", callback_data=f"creategroup_cached_{idx}_{pg}", style=user_style),
+            InlineKeyboardButton("Info", callback_data=f"creategroup_submenu_{idx}_{pg}_info", style=user_style)
         ],
         [
             InlineKeyboardButton("✅ RUN TASK", callback_data=f"creategroup_run_{idx}_{pg}", style=user_style),
@@ -581,6 +754,7 @@ async def creategroup_adjust_handler(c: Client, cb: CallbackQuery):
     val = val + step if action == "add" else val - step
     min_v, max_v = limits.get(key, (0, 100))
     conf[key] = max(min_v, min(val, max_v))
+    save_user_cg_config(user_id, conf)
     await render_creategroup_ui(cb, user_creategroup_state[user_id])
     await cb.answer()
 
@@ -625,6 +799,7 @@ async def creategroup_set_val_handler(c: Client, cb: CallbackQuery):
         val = DEFAULT_CREATEGROUP_CONFIG["bots"]
         
     user_creategroup_state[user_id]["config"][key] = val
+    save_user_cg_config(user_id, user_creategroup_state[user_id]["config"])
     await render_creategroup_ui(cb, user_creategroup_state[user_id])
     await cb.answer(f"Updated {key} to {val_raw}")
 
@@ -727,6 +902,7 @@ async def creategroup_toggle_handler(c: Client, cb: CallbackQuery):
         elif key == "log_format": conf["log_format"] = "zip" if conf.get("log_format", "txt") == "txt" else "txt"
         elif key in conf: conf[key] = not conf[key]
         elif key == "msg_img": conf["msg_img"] = not conf.get("msg_img", True)
+        save_user_cg_config(user_id, conf)
         await render_creategroup_ui(cb, user_creategroup_state[user_id])
     await cb.answer()
 
@@ -854,6 +1030,8 @@ async def creategroup_confirm_task_handler(c: Client, cb: CallbackQuery):
             rand_lower=conf.get("rand_lower", False),
             rand_upper=conf.get("rand_upper", True),
             rand_static=conf.get("rand_static", True),
+            temp_pin=conf.get("temp_pin", True),
+            quote_block=conf.get("quote_block", True),
             user_id=user_id,
             task_id=tid
         ))
@@ -1123,6 +1301,7 @@ async def process_creategroup_input(c: Client, m: Message, text: str = None):
              
         dl.info(f"[DEBUG-CG] Changing step back to 'ui_config' and dispatching UI update.")
         state["step"], state["input_mode"] = "ui_config", None
+        save_user_cg_config(m.from_user.id, state["config"])
         if state.get("prompt_msg_id"):
             try: await c.delete_messages(m.chat.id, state["prompt_msg_id"])
             except: pass

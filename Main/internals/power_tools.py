@@ -149,11 +149,15 @@ async def ping_inline_handler(_, iq: InlineQuery):
     )
 
 
-@Altruix.register_on_cmd("restart", cmd_help={"help": "Restart the bot."})
-@Altruix.register_on_cmd("reload", cmd_help={"help": "Reload plugins."})
+@Altruix.register_on_cmd(
+    ["restart", "reload"],
+    cmd_help={"help": "Restart or reload the bot."},
+    bot_mode_unsupported=True,
+)
 async def restart_ub_cmd(c: Client, m: Message):
     reload = "reload" in m.text.lower()
-    Altruix.log(f"🚀 UB Command Triggered: {'.reload' if reload else '.restart'} by {m.from_user.id}", level=20)
+    user_id = m.from_user.id if m.from_user else c.me.id
+    Altruix.log(f"🚀 UB Command Triggered: {'.reload' if reload else '.restart'} by {user_id}", level=20)
     
     bot_username = Altruix.bot_manager.get_bot_username(c.me.id)
     Altruix.log(f"🔍 Using Bot Username: @{bot_username} for inline query", level=20)
@@ -168,6 +172,12 @@ async def restart_ub_cmd(c: Client, m: Message):
         )
     except Exception as e:
         Altruix.log(f"❌ Failed to trigger inline restart: {e}", level=40)
-        await m.edit(f"❌ <b>Error:</b> <code>{e}</code>")
+        try:
+            await m.edit(f"❌ <b>Error:</b> <code>{e}</code>")
+        except Exception:
+            pass
     
-    await m.delete()
+    try:
+        await m.delete()
+    except Exception:
+        pass

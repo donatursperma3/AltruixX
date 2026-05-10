@@ -99,6 +99,9 @@ class CustomClientMethods:
             "GetChannelDifference",
             "messages.GetStickerSet",
             "GetStickerSet",
+            "messages.SetInlineBotResults",
+            "SetInlineBotResults",
+            "AnswerInlineQuery",
         ]
 
         # 4. METADATA INITIALIZATION
@@ -251,6 +254,7 @@ class CustomClientMethods:
                     "ChatAdminRequired", "ChatIdInvalid", "BroadcastForbidden",
                     "StickersetInvalid", "STICKERSET_INVALID", "StickersEmpty",
                     "DataInvalid", "DATA_INVALID", # ✅ Corrupted data/stale callbacks
+                    "QueryIdInvalid", "QUERY_ID_INVALID", # ✅ Expired queries (don't retry)
                     "ChatSendPlainForbidden", "CHAT_SEND_PLAIN_FORBIDDEN", # ✅ Media-only chats
                     "ChannelPrivate", "CHANNEL_PRIVATE", # ✅ Prevent 5x retries on kicked channels
                     "ChatForwardsRestricted", "CHAT_FORWARDS_RESTRICTED" # ✅ Bypasses retries on protected content

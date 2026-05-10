@@ -6,7 +6,7 @@
 #
 # All rights reserved.
 
-PLUGIN_VERSION = "1.0.167"
+PLUGIN_VERSION = "1.0.168"
 
 import asyncio
 import httpx
@@ -230,6 +230,7 @@ async def ytdl_inline_menu(c: Client, obj: Union[InlineQuery, CallbackQuery], ta
 @Altruix.bot.on_callback_query(filters.regex(r"^ytdl_type#([#\w]+)#(\w+)"))
 @iuser_check
 async def ytdl_type_cb(c: Client, cb: CallbackQuery):
+    await cb.answer()
     task_id, f_type = cb.matches[0].groups()
     state = Altruix.YTDL_STATE.get(task_id)
     if not state: return await cb.answer("Sesi kedaluwarsa.", show_alert=True)
@@ -279,6 +280,7 @@ async def ytdl_qual_cb(c: Client, cb: CallbackQuery):
     task_id, qual = cb.matches[0].groups()
     state = Altruix.YTDL_STATE.get(task_id)
     if not state: return await cb.answer("Sesi kedaluwarsa.", show_alert=True)
+    await cb.answer(f"Quality set to {qual}")
     state["quality"] = qual
     await sync_ytdl_task(task_id) # ✅ PERSISTENCE
     await cb.answer(f"Quality set to {qual}")
@@ -287,6 +289,7 @@ async def ytdl_qual_cb(c: Client, cb: CallbackQuery):
 @Altruix.bot.on_callback_query(filters.regex(r"^ytdl_audio_lang_menu#([#\w]+)"))
 @iuser_check
 async def ytdl_audio_lang_menu_cb(c: Client, cb: CallbackQuery):
+    await cb.answer()
     task_id = cb.matches[0].group(1)
     state = Altruix.YTDL_STATE.get(task_id)
     if not state: return await cb.answer("Sesi kedaluwarsa.", show_alert=True)
@@ -341,6 +344,7 @@ async def ytdl_set_audio_lang_cb(c: Client, cb: CallbackQuery):
 @Altruix.bot.on_callback_query(filters.regex(r"^ytdl_sel_sender#([#\w\d_-]+?)(?:#(\d+))?$"))
 @iuser_check
 async def ytdl_sel_sender_cb(c: Client, cb: CallbackQuery):
+    await cb.answer()
     match = cb.matches[0]
     task_id = match.group(1)
     page = int(match.group(2) or 0)
@@ -674,8 +678,8 @@ async def ytdl_toggle_backup_cb(c: Client, cb: CallbackQuery):
     state = Altruix.YTDL_STATE.get(task_id)
     if not state: return await cb.answer("Sesi kedaluwarsa.", show_alert=True)
     state["auto_backup"] = not state.get("auto_backup", True) # Toggle state
-    asyncio.create_task(sync_ytdl_task(task_id)) # ✅ Background Sync
     await cb.answer(f"Auto Backup: {'ON' if state['auto_backup'] else 'OFF'}")
+    asyncio.create_task(sync_ytdl_task(task_id)) # ✅ Background Sync
     # Refresh dashboard
     await ytdl_inline_menu(c, cb, task_id)
 
@@ -1182,6 +1186,7 @@ async def ytdl_toggle_aname_cb(c: Client, cb: CallbackQuery):
     if not state: return await cb.answer("Sesi kedaluwarsa.", show_alert=True)
     current = state.get("audio_name_fmt", "title_artist")
     state["audio_name_fmt"] = "artist_title" if current == "title_artist" else "title_artist"
+    await cb.answer(f"Format: {state['audio_name_fmt'].replace('_', '-').title()}")
     asyncio.create_task(sync_ytdl_task(task_id)) # ✅ Background Sync
     await ytdl_inline_menu(c, cb, task_id)
 
@@ -1196,6 +1201,7 @@ async def ytdl_toggle_asrc_cb(c: Client, cb: CallbackQuery):
     elif current == "meta": nxt = "none"
     else: nxt = "channel"
     state["audio_artist_src"] = nxt
+    await cb.answer(f"Artist Source: {nxt.title()}")
     asyncio.create_task(sync_ytdl_task(task_id)) # ✅ Background Sync
     await ytdl_inline_menu(c, cb, task_id)
 
@@ -1275,7 +1281,7 @@ async def ytdl_download_confirm_cb(c: Client, cb: CallbackQuery):
     backup_via = state.get("backup_mode", "userbot").capitalize()
     
     text = (
-        f"<blockquote expandbale>"
+        f"<blockquote expandable>"
         f"<b>⚠️ DOWNLOAD CONFRIMATION</b>\n\n"
         f"<b>• Title:</b> <code>{state['title']}</code>\n"
         f"<b>• Format:</b> <code>{f}</code>\n"

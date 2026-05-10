@@ -34,9 +34,16 @@ from Main.core.ext.callback_helpers import (
 
 
 def get_total_plugins():
-    import glob
-    ub_plugins = len(glob.glob("Main/plugins/userbot/*.py"))
-    bot_plugins = len(glob.glob("Main/plugins/bot/*.py"))
+    # ✅ Optimized: Use memory-cached categories instead of disk I/O
+    ub_plugins = sum(1 for cat in Altruix.plugin_categories.values() if cat == "userbot")
+    bot_plugins = sum(1 for cat in Altruix.plugin_categories.values() if cat == "bot")
+    
+    # Fallback to glob only if cache is empty (unlikely after startup)
+    if ub_plugins == 0 and bot_plugins == 0:
+        import glob
+        ub_plugins = len(glob.glob("Main/plugins/userbot/*.py"))
+        bot_plugins = len(glob.glob("Main/plugins/bot/*.py"))
+        
     return ub_plugins, bot_plugins
 
 cache_help_menu = None

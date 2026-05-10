@@ -6,6 +6,7 @@
 # Works across plugins (gcast, relayspam, eval, bash, etc.)
 
 import os
+import html
 import asyncio
 import time
 import logging
@@ -360,7 +361,7 @@ async def taskstatus_cmd(client: Client, message: Message):
     if details: text += f"• <b>Details:</b> {details}\n"
     text += "━━━━━━━━━━━━━━━━━━"
     
-    await message.reply_msg(text)
+    await message.reply_msg(f"<blockquote expandable>{text}</blockquote>")
 
 
 # ==================== COMMAND: .tasklist ====================
@@ -384,9 +385,11 @@ async def tasklist_cmd(client: Client, message: Message):
     
     if not registry:
         await message.reply_msg(
+            "<blockquote expandable>"
             "📋 <b>Active Tasks</b>\n\n"
             "<i>No active tasks running.</i>"
             + (f"\n🧹 Cleaned {cleaned} stale tasks." if cleaned else "")
+            + "</blockquote>"
         )
         return
     
@@ -428,23 +431,29 @@ async def tasklist_cmd(client: Client, message: Message):
         line = (
             f"<b>{tid}</b> — {name}\n"
             f"   Plugin: <code>{plugin}</code> | {status}\n"
-            f"   Duration: {dur_str} | Owner: {user_name} (ID: {user_id})"
+            f"   Duration: {dur_str} | Owner: <b>{html.escape(str(user_name))}</b> (ID: <code>{user_id}</code>)"
         )
         if details:
             line += f"\n   {details}"
         lines.append(line)
     
-    text = (
+    header = (
         f"📋 <b>Active Tasks</b> ({len(registry)} total)\n"
         + (f"🧹 Cleaned {cleaned} stale.\n" if cleaned else "")
-        + "━" * 30 + "\n"
-        + "\n\n".join(lines)
-        + "\n━" * 30
+        + "━" * 18 + "\n"
+    )
+    
+    body = "\n\n".join(lines)
+    
+    footer = (
+        "\n" + "━" * 18
         + "\n💡 <code>.taskcancel &lt;id&gt;</code> to cancel."
     )
     
+    text = f"<blockquote expandable>{header}{body}{footer}</blockquote>"
+    
     # Truncate if too long
     if len(text) > 4000:
-        text = text[:3950] + "\n\n<i>... truncated</i>"
+        text = text[:3950] + "\n\n<i>... truncated</i>" + "</blockquote>"
     
     await message.reply_msg(text)

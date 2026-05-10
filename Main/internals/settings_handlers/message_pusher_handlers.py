@@ -29,7 +29,10 @@ DEFAULT_PUSHER_CONFIG = {
     "quote2": True,
     "quote3": True,
     "msg_img": True,
-    "anon_adm": True
+    "anon_adm": True,
+    "invite_bots": True,
+    "bots": "@MissRose_bot @simixbot @Spillgame_bot @truthordaresbot @truthordares_bot @truthordarerp_bot @truthordarerln_bot @truthordares18_bot",
+    "invite_assistant": True
 }
 
 async def edit_cb(cb: CallbackQuery, text: str, **kwargs):
@@ -59,9 +62,21 @@ async def get_pusher_ui_data(uid: int, session_index: int, page: int) -> tuple:
     sub_menu = state.get("sub_menu")
     user_style = get_user_button_style(uid)
 
+    # Info Sender
+    client = Altruix.clients[session_index]
+    name = f"{client.me.first_name or ''} {client.me.last_name or ''}".strip() or f"User {client.me.id}" if client.me else f"Session {session_index}"
+    sender = f"Anonymous Adm" if config.get("anon_adm") else html.escape(name)
+
+    # Bot info
+    num_bots = len(config.get('bots', '').split())
+    is_default_bots = config.get('bots') == DEFAULT_PUSHER_CONFIG['bots']
+    bot_list_text = f"{num_bots} bots{' (Default)' if is_default_bots else ''}"
+
     text = (
         f"<blockquote expandable>"
         "<b>🚀 Message Pusher Dashboard</b>\n\n"
+        "<b>Info:</b>\n"
+        f"• <b>Sender:</b> {sender}\n"
         f"• <b>Delay Act:</b> <code>{config['delay_act']}</code>s\n"
         f"• <b>Batch Act:</b> <code>{config['batch_act']}</code>\n"
         f"• <b>BA Delay:</b> <code>{config['ba_delay']}</code>s\n"
@@ -71,7 +86,10 @@ async def get_pusher_ui_data(uid: int, session_index: int, page: int) -> tuple:
         f"LQ2: {'Yes' if config['quote2'] else 'No'}\n"
         f"• LQ3: {'Yes' if config['quote3'] else 'No'} | "
         f"IMG: {'Yes' if config['msg_img'] else 'No'}\n"
-        f"• ANON ADM: {'Yes' if config['anon_adm'] else 'No'}"
+        f"• ANON ADM: {'Yes' if config['anon_adm'] else 'No'}\n"
+        f"• Invite Bots: {'Yes' if config.get('invite_bots') else 'No'} | "
+        f"Assistant: {'Yes' if config.get('invite_assistant') else 'No'}\n"
+        f"• Bot List: {bot_list_text}"
         f"</blockquote>"
     )
 
@@ -98,6 +116,13 @@ async def get_pusher_ui_data(uid: int, session_index: int, page: int) -> tuple:
             ],
             [
                 InlineKeyboardButton(f"Anon Adm: {'Yes' if config['anon_adm'] else 'No'}", callback_data=f"mp_toggle_anon_adm_{session_index}", style=user_style),
+            ],
+            [
+                InlineKeyboardButton(f"Invite Bots: {'Yes' if config.get('invite_bots') else 'No'}", callback_data=f"mp_toggle_invite_bots_{session_index}", style=user_style),
+                InlineKeyboardButton(f"Assistant: {'Yes' if config.get('invite_assistant') else 'No'}", callback_data=f"mp_toggle_invite_assistant_{session_index}", style=user_style)
+            ],
+            [
+                InlineKeyboardButton("⚙️ Bot List Configuration", callback_data=f"mp_submenu_bots_{session_index}", style=user_style)
             ],
             [
                 InlineKeyboardButton("SEND MSG", callback_data=f"mp_run_{session_index}", style=user_style),
@@ -158,6 +183,22 @@ async def get_pusher_ui_data(uid: int, session_index: int, page: int) -> tuple:
         buttons = [
             [InlineKeyboardButton("Clear All", callback_data=f"mp_clear_targets_{session_index}", style=user_style)],
             [InlineKeyboardButton("Back", callback_data=f"mp_back_{session_index}", style=user_style)]
+        ]
+    elif sub_menu == "bots":
+        curr_bots = config.get("bots") or ""
+        num_bots = len(curr_bots.split())
+        is_default = curr_bots == DEFAULT_PUSHER_CONFIG['bots']
+        
+        text = (
+            "<b>🤖 Bot List Configuration</b>\n\n"
+            f"• <b>Total Bots:</b> {num_bots}{' (Default)' if is_default else ''}\n"
+            f"• <b>Usernames:</b>\n<code>{html.escape(curr_bots or 'None')}</code>\n\n"
+            "<i>Klik tombol di bawah untuk mengubah daftar atau reset.</i>"
+        )
+        buttons = [
+            [InlineKeyboardButton("✏️ Add/Change Bot List", callback_data=f"mp_setv_bots_input_{session_index}", style=user_style)],
+            [InlineKeyboardButton("🔄 Reset to Default", callback_data=f"mp_setv_bots_default_{session_index}", style=user_style)],
+            [InlineKeyboardButton("🔙 Back", callback_data=f"mp_back_{session_index}", style=user_style)]
         ]
     return text, InlineKeyboardMarkup(buttons)
 
@@ -274,6 +315,33 @@ async def mp_toggle_handler(c: Client, cb: CallbackQuery):
     await show_pusher_ui(c, cb, session_index, 1)
     await cb.answer("Toggled")
 
+@Altruix.bot.on_callback_query(filters.regex(r"^mp_setv_bots_(input|default)_(\d+)$"))
+@iuser_check
+@log_errors
+async def mp_set_bots_handler(c: Client, cb: CallbackQuery):
+    action, session_index = cb.matches[0].group(1), int(cb.matches[0].group(2))
+    uid = cb.from_user.id
+    state_key = f"{uid}_{session_index}"
+    if state_key not in user_messagepusher_state: return await cb.answer("Expired", show_alert=True)
+    
+    if action == "default":
+        user_messagepusher_state[state_key]["config"]["bots"] = DEFAULT_PUSHER_CONFIG["bots"]
+        await show_pusher_ui(c, cb, session_index, 1)
+        await cb.answer("Reset to default bots")
+    else:
+        user_messagepusher_state[state_key]["step"] = "awaiting_bots"
+        user_style = get_user_button_style(uid)
+        buttons = [[InlineKeyboardButton("Back", callback_data=f"mp_submenu_bots_{session_index}", style=user_style)]]
+        await edit_cb(cb, 
+            "<b>🤖 Input Bot List</b>\n\n"
+            "Kirim daftar username bot (pisahkan dengan spasi).\n"
+            "Contoh: <code>@MissRose_bot @GroupHelpBot</code>\n\n"
+            "<i>Ketik /cancel untuk membatalkan.</i>", 
+            reply_markup=InlineKeyboardMarkup(buttons),
+            parse_mode=ParseMode.HTML
+        )
+        await cb.answer()
+
 @Altruix.bot.on_callback_query(filters.regex(r"^mp_set_targets_(\d+)$"))
 @iuser_check
 @log_errors
@@ -351,7 +419,10 @@ async def mp_confirm_run_handler(c: Client, cb: CallbackQuery):
             "quote2": config["quote2"], 
             "quote3": config["quote3"], 
             "msg_img": config["msg_img"],
-            "anon_adm": config["anon_adm"]
+            "anon_adm": config["anon_adm"],
+            "invite_bots": config.get("invite_bots", False),
+            "bots": config.get("bots", ""),
+            "invite_assistant": config.get("invite_assistant", False)
         },
         cb.message, uid
     ))
@@ -406,9 +477,15 @@ async def mp_input_handler(c: Client, m: Message):
             
     if active_key:
         state = user_messagepusher_state[active_key]
-        state["config"]["targets"] = m.text
-        state["step"] = "idle"
-        await m.reply("✅ Targets updated.")
+        if state.get("step") == "awaiting_bots":
+            state["config"]["bots"] = m.text
+            state["step"] = "idle"
+            await m.reply("✅ Bot list updated.")
+        else:
+            state["config"]["targets"] = m.text
+            state["step"] = "idle"
+            await m.reply("✅ Targets updated.")
+            
         await show_pusher_ui(c, None, state["session_index"], 1, user_id=uid, message=m)
     else:
         # ✅ CRITICAL FIX: Continue propagation so other handlers (like security verification) can receive this input.

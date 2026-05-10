@@ -6,13 +6,14 @@
 #
 # All rights reserved.
 
-PLUGIN_VERSION = "1.0.0"
+PLUGIN_VERSION = "1.0.10"
 
 import asyncio
 import traceback
 from typing import Union
 from pyrogram import Client
 from pyrogram.types import Message
+from pyrogram.errors import FloodWait
 from Main import Altruix
 from Main.core.types.message import Message as MMessage
 from pyrogram.raw.functions.channels import GetAdminedPublicChannels
@@ -77,26 +78,32 @@ async def chcheck_cmd(c: Client, m: Union[Message, MMessage]):
                 except Exception:
                     channel_peer = await c.resolve_peer(x.id)
                 
-                try:
-                    result = await c.invoke(
-                        SaveDefaultSendAs(
-                            peer=target_peer,
-                            send_as=channel_peer
+                retry = True
+                while retry:
+                    retry = False
+                    try:
+                        result = await c.invoke(
+                            SaveDefaultSendAs(
+                                peer=target_peer,
+                                send_as=channel_peer
+                            )
                         )
-                    )
-                    if result:
-                        _notif = f"{_ss}. @{_mode} = is ok!"
-                        _ss += 1
-                        if _notif not in _ms_notif:
-                            _ms_notif.append(_notif)
-                    else:
+                        if result:
+                            _notif = f"{_ss}. @{_mode} = is ok!"
+                            _ss += 1
+                            if _notif not in _ms_notif:
+                                _ms_notif.append(_notif)
+                        else:
+                            _gg += 1
+                    except FloodWait as fw:
+                        await asyncio.sleep(fw.value + 1)
+                        retry = True
+                    except Exception as e:
+                        # Banned or not allowed
+                        _notifb = f"{_gg}. @{_mode} = is banned! ({type(e).__name__})"
+                        if _notifb not in _ms_notifb:
+                            _ms_notifb.append(_notifb)
                         _gg += 1
-                except Exception as e:
-                    # Banned or not allowed
-                    _notifb = f"{_gg}. @{_mode} = is banned!"
-                    if _notifb not in _ms_notifb:
-                        _ms_notifb.append(_notifb)
-                    _gg += 1
                     
                 await asyncio.sleep(0.5)
             except Exception as e:

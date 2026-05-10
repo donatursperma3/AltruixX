@@ -14,12 +14,13 @@ import logging
 import time
 import tempfile
 import json
+import traceback
 from datetime import datetime
 from typing import List, Tuple, Optional, Dict, Any
 import random
 import base64
 
-from pyrogram import Client, filters
+from pyrogram import Client, filters, raw
 from pyrogram.errors import (
     FloodWait, PeerIdInvalid, UserNotParticipant, UsernameNotOccupied,
     UsernameInvalid, ChannelInvalid, ChannelPrivate, ChatAdminRequired,
@@ -36,19 +37,15 @@ from pyrogram.enums import ChatType, ChatMemberStatus, ParseMode, ChatAction
 from Main import Altruix
 from Main.core.decorators import log_errors
 from Main.core.types.message import Message as AltruixMessage
-# from Main.utils.helpers import run_shell_cmd
 from Main.utils.helpers import ChatPrivileges
-from pyrogram.types import *
 from Main.core.decorators import log_errors, iuser_check
 from Main.utils.essentials import Essentials
-
-
-# ─── LOGGER KHUSUS PLUGIN ───────────────────────────────────────────────
+# from Main.utils.helpers import run_shell_cmd
 import logging
 
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xcreategroup"
-PLUGIN_VERSION = "0.2.363"  # ✅ REFACTORED: Renamed to CreateGroup, enhanced logging
+PLUGIN_VERSION = "0.2.380"  # ✅ FIXED: Indentation & NameError Batch Msg
 
 logger = logging.getLogger("altruix.xcreategroup")
 logger.setLevel(logging.INFO)
@@ -69,6 +66,7 @@ except AttributeError:
 # State management untuk task creategroup
 CREATEGROUP_TASKS: Dict[str, Dict[str, Any]] = {}
 COMPLETED_CREATEGROUP_TASKS: Dict[str, Dict[str, Any]] = {}
+RECOVERY_NOTIFIED = set() # ✅ Anti-Duplicate Guard
 CREATE_LOCK = asyncio.Lock()
 from Main.utils.file_helpers import get_db_path
 
@@ -76,42 +74,46 @@ STORAGE_FILE = get_db_path("xcreategroup_cache.json")
 PENDING_CONFIRMATIONS = {}
 
 async def save_creategroup_cache():
+    def make_serializable(obj):
+        import asyncio
+        if isinstance(obj, dict):
+            return {k: make_serializable(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [make_serializable(i) for i in obj]
+        elif hasattr(obj, "isoformat"):
+            return obj.isoformat()
+        elif isinstance(obj, asyncio.Event) or "Task" in str(type(obj)) or "Message" in str(type(obj)):
+            return None # Skip non-serializable objects
+        return obj
+
     try:
-        # Konversi datetime dan event ke serializable
+        import json
         data = {
             "tasks": {},
             "completed": {}
         }
+        
+        # Clean tasks
         for tid, task in CREATEGROUP_TASKS.items():
             task_copy = task.copy()
-            # Remove non-serializable objects
+            # Explicitly remove known big objects/events
             keys_to_remove = ["pause_event", "status_task", "task", "task_obj", "log_progress_msg"]
             for key in keys_to_remove:
-                if key in task_copy:
-                    del task_copy[key]
+                task_copy.pop(key, None)
+            data["tasks"][tid] = make_serializable(task_copy)
             
-            if "start_time" in task_copy and hasattr(task_copy["start_time"], "isoformat"):
-                task_copy["start_time"] = task_copy["start_time"].isoformat()
-            data["tasks"][tid] = task_copy
-            
+        # Clean completed tasks
         for tid, comp in COMPLETED_CREATEGROUP_TASKS.items():
-            comp_copy = comp.copy()
-            # Remove non-serializable objects
-            keys_to_remove = ["pause_event", "status_task", "task", "task_obj", "log_progress_msg"]
-            for key in keys_to_remove:
-                if key in comp_copy:
-                    del comp_copy[key]
+            data["completed"][tid] = make_serializable(comp)
             
-            if "end_time" in comp_copy and hasattr(comp_copy["end_time"], "isoformat"):
-                comp_copy["end_time"] = comp_copy["end_time"].isoformat()
-            data["completed"][tid] = comp_copy
-            
-        # Atomic Write: Write to temp file first, then rename
+        # Atomic Write
         temp_file = f"{STORAGE_FILE}.tmp"
         with open(temp_file, "w") as f:
             json.dump(data, f, indent=2)
         os.replace(temp_file, STORAGE_FILE)
     except Exception as e:
+        import logging
+        logger = logging.getLogger("altruix.xcreategroup")
         logger.error(f"Error saving creategroup cache: {e}")
 
 async def load_creategroup_cache():
@@ -125,27 +127,202 @@ async def load_creategroup_cache():
                 # Corrupted JSON: Backup and start fresh
                 bak_file = f"{STORAGE_FILE}.bak"
                 os.replace(STORAGE_FILE, bak_file)
-                logger.error(f"Corrupted creategroup cache detected! Backed up to {bak_file}. Error: {jde}")
+                logger.error(f"[CreateGroup] Corrupted cache detected! Backed up to {bak_file}. Error: {jde}")
                 return
                 
+            task_count = len(data.get("tasks", {}))
+            comp_count = len(data.get("completed", {}))
+            logger.info(f"[CreateGroup] Memuat cache: {task_count} task aktif, {comp_count} task selesai.")
+            
             for tid, task_data in data.get("tasks", {}).items():
-                if "start_time" in task_data:
-                    task_data["start_time"] = datetime.fromisoformat(task_data["start_time"])
+                if "start_time" in task_data and isinstance(task_data["start_time"], str):
+                    try:
+                        task_data["start_time"] = datetime.fromisoformat(task_data["start_time"])
+                    except: pass
                 task_data["pause_event"] = asyncio.Event()
                 task_data["pause_event"].set()
-                # Fix: Ensure loaded tasks are NOT marked as running to prevent lock on restart
-                task_data["running"] = False 
-                CREATEGROUP_TASKS[tid] = task_data
+                # Ensure the key is the TID (#CGabcd)
+                key = task_data.get("tid", tid)
+                CREATEGROUP_TASKS[key] = task_data
                 
             for tid, comp_data in data.get("completed", {}).items():
-                if "end_time" in comp_data:
-                    comp_data["end_time"] = datetime.fromisoformat(comp_data["end_time"])
+                if "start_time" in comp_data and isinstance(comp_data["start_time"], str):
+                    try:
+                        comp_data["start_time"] = datetime.fromisoformat(comp_data["start_time"])
+                    except: pass
                 COMPLETED_CREATEGROUP_TASKS[tid] = comp_data
+        else:
+            logger.info("[CreateGroup] File cache tidak ditemukan, memulai dengan data kosong.")
     except Exception as e:
-        logger.error(f"Error loading creategroup cache: {e}")
+        logger.error(f"[CreateGroup] Error loading cache: {e}")
+
+async def check_interrupted_tasks():
+    """Scan for tasks that were interrupted by a restart and notify user."""
+    logger.info("[CreateGroup] Memulai pemeriksaan task yang terhenti...")
+    
+    if not CREATEGROUP_TASKS:
+        logger.info("[CreateGroup] Tidak ada task aktif di cache, skip pemeriksaan.")
+        return
+    
+    logger.info(f"[CreateGroup] Mengevaluasi {len(CREATEGROUP_TASKS)} task potensial, menunggu bot siap...")
+    
+    # Tunggu bot asisten dan session siap secara dinamis
+    max_wait = 120  # Maksimal 120 detik (untuk banyak session)
+    waited = 0
+    while waited < max_wait:
+        bot_ready = Altruix.bot and Altruix.bot.is_connected
+        sessions_ready = len(Altruix.clients) > 0
+        if bot_ready and sessions_ready:
+            logger.info(f"[CreateGroup] Bot dan Sessions siap setelah {waited}s.")
+            break
+        await asyncio.sleep(2)
+        waited += 2
+        if waited % 10 == 0:
+            logger.info(f"[CreateGroup] Startup Wait: Bot={bool(bot_ready)}, Sessions={len(Altruix.clients)} ({waited}/{max_wait}s)")
+
+    if not Altruix.bot or not Altruix.bot.is_connected:
+        logger.warning(f"[CreateGroup] Bot Assistant tidak siap setelah {waited}s, pemeriksaan dibatalkan.")
+        return
+
+    # Gunakan LOG_CHAT_ID terbaru dari Altruix
+    target_log_chat = Altruix.log_chat or Altruix.config.LOG_CHAT_ID
+    if not target_log_chat and Altruix.config.OWNER_USERS_ID:
+        target_log_chat = Altruix.config.OWNER_USERS_ID[0]
+
+    if not target_log_chat:
+        logger.error("[CreateGroup] LOG_CHAT_ID tidak ditemukan, gagal mengirim notifikasi recovery.")
+        return
+    
+    logger.info(f"[CreateGroup] Target log chat: {target_log_chat}")
+        
+    interrupted_found = False
+    tasks_to_clean = []  # Task yang sudah selesai tapi belum dibersihkan
+    
+    # Use copy to avoid 'dictionary changed size during iteration' and 'module' shadowing issues
+    active_tasks = dict(CREATEGROUP_TASKS)
+    for key_id, task_data in active_tasks.items():
+        # Task yang ada di CREATEGROUP_TASKS saat startup dipastikan adalah task yang terhenti
+        # karena task yang selesai normal akan dihapus dari dictionary ini.
+        current = task_data.get("current_index", 0)
+        params = task_data.get("params", {})
+        total = params.get("count", 0)
+        tid_display = task_data.get("tid", key_id) # Gunakan user-friendly TID jika ada
+        
+        # Safety check: jika data tidak valid, abaikan
+        if total == 0:
+            logger.info(f"[CreateGroup] Task {key_id}: count=0, skip.")
+            continue
+        
+        # Filter: task yang sudah benar-benar selesai
+        # Jika current >= total DAN tidak ada step aktif (loop selesai)
+        if current >= total and task_data.get("current_step") is None:
+            logger.info(f"[CreateGroup] Task {key_id}: sudah selesai ({current}/{total}), akan dibersihkan.")
+            tasks_to_clean.append(key_id)
+            continue
+            
+        interrupted_found = True
+        remaining = total - current
+        step_info = task_data.get("current_step", "unknown")
+        
+        # Dapatkan nama akun
+        account_name = task_data.get("account_name", "Unknown Account")
+        client_id = task_data.get("user_id")
+        
+        if account_name == "Unknown Account" and client_id:
+            user_client = next((c for c in Altruix.clients if c.me and c.me.id == client_id), None)
+            if user_client:
+                account_name = f"{user_client.me.first_name or ''} {user_client.me.last_name or ''}".strip()
+        
+        logger.info(f"[CreateGroup] DITEMUKAN: Task {key_id} (TID={tid_display}): {current}/{total}, step={step_info}, account={account_name}")
+        
+        # Prevent duplicate notifications for the same task in one session
+        if key_id in RECOVERY_NOTIFIED:
+            logger.info(f"[CreateGroup] Task {key_id} sudah dinotifikasi sebelumnya, skip.")
+            continue
+            
+        try:
+            # Build keyboard
+            keyboard = []
+            
+            # Row 1: Action buttons
+            keyboard.append([
+                InlineKeyboardButton("⏯ Resume Task", callback_data=f"recover_creategroup:{key_id}"),
+                InlineKeyboardButton("🗑 Abaikan", callback_data=f"delete_task_creategroup:{key_id}")
+            ])
+            
+            # Row 2: Info link (optional)
+            chat_link = task_data.get("invite_link")
+            if not chat_link and task_data.get("current_chat_id"):
+                c_id = task_data.get("current_chat_id")
+                # Format link for supergroup/channel (T.me/c/ID/1)
+                if str(c_id).startswith("-100"):
+                    chat_link = f"https://t.me/c/{str(c_id)[4:]}/1"
+            
+            if chat_link:
+                keyboard.append([InlineKeyboardButton("📍 View Last Chat", url=chat_link)])
+                
+            buttons = InlineKeyboardMarkup(keyboard)
+
+            await Altruix.bot.send_message(
+                target_log_chat,
+                f"<blockquote expandable>"
+                f"⚠️ <b>Interrupted Task Detected</b>\n\n"
+                f"Task CreateGroup terhenti akibat restart.\n"
+                f"• Account: <b>{html.escape(account_name)}</b>\n"
+                f"• Task ID: <code>{tid_display}</code>\n"
+                f"• Progress: {current}/{total} grup (sisa {remaining})\n"
+                f"• Step terakhir: <code>{step_info}</code>\n\n"
+                f"<i>Ingin melanjutkan proses yang tersisa?</i>"
+                f"</blockquote>",
+                reply_markup=buttons,
+                parse_mode=ParseMode.HTML
+            )
+            RECOVERY_NOTIFIED.add(key_id)
+            logger.info(f"[CreateGroup] ✅ Notifikasi recovery dikirim untuk Task {key_id}")
+        except Exception as e:
+            logger.error(f"[CreateGroup] ❌ Gagal kirim notifikasi recovery untuk {key_id}: {e}")
+    
+    # Bersihkan task yang sudah selesai dari cache
+    for key_id in tasks_to_clean:
+        if key_id in CREATEGROUP_TASKS:
+            del CREATEGROUP_TASKS[key_id]
+    if tasks_to_clean:
+        await save_creategroup_cache()
+        logger.info(f"[CreateGroup] Dibersihkan {len(tasks_to_clean)} task selesai dari cache.")
+                
+    if interrupted_found:
+        logger.info("[CreateGroup] Semua task terhenti telah dinotifikasi.")
+    else:
+        logger.info("[CreateGroup] Tidak ada task terhenti yang perlu di-resume.")
 
 # Load cache on startup
-asyncio.ensure_future(load_creategroup_cache())
+async def startup_initialization():
+    try:
+        await load_creategroup_cache()
+        logger.info(f"[CreateGroup] Cache loaded. Active tasks: {len(CREATEGROUP_TASKS)}")
+        # Langsung panggil, tidak perlu create_task terpisah
+        await check_interrupted_tasks()
+    except Exception as e:
+        logger.error(f"[CreateGroup] ❌ Startup initialization GAGAL: {e}\n{traceback.format_exc()}")
+
+# Schedule startup — wrapped dengan error handling
+try:
+    asyncio.ensure_future(startup_initialization())
+except RuntimeError:
+    # Jika belum ada event loop (misal saat import), jadwalkan nanti
+    logger.warning("[CreateGroup] Event loop belum aktif saat import, startup dijadwalkan ulang.")
+    import atexit
+    _startup_scheduled = False
+    def _schedule_startup():
+        global _startup_scheduled
+        if not _startup_scheduled:
+            _startup_scheduled = True
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    loop.create_task(startup_initialization())
+            except: pass
+
 
 # Daftar kutipan cinta (sama seperti original)
 LOVE_QUOTES = [
@@ -315,33 +492,39 @@ def generate_group_name(pattern: str, index: int, rand_len: int = 0, rand_lower:
     month_num = str(now.month).zfill(2)
     day_num = str(now.day).zfill(2)
     
-    # Check if (index) is explicitly used
-    has_index_placeholder = '(index)' in pattern
+    # Use case-insensitive regex for placeholders
+    import re
     
-    name = pattern\
-        .replace('(tahun)', year_last2)\
-        .replace('(bulan)', month_num)\
-        .replace('(tanggal)', day_num)
-        
+    # Replace date/time placeholders
+    name = pattern
+    name = re.sub(r'\(tahun\)', year_last2, name, flags=re.IGNORECASE)
+    name = re.sub(r'\(bulan\)', month_num, name, flags=re.IGNORECASE)
+    name = re.sub(r'\(tanggal\)', day_num, name, flags=re.IGNORECASE)
+    
+    # Check if (index) is explicitly used (case-insensitive)
+    index_pattern = re.compile(r'\(index\)', re.IGNORECASE)
+    has_index_placeholder = bool(index_pattern.search(name))
+    
+    rand_text = ""
     if predefined_rand is not None:
         rand_text = predefined_rand
-        if rand_text:
-            if has_index_placeholder:
-                name = name.replace('(index)', f"{rand_text} (index)")
-            else:
-                name = f"{name} {rand_text}"
     elif rand_len > 0 and (rand_lower or rand_upper):
         import string
         chars = ""
         if rand_lower: chars += string.ascii_lowercase
         if rand_upper: chars += string.ascii_uppercase
         rand_text = "".join(random.choices(chars, k=rand_len))
+
+    if rand_text:
         if has_index_placeholder:
-            name = name.replace('(index)', f"{rand_text} (index)")
+            # Inject rand_text before the first (index)
+            name = index_pattern.sub(f"{rand_text} \\g<0>", name, count=1)
+            # Subsequent (index) remain as is for now
         else:
             name = f"{name} {rand_text}"
 
-    name = name.replace('(index)', str(index))
+    # Final replacement of all (index) placeholders
+    name = index_pattern.sub(str(index), name)
     
     if has_index_placeholder:
         return name
@@ -441,76 +624,169 @@ async def creategroup_loop(
     rand_static: bool = False,
     batch_action: int = 30,
     ba_delay: int = 30,
+    temp_pin: bool = True,
+    quote_block: bool = True,
     user_id: Optional[int] = None,
-    task_id: str = None
+    task_id: str = None,
+    is_resume: bool = False
 ):
     """Main loop untuk membuat grup"""
     effective_user_id = user_id or (initial_message.from_user.id if initial_message.from_user else None)
     if not effective_user_id:
         logger.error("Cannot determine user_id for creategroup task")
         return
-        
-    task_id = f'creategroup_{effective_user_id}'
-    
+
+    if not task_id:
+        task_id = f'creategroup_{effective_user_id}'
+
     # Task Registration for .tasklist / .taskstatus
     from Main.plugins.userbot.xtaskmanager import register_task, unregister_task, generate_task_id
-    tid = generate_task_id("CG")
-    
+
+    # Get tid from state if resuming, else generate new
+    if is_resume and task_id and task_id in CREATEGROUP_TASKS:
+        tid = CREATEGROUP_TASKS[task_id].get("tid")
+        if not tid:
+            tid = task_id # Fallback if task_id was already the tid
+    else:
+        tid = generate_task_id("CG")
+
+    # Standardize on using tid as the main key in memory
+    task_key = tid
+
     created_groups = []
     batch_groups = [] # Buffer for current batch
     last_log_msg = None
     photo_path = None  # Cache untuk foto profil
-    
+
     # Determine dynamic labels
     is_channel = group_type == "c"
     type_label = "Channel" if is_channel else "Group" # Capitalized for Titles
     unit_label = "channel" if is_channel else "grup"  # lowercase for counts
     type_name = "Channel" if is_channel else "Grup"   # Capitalized for messages
     
+    user_info = None
+    photo_path = None
+
     try:
         # Initialize task state
-        CREATEGROUP_TASKS[task_id] = {
-            "running": True,
-            "paused": False,
-            "paused_by_user": False,
-            "pause_event": asyncio.Event(),
-            "current_index": 1,
-            "created_groups": [],
-            "start_time": datetime.now(),
-            "control_message_id": control_message.id,
-            "user_id": user_id or (initial_message.from_user.id if initial_message.from_user else None),
-            "params": {
-                "delay": delay,
-                "count": count,
-                "extra_delay_minutes": extra_delay_minutes,
-                "batch_size": batch_size,
-                "group_type": group_type,
-                "name_pattern": name_pattern,
-                "username_prefix": username_prefix,
-                "bot_identifiers": bot_identifiers,
-                "action_delay": action_delay,
-                "invite_bots": invite_bots,
-                "anon_mode": anon_mode,
-                "copy_messages": copy_messages,
-                "msg_img": msg_img,
-                "description": description,
-                "photo_source": photo_source,
-                "custom_photo_id": custom_photo_id,
-                "pin_first_msg": pin_first_msg,
-                "batch_action": batch_action,
-                "ba_delay": ba_delay
-            },
-            "task_obj": asyncio.current_task()
-        }
-        CREATEGROUP_TASKS[task_id]["pause_event"].set()
+        if task_key in CREATEGROUP_TASKS and is_resume:
+            # Keep existing state but ensure it's marked as running
+            CREATEGROUP_TASKS[task_key]["running"] = True
+            CREATEGROUP_TASKS[task_key]["task_obj"] = asyncio.current_task()
+            if "pause_event" not in CREATEGROUP_TASKS[task_key]:
+                CREATEGROUP_TASKS[task_key]["pause_event"] = asyncio.Event()
+                CREATEGROUP_TASKS[task_key]["pause_event"].set()
+        else:
+            CREATEGROUP_TASKS[task_key] = {
+                "running": True,
+                "paused": False,
+                "paused_by_user": False,
+                "pause_event": asyncio.Event(),
+                "tid": tid,
+                "current_index": 0,
+                "current_step": None,
+                "step_index": 0,
+                "current_chat_id": None,
+                "current_group_name": None,
+                "invite_link": None,
+                "first_msg_id": None,
+                "created_groups": [],
+                "start_time": datetime.now(),
+                "control_message_id": control_message.id if control_message else None,
+                "user_id": user_id or (initial_message.from_user.id if initial_message and initial_message.from_user else None),
+                "params": {
+                    "delay": delay,
+                    "count": count,
+                    "extra_delay_minutes": extra_delay_minutes,
+                    "batch_size": batch_size,
+                    "group_type": group_type,
+                    "name_pattern": name_pattern,
+                    "username_prefix": username_prefix,
+                    "bot_identifiers": bot_identifiers,
+                    "action_delay": action_delay,
+                    "invite_bots": invite_bots,
+                    "anon_mode": anon_mode,
+                    "copy_messages": copy_messages,
+                    "msg_img": msg_img,
+                    "description": description,
+                    "photo_source": photo_source,
+                    "custom_photo_id": custom_photo_id,
+                    "log_format": log_format,
+                    "pin_first_msg": pin_first_msg,
+                    "temp_pin": temp_pin,
+                    "quote_block": quote_block,
+                    "rand_len": rand_len,
+                    "rand_lower": rand_lower,
+                    "rand_upper": rand_upper,
+                    "rand_static": rand_static,
+                    "batch_action": batch_action,
+                    "ba_delay": ba_delay
+                },
+                "task_obj": asyncio.current_task()
+            }
+            CREATEGROUP_TASKS[task_key]["pause_event"].set()
         await save_creategroup_cache()
         
+        # Recovery control message if missing (for resumed tasks)
+        if not control_message and "control_message_id" in CREATEGROUP_TASKS[task_key]:
+             try:
+                  control_message = await bot_client.get_messages(LOG_CHAT_ID, CREATEGROUP_TASKS[task_key]["control_message_id"])
+             except Exception as e:
+                  logger.warning(f"Gagal recover control message: {e}")
+
+        # Dapatkan info user dasar dulu untuk nama di control message
+        user_info = await user_client.get_me()
+        account_name_raw = f"{user_info.first_name or ''} {user_info.last_name or ''}".strip()
+
+        # Pastikan control_message ada di LOG_CHAT_ID agar linear threading & tombol berfungsi
+        is_in_log = control_message and str(control_message.chat.id) == str(LOG_CHAT_ID)
+        
+        if not is_in_log:
+             # Jika tidak ada di log (misal dari Dashboard PM), buat baru di log group
+             control_buttons = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(await Essentials.get_user_button_style(user_client.me.id, "🛑 Stop"), callback_data="stop_creategroup"),
+                    InlineKeyboardButton(await Essentials.get_user_button_style(user_client.me.id, "⏸️ Pause"), callback_data="pause_creategroup"),
+                    InlineKeyboardButton(await Essentials.get_user_button_style(user_client.me.id, "▶️ Resume"), callback_data="resume_creategroup")
+                ],
+                [
+                    InlineKeyboardButton(await Essentials.get_user_button_style(user_client.me.id, "📊 Status"), callback_data="status_creategroup"),
+                    InlineKeyboardButton(await Essentials.get_user_button_style(user_client.me.id, "📋 List"), callback_data="list_creategroup"),
+                    InlineKeyboardButton(await Essentials.get_user_button_style(user_client.me.id, "🔁 Recurring"), callback_data="recurring_creategroup")
+                ],
+                [
+                     InlineKeyboardButton(await Essentials.get_user_button_style(user_client.me.id, "✏️ Edit Name"), callback_data="edit_last_creategroup"), 
+                     InlineKeyboardButton(await Essentials.get_user_button_style(user_client.me.id, "✅ Check Created"), callback_data="list_groups_creategroup")
+                ]
+             ])
+             try:
+                 control_message = await bot_client.send_message(
+                     LOG_CHAT_ID,
+                     f"🚀 <b>Task Control Panel</b>\n"
+                     f"• TID: <code>{tid}</code>\n"
+                     f"• Account: <b>{html.escape(account_name_raw)}</b>\n"
+                     f"• Target: <code>{count}</code> grup\n\n"
+                     f"<i>Linear Log threading aktif di bawah pesan ini.</i>",
+                     reply_markup=control_buttons,
+                     parse_mode=ParseMode.HTML
+                 )
+                 # Update ID di state agar bisa di-recover nanti
+                 CREATEGROUP_TASKS[task_key]["control_message_id"] = control_message.id
+                 await save_creategroup_cache()
+             except Exception as e:
+                 logger.warning(f"Gagal buat control msg baru di LOG_CHAT_ID: {e}")
+
+        # Determine the best message ID to reply to in the log channel
+        reply_id = getattr(control_message, 'id', None)
+        if initial_message and initial_message.chat and str(initial_message.chat.id) == str(LOG_CHAT_ID):
+             reply_id = initial_message.id
+
         # Dapatkan info user
         user_info = await user_client.get_me()
         account_name_raw = f"{user_info.first_name or ''} {user_info.last_name or ''}".strip()
         
         # Update task state with account name
-        CREATEGROUP_TASKS[task_id]["account_name"] = account_name_raw
+        CREATEGROUP_TASKS[task_key]["account_name"] = account_name_raw
         
         # Register task with account name
         register_task(tid, asyncio.current_task(), "Create Group", "xcreategroup", effective_user_id, f"Count: {count}", user_name=account_name_raw)
@@ -518,8 +794,20 @@ async def creategroup_loop(
         # Dapatkan entity bot asisten
         try:
             assistant = await bot_client.get_me()
-            await send_log_notification(
-                bot_client,
+            
+            if is_resume:
+                resume_msg = (
+                    f"<blockquote expandable>"
+                    f"🔄 <b>Task Create {type_label} Resumed</b>\n"
+                    f"• Task ID: <code>{tid}</code>\n"
+                    f"• Account: <b>{html.escape(account_name_raw)}</b>\n"
+                    f"• Melanjutkan dari {unit_label} ke-{CREATEGROUP_TASKS[task_key].get('current_index', 0) + 1}\n"
+                    f"</blockquote>"
+                )
+                await send_log_notification(bot_client, resume_msg, CREATEGROUP_TASKS[task_key]["user_id"], reply_id)
+            else:
+                await send_log_notification(
+                    bot_client,
                 f"<blockquote expandable>"
                 f"🚀 <b>Task Create {type_label} Started</b>\n"
                 f"• Task ID: <code>{tid}</code>\n"
@@ -532,15 +820,15 @@ async def creategroup_loop(
                 f"• Batch: <code>{batch_size}</code> {unit_label}, delay <code>{extra_delay_minutes}</code> menit\n"
                 f"• Batch Act: <code>{batch_action}</code> act, delay <code>{ba_delay}</code> detik"
                 f"</blockquote>",
-                CREATEGROUP_TASKS[task_id]["user_id"],
-                control_message.id
+                effective_user_id,
+                reply_id
             )
         except Exception as e:
             await send_log_notification(
                 bot_client,
                 f"❌ Gagal mendapatkan info bot asisten: {str(e)}",
-                CREATEGROUP_TASKS[task_id]["user_id"],
-                control_message.id
+                effective_user_id,
+                reply_id
             )
             return
         
@@ -561,8 +849,8 @@ async def creategroup_loop(
                     await send_log_notification(
                         bot_client,
                         f"⚠️ Gagal mendapatkan bot {bot_id}: {str(e)}",
-                        CREATEGROUP_TASKS[task_id]["user_id"],
-                        control_message.id
+                        effective_user_id,
+                        reply_id
                     )
         
         # Download foto profil sekali saja (cache)
@@ -580,80 +868,125 @@ async def creategroup_loop(
                         bot_client,
                         f"✅ Foto profil ({source_label}) berhasil di-download ({os.path.getsize(photo_path)} bytes)\n"
                         f"💡 Use <code>.taskstatus {tid}</code> for details.",
-                        CREATEGROUP_TASKS[task_id]["user_id"],
-                        control_message.id
+                        effective_user_id,
+                        reply_id
                     )
                 else:
                     await send_log_notification(
                         bot_client,
                         f"⚠️ Foto profil tidak tersedia atau gagal di-download",
-                        CREATEGROUP_TASKS[task_id]["user_id"],
-                        control_message.id
+                        effective_user_id,
+                        reply_id
                     )
             except Exception as e:
                 await send_log_notification(
                     bot_client,
                     f"⚠️ Error download foto profil: {str(e)}",
-                    CREATEGROUP_TASKS[task_id]["user_id"],
-                    control_message.id
+                    effective_user_id,
+                    reply_id
                 )
         
+        # Define state for convenient access
+        state = CREATEGROUP_TASKS[task_key]
+
         # Generate static random text once if enabled
-        static_rand_text = None
-        if rand_static and rand_len > 0 and (rand_lower or rand_upper):
+        static_rand_text = state.get("static_rand_text")
+        if not static_rand_text and rand_static and rand_len > 0 and (rand_lower or rand_upper):
             import string
             chars = ""
             if rand_lower: chars += string.ascii_lowercase
             if rand_upper: chars += string.ascii_uppercase
             static_rand_text = "".join(random.choices(chars, k=rand_len))
+            state["static_rand_text"] = static_rand_text
+            await save_creategroup_cache()
 
         # Inisialisasi progress message di log group jika command bukan dari log group
-        if str(control_message.chat.id) != str(LOG_CHAT_ID):
+        if control_message and str(control_message.chat.id) != str(LOG_CHAT_ID):
             try:
                 log_progress_msg = await bot_client.send_message(
                     LOG_CHAT_ID,
                     "📊 <b>Memulai Tracker Progress...</b>",
                     parse_mode=ParseMode.HTML
                 )
-                CREATEGROUP_TASKS[task_id]["log_progress_msg"] = log_progress_msg
+                CREATEGROUP_TASKS[task_key]["log_progress_msg"] = log_progress_msg
             except Exception as e:
                 logger.error(f"Gagal kirim log progress awal: {e}")
 
-        i = 1
+        # Recovery control message if missing (moved higher, removing duplicate here)
+        pass
+
+        # Determine starting index: if was in progress, resume same index, else next index
+        last_index = CREATEGROUP_TASKS[task_key].get("current_index", 0)
+        last_step = CREATEGROUP_TASKS[task_key].get("current_step")
+        
+        if is_resume and last_step is not None:
+            i = last_index
+        else:
+            i = last_index + 1
+            
+        created_groups = CREATEGROUP_TASKS[task_key].get("created_groups", [])
         while i <= count:
+            pinned_chat_id = None
             # Check if task is running
-            if not CREATEGROUP_TASKS.get(task_id, {}).get("running", True):
+            if not CREATEGROUP_TASKS.get(task_key, {}).get("running", True):
                 account_name = f"{user_info.first_name or ''} {user_info.last_name or ''}".strip()
                 await send_log_notification(
                     bot_client,
                     f"🛑 Task Create {type_label} dihentikan oleh user pada {unit_label} ke-{i}\n• Account: {html.escape(account_name)}",
-                    CREATEGROUP_TASKS[task_id]["user_id"],
-                    control_message.id
+                    effective_user_id,
+                    reply_id
                 )
                 break
             
             # Check if paused by user
-            if CREATEGROUP_TASKS[task_id].get("paused", False):
-                CREATEGROUP_TASKS[task_id]["paused_by_user"] = True
+            if CREATEGROUP_TASKS[task_key].get("paused", False):
+                CREATEGROUP_TASKS[task_key]["paused_by_user"] = True
                 account_name = f"{user_info.first_name or ''} {user_info.last_name or ''}".strip()
                 await send_log_notification(
                     bot_client,
                     f"⏸️ Task Create {type_label} dipause pada {unit_label} ke-{i}\n• Account: {html.escape(account_name)}",
-                    CREATEGROUP_TASKS[task_id]["user_id"],
-                    control_message.id
+                    effective_user_id,
+                    reply_id
                 )
-                await CREATEGROUP_TASKS[task_id]["pause_event"].wait()
-                CREATEGROUP_TASKS[task_id]["paused_by_user"] = False
+                await CREATEGROUP_TASKS[task_key]["pause_event"].wait()
+                CREATEGROUP_TASKS[task_key]["paused_by_user"] = False
                 account_name = f"{user_info.first_name or ''} {user_info.last_name or ''}".strip()
                 await send_log_notification(
                     bot_client,
                     f"▶️ Task Create {type_label} di-resume pada {unit_label} ke-{i}\n• Account: {html.escape(account_name)}",
-                    CREATEGROUP_TASKS[task_id]["user_id"],
-                    control_message.id
+                    effective_user_id,
+                    reply_id
                 )
             
             group_start_time = datetime.now()
-            current_group_name = generate_group_name(name_pattern, i, rand_len, rand_lower, rand_upper, static_rand_text)
+            
+            # Granular Resume Logic: Check if we were in the middle of a group
+            state = CREATEGROUP_TASKS[task_key]
+            resuming_this_group = is_resume and state.get("current_index") == i and state.get("current_chat_id")
+            
+            if resuming_this_group:
+                created_chat_id = state.get("current_chat_id")
+                current_group_name = state.get("current_group_name")
+                invite_link = state.get("invite_link")
+                first_msg_id = state.get("first_msg_id")
+                current_step = state.get("current_step")
+                s_idx = state.get("step_index", 0)
+                logger.info(f"Resuming {type_name} {i} ({current_group_name}) at step: {current_step} [{s_idx}]")
+            else:
+                current_group_name = generate_group_name(pattern=name_pattern, index=i, rand_len=rand_len, rand_lower=rand_lower, rand_upper=rand_upper, predefined_rand=static_rand_text)
+                created_chat_id = None
+                invite_link = None
+                first_msg_id = None
+                current_step = "create"
+                s_idx = 0
+                
+                # Save initial state for this group
+                state["current_index"] = i
+                state["current_group_name"] = current_group_name
+                state["current_step"] = "create"
+                state["step_index"] = 0
+                await save_creategroup_cache()
+
             current_username = f"{username_prefix}{i}" if username_prefix else None
             
             # Message buffer for consolidated logs area
@@ -677,7 +1010,7 @@ async def creategroup_loop(
             
             # 1. Log Group (Bot)
             if log_destination in ["log_group", "both"]:
-                msg = await send_log_notification(bot_client, current_log_text, CREATEGROUP_TASKS[task_id]["user_id"], reply_to_msg_id=None)
+                msg = await send_log_notification(bot_client, current_log_text, effective_user_id, reply_to_msg_id=reply_id)
                 if msg: current_log_msgs.append(("bot", msg))
             
             # 2. Saved Messages (User)
@@ -744,19 +1077,19 @@ async def creategroup_loop(
                             logger.debug(f"Gagal update countdown msg: {e}")
                     
                     # Check pause/stop
-                    if not CREATEGROUP_TASKS.get(task_id, {}).get("running"):
+                    if not CREATEGROUP_TASKS.get(task_key, {}).get("running"):
                         break
                     
                     # Wait for pause event if paused
-                    if CREATEGROUP_TASKS.get(task_id, {}).get("paused"):
-                        await CREATEGROUP_TASKS[task_id]["pause_event"].wait()
+                    if CREATEGROUP_TASKS.get(task_key, {}).get("paused"):
+                        await CREATEGROUP_TASKS[task_key]["pause_event"].wait()
                     
                     sleep_time = min(interval, total_seconds)
                     await asyncio.sleep(sleep_time)
                     total_seconds -= sleep_time
                 
                 if countdown_msg:
-                    try: await countdown_msg.delete()
+                    try: await countdown_msg.edit_text("✅ <b>Waktu tunggu selesai, melanjutkan proses...</b>", parse_mode=ParseMode.HTML)
                     except: pass
 
             action_count = 0
@@ -777,588 +1110,457 @@ async def creategroup_loop(
 
             logger.info(f"Membuat {type_name} {i}/{count}: {current_group_name}")
             
+            # Variabel yang dibutuhkan di semua step — definisikan di luar blok kondisional
+            is_supergroup = group_type in ["g", "a", "i"]
+            type_label_full = "Channel" if group_type == "c" else "Supergroup"
+            
             try:
                 # ===== BAGIAN PEMBUATAN GRUP =====
-                if group_type == "b":
-                    # Basic group
-                    try:
-                        chat = await user_client.create_group(
-                            title=current_group_name,
-                            users=[assistant.id]
-                        )
-                        created_chat_id = chat.id
-                        invite_link = await user_client.export_chat_invite_link(created_chat_id)
-                        
-                        created_groups.append({
-                            'name': current_group_name,
-                            'link': invite_link,
-                            'id': created_chat_id,
-                            'time': datetime.now().strftime('%H:%M:%S'),
-                            'type': 'basic'
-                        })
-                        
-                        await update_group_log(f"✅ Grup dasar dibuat: <code>{created_chat_id}</code>")
-                        
-                    except Exception as e:
-                        await update_group_log(f"❌ Gagal membuat grup dasar: {str(e)}")
-                        i += 1
-                        continue
-                
-                elif group_type in ["g", "c", "a", "i"]:
-                    # Supergroup atau channel
-                    is_supergroup = group_type in ["g", "a", "i"]
-                    
-                    try:
-                        if is_supergroup:
-                            chat = await user_client.create_supergroup(
-                                title=current_group_name,
-                                description=description
-                            )
-                        else:
-                            chat = await user_client.create_channel(
-                                title=current_group_name,
-                                description=description
-                            )
-                        
-                        created_chat_id = chat.id
-                        type_label_full = "Channel" if group_type == "c" else "Supergroup"
-                        await update_group_log(f"✅ {type_label_full} dibuat: <code>{created_chat_id}</code>")
-                        await update_group_log(f"✅ Description di-set: <i>{html.escape(description[:30])}...</i>")
-                        
-                        # Set username jika ada
-                        if current_username:
+                if current_step == "create":
+                    if group_type == "b":
+                        # Basic group
+                        try:
+                            # Try with assistant if invite_bots is True
+                            users_to_add = [assistant.id] if invite_bots else []
                             try:
-                                await user_client.set_chat_username(
-                                    created_chat_id,
-                                    current_username
+                                chat = await user_client.create_group(
+                                    title=current_group_name,
+                                    users=users_to_add
                                 )
-                                invite_link = f"https://t.me/{current_username}"
-                                await update_group_log(f"✅ Username di-set: @{current_username}", current_group_name, invite_link)
-                            except Exception as e:
-                                await update_group_log(f"⚠️ Gagal set username @{current_username}: {str(e)}")
-                                invite_link = await user_client.export_chat_invite_link(created_chat_id)
-                                await update_group_log(None, current_group_name, invite_link)
-                        else:
+                            except Exception as eg:
+                                # If failed with users (maybe privacy), try without users
+                                if users_to_add:
+                                    logger.warning(f"Gagal buat grup dasar dengan bot: {eg}")
+                                    chat = await user_client.create_group(title=current_group_name)
+                                    await update_group_log(f"⚠️ Grup dasar dibuat tanpa bot (kendala privasi/limit)")
+                                else:
+                                    raise eg
+                            
+                            created_chat_id = chat.id
                             invite_link = await user_client.export_chat_invite_link(created_chat_id)
-                            await update_group_log(None, current_group_name, invite_link)
+                            
+                            # Welcome message for basic group
+                            try:
+                                await bot_client.send_message(
+                                    created_chat_id, 
+                                    f"🚀 <b>Group Initialized!</b>\n"                                    
+                                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                                    f"🆔 <b>Chat ID:</b><code>{created_chat_id}</code>\n"
+                                    f"📊 <b>Status:</b> Active\n\n"
+                                    f"<i>Powered by Altroid-X Engine</i>",
+                                    parse_mode=ParseMode.HTML
+                                )
+                            except Exception as ew:
+                                logger.warning(f"Gagal kirim welcome msg (basic): {ew}")
+
+                            state["current_chat_id"] = created_chat_id
+                            state["invite_link"] = invite_link
+                            state["current_step"] = "setup"
+                            current_step = "setup"
+                            await save_creategroup_cache()
+                            
+                            await update_group_log(f"✅ Grup dasar dibuat: <code>{created_chat_id}</code>")
+                        except Exception as e:
+                            logger.error(f"Gagal membuat grup dasar: {e}\n{traceback.format_exc()}")
+                            await update_group_log(f"❌ Gagal membuat grup dasar: {str(e)}")
+                            i += 1
+                            continue
                         
-                        # ===== KONFIGURASI LANJUTAN =====
-                        should_anon = anon_mode or group_type in ["a", "i"]
-                        should_copy = copy_messages or group_type in ["a", "i"]
-                        
-                        if is_supergroup: # Apply anon/features primarily to supergroups for now
-                            # 1. Set anonymous admin
-                            if should_anon:
+                        if temp_pin:
                                 try:
-                                    privileges = ChatPrivileges(
-                                        can_manage_chat=True,
-                                        can_delete_messages=True,
-                                        can_manage_video_chats=True,
-                                        can_restrict_members=True,
-                                        can_promote_members=True,
-                                        can_change_info=True,
-                                        can_post_messages=True,
-                                        can_edit_messages=True,
-                                        can_invite_users=True,
-                                        can_pin_messages=True,
-                                        can_manage_topics=True,
-                                        can_post_stories=True,
-                                        can_edit_stories=True,
-                                        can_delete_stories=True,
-                                        is_anonymous=True
-                                    )
-                                    
-                                    await user_client.promote_chat_member(
-                                        created_chat_id,
-                                        user_info.id,
-                                        privileges=privileges
-                                    )
+                                    if hasattr(user_client, "pin_chat"):
+                                        await user_client.pin_chat(created_chat_id)
+                                    else:
+                                        await user_client.invoke(
+                                            raw.functions.messages.ToggleDialogPin(
+                                                peer=await user_client.resolve_peer(created_chat_id),
+                                                pinned=True
+                                            )
+                                        )
+                                    pinned_chat_id = created_chat_id
+                                    await update_group_log(f"📌 {type_name} dipin sementara")
+                                except Exception as epin:
+                                    logger.warning(f"Gagal pin chat {created_chat_id}: {epin}")
+                                    await update_group_log(f"❌ Gagal pin {type_name}: {str(epin)}")
+                
+                    elif group_type in ["g", "c", "a", "i"]:
+                        # Supergroup atau channel
+                        try:
+                            if is_supergroup:
+                                chat = await user_client.create_supergroup(
+                                    title=current_group_name,
+                                    description=description
+                                )
+                            else:
+                                chat = await user_client.create_channel(
+                                    title=current_group_name,
+                                    description=description
+                                )
+                            
+                            created_chat_id = chat.id
+                            
+                            # Set Anonymous Admin DULU sebelum invite bot (agar identitas owner tersembunyi)
+                            should_anon = anon_mode or group_type in ["a", "i"]
+                            if is_supergroup and should_anon:
+                                try:
+                                    privileges = ChatPrivileges(can_manage_chat=True, can_delete_messages=True, can_manage_video_chats=True, can_restrict_members=True, can_promote_members=True, can_change_info=True, can_post_messages=True, can_edit_messages=True, can_invite_users=True, can_pin_messages=True, can_manage_topics=True, can_post_stories=True, can_edit_stories=True, can_delete_stories=True, is_anonymous=True)
+                                    await user_client.promote_chat_member(created_chat_id, user_info.id, privileges=privileges)
                                     await handle_action_delay()
                                     await update_group_log(f"✅ Anonymous admin di-set untuk <code>{created_chat_id}</code>")
                                 except Exception as e:
                                     await update_group_log(f"❌ Gagal set anonymous admin: {str(e)}")
-                            
-                            # 2. Set profile photo dari cache
-                            if photo_path and os.path.exists(photo_path):
+
+                            # Invite and Promote Assistant Bot for supergroups/channels
+                            if invite_bots:
                                 try:
-                                    await user_client.set_chat_photo(
-                                        chat_id=created_chat_id,
-                                        photo=photo_path
+                                    await user_client.add_chat_members(created_chat_id, assistant.id)
+                                    await user_client.promote_chat_member(
+                                        created_chat_id, 
+                                        assistant.id,
+                                        privileges=ChatPrivileges(
+                                            can_manage_chat=False,
+                                            can_post_messages=True,
+                                            can_delete_messages=False,
+                                            can_invite_users=False,
+                                            can_pin_messages=True,
+                                            can_change_info=False
+                                        )
                                     )
-                                    await handle_action_delay()
-                                    await update_group_log(f"✅ Foto profil di-set untuk <code>{created_chat_id}</code>")
-                                except PhotoInvalidDimensions:
-                                    await update_group_log(f"❌ Foto profil invalid dimensions untuk <code>{created_chat_id}</code>")
-                                except Exception as e:
-                                    await update_group_log(f"❌ Gagal set foto profil: {str(e)}")
-                            
-                            # 3. Send time message
-                            try:
-                                from datetime import timezone, timedelta
-                                tz = timezone(timedelta(hours=7))  # WIB
-                                indonesia_time = datetime.now(tz).strftime('%Y-%m-%d | %H:%M:%S %Z')
-                                
-                                time_msg = await user_client.send_message(
-                                    created_chat_id,
-                                    f"**📅 {indonesia_time}**",
-                                    parse_mode=ParseMode.MARKDOWN
-                                )
-                                first_msg_id = time_msg.id
-                                
-                                # Pin first message if enabled
-                                if pin_first_msg:
-                                    try:
-                                        await user_client.pin_chat_message(
-                                            chat_id=created_chat_id,
-                                            message_id=first_msg_id,
-                                            disable_notification=True
-                                        )
-                                        await update_group_log(f"📌 First msg berhasil di-pin <code>{created_chat_id}</code>")
-                                    except Exception as epin:
-                                        await update_group_log(f"⚠️ Gagal pin first msg: {str(epin)}")
-                                
-                                await handle_action_delay()
-                            except Exception as e:
-                                await update_group_log(f"❌ Gagal kirim pesan waktu: {str(e)}")
-                                first_msg_id = None
-                            
-                            # 4. Forward messages from source channel (Copy mode)
-                            if should_copy:
-                                for msg_id in LIST_MSG_IDS:
-                                    try:
-                                        await user_client.copy_message(
-                                            chat_id=created_chat_id,
-                                            from_chat_id=SRC_CHANNEL,
-                                            message_id=msg_id
-                                        )
-                                        await handle_action_delay()
-                                    except FloodWait as fw:
-                                        wait_time = fw.value + 10
-                                        await send_log_notification(
-                                            bot_client,
-                                            f"⏳ FloodWait {fw.value}s, delay {wait_time}s untuk pesan {msg_id}",
-                                            CREATEGROUP_TASKS[task_id]["user_id"],
-                                            control_message.id
-                                        )
-                                        await asyncio.sleep(wait_time)
-                                        continue
-                                    except Exception as e:
-                                        await send_log_notification(
-                                            bot_client,
-                                            f"⚠️ Gagal forward pesan {msg_id}: {str(e)}",
-                                            CREATEGROUP_TASKS[task_id]["user_id"],
-                                            control_message.id
-                                        )
-                                        continue
-                            
-                            # 5. Send LOVE_QUOTES
-                            if should_copy:
-                                for quote_idx, quote in enumerate(LOVE_QUOTES, 1):
-                                    try:
-                                        await user_client.send_message(
-                                            created_chat_id,
-                                            f"<i>💙 {quote}</i>",
-                                            parse_mode=ParseMode.HTML
-                                        )
-                                        await handle_action_delay()
-                                    except FloodWait as fw:
-                                        await asyncio.sleep(fw.value + 10)
-                                        continue
-                                    except Exception as e:
-                                        await send_log_notification(
-                                            bot_client,
-                                            f"⚠️ Gagal kirim quote {quote_idx}: {str(e)}",
-                                            CREATEGROUP_TASKS[task_id]["user_id"],
-                                            control_message.id
-                                        )
-                                        continue
-                                await update_group_log(f"✅ Quote 1 berhasil dikirim total: <code>{len(LOVE_QUOTES)}</code> msg")
-                            
-                            # 6. Send LOVE_QUOTES_2
-                            if should_copy:
-                                for quote_idx, quote in enumerate(LOVE_QUOTES_2, 1):
-                                    try:
-                                        await user_client.send_message(
-                                            created_chat_id,
-                                            f"<i>💖 {quote}</i>",
-                                            parse_mode=ParseMode.HTML
-                                        )
-                                        await handle_action_delay()
-                                    except FloodWait as fw:
-                                        await asyncio.sleep(fw.value + 10)
-                                        continue
-                                    except Exception as e:
-                                        await send_log_notification(
-                                            bot_client,
-                                            f"⚠️ Gagal kirim quote 2-{quote_idx}: {str(e)}",
-                                            CREATEGROUP_TASKS[task_id]["user_id"],
-                                            control_message.id
-                                        )
-                                        continue
-                                await update_group_log(f"✅ Quote 2 berhasil dikirim total: <code>{len(LOVE_QUOTES_2)}</code> msg")
-                            
-                            # 7. Invite bots
-                            if should_invite_bots and bot_entities:
-                                success_bots = []
-                                failed_bots = []
-                                
-                                for bot_idx, bot in enumerate(bot_entities, 1):
-                                    try:
-                                        await user_client.add_chat_members(
-                                            created_chat_id,
-                                            bot.id
-                                        )
-                                        await handle_action_delay()
-                                        success_bots.append(bot.username or str(bot.id))
-                                        
-                                        # Send /help and /id
-                                        for cmd in ["/help", "/id"]:
-                                            try:
-                                                await user_client.send_message(
-                                                    created_chat_id,
-                                                    cmd
-                                                )
-                                                await handle_action_delay()
-                                            except Exception as e:
-                                                await send_log_notification(
-                                                    bot_client,
-                                                    f"⚠️ Gagal kirim {cmd} ke bot {bot.username}: {str(e)}",
-                                                    CREATEGROUP_TASKS[task_id]["user_id"],
-                                                    control_message.id
-                                                )
-                                    except Exception as e:
-                                        failed_bots.append(f"{bot.username or bot.id}: {str(e)}")
-                                        await handle_action_delay()
-                                
-                                # Report hasil invite
-                                if success_bots:
-                                    report = f"✅ Berhasil invite {len(success_bots)} bot ke <code>{created_chat_id}</code>"
-                                    await user_client.send_message(
-                                        created_chat_id,
-                                        f"__{report}__"
-                                    )
-                                    await update_group_log(report)
-                                
-                                if failed_bots:
-                                    await update_group_log(f"❌ Gagal invite {len(failed_bots)} bot")
-                            
-                            # 7.5. Send Image Messages (Msg Img) if enabled
-                            if msg_img:
-                                for img_id in MSG_IMG_IDS:
-                                    try:
-                                        await user_client.copy_message(
-                                            chat_id=created_chat_id,
-                                            from_chat_id=SRC_CHANNEL,
-                                            message_id=img_id
-                                        )
-                                        await handle_action_delay()
-                                    except FloodWait as fw:
-                                        await asyncio.sleep(fw.value + 10)
-                                        continue
-                                    except Exception as e:
-                                        await send_log_notification(
-                                            bot_client,
-                                            f"⚠️ Gagal kirim image {img_id}: {str(e)}",
-                                            CREATEGROUP_TASKS[task_id]["user_id"],
-                                            control_message.id
-                                        )
-                                        continue
-                                await update_group_log(f"✅ Image Messages berhasil dikirim total: <code>{len(MSG_IMG_IDS)}</code> msg")
-                            
-                            # 8. Invite assistant dan kirim welcome message
-                            try:
-                                await user_client.add_chat_members(
-                                    created_chat_id,
-                                    assistant.id
-                                )
-                                await handle_action_delay()
-                                
-                                # Welcome message dengan inline buttons
-                                welcome_buttons = InlineKeyboardMarkup([
-                                    [
-                                        InlineKeyboardButton(await Essentials.get_user_button_style(user_info.id, "Channel 1"), url="https://t.me/alphaxproject"),
-                                        InlineKeyboardButton(await Essentials.get_user_button_style(user_info.id, "Channel 2"), url="https://t.me/tgreceh")
-                                    ],
-                                    [
-                                        InlineKeyboardButton(await Essentials.get_user_button_style(user_info.id, "Channel 3"), url="https://t.me/kutipaninsecure"),
-                                        InlineKeyboardButton(await Essentials.get_user_button_style(user_info.id, "Channel 4"), url="https://t.me/caritemanlink")
-                                    ]
-                                ])
-                                
-                                welcome_msg = await bot_client.send_message(
-                                    created_chat_id,
-                                    "<b>❇️ Welcome to our Aliansi AlphaX:</b>",
-                                    reply_markup=welcome_buttons,
-                                    parse_mode=ParseMode.HTML
-                                )
-                                
-                                await update_group_log(f"✅ Assistant @{assistant.username} invited dan welcome message dikirim")
-                            except Exception as e:
-                                await update_group_log(f"❌ Gagal invite assistant: {str(e)}")
-                            
-                            # 9. Send LOVE_QUOTES_3 via assistant
-                            if should_copy:
-                                for quote_idx, quote in enumerate(LOVE_QUOTES_3, 1):
-                                    try:
-                                        await bot_client.send_message(
-                                            created_chat_id,
-                                            f"<i>💗 {quote}</i>",
-                                            parse_mode=ParseMode.HTML
-                                        )
-                                        await handle_action_delay()
-                                    except FloodWait as fw:
-                                        await asyncio.sleep(fw.value + 10)
-                                        continue
-                                    except Exception as e:
-                                        await send_log_notification(
-                                            bot_client,
-                                            f"⚠️ Gagal kirim quote 3-{quote_idx}: {str(e)}",
-                                            CREATEGROUP_TASKS[task_id]["user_id"],
-                                            control_message.id
-                                        )
-                                        continue
-                                await update_group_log(f"✅ Quote 3 berhasil dikirim total: <code>{len(LOVE_QUOTES_3)}</code> msg")
-                            
-                            # 10. Get approximate message count (Push Message Total)
-                            try:
-                                # Get recent messages count from history scan
-                                messages = []
-                                async for msg in user_client.get_chat_history(created_chat_id, limit=150):
-                                    messages.append(msg)
-                                
-                                total_push_msg = len(messages)
-                                await update_group_log(f"✅ Push message berhasil total: <code>{total_push_msg}</code> msg")
-                                
-                                count_msg = await bot_client.send_message(
-                                    created_chat_id,
-                                    f"<i>Total pesan dalam grup ini: {len(messages)}+</i>",
-                                    parse_mode=ParseMode.HTML
-                                )
-                                await handle_action_delay()
-                            except Exception as e:
-                                await send_log_notification(
-                                    bot_client,
-                                    f"⚠️ Gagal hitung pesan: {str(e)}",
-                                    CREATEGROUP_TASKS[task_id]["user_id"],
-                                    control_message.id
-                                )
-                            
-                            # 11. Link ke pesan pertama
-                            if first_msg_id:
-                                try:
-                                    link_msg = f"<i>➟ ke pesan pertama:</i> <b><a href='t.me/c/{str(created_chat_id).replace("-100", "").lstrip("-")}/{first_msg_id}'>» di sini</a></b>"
-                                    await user_client.send_message(
-                                        created_chat_id,
-                                        link_msg,
+                                    await update_group_log(f"🤖 Asisten bot diundang & di-admin")
+                                    # Welcome message from bot (tanpa info akun)
+                                    await bot_client.send_message(
+                                        created_chat_id, 
+                                        f"🚀 <b>{type_label_full} Initialized!</b>\n"                                 
+                                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                                        f"🆔 <b>Chat ID:</b><code>{created_chat_id}</code>\n"
+                                        f"📊 <b>Status:</b> Active\n\n"
+                                        f"<i>Powered by Altroid-X Engine</i>",
                                         parse_mode=ParseMode.HTML
                                     )
-                                    await handle_action_delay()
-                                except Exception as e:
-                                    await send_log_notification(
-                                        bot_client,
-                                        f"⚠️ Gagal kirim link pesan pertama: {str(e)}",
-                                        CREATEGROUP_TASKS[task_id]["user_id"],
-                                        control_message.id
-                                    )
-                            
-                            # 12. Completion message
-                            group_end_time = datetime.now()
-                            group_duration = (group_end_time - group_start_time).total_seconds()
-                            
-                            completion_msg = await bot_client.send_message(
-                                created_chat_id,
-                                f"<i>✅ grup <code>{created_chat_id}</code> selesai dikustomisasi dalam {format_duration(group_duration)}!</i>",
-                                parse_mode=ParseMode.HTML
-                            )
-                            
-                            # 13. Send reaction to completion message
-                            if completion_msg:
-                                try:
-                                    await send_reaction_with_fallback(
-                                        bot_client,
-                                        created_chat_id,
-                                        completion_msg.id,
-                                        "❤️"
-                                    )
-                                    await handle_action_delay()
-                                except Exception as e:
-                                    await send_log_notification(
-                                        bot_client,
-                                        f"⚠️ Gagal kirim reaction: {str(e)}",
-                                        CREATEGROUP_TASKS[task_id]["user_id"],
-                                        control_message.id
-                                    )
-                        
-                        # Simpan grup yang berhasil dibuat
-                        created_groups.append({
-                            'name': current_group_name,
-                            'link': invite_link,
-                            'id': created_chat_id,
-                            'time': datetime.now().strftime('%H:%M:%S'),
-                            'type': group_type
-                        })
-                        
-                        CREATEGROUP_TASKS[task_id]["created_groups"] = created_groups
-                        CREATEGROUP_TASKS[task_id]["current_index"] = i
-                        await save_creategroup_cache() # Save cache after group creation
+                                except Exception as ebot:
+                                    err_msg = str(ebot)
+                                    if "USER_PRIVACY_RESTRICTED" in err_msg:
+                                        msg = "❌ Gagal undang asisten: Privasi Bot Terbatas"
+                                    elif "USER_BOT" in err_msg:
+                                        msg = "❌ Gagal undang asisten: Bot tidak dapat diundang"
+                                    else:
+                                        msg = f"❌ Gagal undang asisten: {err_msg}"
+                                    
+                                    logger.warning(f"Gagal undang asisten bot ke {created_chat_id}: {ebot}")
+                                    await update_group_log(msg)
 
-                        # 14. Auto Mark All Mentions as Read
-                        try:
-                             # Use read_chat_history to mark everything as read
-                             await user_client.read_chat_history(created_chat_id)
+                            state["current_chat_id"] = created_chat_id
+                            state["current_step"] = "setup"
+                            current_step = "setup"
+                            await save_creategroup_cache()
+                            
+                            await update_group_log(f"✅ {type_label_full} dibuat: <code>{created_chat_id}</code>")
+                            await update_group_log(f"✅ Description di-set: <i>{html.escape(description[:30])}...</i>")
                         except Exception as e:
-                             logger.warning(f"Gagal mark read: {e}")
-                        
-                        # Kirim update progress
-                        # hlgroup = f"<a href='{invite_link}'>{current_group_name}</a> "
-                        account_name = f"{user_info.first_name or ''} {user_info.last_name or ''}".strip()
-                        progress_msg = (
-                            f"<blockquote expandable>"
-                            f"✅ Group {i}/{count} successfully created\n"
-                            f"• Name: {current_group_name}\n"
-                            f"• Account: {html.escape(account_name)}\n"
-                            f"• Duration: {format_duration((datetime.now() - group_start_time).total_seconds())}\n"
-                            f"• Delay: {format_duration(delay)}"
-                            f"</blockquote>"
-                        )
-                        
-                        last_log_msg = await send_log_notification(
-                            bot_client,
-                            progress_msg,
-                            CREATEGROUP_TASKS[task_id]["user_id"],
-                            control_message.id
-                        )
-                        
-                    except FloodWait as fw:
-                        account_name = f"{user_info.first_name or ''} {user_info.last_name or ''}".strip()
-                        wait_msg = (
-                            f"<blockquote expandable>"
-                            f"⏳ FloodWait {fw.value}s untuk {unit_label} {current_group_name}\n"
-                            f"• Account: {html.escape(account_name)}"
-                            f"</blockquote>"
-                        )
-                        await send_log_notification(bot_client, wait_msg, CREATEGROUP_TASKS[task_id]["user_id"], control_message.id)
-                        await asyncio.sleep(fw.value + 10)
-                        continue  # Coba lagi grup/channel yang sama
-                    except Exception as e:
-                        account_name = f"{user_info.first_name or ''} {user_info.last_name or ''}".strip()
-                        error_msg = (
-                            f"<blockquote expandable>"
-                            f"❌ Error membuat {unit_label} {current_group_name}: {str(e)}\n"
-                            f"• Account: {html.escape(account_name)}"
-                            f"</blockquote>"
-                        )
-                        await send_log_notification(bot_client, error_msg, CREATEGROUP_TASKS[task_id]["user_id"], control_message.id)
-                        i += 1
-                        continue
-                
-                # Update control message
-                progress_text = (
-                    f"<blockquote expandable>"
-                    f"📊 <b>Progress CreateGroup</b>\n\n"
-                    f"• Task: <code>{task_id}</code>\n"
-                    f"• Account: {html.escape(account_name)}\n"
-                    f"• Created: {i}/{count}\n"
-                    f"• Berhasil: {len(created_groups)}\n"
-                    f"• Current: {current_group_name}\n"
-                    f"• Status: {'⏸️ Paused' if CREATEGROUP_TASKS[task_id].get('paused') else '▶️ Running'}"
-                    f"</blockquote>"
-                )
-                
-                try:
-                    control_buttons = InlineKeyboardMarkup([
-                        [
-                            InlineKeyboardButton("🛑 Stop", callback_data="stop_creategroup"),
-                            InlineKeyboardButton("⏸️ Pause", callback_data="pause_creategroup"),
-                            InlineKeyboardButton("▶️ Resume", callback_data="resume_creategroup")
-                        ],
-                        [
-                            InlineKeyboardButton("📊 Status Detail", callback_data="status_creategroup"),
-                            InlineKeyboardButton("📋 List Grup", callback_data="list_creategroup")
-                        ],
-                        [
-                            InlineKeyboardButton("🔁 Recurring", callback_data="recurring_creategroup"),
-                            InlineKeyboardButton("✏️ Edit Terakhir", callback_data="edit_last_creategroup")
-                        ]
-                    ])
-                    
-                    await control_message.edit_text(
-                        progress_text,
-                        reply_markup=control_buttons,
-                        parse_mode=ParseMode.HTML
-                    )
-                    
-                    if str(control_message.chat.id) != str(LOG_CHAT_ID) and "log_progress_msg" in CREATEGROUP_TASKS[task_id]:
+                            logger.error(f"Gagal membuat {type_label_full}: {e}\n{traceback.format_exc()}")
+                            await update_group_log(f"❌ Gagal membuat {type_label_full}: {str(e)}")
+                            i += 1
+                            continue
+
+                if current_step == "setup":
+                    if temp_pin:
                         try:
-                            await CREATEGROUP_TASKS[task_id]["log_progress_msg"].edit_text(
-                                progress_text,
-                                reply_markup=control_buttons,
-                                parse_mode=ParseMode.HTML
-                            )
-                        except Exception as el:
-                            logger.error(f"Gagal update log progress message di log group: {el}")
-                            
-                except Exception as e:
-                    logger.error(f"Gagal update control message: {e}")
-                
-                # Tambahkan ke batch buffer
-                batch_groups.append({
-                     'name': current_group_name,
-                     'link': invite_link,
-                     'id': created_chat_id
-                })
+                            if hasattr(user_client, "pin_chat"):
+                                await user_client.pin_chat(created_chat_id)
+                            else:
+                                await user_client.invoke(
+                                    raw.functions.messages.ToggleDialogPin(
+                                        peer=await user_client.resolve_peer(created_chat_id),
+                                        pinned=True
+                                    )
+                                )
+                            pinned_chat_id = created_chat_id
+                            await update_group_log(f"📌 {type_name} dipin sementara")
+                        except Exception as epin:
+                            logger.warning(f"Gagal pin chat {created_chat_id}: {epin}")
+                            await update_group_log(f"❌ Gagal pin {type_name}: {str(epin)}")
+                    
+                    if current_username:
+                        try:
+                            await user_client.set_chat_username(created_chat_id, current_username)
+                            invite_link = f"https://t.me/{current_username}"
+                            await update_group_log(f"✅ Username di-set: @{current_username}", current_group_name, invite_link)
+                        except Exception as e:
+                            await update_group_log(f"❌ Gagal set username @{current_username}: {str(e)}")
+                            invite_link = await user_client.export_chat_invite_link(created_chat_id)
+                            await update_group_log(None, current_group_name, invite_link)
+                    else:
+                        invite_link = await user_client.export_chat_invite_link(created_chat_id)
+                        await update_group_log(None, current_group_name, invite_link)
+                    
+                    state["invite_link"] = invite_link
+                    
+                    
+                    if is_supergroup:
+                        if photo_path and os.path.exists(photo_path):
+                            try:
+                                await user_client.set_chat_photo(chat_id=created_chat_id, photo=photo_path)
+                                await handle_action_delay()
+                                await update_group_log(f"✅ Foto profil di-set untuk <code>{created_chat_id}</code>")
+                            except Exception as e:
+                                await update_group_log(f"❌ Gagal set foto profil: {str(e)}")
+                    
+                    try:
+                        from datetime import timezone, timedelta
+                        tz = timezone(timedelta(hours=7))
+                        indonesia_time = datetime.now(tz).strftime('%Y-%m-%d | %H:%M:%S %Z')
+                        time_msg = await user_client.send_message(created_chat_id, f"**📅 {indonesia_time}**", parse_mode=ParseMode.MARKDOWN)
+                        first_msg_id = time_msg.id
+                        state["first_msg_id"] = first_msg_id
+                        if pin_first_msg:
+                            try:
+                                await user_client.pin_chat_message(created_chat_id, first_msg_id)
+                                await update_group_log(f"📌 First msg berhasil di-pin <code>{created_chat_id}</code>")
+                            except Exception as epin:
+                                await update_group_log(f"❌ Gagal pin first msg: {str(epin)}")
+                        await handle_action_delay()
+                    except Exception as e:
+                        await update_group_log(f"❌ Gagal kirim pesan waktu: {str(e)}")
+                    
+                    state["current_step"] = "copy_msg"
+                    current_step = "copy_msg"
+                    state["step_index"] = 0
+                    await save_creategroup_cache()
 
-                # Delay antar grup
-                if i < count:
-                    await wait_with_countdown(delay, last_log_msg)
-                
-                # Report Batch dan Extra Delay
-                if (i % batch_size == 0) or (i == count):
-                    # Kirim report batch
-                    if batch_groups:
-                        batch_num = (i - 1) // batch_size + 1
-                        account_name = f"{user_info.first_name or ''} {user_info.last_name or ''}".strip()
-                        batch_report = f"<blockquote expandable>"
-                        batch_report += f"#LOG Waktu Pembuatan: {datetime.now().strftime('%Y-%m-%d')}\n"
-                        batch_report += f"✅ Berhasil membuat {len(batch_groups)} {unit_label} (batch {batch_num})\n"
-                        batch_report += f"• Account: {html.escape(account_name)}\n\n"
-                        
-                        for idx, bg in enumerate(batch_groups, 1):
-                            batch_report += f"{idx}. <a href='{bg['link']}'>{bg['name']} </a> [ <code>{bg['id']}</code> ]\n"
-                        
-                        batch_report += f"\nmodule by: @AlphaXproject team"
-                        batch_report += f"</blockquote>"
-                        
-                        await send_log_notification(bot_client, batch_report, CREATEGROUP_TASKS[task_id]["user_id"], control_message.id, disable_web_page_preview=True)
-                        batch_groups = [] # Reset buffer
+                if current_step == "copy_msg":
+                    should_copy = copy_messages or group_type in ["a", "i"]
+                    if should_copy:
+                        for idx in range(s_idx, len(LIST_MSG_IDS)):
+                            msg_id = LIST_MSG_IDS[idx]
+                            try:
+                                await user_client.copy_message(chat_id=created_chat_id, from_chat_id=SRC_CHANNEL, message_id=msg_id)
+                                s_idx = idx + 1
+                                state["step_index"] = s_idx
+                                if s_idx % 5 == 0: await save_creategroup_cache()
+                                await handle_action_delay()
+                            except FloodWait as fw:
+                                await asyncio.sleep(fw.value + 10)
+                                continue
+                            except Exception as e:
+                                logger.warning(f"Gagal copy message {msg_id}: {e}")
+                    
+                    state["current_step"] = "quotes_1"
+                    current_step = "quotes_1"
+                    state["step_index"] = 0
+                    s_idx = 0
+                    await save_creategroup_cache()
 
-                    # Handle extra delay only if NOT the last group and batch limit reached
-                    if i % batch_size == 0 and i < count:
-                        extra_delay = extra_delay_minutes * 60
-                        account_name = f"{user_info.first_name or ''} {user_info.last_name or ''}".strip()
-                        batch_msg_obj = await send_log_notification(bot_client, batch_msg, CREATEGROUP_TASKS[task_id]["user_id"], control_message.id)
-                        await wait_with_countdown(extra_delay, batch_msg_obj or last_log_msg)
-                
+                if current_step == "quotes_1":
+                    for idx in range(s_idx, len(LOVE_QUOTES)):
+                        quote = LOVE_QUOTES[idx]
+                        try:
+                            msg_text = f"<i>💙 {quote}</i>"
+                            if quote_block:
+                                msg_text = f"<blockquote expandable>{msg_text}</blockquote>"
+                            await user_client.send_message(created_chat_id, msg_text, parse_mode=ParseMode.HTML)
+                            s_idx = idx + 1
+                            state["step_index"] = s_idx
+                            if s_idx % 5 == 0: await save_creategroup_cache()
+                            await handle_action_delay()
+                        except FloodWait as fw:
+                            await asyncio.sleep(fw.value + 10)
+                            continue
+                    await update_group_log(f"✅ Quote 1 berhasil dikirim total: <code>{len(LOVE_QUOTES)}</code> msg")
+                    state["current_step"] = "quotes_2"
+                    current_step = "quotes_2"
+                    state["step_index"] = 0
+                    s_idx = 0
+                    await save_creategroup_cache()
+
+                if current_step == "quotes_2":
+                    for idx in range(s_idx, len(LOVE_QUOTES_2)):
+                        quote = LOVE_QUOTES_2[idx]
+                        try:
+                            msg_text = f"<i>💖 {quote}</i>"
+                            if quote_block:
+                                msg_text = f"<blockquote expandable>{msg_text}</blockquote>"
+                            await user_client.send_message(created_chat_id, msg_text, parse_mode=ParseMode.HTML)
+                            s_idx = idx + 1
+                            state["step_index"] = s_idx
+                            if s_idx % 5 == 0: await save_creategroup_cache()
+                            await handle_action_delay()
+                        except FloodWait as fw:
+                            await asyncio.sleep(fw.value + 10)
+                            continue
+                    await update_group_log(f"✅ Quote 2 berhasil dikirim total: <code>{len(LOVE_QUOTES_2)}</code> msg")
+                    state["current_step"] = "invite_bots"
+                    current_step = "invite_bots"
+                    state["step_index"] = 0
+                    s_idx = 0
+                    await save_creategroup_cache()
+
+                if current_step == "invite_bots":
+                    if should_invite_bots and bot_entities:
+                        success_bots = []
+                        for idx in range(s_idx, len(bot_entities)):
+                            bot = bot_entities[idx]
+                            try:
+                                await user_client.add_chat_members(created_chat_id, bot.id)
+                                success_bots.append(bot.username or str(bot.id))
+                                for cmd in ["/help", "/id"]:
+                                    try:
+                                        await user_client.send_message(created_chat_id, cmd)
+                                        await handle_action_delay()
+                                    except: pass
+                            except: pass
+                            s_idx = idx + 1
+                            state["step_index"] = s_idx
+                            if s_idx % 2 == 0: await save_creategroup_cache()
+                        await update_group_log(f"✅ Berhasil invite {len(success_bots)} bot ke <code>{created_chat_id}</code>")
+                    
+                    state["current_step"] = "msg_img"
+                    current_step = "msg_img"
+                    state["step_index"] = 0
+                    s_idx = 0
+                    await save_creategroup_cache()
+
+                if current_step == "msg_img":
+                    if msg_img:
+                        if isinstance(msg_img, bool):
+                            # Jika msg_img adalah boolean True, gunakan daftar global MSG_IMG_IDS
+                            for idx in range(s_idx, len(MSG_IMG_IDS)):
+                                msg_id = MSG_IMG_IDS[idx]
+                                try:
+                                    await user_client.copy_message(created_chat_id, from_chat_id=SRC_CHANNEL, message_id=msg_id)
+                                    s_idx = idx + 1
+                                    state["step_index"] = s_idx
+                                    if s_idx % 5 == 0: await save_creategroup_cache()
+                                    await handle_action_delay()
+                                except: pass
+
+                        elif isinstance(msg_img, list):
+                            # Jika msg_img adalah list, gunakan list tersebut
+                            for idx in range(s_idx, len(msg_img)):
+                                img_url = msg_img[idx]
+                                try:
+                                    await user_client.send_photo(created_chat_id, img_url)
+                                    s_idx = idx + 1
+                                    state["step_index"] = s_idx
+                                    if s_idx % 5 == 0: await save_creategroup_cache()
+                                    await handle_action_delay()
+                                except: pass
+                            await update_group_log(f"✅ Image Messages berhasil dikirim total: <code>{len(msg_img)}</code> msg")
+                    state["current_step"] = "quotes_3"
+                    current_step = "quotes_3"
+                    state["step_index"] = 0
+                    s_idx = 0
+                    await save_creategroup_cache()
+
+                if current_step == "quotes_3":
+                    for idx in range(s_idx, len(LOVE_QUOTES_3)):
+                        quote = LOVE_QUOTES_3[idx]
+                        try:
+                            msg_text = f"<i>🌹 {quote}</i>"
+                            if quote_block:
+                                msg_text = f"<blockquote expandable>{msg_text}</blockquote>"
+                            await user_client.send_message(created_chat_id, msg_text, parse_mode=ParseMode.HTML)
+                            s_idx = idx + 1
+                            state["step_index"] = s_idx
+                            await handle_action_delay()
+                        except: pass
+                    await update_group_log(f"✅ Quote 3 berhasil dikirim total: <code>{len(LOVE_QUOTES_3)}</code> msg")
+                    state["current_step"] = "finalize"
+                    current_step = "finalize"
+                    state["step_index"] = 0
+                    s_idx = 0
+                    await save_creategroup_cache()
+
+                if current_step == "finalize":
+                    # 1. Count messages
+                    total_push_msg = 0
+                    try:
+                        messages = []
+                        async for msg in user_client.get_chat_history(created_chat_id, limit=150):
+                            messages.append(msg)
+                        total_push_msg = len(messages)
+                        await update_group_log(f"✅ Push message berhasil total: <code>{total_push_msg}</code> msg")
+                    except Exception as e:
+                        logger.warning(f"Gagal hitung pesan: {e}")
+                        await update_group_log(f"❌ Gagal hitung push message: {str(e)}")
+                    
+                    # 2. Bot sends summary message (independent — bot mungkin tidak ada di grup)
+                    try:
+                        await bot_client.send_message(created_chat_id, f"<i>Total pesan dalam grup ini: {total_push_msg}+</i>", parse_mode=ParseMode.HTML)
+                    except Exception as e:
+                        logger.warning(f"Bot gagal kirim summary ke {created_chat_id}: {e}")
+                        await update_group_log(f"❌ Bot gagal kirim summary: {str(e)}")
+                    
+                    # 3. Link ke pesan pertama
+                    if first_msg_id:
+                        try:
+                            link_msg = f"<i>➟ ke pesan pertama:</i> <b><a href='t.me/c/{str(created_chat_id).replace('-100', '').lstrip('-')}/{first_msg_id}'>» di sini</a></b>"
+                            await user_client.send_message(created_chat_id, link_msg, parse_mode=ParseMode.HTML)
+                        except Exception as e:
+                            logger.warning(f"Gagal kirim link first msg: {e}")
+                    
+                    # 4. Bot sends completion message (independent)
+                    try:
+                        group_duration = (datetime.now() - group_start_time).total_seconds()
+                        await bot_client.send_message(created_chat_id, f"<i>✅ grup <code>{created_chat_id}</code> selesai dikustomisasi dalam {format_duration(group_duration)}!</i>", parse_mode=ParseMode.HTML)
+                    except Exception as e:
+                        logger.warning(f"Bot gagal kirim completion msg ke {created_chat_id}: {e}")
+
+                    # 5. Unpin chat (SELALU dijalankan, tidak bergantung pada bot)
+                    if temp_pin and created_chat_id:
+                        try:
+                            if hasattr(user_client, "unpin_chat"):
+                                await user_client.unpin_chat(created_chat_id)
+                            else:
+                                await user_client.invoke(
+                                    raw.functions.messages.ToggleDialogPin(
+                                        peer=await user_client.resolve_peer(created_chat_id),
+                                        pinned=False
+                                    )
+                                )
+                            await update_group_log(f"📍 {type_name} unpin otomatis")
+                        except Exception as e:
+                            logger.warning(f"Gagal unpin chat {created_chat_id}: {e}")
+                            await update_group_log(f"❌ Gagal unpin {type_name}: {str(e)}")
+
+                # Group completed, move to next
+                created_groups.append({'name': current_group_name, 'link': invite_link, 'id': created_chat_id, 'time': datetime.now().strftime('%H:%M:%S'), 'type': group_type})
+                state["current_index"] = i
+                state["current_step"] = None
+                current_step = None
+                state["step_index"] = 0
+                state["current_chat_id"] = None
+                await save_creategroup_cache()
                 i += 1
                 
+            except FloodWait as fw:
+                account_name = f"{user_info.first_name or ''} {user_info.last_name or ''}".strip()
+                wait_msg = (
+                    f"<blockquote expandable>"
+                    f"⏳ FloodWait {fw.value}s untuk {unit_label} {current_group_name}\n"
+                    f"• Account: {html.escape(account_name)}"
+                    f"</blockquote>"
+                )
+                await send_log_notification(bot_client, wait_msg, effective_user_id, reply_id)
+                await asyncio.sleep(fw.value + 10)
+                continue
             except Exception as e:
                 logger.error(f"Error dalam loop pembuatan {unit_label}: {e}")
                 await send_log_notification(
                     bot_client,
                     f"❌ Error dalam loop untuk {unit_label} {i}: {str(e)}",
-                    CREATEGROUP_TASKS[task_id]["user_id"],
-                    control_message.id
+                    effective_user_id,
+                    reply_id
                 )
                 i += 1
                 continue
         
         # ===== TASK COMPLETED =====
-        if CREATEGROUP_TASKS.get(task_id, {}).get("running", False):
+        if CREATEGROUP_TASKS.get(task_key, {}).get("running", False):
             end_time = datetime.now()
-            total_duration = (end_time - CREATEGROUP_TASKS[task_id]["start_time"]).total_seconds()
+            total_duration = (end_time - CREATEGROUP_TASKS[task_key]["start_time"]).total_seconds()
             
             # Simpan konfigurasi task yang selesai
-            COMPLETED_CREATEGROUP_TASKS[task_id] = {
+            COMPLETED_CREATEGROUP_TASKS[task_key] = {
                 "delay": delay,
                 "count": count,
                 "extra_delay_minutes": extra_delay_minutes,
@@ -1377,6 +1579,8 @@ async def creategroup_loop(
                 "log_destination": log_destination,
                 "log_format": log_format,
                 "pin_first_msg": pin_first_msg,
+                "temp_pin": temp_pin,
+                "quote_block": quote_block,
                 "msg_img": msg_img,
                 "rand_len": rand_len,
                 "rand_lower": rand_lower,
@@ -1388,7 +1592,7 @@ async def creategroup_loop(
                 "total_duration": total_duration,
                 "user_id": effective_user_id,
                 "client_id": user_info.id,
-                "start_time": CREATEGROUP_TASKS[task_id]["start_time"].strftime('%Y-%m-%d %H:%M:%S')
+                "start_time": CREATEGROUP_TASKS[task_key]["start_time"].strftime('%Y-%m-%d %H:%M:%S')
             }
             
             # Kirim laporan akhir
@@ -1414,48 +1618,49 @@ async def creategroup_loop(
                 f"<blockquote expandable>"
                 f"🛑 Task Create {type_label} dihentikan\n"
                 f"• {type_name} dibuat: {len(created_groups)}/{count}\n"
-                f"• User: {user_info.first_name}"
+                f"• User: {user_info.first_name if user_info else 'Unknown'}"
                 f"</blockquote>",
-                CREATEGROUP_TASKS[task_id]["user_id"],
-                control_message.id
+                effective_user_id,
+                reply_id
             )
     
     except Exception as e:
         logger.error(f"Critical error in creategroup_loop: {e}", exc_info=True)
         
         # Simpan partial state agar bisa diakses
-        COMPLETED_CREATEGROUP_TASKS[task_id] = {
+        COMPLETED_CREATEGROUP_TASKS[task_key] = {
             "delay": delay,
             "count": count,
             "created_groups": created_groups,
-            "total_duration": (datetime.now() - CREATEGROUP_TASKS[task_id]["start_time"]).total_seconds(),
-            "user_id": user_info.id,
+            "total_duration": (datetime.now() - CREATEGROUP_TASKS[task_key]["start_time"]).total_seconds(),
+            "user_id": user_info.id if user_info else None,
             "status": "failed",
             "error": str(e)
         }
         
         # Update control message
-        try:
-             await control_message.edit_text(
-                  f"❌ <b>Task CreateGroup Gagal</b>\n\n"
-                  f"• Error: {html.escape(str(e))}\n"
-                  f"• Berhasil: {len(created_groups)}/{count}\n"
-                  f"• User: {user_info.first_name}",
-                  reply_markup=InlineKeyboardMarkup([
-                       [InlineKeyboardButton("📋 List Partial", callback_data="list_groups_creategroup")]
-                  ]),
-                  parse_mode=ParseMode.HTML
-             )
-        except Exception as ex:
-             logger.warning(f"Gagal update control message saat error: {ex}")
+        if control_message:
+            try:
+                 await control_message.edit_text(
+                      f"❌ <b>Task CreateGroup Gagal</b>\n\n"
+                      f"• Error: {html.escape(str(e))}\n"
+                      f"• Berhasil: {len(created_groups)}/{count}\n"
+                      f"• User: {user_info.first_name if user_info else 'Unknown'}",
+                      reply_markup=InlineKeyboardMarkup([
+                           [InlineKeyboardButton("📋 List Partial", callback_data="list_groups_creategroup")]
+                      ]),
+                      parse_mode=ParseMode.HTML
+                 )
+            except Exception as ex:
+                 logger.warning(f"Gagal update control message saat error: {ex}")
 
         await send_log_notification(
             bot_client,
             f"<blockquote expandable>"
             f"❌ Critical error in creategroup_loop: {html.escape(str(e))}"
             f"</blockquote>",
-            CREATEGROUP_TASKS[task_id]["user_id"],
-            control_message.id
+            effective_user_id,
+            reply_id
         )
     finally:
         if 'tid' in locals():
@@ -1469,7 +1674,13 @@ async def creategroup_loop(
                 logger.error(f"Gagal hapus cache foto profil: {e}")
         
         # Cleanup task state
-        CREATEGROUP_TASKS.pop(task_id, None)
+        if 'task_key' in locals():
+            CREATEGROUP_TASKS.pop(task_key, None)
+        else:
+            CREATEGROUP_TASKS.pop(task_id, None)
+        
+        # Simpan cache setelah cleanup (mencegah ghost tasks)
+        await save_creategroup_cache()
 
 async def send_completion_report(
     bot_client: Client,
@@ -1606,7 +1817,8 @@ async def send_completion_report(
                      f"• Detail: Berhasil {success_count}/{requested_count} {unit_label}\n"
                      f"• 📁 Log: Terkirim ke {log_info}."
                      f"</blockquote>",
-                     parse_mode=ParseMode.HTML
+                     parse_mode=ParseMode.HTML,
+                     reply_to_message_id=reply_id
                  )
              except: pass
 
@@ -1641,56 +1853,57 @@ async def send_completion_report(
         unit_label = "channel" if is_channel else "grup"
 
         # Update control message dengan tombol baru
-        final_buttons = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("📥 Download Log", callback_data="download_log_creategroup"),
-                InlineKeyboardButton("🔁 Recurring", callback_data="recurring_creategroup")
-            ],
-            [
-                InlineKeyboardButton(f"📋 List {type_label}", callback_data="list_groups_creategroup"),
-                InlineKeyboardButton("🗑️ Hapus Task", callback_data="delete_task_creategroup")
-            ]
-        ])
+        if control_message:
+            try:
+                final_buttons = InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton("📥 Download Log", callback_data="download_log_creategroup"),
+                        InlineKeyboardButton("🔁 Recurring", callback_data="recurring_creategroup")
+                    ],
+                    [
+                        InlineKeyboardButton(f"📋 List {type_label}", callback_data="list_groups_creategroup"),
+                        InlineKeyboardButton("🗑️ Hapus Task", callback_data="delete_task_creategroup")
+                    ]
+                ])
 
-        # Generate buttons for created groups
-        group_buttons = []
-        if created_groups:
-             # Limit buttons to avoid hitting limits (max 100 buttons usually safe, but let's be reasonable)
-             # Structure: [[Grup 1], [Grup 2]]
-             buttons_list = []
-             for idx, grp in enumerate(created_groups[:90], 1): # Limit to 90 for safety
-                  buttons_list.append(InlineKeyboardButton(f"{type_label} {idx}", url=grp['link']))
-             
-             # Arrange buttons, 3 per row
-             from Main.utils.helpers import arrange_buttons
-             from Main.core.decorators import log_errors, iuser_check
-             group_buttons = arrange_buttons(buttons_list, 3)
-             
-             # Append control buttons to the group buttons (or vice versa? usually group buttons below)
-             # Let's keep final_buttons separate or merge. 
-             # Merging:
-             final_buttons.inline_keyboard = group_buttons + final_buttons.inline_keyboard
+                # Generate buttons for created groups
+                group_buttons = []
+                if created_groups:
+                     # Limit buttons to avoid hitting limits (max 100 buttons usually safe, but let's be reasonable)
+                     buttons_list = []
+                     for idx, grp in enumerate(created_groups[:90], 1): # Limit to 90 for safety
+                          buttons_list.append(InlineKeyboardButton(f"{type_label} {idx}", url=grp['link']))
+                     
+                     # Arrange buttons, 3 per row
+                     from Main.utils.helpers import arrange_buttons
+                     group_buttons = arrange_buttons(buttons_list, 3)
+                     
+                     # Merging:
+                     final_buttons.inline_keyboard = group_buttons + final_buttons.inline_keyboard
 
-        account_name = f"{user_info.first_name or ''} {user_info.last_name or ''}".strip()
-        await control_message.edit_text(
-            f"<blockquote expandable>"
-            f"📊 <b>Laporan Create {type_label} Selesai</b>\n\n"
-            f"• <b>User:</b> {html.escape(account_name)}\n"
-            f"• <b>Detail:</b> Berhasil {success_count}/{requested_count} {unit_label}\n"
-            f"• <b>Durasi:</b> {format_duration(total_duration)}\n"
-            f"• <b>Log:</b> {log_info}"
-            f"</blockquote>",
-            reply_markup=final_buttons,
-            parse_mode=ParseMode.HTML
-        )
+                account_name = f"{user_info.first_name or ''} {user_info.last_name or ''}".strip() if user_info else "Unknown"
+                await control_message.edit_text(
+                    f"<blockquote expandable>"
+                    f"✅ <b>Laporan Create {type_label} Selesai</b>\n\n"
+                    f"• <b>User:</b> {html.escape(account_name)}\n"
+                    f"• <b>Detail:</b> Berhasil {success_count}/{requested_count} {unit_label}\n"
+                    f"• <b>Durasi:</b> {format_duration(total_duration)}\n"
+                    f"• <b>Log:</b> {log_info}"
+                    f"</blockquote>",
+                    reply_markup=final_buttons,
+                    parse_mode=ParseMode.HTML
+                )
+            except Exception as e:
+                logger.error(f"Gagal update control message final: {e}\n{traceback.format_exc()}")
         
     except Exception as e:
-        logger.error(f"Error sending completion report: {e}")
+        error_tb = traceback.format_exc()
+        logger.error(f"Error sending completion report: {e}\n{error_tb}")
         await send_log_notification(
             bot_client,
-            f"❌ Error dalam completion report: {str(e)}",
-            user_info.id,
-            control_message.id
+            f"❌ <b>Error dalam completion report:</b> {str(e)}\n\n<blockquote expandable><code>{html.escape(error_tb)}</code></blockquote>",
+            user_info.id if user_info else user_client.me.id,
+            reply_id
         )
 
 # ==================== COMMAND HANDLER ====================
@@ -1851,6 +2064,7 @@ async def creategroup_command_handler(client: Client, message: AltruixMessage):
                 "log_destination": config.get("log_destination", "both"),
                 "log_format": config.get("log_format", "zip"),
                 "pin_first_msg": config.get("pin_first_msg", True),
+                "quote_block": config.get("quote_block", True),
                 "rand_len": config.get("rand_len", 0),
                 "rand_lower": config.get("rand_lower", False),
                 "rand_upper": config.get("rand_upper", False),
@@ -1880,7 +2094,8 @@ async def creategroup_command_handler(client: Client, message: AltruixMessage):
                     f"• Bots: <code>{len(bot_identifiers) if group_type == 'i' else 0}</code>\n\n"
                     f"<i>Task ini akan berjalan di background. Lanjutkan?</i>",
                     reply_markup=confirm_buttons,
-                    parse_mode=ParseMode.HTML
+                    parse_mode=ParseMode.HTML,
+                    reply_to_message_id=message.id if str(message.chat.id) == str(LOG_CHAT_ID) else None
                 )
                 
                 # Beritahu user untuk cek log group
@@ -1990,7 +2205,10 @@ async def confirm_creategroup_handler(client: Client, callback_query: CallbackQu
         description = task_data.get("description", "Powered by @AlphaXproject")
         
         # Hapus pesan konfirmasi
-        await callback_query.message.delete()
+        if callback_query.message:
+            await callback_query.message.delete()
+        elif callback_query.inline_message_id:
+            await Altruix.bot.edit_message_text(inline_message_id=callback_query.inline_message_id, text="🗑 <b>Dashboard Ditutup</b>", parse_mode=ParseMode.HTML)
         
         # Buat control message dengan tombol lengkap
         control_buttons = InlineKeyboardMarkup([
@@ -2073,10 +2291,12 @@ async def confirm_creategroup_handler(client: Client, callback_query: CallbackQu
                 log_destination=config.get("log_destination", "both"),
                 log_format=config.get("log_format", "zip"),
                 pin_first_msg=config.get("pin_first_msg", True),
+                quote_block=config.get("quote_block", True),
                 rand_len=config.get("rand_len", 0),
                 rand_lower=config.get("rand_lower", False),
                 rand_upper=config.get("rand_upper", False),
                 rand_static=config.get("rand_static", False),
+                temp_pin=config.get("temp_pin", True),
                 user_id=callback_query.from_user.id
             )
         )
@@ -2177,7 +2397,7 @@ async def creategroup_stop_cmd(client: Client, message: AltruixMessage):
         await message.reply("⏹️ Sinyal stop dikirim. Task akan berhenti setelah proses saat ini selesai.")
 
 
-@Altruix.bot.on_callback_query(filters.regex(r"^(stop|pause|resume|status|list|recurring|edit_last|download_log|list_groups|delete_task|cancel|force_stop|confirm_recur)_creategroup"))
+@Altruix.bot.on_callback_query(filters.regex(r"^(stop|pause|resume|status|list|recurring|edit_last|download_log|list_groups|delete_task|cancel|force_stop|confirm_recur|recover)_creategroup"))
 @log_errors
 @iuser_check
 async def creategroup_control_handler(client: Client, callback_query: CallbackQuery):
@@ -2186,8 +2406,15 @@ async def creategroup_control_handler(client: Client, callback_query: CallbackQu
     data_parts = callback_query.data.split(":")
     action = data_parts[0].replace("_creategroup", "")
     user_id = callback_query.from_user.id
-    task_id = f'creategroup_{user_id}'
     
+    # Mencari task yang relevan (baik dari tid eksplisit atau owner)
+    task_key = None
+    if len(data_parts) > 1 and data_parts[1] in CREATEGROUP_TASKS:
+        task_key = data_parts[1]
+    else:
+        # Fallback: cari task aktif milik user ini
+        task_key = next((k for k, v in CREATEGROUP_TASKS.items() if v.get("user_id") == user_id and v.get("running")), None)
+
     try:
         # Handle Force Stop first (doesn't need check)
         if action == "force_stop":
@@ -2202,23 +2429,100 @@ async def creategroup_control_handler(client: Client, callback_query: CallbackQu
             await callback_query.message.edit_text("🛑 <b>Task CreateGroup Dihentikan Paksa (Force Stop)</b>\nMemory dibersihkan.", parse_mode=ParseMode.HTML)
             return
 
+        if action == "recover":
+            if len(data_parts) < 2:
+                await callback_query.answer("Data tidak valid", show_alert=True)
+                return
+                
+            tid = data_parts[1]
+            if tid not in CREATEGROUP_TASKS:
+                await callback_query.answer("❌ Task tidak ditemukan di memori.", show_alert=True)
+                return
+            
+            task_data = CREATEGROUP_TASKS[tid]
+            params = task_data.get("params", {})
+            
+            # Find client
+            client_id = task_data.get("user_id")
+            user_client = next((c for c in Altruix.clients if c.me.id == client_id), None)
+            
+            if not user_client:
+                 if Altruix.clients:
+                      user_client = Altruix.clients[0]
+                 else:
+                      await callback_query.answer("❌ Tidak ada userbot aktif!", show_alert=True)
+                      return
+
+            
+            await callback_query.answer("Mengambil alih task...")
+            msg_text = f"🔄 <b>Resuming Interrupted Task:</b> <code>{tid}</code>"
+            try:
+                await callback_query.edit_message_text(msg_text, parse_mode=ParseMode.HTML)
+            except Exception:
+                pass
+
+            # Start loop
+            asyncio.create_task(
+                creategroup_loop(
+                    user_client=user_client,
+                    bot_client=Altruix.bot,
+                    initial_message=None,
+                    delay=params.get("delay"),
+                    count=params.get("count"),
+                    extra_delay_minutes=params.get("extra_delay_minutes"),
+                    batch_size=params.get("batch_size"),
+                    group_type=params.get("group_type"),
+                    name_pattern=params.get("name_pattern"),
+                    username_prefix=params.get("username_prefix"),
+                    bot_identifiers=params.get("bot_identifiers"),
+                    control_message=None, # Will be recovered by loop
+                    action_delay=params.get("action_delay", 3.0),
+                    invite_bots=params.get("invite_bots", True),
+                    anon_mode=params.get("anon_mode", True),
+                    copy_messages=params.get("copy_messages", True),
+                    description=params.get("description", "Powered by @AlphaXproject"),
+                    photo_source=params.get("photo_source", "source"),
+                    custom_photo_id=params.get("custom_photo_id"),
+                    log_destination=params.get("log_destination", "both"),
+                    log_format=params.get("log_format", "zip"),
+                    pin_first_msg=params.get("pin_first_msg", True),
+                    temp_pin=params.get("temp_pin", True),
+                    quote_block=params.get("quote_block", True),
+                    msg_img=params.get("msg_img", True),
+                    rand_len=params.get("rand_len", 0),
+                    rand_lower=params.get("rand_lower", False),
+                    rand_upper=params.get("rand_upper", False),
+                    rand_static=params.get("rand_static", False),
+                    batch_action=params.get("batch_action", 30),
+                    ba_delay=params.get("ba_delay", 30),
+                    user_id=client_id,
+                    task_id=tid,
+                    is_resume=True
+                )
+            )
+            return
+
         if action == "cancel":
             if len(data_parts) > 1:
                 confirm_id = data_parts[1]
                 PENDING_CONFIRMATIONS.pop(confirm_id, None)
             
+        if callback_query.message:
             await callback_query.message.delete()
-            await callback_query.answer("Task dibatalkan")
-            return
+        elif callback_query.inline_message_id:
+            await Altruix.bot.edit_message_text(inline_message_id=callback_query.inline_message_id, text="🗑 <b>Dashboard Ditutup</b>", parse_mode=ParseMode.HTML)
+        
+        await callback_query.answer("Task dibatalkan")
+        return
         
         if action == "stop":
-            if task_id in CREATEGROUP_TASKS:
-                CREATEGROUP_TASKS[task_id]["running"] = False
+            if task_key in CREATEGROUP_TASKS:
+                CREATEGROUP_TASKS[task_key]["running"] = False
                 await send_log_notification(
                     client,
                     f"🛑 Task CreateGroup dihentikan oleh {callback_query.from_user.mention}",
-                    CREATEGROUP_TASKS[task_id].get("user_id"),
-                    CREATEGROUP_TASKS[task_id].get("control_message_id")
+                    CREATEGROUP_TASKS[task_key].get("user_id"),
+                    CREATEGROUP_TASKS[task_key].get("control_message_id")
                 )
                 await callback_query.answer("Task dihentikan")
                 await callback_query.message.edit_text(
@@ -2229,14 +2533,14 @@ async def creategroup_control_handler(client: Client, callback_query: CallbackQu
                 await callback_query.answer("Tidak ada task yang berjalan")
         
         elif action == "pause":
-            if task_id in CREATEGROUP_TASKS and CREATEGROUP_TASKS[task_id].get("running", False):
-                CREATEGROUP_TASKS[task_id]["paused"] = True
-                CREATEGROUP_TASKS[task_id]["pause_event"].clear()
+            if task_key in CREATEGROUP_TASKS and CREATEGROUP_TASKS[task_key].get("running", False):
+                CREATEGROUP_TASKS[task_key]["paused"] = True
+                CREATEGROUP_TASKS[task_key]["pause_event"].clear()
                 await send_log_notification(
                     client,
                     f"⏸️ Task CreateGroup dipause oleh {callback_query.from_user.mention}",
-                    CREATEGROUP_TASKS[task_id].get("user_id"),
-                    CREATEGROUP_TASKS[task_id].get("control_message_id")
+                    CREATEGROUP_TASKS[task_key].get("user_id"),
+                    CREATEGROUP_TASKS[task_key].get("control_message_id")
                 )
                 await callback_query.answer("Task dipause")
                 await callback_query.message.edit_text(
@@ -2247,14 +2551,14 @@ async def creategroup_control_handler(client: Client, callback_query: CallbackQu
                 await callback_query.answer("Task tidak berjalan atau sudah dihentikan")
         
         elif action == "resume":
-            if task_id in CREATEGROUP_TASKS and CREATEGROUP_TASKS[task_id].get("paused", False):
-                CREATEGROUP_TASKS[task_id]["paused"] = False
-                CREATEGROUP_TASKS[task_id]["pause_event"].set()
+            if task_key in CREATEGROUP_TASKS and CREATEGROUP_TASKS[task_key].get("paused", False):
+                CREATEGROUP_TASKS[task_key]["paused"] = False
+                CREATEGROUP_TASKS[task_key]["pause_event"].set()
                 await send_log_notification(
                     client,
                     f"▶️ Task CreateGroup di-resume oleh {callback_query.from_user.mention}",
-                    CREATEGROUP_TASKS[task_id].get("user_id"),
-                    CREATEGROUP_TASKS[task_id].get("control_message_id")
+                    CREATEGROUP_TASKS[task_key].get("user_id"),
+                    CREATEGROUP_TASKS[task_key].get("control_message_id")
                 )
                 await callback_query.answer("Task di-resume")
                 # Hapus status pause dari teks
@@ -2269,8 +2573,8 @@ async def creategroup_control_handler(client: Client, callback_query: CallbackQu
                 await callback_query.answer("Task tidak dalam status pause")
         
         elif action == "status":
-            if task_id in CREATEGROUP_TASKS:
-                task_info = CREATEGROUP_TASKS[task_id]
+            if task_key in CREATEGROUP_TASKS:
+                task_info = CREATEGROUP_TASKS[task_key]
                 created = len(task_info.get("created_groups", []))
                 current = task_info.get("current_index", 0)
                 running = task_info.get("running", False)
@@ -2361,66 +2665,41 @@ async def creategroup_control_handler(client: Client, callback_query: CallbackQu
                     return
                 
                 conf = COMPLETED_CREATEGROUP_TASKS[task_id]
-                
-                # Find client
-                client_id = conf.get("client_id", conf["user_id"])
+                client_id = conf.get("client_id", conf.get("user_id"))
                 user_client = next((c for c in Altruix.clients if c.me.id == client_id), None)
-                if not user_client and Altruix.clients:
-                    user_client = Altruix.clients[0]
-                
+                if not user_client and Altruix.clients: user_client = Altruix.clients[0]
                 if not user_client:
                     await callback_query.answer("❌ Tidak ada userbot aktif!", show_alert=True)
                     return
-                
-                # Start task
+
                 await callback_query.answer("🔁 Mengulang task...")
-                
-                # Update control message with starting status
-                await callback_query.message.edit_text(
-                    f"🔄 <b>Mengulang Task CreateGroup...</b>\n\n"
-                    f"• Account: {callback_query.from_user.mention}\n"
-                    f"• Total: {conf['count']} grup\n"
-                    f"• Tipe: {conf['group_type']}",
-                    parse_mode=ParseMode.HTML
-                )
-                
+                msg_text = "🔄 <b>Mengulang Task CreateGroup...</b>"
+                if callback_query.message:
+                    await callback_query.message.edit_text(msg_text, parse_mode=ParseMode.HTML)
+                elif callback_query.inline_message_id:
+                    await Altruix.bot.edit_message_text(inline_message_id=callback_query.inline_message_id, text=msg_text, parse_mode=ParseMode.HTML)
+
                 asyncio.create_task(
                     creategroup_loop(
-                        user_client=user_client,
-                        bot_client=Altruix.bot,
-                        initial_message=callback_query.message,
-                        delay=conf["delay"],
-                        count=conf["count"],
-                        extra_delay_minutes=conf["extra_delay_minutes"],
-                        batch_size=conf["batch_size"],
-                        group_type=conf["group_type"],
-                        name_pattern=conf["name_pattern"],
-                        username_prefix=conf["username_prefix"],
-                        bot_identifiers=conf["bot_identifiers"],
-                        control_message=callback_query.message,
-                        action_delay=conf.get("action_delay", 3.0),
-                        invite_bots=conf.get("invite_bots", True),
-                        anon_mode=conf.get("anon_mode", True),
-                        copy_messages=conf.get("copy_messages", True),
-                        description=conf.get("description", "Powered by @AlphaXproject"),
-                        photo_source=conf.get("photo_source", "source"),
-                        custom_photo_id=conf.get("custom_photo_id"),
-                        log_destination=conf.get("log_destination", "both"),
-                        log_format=conf.get("log_format", "zip"),
-                        pin_first_msg=conf.get("pin_first_msg", True),
-                        msg_img=conf.get("msg_img", True),
-                        rand_len=conf.get("rand_len", 0),
-                        rand_lower=conf.get("rand_lower", False),
-                        rand_upper=conf.get("rand_upper", False),
-                        rand_static=conf.get("rand_static", False),
-                        batch_action=conf.get("batch_action", 30),
-                        ba_delay=conf.get("ba_delay", 30),
-                        user_id=user_id
+                        user_client=user_client, bot_client=Altruix.bot, initial_message=callback_query.message,
+                        delay=conf["delay"], count=conf["count"], extra_delay_minutes=conf["extra_delay_minutes"],
+                        batch_size=conf["batch_size"], group_type=conf["group_type"], name_pattern=conf["name_pattern"],
+                        username_prefix=conf["username_prefix"], bot_identifiers=conf["bot_identifiers"],
+                        control_message=callback_query.message, action_delay=conf.get("action_delay", 3.0),
+                        invite_bots=conf.get("invite_bots", True), anon_mode=conf.get("anon_mode", True),
+                        copy_messages=conf.get("copy_messages", True), description=conf.get("description", "Powered by @AlphaXproject"),
+                        photo_source=conf.get("photo_source", "source"), custom_photo_id=conf.get("custom_photo_id"),
+                        log_destination=conf.get("log_destination", "both"), log_format=conf.get("log_format", "zip"),
+                        pin_first_msg=conf.get("pin_first_msg", True), temp_pin=conf.get("temp_pin", True),
+                        quote_block=conf.get("quote_block", True), msg_img=conf.get("msg_img", True),
+                        rand_len=conf.get("rand_len", 0), rand_lower=conf.get("rand_lower", False),
+                        rand_upper=conf.get("rand_upper", False), rand_static=conf.get("rand_static", False),
+                        batch_action=conf.get("batch_action", 30), ba_delay=conf.get("ba_delay", 30), user_id=conf.get("user_id")
                     )
                 )
             else:
                 await callback_query.answer("Tidak ada task selesai untuk diulang.")
-        
+            
         elif action == "edit_last":
             if task_id in CREATEGROUP_TASKS:
                 groups = CREATEGROUP_TASKS[task_id].get("created_groups", [])
@@ -2454,12 +2733,27 @@ async def creategroup_control_handler(client: Client, callback_query: CallbackQu
                 await callback_query.answer("Task belum selesai")
         
         elif action == "delete_task":
-            if task_id in COMPLETED_CREATEGROUP_TASKS:
-                COMPLETED_CREATEGROUP_TASKS.pop(task_id)
-                await callback_query.answer("Task dihapus dari memory")
-                await callback_query.message.delete()
+            target_tid = data_parts[1] if len(data_parts) > 1 else task_id
+            if target_tid in COMPLETED_CREATEGROUP_TASKS:
+                COMPLETED_CREATEGROUP_TASKS.pop(target_tid, None)
+                await callback_query.answer("Task riwayat dihapus")
+                if callback_query.message:
+                    await callback_query.message.delete()
+                elif callback_query.inline_message_id:
+                    await Altruix.bot.edit_message_text(inline_message_id=callback_query.inline_message_id, text="🗑 <b>Dashboard Ditutup</b>", parse_mode=ParseMode.HTML)
+            elif target_tid in CREATEGROUP_TASKS:
+                CREATEGROUP_TASKS.pop(target_tid, None)
+                await callback_query.answer("Task aktif dihapus dari memori")
+                if callback_query.message:
+                    await callback_query.message.delete()
+                elif callback_query.inline_message_id:
+                    await Altruix.bot.edit_message_text(inline_message_id=callback_query.inline_message_id, text="🗑 <b>Dashboard Ditutup</b>", parse_mode=ParseMode.HTML)
             else:
                 await callback_query.answer("Tidak ada task untuk dihapus")
+                if callback_query.message:
+                    await callback_query.message.delete()
+                elif callback_query.inline_message_id:
+                    await Altruix.bot.edit_message_text(inline_message_id=callback_query.inline_message_id, text="🗑 <b>Dashboard Ditutup</b>", parse_mode=ParseMode.HTML)
     
     except Exception as e:
         logger.error(f"Error in creategroup_control_handler: {e}")
