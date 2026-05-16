@@ -3325,6 +3325,44 @@ class AltruixClient:
                                 parse_mode=ParseMode.HTML
                             )
                             self.log(f"Ringkasan akhir berhasil dikirim. Branch: {branch}, Versi: {altruix_version}", level=20)
+
+                            # =============================================
+                            # 📜 CHANGELOG NOTIFICATION ON STARTUP
+                            # =============================================
+                            try:
+                                changelog_notif = str(await self.config.get_env("CHANGELOG_NOTIF_ENABLED", default="on")).lower()
+                                if changelog_notif == "on":
+                                    from Main.utils.changelog_helpers import parse_changelog, format_entry_to_html
+                                    entries = parse_changelog()
+                                    if entries:
+                                        latest_entry = entries[0]
+                                        entry_html = format_entry_to_html(latest_entry)
+                                        # Truncate if too long for a single message (safe limit ~3800)
+                                        if len(entry_html) > 3600:
+                                            entry_html = entry_html[:3600] + "\n\n<i>... (truncated)</i>"
+                                        changelog_msg = (
+                                            "<blockquote expandable>"
+                                            "📜 <b>Latest Changelog Update</b>\n"
+                                            "━━━━━━━━━━━━━━━━━━━━\n\n"
+                                            f"{entry_html}\n"
+                                            "━━━━━━━━━━━━━━━━━━━━\n"
+                                            "<i>Auto-sent on startup. Disable via Settings → Program Controls.</i>"
+                                            "</blockquote>"
+                                        )
+                                        await self.bot.send_message(
+                                            log_chat_id,
+                                            changelog_msg,
+                                            parse_mode=ParseMode.HTML,
+                                            link_preview_options=LinkPreviewOptions(is_disabled=True)
+                                        )
+                                        self.log("📜 Changelog notification sent to log group.", level=20)
+                                    else:
+                                        self.log("📜 Changelog notification enabled but changelog.md is empty.", level=logging.DEBUG)
+                                else:
+                                    self.log("📜 Changelog notification is disabled.", level=logging.DEBUG)
+                            except Exception as clog_err:
+                                self.log(f"📜 Failed to send changelog notification: {clog_err}", level=logging.WARNING)
+
                         except Exception as e:
                             # Fallback ke format plain text jika HTML error
                             self.log(f"Error sending HTML format, trying plain text: {e}", level=logging.WARNING)

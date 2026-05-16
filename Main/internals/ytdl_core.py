@@ -5,7 +5,7 @@
 # Please see < https://github.com/Altriux/Altruix/blob/main/LICENSE >
 #
 # All rights reserved.
-YTDL_CORE_VERSION = "0.0.238"
+YTDL_CORE_VERSION = "0.0.239"
 
 import os
 import time
@@ -14,6 +14,7 @@ import asyncio
 import sys
 import traceback
 import subprocess
+import re
 from pyrogram import enums
 from Main import Altruix
 from Main.utils.runtime_check import check_and_alert, get_js_runtime # ✅ Added get_js_runtime
@@ -92,6 +93,56 @@ async def run_subprocess(cmd: list):
         except:
             pass
         raise
+    
+async def run_yt_dlp_with_progress(cmd: list, status_msg, task_id, state):
+    """Runs yt-dlp and parses stdout to report progress via progress_callback."""
+    process = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE
+    )
+    
+    start_time = time.time()
+    last_update = 0
+    full_stdout = []
+    
+    is_video = state.get("format") == "video"
+    qual_suffix = "p" if is_video else "kbps"
+    media_type = "Video" if is_video else "Audio"
+    media_quality = f"{state['quality']}{qual_suffix}"
+    media_name = state.get('title', 'Unknown')
+    a_lang = state.get("audio_lang", "Default")
+    sender_name = state.get("sender_name", "Userbot")
+
+    # Regex for yt-dlp percentage: [download]  10.5% of ...
+    prog_regex = re.compile(r"\[download\]\s+(\d+\.\d+)%")
+
+    try:
+        while True:
+            line = await process.stdout.readline()
+            if not line:
+                break
+            
+            line_str = line.decode(errors="replace").strip()
+            if not line_str: continue
+            full_stdout.append(line_str)
+            
+            match = prog_regex.search(line_str)
+            if match:
+                percentage = float(match.group(1))
+                # We pass percentage as current and 100 as total
+                last_update = await progress_callback(
+                    percentage, 100, status_msg, start_time, last_update, 
+                    "Downloading", sender_name, media_type, media_quality, 
+                    media_name, task_id=task_id, audio_lang=a_lang
+                )
+                    
+        stderr_data = await process.stderr.read()
+        return process.returncode, "\n".join(full_stdout), stderr_data.decode(errors="replace").strip()
+    except Exception as e:
+        try: process.kill()
+        except: pass
+        raise e
 
 def get_progress_bar(percentage: float) -> str:
     """Standard Altruix Progress Bar: █▋░"""
@@ -129,7 +180,8 @@ async def edit_status(target, text, **kwargs):
 async def progress_callback(current, total, msg, start_time, last_update_time, task_name="Uploading", sender_name=None, media_type=None, media_quality=None, media_name=None, task_id=None, audio_lang=None):
     """Throttled progress bar update (4-6s) to avoid floodwait."""
     now = time.time()
-    if now - last_update_time < 5:
+    # ✅ Optimized throttle: 10s to avoid floodwait as requested
+    if now - last_update_time < 10:
         return last_update_time
         
     diff = now - start_time
@@ -500,7 +552,7 @@ async def _ytdl_single_unit(status_msg, task_id, state):
         if not is_video:
              dl_cmd.extend(["--extract-audio", "--audio-format", "mp3", "--audio-quality", f"{quality}K"])
              
-        ret, out, err = await run_subprocess(dl_cmd)
+        ret, out, err = await run_yt_dlp_with_progress(dl_cmd, status_msg, task_id, state)
         if ret != 0: raise Exception(f"Download Fail: {err}")
         
         actual_raw = None

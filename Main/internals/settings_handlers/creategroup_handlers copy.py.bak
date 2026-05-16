@@ -18,14 +18,13 @@ from pyrogram.enums import ParseMode
 
 from .states import user_creategroup_state
 
-HANDLER_VERSION = "0.3.22" # ✅ ADDED: Account Delay UI & Staggered Sync
+HANDLER_VERSION = "0.3.18" # ✅ Standardized Logging
 logger = logging.getLogger("altruix.creategroup.handlers")
 logger.setLevel(logging.INFO)
 
 # Default Configuration
 DEFAULT_CREATEGROUP_CONFIG = {
     "delay": 60, "count": 2, "batch_delay": 10, "batch_size": 2, "action_delay": 3.0,
-    "account_delay": 0.5, # ✅ NEW: Staggered start delay for multi-account tasks
     "batch_action": 30, "ba_delay": 30,
     "pattern": "🔰 X(tahun) B(bulan)-T(tanggal)", "username": None, "description": "Powered by @AlphaXProject",
     "bots": "@MissRose_bot @simixbot @Spillgame_bot @truthordaresbot @truthordares_bot @truthordarerp_bot @truthordarerln_bot @truthordares18_bot",
@@ -112,20 +111,9 @@ async def creategroup_menu_handler(c: Client, cb: CallbackQuery):
 @log_errors
 async def creategroup_cached_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
-    
-    # Use split instead of cb.matches to be safe for manual calls from other handlers
-    data = cb.data.split("_")
-    # Format can be creategroup_cached_idx_pg_tpg OR creategroup_pauall_idx_pg etc
-    # Both have index 2 as session and index 3 as page
-    try:
-        session_index = int(data[2])
-        page = int(data[3])
-        task_page = int(data[4]) if len(data) > 4 and data[4].isdigit() else 1
-    except (IndexError, ValueError):
-        # Fallback for unexpected data formats
-        session_index = 1
-        page = 1
-        task_page = 1
+    session_index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    task_page = int(cb.matches[0].group(3)) if cb.matches[0].group(3) else 1
     
     from Main.plugins.userbot.xcreategroup import CREATEGROUP_TASKS
     from Main.internals.settings_handlers.custom_alert_handlers import _get_session_user_id
@@ -177,11 +165,28 @@ async def creategroup_cached_handler(c: Client, cb: CallbackQuery):
         # Text summary for header
         lines.append(f"• <b>{tid}</b> [{status}] | {account} ({int(current)}/{int(total)})")
         
-        # Row 1: Task Label - NOW ACTS AS ENTRY TO SUB-MENU
-        # We append session_index, page, and task_page to the callback for "Back" navigation
+        # Row 1: Task Label
         buttons.append([
-            InlineKeyboardButton(f"⚙️ Manage {tid} — {account[:15]}", callback_data=f"creategroup_task_manage_{tid}_{session_index}_{page}_{task_page}", style=user_style)
+            InlineKeyboardButton(f"Task ID {tid} | 👤 {account}", callback_data=f"creategroup_task_info_{tid}", style=user_style)
         ])
+        
+        # Row 2: Action Buttons
+        row_actions = [
+            InlineKeyboardButton("Resume", callback_data=f"recover_creategroup:{tid}", style=user_style),
+            InlineKeyboardButton("End", callback_data=f"delete_task_creategroup:{tid}", style=user_style)
+        ]
+        
+        # Add View Last Chat if available
+        chat_link = task.get("invite_link")
+        if not chat_link and task.get("current_chat_id"):
+            c_id = task.get("current_chat_id")
+            if str(c_id).startswith("-100"):
+                chat_link = f"https://t.me/c/{str(c_id)[4:]}/1"
+        
+        if chat_link:
+            row_actions.append(InlineKeyboardButton("View", url=chat_link, style=user_style))
+            
+        buttons.append(row_actions)
         
     text = f"<blockquote expandable><b>🔄 Restore Tasks (Cache) [{task_page}/{total_pages}]</b>\n\n" + "\n".join(lines) + "\n\n<i>Klik tombol aksi di bawah untuk memproses task spesifik.</i></blockquote>"
     
@@ -251,11 +256,6 @@ async def creategroup_resall_handler(c: Client, cb: CallbackQuery):
         if not user_client and Altruix.clients: user_client = Altruix.clients[0]
         
         if user_client:
-            # Sync with global registry first
-            registry = getattr(Altruix, "_TASK_REGISTRY", {})
-            if tid in registry:
-                registry[tid]["paused"] = False
-            
             asyncio.create_task(creategroup_loop(
                 user_client=user_client, bot_client=Altruix.bot, initial_message=None,
                 delay=params.get("delay"), count=params.get("count"),
@@ -285,12 +285,10 @@ async def creategroup_resall_handler(c: Client, cb: CallbackQuery):
 @log_errors
 async def creategroup_pauall_handler(c: Client, cb: CallbackQuery):
     from Main.plugins.userbot.xcreategroup import CREATEGROUP_TASKS
-    registry = getattr(Altruix, "_TASK_REGISTRY", {})
     count = 0
     for tid, task in CREATEGROUP_TASKS.items():
         if task.get("running") and not task.get("paused"):
             task["paused"] = True
-            if tid in registry: registry[tid]["paused"] = True
             if "pause_event" in task: task["pause_event"].clear()
             count += 1
             
@@ -303,14 +301,12 @@ async def creategroup_pauall_handler(c: Client, cb: CallbackQuery):
 @log_errors
 async def creategroup_endall_handler(c: Client, cb: CallbackQuery):
     from Main.plugins.userbot.xcreategroup import CREATEGROUP_TASKS, save_creategroup_cache
-    registry = getattr(Altruix, "_TASK_REGISTRY", {})
     count = len(CREATEGROUP_TASKS)
     if count == 0: return await cb.answer("Tidak ada task untuk dihapus.", show_alert=True)
     
     # Signal stop to all running tasks first
     for tid, task in CREATEGROUP_TASKS.items():
         task["running"] = False
-        if tid in registry: registry[tid]["paused"] = True # Force stop sync
         if task.get("task_obj"): task["task_obj"].cancel()
         
     CREATEGROUP_TASKS.clear()
@@ -324,66 +320,22 @@ async def creategroup_noop_handler(c: Client, cb: CallbackQuery):
     await cb.answer()
 
 
-@Altruix.bot.on_callback_query(filters.regex(r"^creategroup_task_manage_(?P<tid>.+?)_(?P<session>\d+)_(?P<page>\d+)_(?P<tpage>\d+)$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^creategroup_task_info_(.+)$"))
 @iuser_check
 @log_errors
-async def creategroup_task_manage_handler(c: Client, cb: CallbackQuery):
-    """Sub-menu to manage a specific cached/active task."""
-    m = cb.matches[0]
-    tid = m.group("tid")
-    session_index = int(m.group("session"))
-    page = int(m.group("page"))
-    task_page = int(m.group("tpage"))
-    
-    from Main.plugins.userbot.xcreategroup import CREATEGROUP_TASKS, get_creategroup_dashboard_text
+async def creategroup_task_info_handler(c: Client, cb: CallbackQuery):
+    tid = cb.matches[0].group(1)
+    from Main.plugins.userbot.xcreategroup import CREATEGROUP_TASKS
     task = CREATEGROUP_TASKS.get(tid)
     if not task:
-        return await cb.answer("❌ Task tidak ditemukan di memori.", show_alert=True)
+        return await cb.answer("Task tidak ditemukan.", show_alert=True)
     
-    # Generate clean standardized text
-    text = get_creategroup_dashboard_text(tid)
-    
-    # Check live status for buttons
-    task_obj = task.get("task_obj")
-    is_paused = task.get("paused", False)
-    is_running = task.get("running", False)
-    is_actually_alive = task_obj and not task_obj.done()
-    
-    can_resume = not is_actually_alive or is_paused
-    
-    # Resolve user_style
-    from Main.internals.settings_handlers.custom_alert_handlers import _get_session_user_id
-    session_user_id = _get_session_user_id(session_index)
-    user_style = get_user_button_style(session_user_id)
-    
-    # Build Sub-Menu Buttons
-    buttons = [
-        [
-            InlineKeyboardButton("▶️ Resume" if can_resume else "⏸ Pause", 
-                                 callback_data=f"recover_creategroup:{tid}", style=user_style),
-            InlineKeyboardButton("🛑 End", callback_data=f"delete_task_creategroup:{tid}", style=user_style),
-            InlineKeyboardButton("🔄 Refresh", callback_data=cb.data, style=user_style)
-        ]
-    ]
-    
-    # Add "View" (External Link) if available
-    chat_link = task.get("invite_link")
-    if not chat_link and task.get("current_chat_id"):
-        c_id = task.get("current_chat_id")
-        if str(c_id).startswith("-100"):
-            chat_link = f"https://t.me/c/{str(c_id)[4:]}/1"
-    
-    row_nav = []
-    if chat_link:
-        row_nav.append(InlineKeyboardButton("🔍 View", url=chat_link, style=user_style))
-    
-    row_nav.append(InlineKeyboardButton("📋 Back", callback_data=f"creategroup_cached_{session_index}_{page}_{task_page}", style=user_style))
-    buttons.append(row_nav)
-    
-    try:
-        await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
-    except Exception:
-        await cb.answer()
+    current = task.get("current_index", 0)
+    total = task.get("params", {}).get("count", 0)
+    step = task.get("current_step", "N/A")
+    account = task.get("account_name", "Unknown")
+    info = f"Task: {tid}\nAccount: {account}\nProgress: {int(current)}/{int(total)}\nStep: {step}"
+    await cb.answer(info, show_alert=True)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^creategroup_manual_(\d+)_(\d+)$"))
 @iuser_check
@@ -547,9 +499,9 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
     
     session_text = ""
     if session_user:
-        session_text = f"<b>• Session:</b> ⭐ <a href='tg://user?id={session_user.id}'>{html.escape(session_user.first_name)}</a>\n"
+        session_text = f"⭐ <b>Session:</b> <a href='tg://user?id={session_user.id}'>{html.escape(session_user.first_name)}</a>\n"
     
-    session_text += f"<b>• Selected Acc(s):</b> <code>{sel_count}</code> / <code>{len(Altruix.clients)}</code>\n"
+    session_text += f"<b>Selected Accounts:</b> <code>{sel_count}</code> / <code>{len(Altruix.clients)}</code>\n"
 
     photo_status = f"Source Account" if config.get('photo_source') == "source" else "Custom Photo"
     if config.get('photo_source') == "custom":
@@ -596,8 +548,7 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
         f"• <b>Action Delay:</b> {config['action_delay']}s\n"
         f"• <b>Delay:</b> {config['delay']}s\n"
         f"• <b>Batch Delay:</b> {config['batch_delay']}m | <b>Batch Size:</b> {config['batch_size']} {unit_name}\n"
-        f"• <b>Batch Act:</b> {config.get('batch_action', 30)} act | <b>B.Act Delay:</b> {config.get('ba_delay', 30)}s\n"
-        f"• <b>Action Delay:</b> {config['action_delay']}s | <b>Account Delay:</b> {config.get('account_delay', 0.5)}s\n"
+        f"• <b>Batch Action:</b> {config.get('batch_action', 30)} act | <b>BA Delay:</b> {config.get('ba_delay', 30)}s\n"
         f"• <b>Name:</b> {html.escape(name_preview)}\n"
         f"• <b>Username:</b> {config['username'] or 'None'}\n"
         f"• <b>Description:</b> {html.escape(config['description'])}\n"
@@ -611,22 +562,21 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
     )
     
     # ─── SUB-MENUS ───
-    if sub_menu in ["action_delay", "account_delay", "delay", "count", "batch_delay", "batch_size", "batch_action", "ba_delay"]:
+    if sub_menu in ["action_delay", "delay", "count", "batch_delay", "batch_size", "batch_action", "ba_delay"]:
         # Sub-Menu Keypad
         # steps = {"delay": 10, "count": 1, "batch_delay": 1, "batch_size": 1, "action_delay": 0.5}
-        step_map = {"delay": 10, "count": 1, "batch_delay": 1, "batch_size": 1, "action_delay": 0.5, "account_delay": 0.5, "batch_action": 5, "ba_delay": 10}
+        step_map = {"delay": 10, "count": 1, "batch_delay": 1, "batch_size": 1, "action_delay": 0.5, "batch_action": 5, "ba_delay": 10}
         step = step_map.get(sub_menu, 1)
         step_str = f"{step}" if step < 1 else f"{int(step)}"
         
         # Label and current value
         labels = {
-            "action_delay": "Action Delay", "account_delay": "Account Delay", "delay": "Group Delay", 
+            "action_delay": "Action Delay", "delay": "Group Delay", 
             "count": "Total Groups", "batch_delay": "Batch Delay", "batch_size": "Batch Size",
-            "batch_action": "Batch Act", "ba_delay": "B.Act Delay"
+            "batch_action": "Batch Act", "ba_delay": "BA Delay"
         }
         unit_map = {
             "action_delay": "s", 
-            "account_delay": "s", 
             "delay": "s", 
             "batch_delay": "m", 
             "count": "c" if config.get('group_type', 'a') == 'c' else "g", 
@@ -645,7 +595,7 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
             adj_steps = [3, 5, 10, 30, 60, 120]
         elif sub_menu == "batch_action":
             adj_steps = [3, 5, 10, 30, 60, 120]
-        elif sub_menu == "action_delay" or sub_menu == "account_delay":
+        elif sub_menu == "action_delay":
             adj_steps = [0.25, 0.5, 1, 3, 5]
         elif sub_menu == "count":
             adj_steps = [1, 3, 5, 10]
@@ -783,7 +733,7 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
             "<b>🎛️ Basic Configuration:</b>\n"
             "• <b>Type:</b> <u>Supergroup</u> (mendukung Anon Admin/Topics) atau <u>Channel</u> (broadcast).\n"
             "• <b>Count:</b> Jumlah total grup/channel yang akan dibuat secara otomatis.\n"
-            "• <b>Delay/Act:</b> Jeda antar aksi di dalam grup/channel (misal: setting foto, copy pesan, invite bot).\n"
+            "• <b>Act Delay:</b> Jeda antar aksi di dalam grup/channel (misal: setting foto, copy pesan, invite bot).\n"
             "• <b>Group/Channel Delay:</b> Jeda istirahat setelah satu grup/channel selesai diproses sebelum lanjut ke grup/channel berikutnya.\n\n"
             "<b>📦 Batch & Pacing:</b>\n"
             "• <b>Batch Size:</b> Jumlah grup/channel yang dibuat dalam satu sesi sebelum istirahat panjang.\n"
@@ -872,15 +822,14 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
 
     buttons = [
         [
-            InlineKeyboardButton(f"Acc(s): {sel_count} Sel", callback_data=f"creategroup_submenu_{idx}_{pg}_select_sessions", style=user_style),
-            InlineKeyboardButton(f"Delay/Acc: {config.get('account_delay', 0.5)}s", callback_data=f"creategroup_submenu_{idx}_{pg}_account_delay", style=user_style)
+            InlineKeyboardButton(f"👥 Accounts: {sel_count} Selected", callback_data=f"creategroup_submenu_{idx}_{pg}_select_sessions", style=user_style)
         ],
         [
             InlineKeyboardButton(f"Type: {'Group' if not is_channel else 'Channel'}", callback_data=f"creategroup_submenu_{idx}_{pg}_group_type", style=user_style),
             InlineKeyboardButton(f"Count: {config['count']}{type_indicator}", callback_data=f"creategroup_submenu_{idx}_{pg}_count", style=user_style)
         ],
         [
-            InlineKeyboardButton(f"Delay/Act: {config['action_delay']}s", callback_data=f"creategroup_submenu_{idx}_{pg}_action_delay", style=user_style),
+            InlineKeyboardButton(f"Act Delay: {config['action_delay']}s", callback_data=f"creategroup_submenu_{idx}_{pg}_action_delay", style=user_style),
             InlineKeyboardButton(f"Delay/{'GC' if not is_channel else 'CH'}: {config['delay']}s", callback_data=f"creategroup_submenu_{idx}_{pg}_delay", style=user_style)
         ],
         [
@@ -888,8 +837,8 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
             InlineKeyboardButton(f"B.Size: {config['batch_size']}{type_indicator}", callback_data=f"creategroup_submenu_{idx}_{pg}_batch_size", style=user_style)
         ],
         [
-            InlineKeyboardButton(f"B.Act: {config.get('batch_action', 30)} act", callback_data=f"creategroup_submenu_{idx}_{pg}_batch_action", style=user_style),
-            InlineKeyboardButton(f"B.Act Delay: {config.get('ba_delay', 30)}s", callback_data=f"creategroup_submenu_{idx}_{pg}_ba_delay", style=user_style)
+            InlineKeyboardButton(f"Batch Act: {config.get('batch_action', 30)} act", callback_data=f"creategroup_submenu_{idx}_{pg}_batch_action", style=user_style),
+            InlineKeyboardButton(f"BA Delay: {config.get('ba_delay', 30)}s", callback_data=f"creategroup_submenu_{idx}_{pg}_ba_delay", style=user_style)
         ],
         [InlineKeyboardButton(f"Name: {config['pattern'][:20]}...", callback_data=f"creategroup_submenu_{idx}_{pg}_pattern", style=user_style)],
         [InlineKeyboardButton(f"Desc: {config['description'][:25]}...", callback_data=f"creategroup_submenu_{idx}_{pg}_description", style=user_style)],
@@ -973,8 +922,8 @@ async def creategroup_adjust_handler(c: Client, cb: CallbackQuery):
          return
          
     conf = user_creategroup_state[user_id]["config"]
-    steps = {"delay": 10, "count": 1, "batch_delay": 1, "batch_size": 1, "action_delay": 0.5, "account_delay": 0.5, "rand_len": 1, "batch_action": 5, "ba_delay": 10}
-    limits = {"delay": (1, 3600), "count": (1, 1000), "batch_delay": (0, 300), "batch_size": (1, 100), "action_delay": (0.1, 30.0), "account_delay": (0.1, 30.0), "rand_len": (0, 64), "batch_action": (1, 500), "ba_delay": (10, 3600)}
+    steps = {"delay": 10, "count": 1, "batch_delay": 1, "batch_size": 1, "action_delay": 0.5, "rand_len": 1, "batch_action": 5, "ba_delay": 10}
+    limits = {"delay": (1, 3600), "count": (1, 1000), "batch_delay": (0, 300), "batch_size": (1, 100), "action_delay": (0.1, 30.0), "rand_len": (0, 64), "batch_action": (1, 500), "ba_delay": (10, 3600)}
     val = conf.get(key, 0)
     
     # Handle extended step actions (sub10, add60, sub0.5 etc)
@@ -1289,25 +1238,16 @@ async def creategroup_confirm_task_handler(c: Client, cb: CallbackQuery):
         else:
             await cb.edit_message_text(start_msg, parse_mode=ParseMode.HTML)
             
-        acc_delay = conf.get("account_delay", 0.5)
-        for i, s_idx in enumerate(selected):
+        for s_idx in selected:
             if s_idx < 1 or s_idx > len(Altruix.clients): continue
-            
-            # Stagger startup if not the first account
-            if i > 0 and acc_delay > 0:
-                await asyncio.sleep(acc_delay)
-                
             tid = generate_task_id("CG")
             try:
                 control_msg = None
                 try:
-                    msg_text = f"🔄 Initializing task for Session {s_idx} [<code>{tid}</code>]..."
-                    if i > 0: msg_text = f"⏳ Staggered Start ({acc_delay}s)...\n{msg_text}"
-                    
                     if cb.message:
-                        control_msg = await cb.message.reply(msg_text)
+                        control_msg = await cb.message.reply(f"🔄 Initializing task for Session {s_idx} [<code>{tid}</code>]...")
                     else:
-                        control_msg = await c.send_message(cb.from_user.id, msg_text)
+                        control_msg = await c.send_message(cb.from_user.id, f"🔄 Initializing task for Session {s_idx} [<code>{tid}</code>]...")
                 except Exception as e:
                     from pyrogram.errors import PeerIdInvalid, UserIsBlocked
                     if isinstance(e, (PeerIdInvalid, UserIsBlocked)):
@@ -1615,10 +1555,9 @@ async def process_creategroup_input(c: Client, m: Message, text: str = None):
              for b in bots: clean_bots.append(b if (b.startswith("@") or b.isdigit()) else f"@{b}")
              state["config"]["bots"] = " ".join(clean_bots)
              dl.info(f"[DEBUG-CG] Field 'bots' successfully updated {len(clean_bots)} bots.")
-        elif field in ["delay", "count", "batch_delay", "batch_size", "action_delay", "account_delay"]:
-            is_float_field = field in ["action_delay", "account_delay"]
-            if text.isdigit() or (is_float_field and text.replace(".", "", 1).isdigit()):
-                 val = float(text) if is_float_field else int(text)
+        elif field in ["delay", "count", "batch_delay", "batch_size", "action_delay"]:
+            if text.isdigit() or (field == "action_delay" and text.replace(".", "", 1).isdigit()):
+                 val = float(text) if field == "action_delay" else int(text)
                  state["config"][field] = val
                  dl.info(f"[DEBUG-CG] Field '{field}' successfully updated to integer/float {val}.")
             else:

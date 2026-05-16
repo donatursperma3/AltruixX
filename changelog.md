@@ -4,6 +4,217 @@ All notable changes to the **AltruixX** project from version **0.0.10.0959H** to
 
 ---
 
+## [1.0.533] - 2026-05-16
+
+### 🔄 Auto Pro Gcast: Paginated Account Sync
+- **New Feature: Paginated Sync List**:
+  - Implemented a robust 6-item pagination system for the "Sync from Account" sub-menu.
+  - Handles large numbers of active sessions gracefully without exceeding Telegram's message length limits.
+- **Improved: Navigation Controls**:
+  - Added a full suite of navigation buttons: **[ First ]**, **[ Last ]**, **[ Prev ]**, **[ Next ]**, and **[ n/n ]** (Page Indicator).
+- **Refined: Logic Flow & UX**:
+  - Updated the **[ Cancel ]** button in the sync confirmation menu to return the user to the exact same page they were browsing, maintaining navigation context.
+  - Bumped plugin version to `1.0.533`.
+
+---
+
+## [1.0.173] - 2026-05-16
+
+### 🛠️ CreateGroup: Advanced Pacing & Multi-Account Hardening
+- **New Feature: Account Delay (Staggered Startup)**:
+  - Added **"Delay/Account"** adjustment parameter to stagger the activities of multiple sessions.
+  - Helps avoid Telegram's rate-limiting and detection by ensuring each account starts its execution loop with a user-defined pause (Default: 0.5s).
+  - Integrated into the main dashboard, adjustment sub-menus, and manual input handlers.
+- **Bug Fix: Bulk Action Global Sync**:
+  - Refactored **[Pause All]**, **[Resume All]**, and **[End All]** to synchronize with the global `_TASK_REGISTRY`.
+  - Prevents background loops from automatically resuming when they detect local/global state mismatches.
+- **Bug Fix: Dashboard Header Duplication**:
+  - Fixed a Python string precedence bug that caused the dashboard header to repeat 15 times.
+  - Implemented strict **TID Sanitization** to prevent decorative text from polluting the internal state.
+- **Bug Fix: Cache Manager IndexError**:
+  - Resolved a crash when navigating the **Restore Tasks** menu caused by incorrect regex group access.
+  - Refactored parameter extraction to use robust string splitting instead of context-dependent regex matches.
+
+---
+
+## [0.0.10.2431I] - 2026-05-16
+
+### ⚙️ Program Controls: Automated Startup Changelog
+- **New Feature: Automated Startup Changelog**:
+  - Integrated an automated system to broadcast the latest updates to the **Log Group** immediately after program restart/reload.
+  - Fetches and formats the most recent entry from `changelog.md` into an aesthetic, expandable blockquote.
+  - Implemented intelligent message truncation (3600 chars) and HTML sanitization to prevent Telegram API errors.
+- **New Feature: Changelog Notification Toggle**:
+  - Added a dedicated **"📜 Changelog Notif"** button in the **[Program Controls]** dashboard.
+  - Allows users to globally enable/disable startup update notifications.
+  - Default state set to **Enabled** (`CHANGELOG_NOTIF_ENABLED=on`).
+
+---
+
+## [1.0.246] - 2026-05-15
+
+### 🛡️ Task Manager Plugin: Security Gating & UI Precision
+- **New Feature: Security Confirmation System**:
+  - Implemented a mandatory **"Yes/No"** confirmation screen for all destructive actions (`End`, `Restore`) and bulk operations (`End All`, `Resume All`, `Pause All`).
+  - Protects the system from accidental task termination and bulk state changes.
+- **Improved: Enriched Execution Metadata & UX**:
+  - Upgraded the **"Manage Task"** sub-menu with a refined **3-row button layout** for better accessibility:
+    - Row 1: Primary Controls (`Restore/Pause`, `End`)
+    - Row 2: Secondary Info (`View Info`, `Recur Toggle`)
+    - Row 3: Navigation & Sync (`Back`, `Refresh`)
+- **Hardening: Advanced Debugging & Stability**:
+  - Reinforced all core handlers and UI generators with `try-except` blocks and detailed `traceback` logging to the terminal.
+  - Implemented a unified `handle_restore_action` helper for modular plugin-specific recovery.
+- **Fixed: Task Manager Registry Sync**: Resolved a critical `TypeError` where cached tasks with ISO string timestamps (from xcreategroup) were causing the registry merge logic to fail.
+- **Fixed: Task Visibility & Status Logic**: 
+  - Resolved the "Shadowing" bug that prevented interrupted tasks from appearing in the dashboard.
+  - Corrected the `⚫ Done` status false-positive; tasks without active processes now accurately display `⚠️ Interrupted`.
+- **Improved: Defensive Timestamp Handling**: Implemented a dual-format converter in `scan_and_merge_caches` that intelligently handles both float timestamps and ISO 8601 strings.
+- **Improved: Direct Restore Access**: Added a direct **"♻️ Restore"** button within the task status sub-menu for immediate recovery.
+- **Hardening: UI Crash Prevention**: Added defensive float conversion to all UI status generators to ensure the dashboard remains stable even with malformed or inconsistent task metadata.
+- **Improved: Interactive Feedback (UX)**:
+  - Added instant "Refreshing list...", "Updating status...", and "Refreshing info..." alerts to all Refresh buttons to ensure visual feedback even when message content is unchanged.
+- **Improved: Data Consistency**:
+  - Standardized `gen_task_info_data` to utilize `get_all_tasks()`, ensuring that the detailed info view always reflects the latest state from physical caches.
+
+---
+
+## [0.0.10.2430I] - 2026-05-15
+
+### 🏗️ Task Manager Plugin: Global Recovery & Bulk Management (v1.0.240)
+- **New Feature: Global Restore Tasks (Cache)**:
+  - Integrated a cross-plugin cache scanner to recover interrupted tasks from persistent storage (e.g., `creategroup_cache.json`).
+  - Added dedicated Restore Menu with pagination and single-click recovery.
+- **New Feature: Bulk Task Controls**:
+  - Implemented `resume all`, `pause all`, and `end all` functionality to manage all active registry tasks simultaneously.
+- **Improved: Advanced Dashboard Navigation**:
+  - Added `first` and `last` navigation buttons for rapid access in large task lists.
+  - Refined the dashboard UI into a structured 6-row grid with clean, lowercase labels for a professional look.
+- **Fixed: MESSAGE_TOO_LONG Stability**:
+  - Migrated task detail views from restricted popup alerts to a dedicated paginated message view.
+  - Implemented automatic log chunking (1500 chars/page) to ensure UI stability with large amounts of metadata.
+- **Enhanced: Debugging & Traceback**:
+  - Implemented full stack-trace reporting to the Group Log (`LOG_CHAT_ID`) for every dashboard interaction error.
+
+---
+
+## [1.0.172] - 2026-05-15
+
+### 🛠️ Universal Task Management: Advanced Sub-Menus & UX Hardening
+- **New Feature: Multi-Layered Sub-Menu Architecture**:
+  - Implemented a clean "List-to-Detail" pattern across the global Task Manager (`.tasklist`), CreateGroup Dashboard (`.cg`), and Restore Cache Manager (`.cgui`).
+  - Technical controls (Resume, Pause, End, View) are now tucked away into specialized sub-menus for each task, significantly reducing UI clutter.
+- **New Feature: Distinct "View" vs "Refresh" Logic**:
+  - **🔍 View Info**: Now provides a static, detailed metadata snapshot (Start time, Plugin, Owner, Details) via a non-disruptive pop-up alert.
+  - **🔄 Refresh**: Strictly handles re-rendering the status message with live progress and uptime data.
+- **Hardening: Robust Task Status Detection**:
+  - Integrated real-time process verification using `is_actually_alive` logic.
+  - The system now accurately detects **"Interrupted"** tasks (where the process is missing but the flag is set) and correctly offers the **"▶️ Resume"** button instead of "Pause".
+- **Hardening: Dashboard Integrity & Anti-Duplication**:
+  - Implemented a **Unified Dashboard Text Generator** to ensure consistent formatting across all modules.
+  - Resolved the "Header Stacking" bug by replacing cumulative text updates with clean, template-based re-renders.
+- **Fixed: UI & Styling Synchronization**:
+  - Corrected a `TypeError` in the CreateGroup dashboard keyboard generator.
+  - Synchronized the **"🔍 View Chat"** button styling in the Restore Cache menu to match the session's aesthetic.
+
+## [1.0.171] - 2026-05-15
+
+### 🏗️ CreateGroup Plugin: Bulk Control & Execution Precision
+- **New Feature: Bulk Task Management**:
+  - Implemented **"Resume All"**, **"Pause All"**, and **"End All"** buttons in the Restore Tasks menu.
+  - Allows simultaneous control over all cached background tasks across multiple sessions.
+- **Improved: Restore Tasks Navigation**:
+  - Added **"First"**, **"Last"**, and **"Refresh List"** buttons for more efficient navigation of large task histories.
+  - Implemented a dedicated **"Back to Menu"** button for a smoother UI flow.
+- **Hardening: Smart Task Status Monitoring**:
+  - Implemented real-time task object validation to distinguish between active (`🟢 Running`), paused (`⏸️ Paused`), interrupted (`⚠️ Interrupted`), and stopped (`🛑 Stopped`) states.
+  - The UI now accurately identifies tasks that were interrupted by a system restart or crash.
+- **Improved: Log Formatting & Execution Loop**:
+  - Enforced strict **integer-only types** for the `Count` parameter to eliminate floating-point artifacts in progress logs (e.g., `1/2.0` → `1/2`).
+  - Corrected logic flow in the Restore Tasks menu to ensure all navigation buttons are properly registered before message dispatch.
+- **Hardening: Task Parameter Integrity**:
+  - Refined the adjustment handler to maintain precision for float-based delays while strictly enforcing whole numbers for count-based execution settings.
+
+## [1.0.170] - 2026-05-15
+
+### 🏗️ CreateGroup Plugin: Multi-Account & UI Scalability
+- **New Feature: Multi-Account/Session Selection**:
+  - Implemented a dedicated **Account Selection Dashboard** allowing users to select multiple accounts for a single task.
+  - **Individual Toggles**: Select specific accounts from the session list with ☑️/☐ status icons.
+  - **Batch Selection**: Added **"Select All"** and **"Deselect All"** buttons for rapid management of large session pools.
+  - **Smart Defaulting**: The account that initiates the `.cgui` command is automatically pre-selected.
+- **New Feature: Parallel Multi-Tasking**:
+  - The system now initiates independent background tasks for every selected account simultaneously.
+  - Each session-task is assigned a unique **Task ID (TID)** and can be managed (Pause/Resume/Stop) individually via `.tasklist`.
+- **Improved: Adjustment UI & Granularity**:
+  - Expanded numeric adjustment buttons to include **+/- 3** and **+/- 5** increments for all parameters (Count, Delay, Batch, etc.).
+  - Redesigned the adjustment interface into a clean **2-column layout** for better vertical space management.
+  - Hardened regex and parsing to support **floating-point values** (e.g., `0.5s` action delays).
+- **Hardening: Multi-Session Persistence & Recovery**:
+  - **Advanced State Mapping**: Separated `admin_id` (task owner) from `client_id` (executor session) in the task state.
+  - **Independent Recovery**: The recovery system now correctly resolves the exact userbot session for each task after a restart, preventing session cross-talk.
+  - **Collision-Proof Logging**: Log filenames now include the unique **TID** to prevent overwriting when multiple sessions finish at the same time.
+- **Fixed: UI & Logic Consistency**:
+  - Resolved a critical session indexing mismatch (0-based vs 1-based) that caused the Bot Assistant to fail when launching the dashboard via `.cgui`.
+  - Standardized all internal session lookups to use 1-based indexing for UI compatibility.
+  - Added **⏮ First** and **⏭ Last** buttons to the Multi-Session selection menu for faster navigation through large account lists.
+- **Improved: Diagnostic & Debugging Suite**:
+  - **Centralized Log Reporting**: Integrated `send_log_message` with full **Traceback** capture for all critical handler and loop failures.
+  - **Smart Log Delivery**: Implemented automatic conversion of long error logs into `.txt` files to bypass Telegram's `MessageTooLong` limit.
+  - **Real-Time Notifications**: Critical internal errors are now immediately reported to the Log Group for faster troubleshooting.
+- **Fixed: UI Error Handling Parity**:
+  - Restored fallback logic that warns the user if the Bot Assistant cannot send a PM (e.g., blocked), while ensuring the task still proceeds in the Log Group.
+  - Implemented session-level `try-except` blocks to ensure one failing account doesn't prevent others from starting.
+
+## [1.0.169] - 2026-05-14
+
+### 🎥 YTDL Manager: Real-Time Download Progress
+- **New Feature: Live Download Progress Bar**:
+  - Implemented real-time parsing of `yt-dlp` output to display a live progress bar during the downloading phase.
+  - Users can now track the exact percentage of completion without the dashboard appearing stuck.
+- **Improved: Throttled UI Updates**:
+  - Optimized the progress update interval to **10 seconds** per refresh.
+  - This balance ensures continuous visual feedback while strictly preventing Telegram `FloodWait` (429) errors during long downloads.
+- **Hardening: Stable Subprocess Handling**:
+  - Refactored the internal download engine to use a robust stream reader for `stdout` and `stderr`.
+
+## [0.0.10.2506H] - 2026-05-12
+
+### 🏗️ Task Manager Plugin: Universal Dashboard & UI Synchronization
+- **New Feature: Interactive Task Dashboard (v1.0.231)**:
+  - Full UI overhaul with inline control buttons for each task: **Pause, Resume, Stop,** and **Recurring Toggle**.
+  - Implemented a **Pagination System** (5 tasks per page) with `⬅️ Prev` and `Next ➡️` navigation for managing large task registries.
+- **Improved: Inline Bot Results Integration**:
+  - Migrated menu rendering to the compliant `via @bot` assistant architecture (`get_inline_bot_results`), ensuring maximum interactive stability and following developer guidelines.
+- **Synchronized: Button Style & Aesthetics**:
+  - **Account Styling**: Every interactive button now automatically matches the account/session's configured **Button Style** (Primary, Success, Danger, or Default).
+  - **Expandable Blockquotes**: All task-related responses are now wrapped in `<blockquote expandable>` for a cleaner, professional chat experience.
+- **Hardening: Robust Error Handling & Diagnostics**:
+  - Wrapped all menu generators, inline handlers, and callback logic in `try/except` blocks with **full Traceback logging**.
+  - Integrated `logger.exception` to ensure rapid identification of technical issues during task management.
+- **Refined Command Set**:
+  - Renamed `.canceltask` to `.taskcancel` for better naming consistency.
+  - Added new dedicated commands: `.taskpause`, `.taskresume`, and `.taskstatus`.
+
+---
+
+## [0.0.10.2505H] - 2026-05-11
+
+### 🏗️ Message Pusher Plugin: Feature Parity & Interactive Enhancements
+- **New Feature: Bot & Assistant Invitation**:
+  - Added support for inviting the **Bot Assistant** and a **Custom Bot List** automatically before pushing messages.
+  - Implemented a dedicated sub-menu for managing the bot username list interactively.
+- **New Feature: Quote Block Support**:
+  - Integrated the **Quote Block** toggle to wrap quote sequences in `<blockquote expandable>` tags, matching the CreateGroup module's aesthetics.
+- **Improved: Command UX & Logic**:
+  - The `.pushmsg` command now defaults to the **current chat** if no arguments are provided, allowing for faster task initialization.
+- **Enhanced: Task Management Integration**:
+  - Fully integrated with `Xtaskmanager`, enabling users to monitor, pause, resume, and cancel background pusher tasks via `.tasklist`.
+- **Plugin Version Upgraded**: Bumped `xmessage_pusher.py` to `0.1.17`.
+
+### 🏗️ CreateGroup Plugin: UX Refinement
+- **UI Improvement**: Added `.cgpanel` as an official alias for `.cgtid` and updated help documentation for better clarity on task recalling.
+
 ## [0.0.10.2411H] - 2026-05-10
 
 ### 🏗️ CreateGroup Plugin: UI Persistence & Feature Reinstatement
@@ -11,12 +222,15 @@ All notable changes to the **AltruixX** project from version **0.0.10.0959H** to
   - Implemented a dedicated storage system (`xcreategroup_user_configs.json`) to persist user settings across restarts and sessions.
   - **Automated Saving**: Integrated `save_user_cg_config` into all interactive handlers (Toggle, Adjust, Set Value, and Message Input).
   - **Smart Loading**: The dashboard now automatically recovers the user's last saved configuration instead of resetting to defaults.
+- **New Feature: Task Control Recovery**:
+  - Added `.cgtid [TID]` (alias `.cgpanel`) command to recall the interactive **Task Control Panel** for any specific active task.
 - **New Feature: Dashboard Restore Access**:
   - Added the **"Restore Tasks"** button directly to the main dashboard for faster access to interrupted task management.
 - **Restored: Quote Block Formatting**:
   - Reinstated the **Quote Block** toggle in the interactive UI, allowing users to enable/disable `<blockquote expandable>` tags for love quotes.
   - Fixed logic flow to ensure the setting is correctly passed to the background execution loop.
 - **Fixed: Critical Stability & Code Integrity**:
+  - Resolved task initiation failures for users who haven't started the Bot Assistant in PM; the system now gracefully falls back to the Log Group control panel instead of crashing.
   - Resolved missing control buttons (**Pause, Resume, Stop**, etc.) when starting tasks from the Dashboard by ensuring the control message is properly initialized with the interactive UI via the **Bot Assistant client**.
   - Resolved `KeyError` in `creategroup_loop` by standardizing on `task_key` (TID) for all dictionary accesses, preventing crashes when starting or resuming tasks.
   - Resolved `NameError: name 'CREATEGROUP_TASKS' is not defined` in the cached handler by implementing lazy imports to avoid circular dependency issues.
@@ -34,10 +248,6 @@ All notable changes to the **AltruixX** project from version **0.0.10.0959H** to
 - **Improved: UI Consistency**:
   - Updated `HANDLER_VERSION` to **`0.3.0`** to mark the transition to a persistent configuration model.
   - Standardized button labels and emoji usage across the dashboard.
-
----
-
-## [0.0.10.2410I] - 2026-05-10
 
 ---
 

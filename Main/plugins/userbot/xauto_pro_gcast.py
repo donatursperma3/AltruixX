@@ -31,7 +31,7 @@ from Main.utils.file_helpers import get_user_button_style
 # Plugin Metadata
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xauto_pro_gcast"
-PLUGIN_VERSION = "1.0.532"
+PLUGIN_VERSION = "1.0.533"
 
 logger = logging.getLogger("altruix.xauto_pro_gcast")
 logger.setLevel(logging.INFO)
@@ -3856,29 +3856,74 @@ async def pgc_callback_handler(c: Client, cb: CallbackQuery):
         if not other_clients:
             await safe_cb_answer(cb, "❌ No other active sessions found to sync from.", show_alert=True)
             return
+
+        # Pagination logic
+        page = 0
+        if len(parts) >= 5 and parts[3] == "page":
+            try: page = int(parts[4])
+            except: page = 0
+            
+        items_per_page = 6
+        total = len(other_clients)
+        total_pages = max(1, (total + items_per_page - 1) // items_per_page)
+        
+        if page < 0: page = 0
+        if page >= total_pages: page = total_pages - 1
+        
+        start_idx = page * items_per_page
+        end_idx = min(start_idx + items_per_page, total)
+        page_clients = other_clients[start_idx:end_idx]
             
         text = (
             f"<blockquote expandable>🔄 <b>Sync from Account</b>\n"
             f"{'━' * 18}\n"
-            f"Select an account to copy configuration FROM. All current settings for account <code>{uid}</code> will be overwritten.</blockquote>"
+            f"Select an account to copy configuration FROM. All current settings for account <code>{uid}</code> will be overwritten.\n\n"
+            f"<i>Page {page+1}/{total_pages} ({total} accounts)</i></blockquote>"
         )
         
         rows = []
-        for me in other_clients:
+        for me in page_clients:
             name = f"{me.first_name} {me.last_name or ''}".strip() or str(me.id)
-            rows.append([InlineKeyboardButton(f"👤 {name} ({me.id})", callback_data=f"pgc_syncfrom_{uid}_{me.id}", style=btn_style)])
+            rows.append([InlineKeyboardButton(f"👤 {name} ({me.id})", callback_data=f"pgc_syncfrom_{uid}_{me.id}_p{page}", style=btn_style)])
             
+        # Navigation Row
+        if total_pages > 1:
+            nav = []
+            # First button
+            nav.append(InlineKeyboardButton("[ First ]", callback_data=f"pgc_synclist_{uid}_page_0", style=btn_style))
+            
+            # Prev button
+            prev_page = max(0, page - 1)
+            nav.append(InlineKeyboardButton("[ Prev ]", callback_data=f"pgc_synclist_{uid}_page_{prev_page}", style=btn_style))
+            
+            # Page info [n/n]
+            nav.append(InlineKeyboardButton(f"[ {page+1}/{total_pages} ]", callback_data=f"pgc_synclist_{uid}_page_{page}", style=btn_style))
+            
+            # Next button
+            next_page = min(total_pages - 1, page + 1)
+            nav.append(InlineKeyboardButton("[ Next ]", callback_data=f"pgc_synclist_{uid}_page_{next_page}", style=btn_style))
+            
+            # Last button
+            nav.append(InlineKeyboardButton("[ Last ]", callback_data=f"pgc_synclist_{uid}_page_{total_pages-1}", style=btn_style))
+            
+            rows.append(nav)
+
         rows.append([InlineKeyboardButton("⬅️ Back", callback_data=f"pgc_syncmenu_{uid}", style=btn_style)])
         kb = InlineKeyboardMarkup(rows)
         await safe_edit_message(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
-        await safe_cb_answer(cb, "Select account to sync from.", show_alert=False)
+        await safe_cb_answer(cb, f"Select account to sync from (Page {page+1}/{total_pages}).", show_alert=False)
         return
 
     elif action == "syncfrom":
-        # pgc_syncfrom_uid_fromuid
+        # pgc_syncfrom_uid_fromuid_pPAGE
         if len(parts) < 4: return
         from_uid = int(parts[3])
         
+        page = 0
+        if len(parts) >= 5 and parts[4].startswith("p"):
+            try: page = int(parts[4][1:])
+            except: page = 0
+
         text = (
             f"<blockquote expandable>⚠️ <b>Confirm Synchronization</b>\n"
             f"{'━' * 18}\n"
@@ -3887,7 +3932,7 @@ async def pgc_callback_handler(c: Client, cb: CallbackQuery):
         )
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("✅ Confirm Sync", callback_data=f"pgc_syncconfirm_{uid}_{from_uid}", style=btn_style)],
-            [InlineKeyboardButton("⬅️ Cancel", callback_data=f"pgc_synclist_{uid}", style=btn_style)]
+            [InlineKeyboardButton("⬅️ Cancel", callback_data=f"pgc_synclist_{uid}_page_{page}", style=btn_style)]
         ])
         await safe_edit_message(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
         return

@@ -32,7 +32,8 @@ DEFAULT_PUSHER_CONFIG = {
     "anon_adm": True,
     "invite_bots": True,
     "bots": "@MissRose_bot @simixbot @Spillgame_bot @truthordaresbot @truthordares_bot @truthordarerp_bot @truthordarerln_bot @truthordares18_bot",
-    "invite_assistant": True
+    "invite_assistant": True,
+    "quote_block": True
 }
 
 async def edit_cb(cb: CallbackQuery, text: str, **kwargs):
@@ -86,9 +87,10 @@ async def get_pusher_ui_data(uid: int, session_index: int, page: int) -> tuple:
         f"LQ2: {'Yes' if config['quote2'] else 'No'}\n"
         f"• LQ3: {'Yes' if config['quote3'] else 'No'} | "
         f"IMG: {'Yes' if config['msg_img'] else 'No'}\n"
-        f"• ANON ADM: {'Yes' if config['anon_adm'] else 'No'}\n"
-        f"• Invite Bots: {'Yes' if config.get('invite_bots') else 'No'} | "
-        f"Assistant: {'Yes' if config.get('invite_assistant') else 'No'}\n"
+        f"• ANON ADM: {'Yes' if config['anon_adm'] else 'No'} | "
+        f"Quote Block: {'Yes' if config.get('quote_block', True) else 'No'}\n"
+        f"• Invite Bots: {'Yes' if config.get('invite_bots', True) else 'No'} | "
+        f"Assistant: {'Yes' if config.get('invite_assistant', True) else 'No'}\n"
         f"• Bot List: {bot_list_text}"
         f"</blockquote>"
     )
@@ -116,6 +118,7 @@ async def get_pusher_ui_data(uid: int, session_index: int, page: int) -> tuple:
             ],
             [
                 InlineKeyboardButton(f"Anon Adm: {'Yes' if config['anon_adm'] else 'No'}", callback_data=f"mp_toggle_anon_adm_{session_index}", style=user_style),
+                InlineKeyboardButton(f"Quote Block: {'Yes' if config.get('quote_block', True) else 'No'}", callback_data=f"mp_toggle_quote_block_{session_index}", style=user_style),
             ],
             [
                 InlineKeyboardButton(f"Invite Bots: {'Yes' if config.get('invite_bots') else 'No'}", callback_data=f"mp_toggle_invite_bots_{session_index}", style=user_style),
@@ -420,9 +423,10 @@ async def mp_confirm_run_handler(c: Client, cb: CallbackQuery):
             "quote3": config["quote3"], 
             "msg_img": config["msg_img"],
             "anon_adm": config["anon_adm"],
-            "invite_bots": config.get("invite_bots", False),
+            "invite_bots": config.get("invite_bots", True),
             "bots": config.get("bots", ""),
-            "invite_assistant": config.get("invite_assistant", False)
+            "invite_assistant": config.get("invite_assistant", True),
+            "quote_block": config.get("quote_block", True)
         },
         cb.message, uid
     ))
@@ -499,15 +503,20 @@ async def pusher_inline_handler(c: Client, iq: InlineQuery):
     index = int(iq.matches[0].group(1))
     page = int(iq.matches[0].group(2)) if iq.matches[0].group(2) else 1
     
+    # AUTHORIZATION CHECK
+    if not await Altruix.is_sudo(iq.from_user.id):
+        return
+
     text, markup = await get_pusher_ui_data(iq.from_user.id, index, page)
+    full_text = f"<b>🚀 𝐌𝐄𝐒𝐒𝐀𝐆𝐄 𝐏𝐔𝐒𝐇𝐄𝐑 𝐃𝐀𝐒𝐇𝐁𝐎𝐀𝐑𝐃</b>\n\n<blockquote expandable>{text}</blockquote>"
     
     results = [
         InlineQueryResultArticle(
             id=f"mp_{index}",
-            title="Message Pusher Dashboard",
-            description="Manage message pushing tasks",
+            title=f"Message Pusher Dashboard #{index}",
+            description="Manage and push message sequences to target chats.",
             input_message_content=InputTextMessageContent(
-                message_text=text,
+                message_text=full_text,
                 parse_mode=ParseMode.HTML,
                 link_preview_options=LinkPreviewOptions(is_disabled=True)
             ),
@@ -520,6 +529,12 @@ async def pusher_inline_handler(c: Client, iq: InlineQuery):
 async def pusher_chosen_handler(c: Client, cir: ChosenInlineResult):
     uid = cir.from_user.id
     index = int(cir.matches[0].group(1))
+    inline_msg_id = cir.inline_message_id
+    
     state_key = f"{uid}_{index}"
     if state_key in user_messagepusher_state:
-        user_messagepusher_state[state_key]["inline_message_id"] = cir.inline_message_id
+        user_messagepusher_state[state_key].update({
+            "ui_msg_id": inline_msg_id,
+            "inline_message_id": inline_msg_id, # Compatibility
+            "session_index": index
+        })

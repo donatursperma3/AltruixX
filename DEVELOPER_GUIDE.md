@@ -369,5 +369,40 @@ async def input_handler(client, message):
 
 **Penting:** Selalu gunakan `allow_commands=True` pada handler prioritas tinggi jika Anda ingin menangkap input yang mungkin diawali karakter prefix (seperti `-` atau `/`). Tanpa ini, core client akan menyaring pesan tersebut sebelum sampai ke handler Anda.
 
+## 10. Button Style Synchronization
+
+AltruixX mendukung sinkronisasi warna tombol (**Button Style**) berdasarkan preferensi tiap akun (Primary, Success, Danger, Default). Anda sangat disarankan menggunakan helper ini pada setiap menu interaktif agar UI tetap konsisten di seluruh ekosistem.
+
+### Cara Penggunaan:
+
+1. **Import Helper**:
+```python
+from Main.utils.file_helpers import get_user_button_style
+```
+
+2. **Dapatkan Style & Terapkan**:
+Gunakan `user_id` dari session yang sedang aktif untuk menentukan warna tombol. Masukkan hasil helper ke dalam argumen `style` pada `InlineKeyboardButton`.
+
+```python
+from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+@Altruix.bot.on_callback_query(filters.regex("my_plugin_menu"))
+async def my_handler(c, cb):
+    # Ambil user_id dari user yang berinteraksi (atau dari context session)
+    user_id = cb.from_user.id
+    user_style = get_user_button_style(user_id)
+
+    buttons = [
+        [InlineKeyboardButton("✅ Confirm", callback_data="conf", style=user_style)],
+        [InlineKeyboardButton("❌ Cancel", callback_data="canc", style=user_style)]
+    ]
+    
+    await cb.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(buttons))
+```
+
+### Keuntungan:
+- **Konsistensi UI**: Jika user mengatur style akunnya ke "Success" (Hijau) melalui `/settings`, maka seluruh tombol di plugin Anda akan otomatis berwarna hijau.
+- **Premium Look**: Memberikan pengalaman visual yang lebih dinamis dibandingkan tombol default yang statis.
+
 ---
 *Altruix Developer Documentation*

@@ -240,7 +240,7 @@ It's not necessary until you host the bot. You can get the String Session after 
 
 
 <details>
-<summary><b>Maintainers</b></summary>
+<summary><b>Developers &Maintainers</b></summary>
 
 > - <a href="https://www.github.com/sukri369">Sukri369</a>
 > - <a href="https://t.me/FakboiPensiun">Fakboi Pensiun</a>

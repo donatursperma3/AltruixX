@@ -31,7 +31,7 @@ logger.setLevel(logging.INFO)
 
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xmessage_pusher"
-PLUGIN_VERSION = "0.1.15"
+PLUGIN_VERSION = "0.1.18"
 
 # ─── CONFIG ───
 LOG_CHAT_ID = Altruix.log_chat or Altruix.config.LOG_CHAT_ID or Altruix.config.OWNER_USERS_ID
@@ -242,13 +242,19 @@ async def messagepusher_loop(
                 # 2. LOVE_QUOTES
                 if options.get("quote1"):
                     for quote in LOVE_QUOTES:
-                        await user_client.send_message(chat_id, f"<i>💙 {quote}</i>", parse_mode=ParseMode.HTML)
+                        msg_text = f"<i>💙 {quote}</i>"
+                        if options.get("quote_block"):
+                            msg_text = f"<blockquote expandable>{msg_text}</blockquote>"
+                        await user_client.send_message(chat_id, msg_text, parse_mode=ParseMode.HTML)
                         await handle_delay()
                 
                 # 3. LOVE_QUOTES_2
                 if options.get("quote2"):
                     for quote in LOVE_QUOTES_2:
-                        await user_client.send_message(chat_id, f"<i>💖 {quote}</i>", parse_mode=ParseMode.HTML)
+                        msg_text = f"<i>💖 {quote}</i>"
+                        if options.get("quote_block"):
+                            msg_text = f"<blockquote expandable>{msg_text}</blockquote>"
+                        await user_client.send_message(chat_id, msg_text, parse_mode=ParseMode.HTML)
                         await handle_delay()
                 
                 # 4. MSG_IMG_IDS
@@ -260,7 +266,10 @@ async def messagepusher_loop(
                 # 5. LOVE_QUOTES_3
                 if options.get("quote3"):
                     for quote in LOVE_QUOTES_3:
-                        await user_client.send_message(chat_id, f"<i>🌹 {quote}</i>", parse_mode=ParseMode.HTML)
+                        msg_text = f"<i>🌹 {quote}</i>"
+                        if options.get("quote_block"):
+                            msg_text = f"<blockquote expandable>{msg_text}</blockquote>"
+                        await user_client.send_message(chat_id, msg_text, parse_mode=ParseMode.HTML)
                         await handle_delay()
 
                 await send_log_notification(
@@ -322,8 +331,8 @@ async def pushmsg_cmd(c: Client, m: Message):
     try:
         from Main.internals.settings_handlers.message_pusher_handlers import show_pusher_ui, user_messagepusher_state, DEFAULT_PUSHER_CONFIG
         
-        # Resolve 'current' keyword
-        if target_arg and target_arg.lower() == "current":
+        # Resolve 'current' keyword or default to current chat if empty
+        if not target_arg or target_arg.lower() == "current":
             target_arg = str(m.chat.id)
 
         # Find session index first (needed for composite state key)

@@ -491,6 +491,9 @@ async def program_controls_menu_handler(c: Client, cb: CallbackQuery):
     stagger_method = str(await Altruix.config.get_env("STAGGER_METHOD", default="sequential")).lower()
     stagger_btn = "⚡ Method: Parallel" if stagger_method == "parallel" else "🐌 Method: Sequential"
 
+    changelog_notif = str(await Altruix.config.get_env("CHANGELOG_NOTIF_ENABLED", default="on")).lower()
+    changelog_btn = "📜 Changelog Notif: ON" if changelog_notif == "on" else "📜 Changelog Notif: OFF"
+
     if stagger_method == "parallel":
         info_text = (
             "🚀 <b>Mode: High-Speed Parallel</b>\n"
@@ -514,7 +517,8 @@ async def program_controls_menu_handler(c: Client, cb: CallbackQuery):
         "• <b>Sequential:</b> Memuat satu per satu (Legacy/Safe).\n"
         f"• <b>Concurrency:</b> Maksimal <code>{Altruix.CONCURRENT_SESSIONS}</code> akun diproses bersamaan.\n"
         f"• <b>Stagger:</b> Jeda <code>{Altruix.MICRO_STAGGER}s</code> antar koneksi untuk keamanan.\n"
-        f"• <b>Log Speed:</b> Mengirim <code>{Altruix.LOG_CONCURRENCY}</code> log startup sekaligus."
+        f"• <b>Log Speed:</b> Mengirim <code>{Altruix.LOG_CONCURRENCY}</code> log startup sekaligus.\n"
+        "• <b>Changelog Notif:</b> Kirim ringkasan update terakhir ke Log Group saat restart."
         "</blockquote>\n\n"
         "Manage global program features and logic."
     )
@@ -524,6 +528,9 @@ async def program_controls_menu_handler(c: Client, cb: CallbackQuery):
         ],
         [
             InlineKeyboardButton(stagger_btn, callback_data="toggle_stagger_method", style=user_style),
+        ],
+        [
+            InlineKeyboardButton(changelog_btn, callback_data="toggle_changelog_notif", style=user_style),
         ],
         [
             InlineKeyboardButton("📤 Backup Now", callback_data="backup_now", style=user_style),
@@ -555,6 +562,18 @@ async def toggle_stagger_method_handler(c: Client, cb: CallbackQuery):
     
     await Altruix.config.set_env("STAGGER_METHOD", new_method)
     await cb.answer(f"✅ Startup Method set to: {new_method.upper()}", show_alert=True)
+    await program_controls_menu_handler(c, cb)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^toggle_changelog_notif$"))
+@iuser_check
+@log_errors
+async def toggle_changelog_notif_handler(c: Client, cb: CallbackQuery):
+    """Toggle the Changelog Notification on startup setting."""
+    current = str(await Altruix.config.get_env("CHANGELOG_NOTIF_ENABLED", default="on")).lower()
+    new_state = "off" if current == "on" else "on"
+    
+    await Altruix.config.set_env("CHANGELOG_NOTIF_ENABLED", new_state)
+    await cb.answer(f"✅ Changelog Notif: {new_state.upper()}", show_alert=False)
     await program_controls_menu_handler(c, cb)
 
 # ====================== SHARED UTILS ======================

@@ -46,7 +46,7 @@ import logging
 
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xcreategroup"
-PLUGIN_VERSION = "0.2.392"  # ✅ ADDED: Account Delay (Staggered Startup)
+PLUGIN_VERSION = "0.2.388"  # ✅ FIXED: Indentation & NameError Batch Msg
 
 logger = logging.getLogger("altruix.xcreategroup")
 logger.setLevel(logging.INFO)
@@ -609,138 +609,6 @@ async def send_log_notification(
     return log_msg
 
 
-# ==================== TASK REGISTRY SYNC HELPERS ====================
-def _sync_pause_from_registry(task_key: str, tid: str):
-    """Sync pause state FROM global _TASK_REGISTRY TO local CREATEGROUP_TASKS.
-    
-    When xtaskmanager sets paused=True in the global registry, propagate it
-    to CREATEGROUP_TASKS so the loop actually pauses.
-    """
-    registry = getattr(Altruix, "_TASK_REGISTRY", {})
-    if tid in registry and registry[tid].get("paused", False):
-        if task_key in CREATEGROUP_TASKS and not CREATEGROUP_TASKS[task_key].get("paused", False):
-            CREATEGROUP_TASKS[task_key]["paused"] = True
-            if "pause_event" in CREATEGROUP_TASKS[task_key]:
-                CREATEGROUP_TASKS[task_key]["pause_event"].clear()
-            logger.info(f"[Sync] Pause propagated from _TASK_REGISTRY to CREATEGROUP_TASKS for {tid}")
-
-
-def _sync_resume_from_registry(task_key: str, tid: str):
-    """Sync resume state FROM global _TASK_REGISTRY TO local CREATEGROUP_TASKS.
-    
-    When xtaskmanager sets paused=False in the global registry, propagate it
-    to CREATEGROUP_TASKS so the loop actually resumes.
-    """
-    registry = getattr(Altruix, "_TASK_REGISTRY", {})
-    if tid in registry and not registry[tid].get("paused", False):
-        if task_key in CREATEGROUP_TASKS and CREATEGROUP_TASKS[task_key].get("paused", False):
-            CREATEGROUP_TASKS[task_key]["paused"] = False
-            if "pause_event" in CREATEGROUP_TASKS[task_key]:
-                CREATEGROUP_TASKS[task_key]["pause_event"].set()
-            logger.info(f"[Sync] Resume propagated from _TASK_REGISTRY to CREATEGROUP_TASKS for {tid}")
-
-
-# ==================== UI HELPERS ====================
-def get_creategroup_dashboard_text(tid: str):
-    """Generate a clean, standardized dashboard text for a task."""
-    # Sanitize tid to prevent header duplication if it was polluted
-    tid = str(tid).split('\n')[0].replace('━', '').replace('⚙️ Manage Task:', '').strip()
-    
-    task = CREATEGROUP_TASKS.get(tid)
-    if not task:
-        return f"❌ <b>Task {tid} tidak ditemukan di memori.</b>"
-    
-    params = task.get("params", {})
-    current = task.get("current_index", 0)
-    total = params.get("count", 0)
-    step = task.get("current_step", "N/A")
-    account = task.get("account_name", "Unknown")
-    is_paused = task.get("paused", False)
-    is_running = task.get("running", False)
-    task_obj = task.get("task_obj")
-    
-    # Live status check
-    is_alive = task_obj and not task_obj.done()
-    if is_alive:
-        status = "⏸️ Paused" if is_paused else "🟢 Running"
-    else:
-        status = "⚠️ Interrupted" if is_running else "🛑 Stopped"
-    
-    uptime = ""
-    start_str = "N/A"
-    if "start_time" in task:
-        st = task["start_time"]
-        elapsed = (datetime.now() - st).total_seconds()
-        uptime = f"\n• <b>Uptime:</b> <code>{format_duration(elapsed)}</code>"
-        start_str = st.strftime("%Y-%m-%d %H:%M:%S")
-
-    created_count = len(task.get("created_groups", []))
-    separator = "━" * 15
-    
-    text = (
-        f"<blockquote expandable><b>⚙️ Manage Task:</b> <code>{tid}</code>\n"
-        f"{separator}\n"
-        f"• <b>Account:</b> {account}\n"
-        f"• <b>Status:</b> {status}\n"
-        f"• <b>Created:</b> <code>{created_count}</code> / <b>Attempt:</b> <code>{int(current)}</code> / <b>Total:</b> <code>{int(total)}</code>\n"
-        f"• <b>Started:</b> <code>{start_str}</code>{uptime}\n"
-        f"• <b>Last Step:</b> <code>{step}</code>\n"
-        f"</blockquote>"
-    )
-    return text
-
-
-# ==================== KEYBOARD GENERATORS ====================
-async def get_creategroup_keyboard(client_id: int, tid: str, menu_type: str = "main"):
-    """Generate the control keyboard for CreateGroup tasks."""
-    
-    if menu_type == "manage":
-        # Sub-menu for Resume, End, View
-        # Check current state for Pause/Resume label
-        is_paused = False
-        if tid in CREATEGROUP_TASKS:
-            is_paused = CREATEGROUP_TASKS[tid].get("paused", False)
-        
-        keyboard = [
-            [
-                InlineKeyboardButton(await Essentials.get_user_button_style(client_id, "▶️ Resume" if is_paused else "⏸️ Pause"), 
-                                     callback_data=f"{'resume' if is_paused else 'pause'}_creategroup:{tid}"),
-                InlineKeyboardButton(await Essentials.get_user_button_style(client_id, "🛑 End"), 
-                                     callback_data=f"stop_creategroup:{tid}"),
-                InlineKeyboardButton(await Essentials.get_user_button_style(client_id, "🔄 View"), 
-                                     callback_data=f"status_creategroup:{tid}")
-            ],
-            [
-                InlineKeyboardButton(await Essentials.get_user_button_style(client_id, "🔁 Recurring"), 
-                                     callback_data=f"recurring_creategroup:{tid}"),
-                InlineKeyboardButton(await Essentials.get_user_button_style(client_id, "🔙 Back"), 
-                                     callback_data=f"back_creategroup:{tid}")
-            ]
-        ]
-    else:
-        # Main Menu
-        keyboard = [
-            [
-                InlineKeyboardButton(await Essentials.get_user_button_style(client_id, "⚙️ Manage Task"), 
-                                     callback_data=f"manage_creategroup:{tid}"),
-                InlineKeyboardButton(await Essentials.get_user_button_style(client_id, "📊 Status"), 
-                                     callback_data=f"status_creategroup:{tid}")
-            ],
-            [
-                InlineKeyboardButton(await Essentials.get_user_button_style(client_id, "📋 List Created"), 
-                                     callback_data=f"list_creategroup:{tid}"),
-                InlineKeyboardButton(await Essentials.get_user_button_style(client_id, "✏️ Edit Name"), 
-                                     callback_data=f"edit_last_creategroup:{tid}")
-            ],
-            [
-                InlineKeyboardButton(await Essentials.get_user_button_style(client_id, "✅ Check Created"), 
-                                     callback_data=f"list_groups_creategroup:{tid}")
-            ]
-        ]
-    
-    return InlineKeyboardMarkup(keyboard)
-
-
 # ==================== MAIN CREATION FUNCTIONS ====================
 async def creategroup_loop(
     user_client: Client,
@@ -796,14 +664,9 @@ async def creategroup_loop(
         if not tid:
             tid = task_id # Fallback if task_id was already the tid
     else:
-        # Use explicit task_id if it's already a tid format, else generate
-        tid = task_id if (task_id and task_id.startswith("CG-")) else generate_task_id("CG")
+        tid = generate_task_id("CG")
 
     # Standardize on using tid as the main key in memory
-    if tid:
-        # Prevent "Dirty TID" pollution from message text extraction
-        tid = str(tid).split('\n')[0].replace('━', '').replace('⚙️ Manage Task:', '').strip()
-    
     task_key = tid
 
     created_groups = []
@@ -898,7 +761,22 @@ async def creategroup_loop(
         assistant = await bot_client.get_me()
 
         # Definisikan tombol kontrol dengan TID eksplisit agar handler tidak bingung
-        control_buttons = await get_creategroup_keyboard(user_client.me.id, tid, menu_type="main")
+        control_buttons = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(await Essentials.get_user_button_style(user_client.me.id, "🛑 Stop"), callback_data=f"stop_creategroup:{tid}"),
+                InlineKeyboardButton(await Essentials.get_user_button_style(user_client.me.id, "⏸️ Pause"), callback_data=f"pause_creategroup:{tid}"),
+                InlineKeyboardButton(await Essentials.get_user_button_style(user_client.me.id, "▶️ Resume"), callback_data=f"resume_creategroup:{tid}")
+            ],
+            [
+                InlineKeyboardButton(await Essentials.get_user_button_style(user_client.me.id, "📊 Status"), callback_data=f"status_creategroup:{tid}"),
+                InlineKeyboardButton(await Essentials.get_user_button_style(user_client.me.id, "📋 List"), callback_data=f"list_creategroup:{tid}"),
+                InlineKeyboardButton(await Essentials.get_user_button_style(user_client.me.id, "🔁 Recurring"), callback_data=f"recurring_creategroup:{tid}")
+            ],
+            [
+                 InlineKeyboardButton(await Essentials.get_user_button_style(user_client.me.id, "✏️ Edit Name"), callback_data=f"edit_last_creategroup:{tid}"), 
+                 InlineKeyboardButton(await Essentials.get_user_button_style(user_client.me.id, "✅ Check Created"), callback_data=f"list_groups_creategroup:{tid}")
+            ]
+        ])
 
         # Pastikan control_message ada di LOG_CHAT_ID dan dikirim oleh bot agar tombol muncul
         is_valid_control = (
@@ -1084,8 +962,7 @@ async def creategroup_loop(
         created_groups = CREATEGROUP_TASKS[task_key].get("created_groups", [])
         while i <= count:
             pinned_chat_id = None
-            # Check if task is running (from either local or global registry)
-            _sync_pause_from_registry(task_key, tid)
+            # Check if task is running
             if not CREATEGROUP_TASKS.get(task_key, {}).get("running", True):
                 account_name = f"{user_info.first_name or ''} {user_info.last_name or ''}".strip()
                 await send_log_notification(
@@ -1096,7 +973,7 @@ async def creategroup_loop(
                 )
                 break
             
-            # Check if paused by user (from either CREATEGROUP_TASKS or global _TASK_REGISTRY)
+            # Check if paused by user
             if CREATEGROUP_TASKS[task_key].get("paused", False):
                 CREATEGROUP_TASKS[task_key]["paused_by_user"] = True
                 account_name = f"{user_info.first_name or ''} {user_info.last_name or ''}".strip()
@@ -1106,12 +983,7 @@ async def creategroup_loop(
                     effective_user_id,
                     reply_id
                 )
-                # Poll-based wait: check both local pause_event AND global registry
-                while CREATEGROUP_TASKS.get(task_key, {}).get("paused", False):
-                    _sync_resume_from_registry(task_key, tid)
-                    if not CREATEGROUP_TASKS.get(task_key, {}).get("paused", False):
-                        break
-                    await asyncio.sleep(1)
+                await CREATEGROUP_TASKS[task_key]["pause_event"].wait()
                 CREATEGROUP_TASKS[task_key]["paused_by_user"] = False
                 account_name = f"{user_info.first_name or ''} {user_info.last_name or ''}".strip()
                 await send_log_notification(
@@ -1239,17 +1111,13 @@ async def creategroup_loop(
                         except Exception as e:
                             logger.debug(f"Gagal update countdown msg: {e}")
                     
-                    # Check pause/stop (sync from global registry)
-                    _sync_pause_from_registry(task_key, tid)
+                    # Check pause/stop
                     if not CREATEGROUP_TASKS.get(task_key, {}).get("running"):
                         break
                     
-                    # Wait for pause event if paused (poll both sources)
-                    while CREATEGROUP_TASKS.get(task_key, {}).get("paused"):
-                        _sync_resume_from_registry(task_key, tid)
-                        if not CREATEGROUP_TASKS.get(task_key, {}).get("paused"):
-                            break
-                        await asyncio.sleep(1)
+                    # Wait for pause event if paused
+                    if CREATEGROUP_TASKS.get(task_key, {}).get("paused"):
+                        await CREATEGROUP_TASKS[task_key]["pause_event"].wait()
                     
                     sleep_time = min(interval, total_seconds)
                     await asyncio.sleep(sleep_time)
@@ -1262,16 +1130,6 @@ async def creategroup_loop(
             action_count = 0
             async def handle_action_delay():
                 nonlocal action_count
-                
-                # Immediate check before action delay
-                _sync_pause_from_registry(task_key, tid)
-                if not CREATEGROUP_TASKS.get(task_key, {}).get("running"): return
-                
-                while CREATEGROUP_TASKS.get(task_key, {}).get("paused"):
-                    _sync_resume_from_registry(task_key, tid)
-                    if not CREATEGROUP_TASKS.get(task_key, {}).get("paused"): break
-                    await asyncio.sleep(1)
-
                 await asyncio.sleep(action_delay)
                 action_count += 1
                 if action_count >= batch_action:
@@ -1294,14 +1152,6 @@ async def creategroup_loop(
             try:
                 # ===== BAGIAN PEMBUATAN GRUP =====
                 if current_step == "create":
-                    # Extra pause check before creation
-                    _sync_pause_from_registry(task_key, tid)
-                    while CREATEGROUP_TASKS.get(task_key, {}).get("paused"):
-                        _sync_resume_from_registry(task_key, tid)
-                        if not CREATEGROUP_TASKS.get(task_key, {}).get("paused"): break
-                        await asyncio.sleep(1)
-                    if not CREATEGROUP_TASKS.get(task_key, {}).get("running"): break
-
                     if group_type == "b":
                         # Basic group
                         try:
@@ -1446,14 +1296,6 @@ async def creategroup_loop(
                             await update_group_log(f"❌ Gagal membuat {type_label_full}: {str(e)}")
                             i += 1
                             continue
-
-                # Extra pause check before setup
-                _sync_pause_from_registry(task_key, tid)
-                while CREATEGROUP_TASKS.get(task_key, {}).get("paused"):
-                    _sync_resume_from_registry(task_key, tid)
-                    if not CREATEGROUP_TASKS.get(task_key, {}).get("paused"): break
-                    await asyncio.sleep(1)
-                if not CREATEGROUP_TASKS.get(task_key, {}).get("running"): break
 
                 if current_step == "setup":
                     if temp_pin:
@@ -1737,6 +1579,7 @@ async def creategroup_loop(
                 await asyncio.sleep(fw.value + 10)
                 continue
             except Exception as e:
+                import traceback
                 logger.error(f"Error dalam loop pembuatan {unit_label}: {e}\n{traceback.format_exc()}")
                 error_msg = (
                     f"❌ <b>Error dalam loop {unit_label} #{i}:</b>\n"
@@ -2417,12 +2260,23 @@ async def confirm_creategroup_handler(client: Client, callback_query: CallbackQu
             except Exception:
                 pass
         
-        # Generate tid early for buttons
-        from Main.plugins.userbot.xtaskmanager import generate_task_id
-        tid = generate_task_id("CG")
-        
-        # Buat control message dengan tombol lengkap (Main Menu)
-        control_buttons = await get_creategroup_keyboard(client.me.id, tid, menu_type="main")
+        # Buat control message dengan tombol lengkap
+        control_buttons = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, "🛑 Stop"), callback_data="stop_creategroup"),
+                InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, "⏸️ Pause"), callback_data="pause_creategroup"),
+                InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, "▶️ Resume"), callback_data="resume_creategroup")
+            ],
+            [
+                InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, "📊 Status"), callback_data="status_creategroup"),
+                InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, "📋 List"), callback_data="list_creategroup"),
+                InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, "🔁 Recurring"), callback_data="recurring_creategroup")
+            ],
+            [
+                 InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, "✏️ Edit Name"), callback_data="edit_last_creategroup"), 
+                 InlineKeyboardButton(await Essentials.get_user_button_style(client.me.id, "✅ Check Created"), callback_data="list_groups_creategroup")
+            ]
+        ])
         
         control_msg = await client.send_message(
             LOG_CHAT_ID,
@@ -2493,8 +2347,7 @@ async def confirm_creategroup_handler(client: Client, callback_query: CallbackQu
                 rand_upper=config.get("rand_upper", False),
                 rand_static=config.get("rand_static", False),
                 temp_pin=config.get("temp_pin", True),
-                user_id=callback_query.from_user.id,
-                task_id=tid
+                user_id=callback_query.from_user.id
             )
         )
         
@@ -2612,7 +2465,7 @@ async def creategroup_stop_cmd(client: Client, message: AltruixMessage):
         await message.reply("⏹️ Sinyal stop dikirim. Task akan berhenti setelah proses saat ini selesai.")
 
 
-@Altruix.bot.on_callback_query(filters.regex(r"^(stop|pause|resume|status|list|recurring|edit_last|download_log|list_groups|delete_task|cancel|force_stop|confirm_recur|recover|manage|back)_creategroup"))
+@Altruix.bot.on_callback_query(filters.regex(r"^(stop|pause|resume|status|list|recurring|edit_last|download_log|list_groups|delete_task|cancel|force_stop|confirm_recur|recover)_creategroup"))
 @log_errors
 @iuser_check
 async def creategroup_control_handler(client: Client, callback_query: CallbackQuery):
@@ -2635,22 +2488,6 @@ async def creategroup_control_handler(client: Client, callback_query: CallbackQu
             task_key = next((k for k, v in CREATEGROUP_TASKS.items() if v.get("user_id") == user_id and v.get("running")), None)
 
     try:
-        # Handle Menu Navigation
-        if action == "manage":
-            if not task_key:
-                await callback_query.answer("❌ Task tidak ditemukan.", show_alert=True)
-                return
-            keyboard = await get_creategroup_keyboard(client.me.id, task_key, menu_type="manage")
-            await callback_query.edit_message_reply_markup(reply_markup=keyboard)
-            return
-
-        if action == "back":
-            if not task_key:
-                await callback_query.answer("❌ Task tidak ditemukan.", show_alert=True)
-                return
-            keyboard = await get_creategroup_keyboard(client.me.id, task_key, menu_type="main")
-            await callback_query.edit_message_reply_markup(reply_markup=keyboard)
-            return
         # Handle Force Stop first (doesn't need check)
         if action == "force_stop":
             if task_key in CREATEGROUP_TASKS:
@@ -2778,12 +2615,6 @@ async def creategroup_control_handler(client: Client, callback_query: CallbackQu
             if task_key in CREATEGROUP_TASKS and CREATEGROUP_TASKS[task_key].get("running", False):
                 CREATEGROUP_TASKS[task_key]["paused"] = True
                 CREATEGROUP_TASKS[task_key]["pause_event"].clear()
-                # Sync to global _TASK_REGISTRY
-                _tid = CREATEGROUP_TASKS[task_key].get("tid")
-                if _tid:
-                    _reg = getattr(Altruix, "_TASK_REGISTRY", {})
-                    if _tid in _reg:
-                        _reg[_tid]["paused"] = True
                 await send_log_notification(
                     client,
                     f"⏸️ Task CreateGroup dipause oleh {callback_query.from_user.mention}",
@@ -2792,12 +2623,8 @@ async def creategroup_control_handler(client: Client, callback_query: CallbackQu
                 )
                 await callback_query.answer("Task dipause")
                 try:
-                    # Update text and keyboard cleanly
-                    text = get_creategroup_dashboard_text(task_key)
-                    keyboard = await get_creategroup_keyboard(client.me.id, task_key, menu_type="manage")
                     await callback_query.edit_message_text(
-                        text,
-                        reply_markup=keyboard,
+                        (callback_query.message.text if callback_query.message else "🚀 Task Control Panel") + "\n\n⏸️ **DIPAUSE OLEH USER**",
                         parse_mode=ParseMode.HTML
                     )
                 except Exception:
@@ -2809,12 +2636,6 @@ async def creategroup_control_handler(client: Client, callback_query: CallbackQu
             if task_key in CREATEGROUP_TASKS and CREATEGROUP_TASKS[task_key].get("paused", False):
                 CREATEGROUP_TASKS[task_key]["paused"] = False
                 CREATEGROUP_TASKS[task_key]["pause_event"].set()
-                # Sync to global _TASK_REGISTRY
-                _tid = CREATEGROUP_TASKS[task_key].get("tid")
-                if _tid:
-                    _reg = getattr(Altruix, "_TASK_REGISTRY", {})
-                    if _tid in _reg:
-                        _reg[_tid]["paused"] = False
                 await send_log_notification(
                     client,
                     f"▶️ Task CreateGroup di-resume oleh {callback_query.from_user.mention}",
@@ -2823,12 +2644,11 @@ async def creategroup_control_handler(client: Client, callback_query: CallbackQu
                 )
                 await callback_query.answer("Task di-resume")
                 try:
-                    # Update text and keyboard cleanly
-                    text = get_creategroup_dashboard_text(task_key)
-                    keyboard = await get_creategroup_keyboard(client.me.id, task_key, menu_type="manage")
+                    orig_text = callback_query.message.text if callback_query.message else "🚀 Task Control Panel"
+                    if "**DIPAUSE" in orig_text:
+                        orig_text = orig_text.replace("\n\n⏸️ **DIPAUSE OLEH USER**", "")
                     await callback_query.edit_message_text(
-                        text,
-                        reply_markup=keyboard,
+                        orig_text + "\n\n▶️ **DILANJUTKAN OLEH USER**",
                         parse_mode=ParseMode.HTML
                     )
                 except Exception:
@@ -2838,19 +2658,24 @@ async def creategroup_control_handler(client: Client, callback_query: CallbackQu
         
         elif action == "status":
             if task_key in CREATEGROUP_TASKS:
-                # If it's a dashboard message, refresh it. Else show popup.
-                msg_text = callback_query.message.text if callback_query.message else ""
-                if "Manage Task" in msg_text:
-                    text = get_creategroup_dashboard_text(task_key)
-                    keyboard = await get_creategroup_keyboard(client.me.id, task_key, menu_type="manage")
-                    try:
-                        await callback_query.edit_message_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
-                    except Exception:
-                        pass
-                else:
-                    # Show alert style status
-                    text = get_creategroup_dashboard_text(task_key).replace("<blockquote expandable>", "").replace("</blockquote>", "")
-                    await callback_query.answer(text, show_alert=True)
+                task_info = CREATEGROUP_TASKS[task_key]
+                created = len(task_info.get("created_groups", []))
+                current = task_info.get("current_index", 0)
+                running = task_info.get("running", False)
+                paused = task_info.get("paused", False)
+                start_time = task_info.get("start_time", datetime.now())
+                elapsed = (datetime.now() - start_time).total_seconds()
+                
+                status_text = (
+                    f"📊 Status Task CreateGroup\n\n"
+                    f"• Created: {created}\n"
+                    f"• Current: {current}\n"
+                    f"• Running: {'Ya' if running else 'Tidak'}\n"
+                    f"• Paused: {'Ya' if paused else 'Tidak'}\n"
+                    f"• Elapsed: {format_duration(elapsed)}\n"
+                    f"• Start: {start_time.strftime('%Y-%m-%d %H:%M:%S')}"
+                )
+                await callback_query.answer(status_text, show_alert=True)
             elif task_key in COMPLETED_CREATEGROUP_TASKS:
                 info = COMPLETED_CREATEGROUP_TASKS[task_key]
                 status_str = "Gagal ❌" if info.get("status") == "failed" else "Selesai ✅"
@@ -2905,8 +2730,8 @@ async def creategroup_control_handler(client: Client, callback_query: CallbackQu
                         f"• Account: <b>{callback_query.from_user.mention}</b>\n"
                         f"• Total: <code>{conf['count']}</code> grup\n"
                         f"• Tipe: <code>{conf['group_type']}</code>\n"
-                        f"• Delay/Act: <code>{conf.get('action_delay', 3.0)}</code>s\n"
-                        f"• Delay/GC: <code>{conf['delay']}</code>s\n"
+                        f"• Act Delay: <code>{conf.get('action_delay', 3.0)}</code>s\n"
+                        f"• GC Delay: <code>{conf['delay']}</code>s\n"
                         f"• Batch: <code>{conf['batch_size']}</code> | <code>{conf['extra_delay_minutes']}</code>m\n"
                         f"• Batch Act: <code>{conf.get('batch_action', 30)}</code> | <code>{conf.get('ba_delay', 30)}</code>s\n"
                         f"• Pattern: <code>{html.escape(conf['name_pattern'][:25])}...</code>\n"
