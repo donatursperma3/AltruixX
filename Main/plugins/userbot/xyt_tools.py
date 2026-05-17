@@ -6,7 +6,7 @@
 #
 # All rights reserved.
 
-PLUGIN_VERSION = "1.0.125"
+PLUGIN_VERSION = "1.0.126"
 
 import hashlib
 import time
@@ -89,7 +89,10 @@ async def ytdl_cmd(c: Client, m: Message):
             "auto_backup": True,
             "backup_mode": "bot",
             "languages": info.get("languages", []),
-            "audio_lang": "Default"
+            "audio_lang": "Default",
+            "video_bitrate": "Original",
+            "chapters": info.get("chapters", []),
+            "split_chapters": False
         }
         
         if not is_playlist:

@@ -53,7 +53,17 @@ async def test_ping_all_dashboard_handler(c: Client, cb: CallbackQuery):
     user_style = get_user_button_style(user_id)
     
     status_emoji = "🟢 ON" if str(status).lower() == "on" else "🔴 OFF"
-    mode_text = "📡 Test + Message" if str(mode).lower() == "message" else "🔍 Test Only"
+    mode_val = str(mode).lower()
+    if mode_val == "message":
+        mode_text = "📡 Test + Message"
+        next_mode_btn = "Test + Online"
+    elif mode_val == "online":
+        mode_text = "🟢 Test + Online"
+        next_mode_btn = "Test Only"
+    else:
+        mode_text = "🔍 Test Only"
+        next_mode_btn = "Test + Msg"
+        
     readable_interval = format_interval(interval)
     
     text = (
@@ -68,7 +78,7 @@ async def test_ping_all_dashboard_handler(c: Client, cb: CallbackQuery):
     buttons = [
         [
             InlineKeyboardButton(f"Toggle Status: {('TURN OFF' if str(status).lower() == 'on' else 'TURN ON')}", "auto_ping_toggle", style=user_style),
-            InlineKeyboardButton(f"Mode: {('Test Only' if str(mode).lower() == 'message' else 'Test + Msg')}", "auto_ping_mode_toggle", style=user_style)
+            InlineKeyboardButton(f"Mode: {next_mode_btn}", "auto_ping_mode_toggle", style=user_style)
         ],
 
 
@@ -157,12 +167,20 @@ async def get_otp_exec_handler(c: Client, cb: CallbackQuery):
 @iuser_check
 @log_errors
 async def auto_ping_mode_toggle_handler(c: Client, cb: CallbackQuery):
-    """Toggle Auto Ping mode (test vs message)"""
+    """Toggle Auto Ping mode (test vs message vs online)"""
     current = await Altruix.config.get_env("AUTO_PING_MODE") or "test"
-    new_mode = "test" if str(current).lower() == "message" else "message"
+    mode_val = str(current).lower()
+    if mode_val == "test":
+        new_mode = "message"
+        label = "Test + Message"
+    elif mode_val == "message":
+        new_mode = "online"
+        label = "Test + Online"
+    else:
+        new_mode = "test"
+        label = "Test Only"
     
     await Altruix.config.set_env("AUTO_PING_MODE", new_mode)
-    label = "Test + Message" if new_mode == "message" else "Test Only"
     await cb.answer(f"✅ Mode changed to: {label}")
     await test_ping_all_dashboard_handler(c, cb)
 

@@ -95,6 +95,14 @@ class AutoPingManager:
                         )
                     except Exception as me:
                         logger.warning(f"Session {i+1} failed to send ping message: {me}")
+                
+                # If mode is 'online', explicitly update presence status to keep session alive
+                elif mode == "online":
+                    try:
+                        from pyrogram.raw.functions.account import UpdateStatus
+                        await client.invoke(UpdateStatus(offline=False))
+                    except Exception as oe:
+                        logger.warning(f"Session {i+1} failed to update presence status: {oe}")
             except Exception:
                 results.append(f"• Session {i+1}: ❌ Offline")
                 failed_count += 1
@@ -116,6 +124,36 @@ class AutoPingManager:
 
             status_summary = "✅ SUCCESS" if failed == 0 else "⚠️ COMPLETED" if success > 0 else "❌ FAILED"
             
+            # Fetch current settings for inclusion in the log
+            mode = await self.altruix.config.get_env("AUTO_PING_MODE") or "test"
+            interval = await self.altruix.config.get_env("AUTO_PING_INTERVAL") or 300
+            try:
+                interval_secs = int(interval)
+            except:
+                interval_secs = 300
+
+            # Format interval
+            def format_interval(seconds: int) -> str:
+                if seconds < 60:
+                    return f"{seconds}s"
+                if seconds < 3600:
+                    return f"{seconds // 60}m"
+                if seconds < 86400:
+                    h = seconds // 3600
+                    m = (seconds % 3600) // 60
+                    return f"{h}h {m}m" if m else f"{h}h"
+                return f"{seconds // 86400}d"
+
+            readable_interval = format_interval(interval_secs)
+
+            mode_val = str(mode).lower()
+            if mode_val == "message":
+                mode_text = "📡 Test + Message"
+            elif mode_val == "online":
+                mode_text = "🔍 Test + Online"
+            else:
+                mode_text = "🔍 Test Only"
+
             # Base components for the report
             base_header = (
                 f"🏓 <b>{title} REPORT</b>\n"
@@ -123,7 +161,9 @@ class AutoPingManager:
                 f"• Status: <b>{status_summary}</b>\n"
                 f"• Total Sessions: <code>{total}</code>\n"
                 f"• Online: <code>{success}</code>\n"
-                f"• Offline: <code>{failed}</code>\n\n"
+                f"• Offline: <code>{failed}</code>\n"
+                f"• Ping Mode: <b>{mode_text}</b>\n"
+                f"• Interval: <code>{readable_interval}</code>\n\n"
             )
             base_footer = (
                 f"\n\n• Time: <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>\n"

@@ -44,18 +44,24 @@ class BotManager:
             logger.error(f"Failed to initialize BotManager: {e}")
 
     async def save_token(self, user_id: int, token: str):
-        if hasattr(self.altruix, 'db') and hasattr(self.altruix.db, 'make_collection'):
-            col = self.altruix.db.make_collection("custom_bots")
-            await col.find_one_and_update(
-                {"_id": user_id},
-                {"$set": {"token": token}},
-                upsert=True
-            )
+        try:
+            if hasattr(self.altruix, 'db') and hasattr(self.altruix.db, 'make_collection'):
+                col = self.altruix.db.make_collection("custom_bots")
+                await col.find_one_and_update(
+                    {"_id": user_id},
+                    {"$set": {"token": token}},
+                    upsert=True
+                )
+        except Exception as e:
+            logger.error(f"Failed to save bot token for {user_id}: {e}")
 
     async def delete_token(self, user_id: int):
-        if hasattr(self.altruix, 'db') and hasattr(self.altruix.db, 'make_collection'):
-            col = self.altruix.db.make_collection("custom_bots")
-            await col.find_one_and_delete({"_id": user_id})
+        try:
+            if hasattr(self.altruix, 'db') and hasattr(self.altruix.db, 'make_collection'):
+                col = self.altruix.db.make_collection("custom_bots")
+                await col.find_one_and_delete({"_id": user_id})
+        except Exception as e:
+            logger.error(f"Failed to delete bot token for {user_id}: {e}")
 
     async def start_custom_bot(self, user_id: int, token: str, progress: str = "") -> bool:
         """Start a custom bot for a user session."""

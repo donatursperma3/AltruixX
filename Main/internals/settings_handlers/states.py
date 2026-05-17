@@ -19,6 +19,7 @@ user_bulk_join_state = {}
 user_bulk_leave_state = {}
 user_bulk_report_state = {}
 user_bulk_append_session_state = {}
+user_bulk_append_bot_tokens_state = {}
 user_message_count_state = {}
 
 # Security & Tracking States

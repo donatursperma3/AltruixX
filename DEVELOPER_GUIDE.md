@@ -404,5 +404,41 @@ async def my_handler(c, cb):
 - **Konsistensi UI**: Jika user mengatur style akunnya ke "Success" (Hijau) melalui `/settings`, maka seluruh tombol di plugin Anda akan otomatis berwarna hijau.
 - **Premium Look**: Memberikan pengalaman visual yang lebih dinamis dibandingkan tombol default yang statis.
 
+## 12. Debugging Mendalam dengan Handler Prioritas Tinggi
+
+Saat menghadapi masalah di mana pesan atau interaksi seolah-olah "hilang" atau tidak merespon, Anda dapat menggunakan teknik **Diagnostic Catch-All** menggunakan group prioritas yang sangat tinggi (angka negatif besar) untuk melacak alur update di Pyrogram.
+
+### 1. Menggunakan RawUpdateHandler
+`RawUpdateHandler` menangkap **semua** jenis update dari Telegram (pesan, status ketik, edit, dll) sebelum diproses oleh filter apa pun. Ini sangat berguna untuk memastikan apakah server bot sebenarnya menerima data tersebut atau tidak.
+
+```python
+from pyrogram.handlers import RawUpdateHandler
+
+async def diagnostic_raw_update_handler(c: Client, update, users, chats):
+    # Log tipe update yang masuk (misal: UpdateShortMessage, UpdateNewMessage)
+    Altruix.log(f"🕵️ [DEBUG-RAW] Received update: {type(update).__name__}", level=20)
+
+# Gunakan group -2 atau lebih rendah agar diproses paling awal
+Altruix.bot.add_handler(RawUpdateHandler(diagnostic_raw_update_handler), group=-2)
+```
+
+### 2. High-Priority Message Tracker
+Gunakan group ekstrim seperti `-100` untuk menangkap pesan sebelum di-intercept oleh plugin lain. Pastikan selalu memanggil `continue_propagation()` agar fitur lain tetap berfungsi.
+
+```python
+@Altruix.bot.on_message(group=-100)
+async def diagnostic_message_handler(c: Client, m: Message):
+    if m.from_user:
+        Altruix.log(f"🚨 [DEBUG-MSG] Group -100 saw message from {m.from_user.id}: {m.text[:20]}", level=20)
+    
+    # SANGAT PENTING: Lanjutkan ke handler berikutnya
+    await m.continue_propagation()
+```
+
+### 3. Kapan Menggunakan Ini?
+- Ketika tombol menu tidak merespon saat diklik.
+- Ketika input teks (seperti Token atau Password) dikirim tapi bot diam saja.
+- Untuk mendeteksi apakah ada plugin lain yang tidak sengaja melakukan `stop_propagation()` sehingga memutus alur pesan.
+
 ---
 *Altruix Developer Documentation*

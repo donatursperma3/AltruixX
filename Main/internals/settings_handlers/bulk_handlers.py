@@ -2,6 +2,7 @@
 import html
 import os
 import asyncio
+import traceback
 import logging
 from datetime import datetime
 from pyrogram import Client, filters
@@ -17,7 +18,7 @@ from Main.core.client import Altruix
 
 # Utils & States
 from .utils import edit_cb, check_authorization, send_log_notification, gt
-from .states import user_bulk_join_state, user_bulk_leave_state, user_bulk_report_state, user_bulk_append_session_state
+from .states import user_bulk_join_state, user_bulk_leave_state, user_bulk_report_state, user_bulk_append_session_state, user_bulk_append_bot_tokens_state
 
 # Logger
 logger = logging.getLogger(__name__)
@@ -58,6 +59,10 @@ async def bulk_controls_menu_handler(c: Client, cb: CallbackQuery):
         [
             InlineKeyboardButton("📤 Export Sessions", "export_all_sessions_confirmation", style=user_style),
             InlineKeyboardButton("➕ Append Session", "bulk_append_session_menu", style=user_style)
+        ],
+        [
+            InlineKeyboardButton("🤖 Export Bot Tokens", "export_all_bot_tokens_confirmation", style=user_style),
+            InlineKeyboardButton("➕ Append Bot Tokens", "bulk_append_bot_tokens_menu", style=user_style)
         ],
         [
             InlineKeyboardButton("📲 Export Phones", "export_all_phones_confirmation", style=user_style),
@@ -976,4 +981,316 @@ async def execute_bulk_append_sessions(c: Client, m: Message, sessions: list, is
     
     # Notify logging channel (general notification)
     await send_log_notification(c, 'bulk_append_session', 0, m.from_user, True, additional_info={'Total': total, 'Success': success})
+
+
+# ====================== BULK APPEND BOT TOKENS FEATURE ======================
+def extract_tokens_from_text(content: str):
+    try:
+        found = []
+        lines = content.splitlines()
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith("#") or line.startswith("==="):
+                continue
+            
+            # Check colons count
+            colon_count = line.count(":")
+            if colon_count >= 2:
+                # owner:bot_id:token_hash
+                parts = line.split(":", 1)
+                prefix = parts[0].strip()
+                token = parts[1].strip()
+            else:
+                prefix = None
+                token = line
+                
+            if ":" in token and len(token) >= 20:
+                found.append({'prefix': prefix, 'token': token})
+        return found
+    except Exception as e:
+        logger.error(f"Error in extract_tokens_from_text: {e}\n{traceback.format_exc()}")
+        return []
+
+async def execute_bulk_append_bot_tokens(c: Client, m: Message, parsed_entries: list):
+    try:
+        status_msg = await m.reply(f"⏳ <b>Memulai bulk append bot tokens ({len(parsed_entries)} ditemukan)...</b>", parse_mode=ParseMode.HTML)
+        
+        success = 0
+        failed = 0
+        errors = []
+        
+        # We will map each entry to a client
+        used_clients = set()
+        
+        for idx, entry in enumerate(parsed_entries):
+            prefix = entry.get('prefix')
+            token = entry.get('token')
+            
+            # Find matching client
+            target_client = None
+            
+            # 1. Try matching by prefix
+            if prefix:
+                if prefix.isdigit() and int(prefix) <= len(Altruix.clients):
+                    client = Altruix.clients[int(prefix) - 1]
+                    if client not in used_clients:
+                        target_client = client
+                else:
+                    clean_prefix = prefix.replace("+", "").strip()
+                    for client in Altruix.clients:
+                        if client in used_clients:
+                            continue
+                        if not getattr(client, "me", None):
+                            try: client.me = await client.get_me()
+                            except: pass
+                        if getattr(client, "me", None):
+                            if str(client.me.id) == prefix or client.me.phone_number == clean_prefix:
+                                target_client = client
+                                break
+                                
+            # 2. Match to next available client without a custom bot active and not already used in this bulk run
+            if not target_client:
+                for client in Altruix.clients:
+                    if client in used_clients:
+                        continue
+                    if not getattr(client, "me", None):
+                        try: client.me = await client.get_me()
+                        except: pass
+                    if getattr(client, "me", None):
+                        session_user_id = client.me.id
+                        has_bot = False
+                        if hasattr(Altruix, 'bot_manager'):
+                            if session_user_id in Altruix.bot_manager.custom_bots:
+                                has_bot = True
+                        if not has_bot:
+                            target_client = client
+                            break
+                            
+            if not target_client:
+                failed += 1
+                errors.append(f"• Token {token[:15]}...: ❌ No matching available session client found.")
+                continue
+                
+            used_clients.add(target_client)
+            session_user_id = target_client.me.id
+            session_index = Altruix.clients.index(target_client)
+            
+            try:
+                # Start custom bot and save token
+                if hasattr(Altruix, 'bot_manager'):
+                    started = await Altruix.bot_manager.start_custom_bot(session_user_id, token)
+                    if started:
+                        await Altruix.bot_manager.save_token(session_user_id, token)
+                        success += 1
+                    else:
+                        failed += 1
+                        errors.append(f"• Session {session_index + 1}: ❌ Bot client failed to start (invalid token or connection error).")
+                else:
+                    failed += 1
+                    errors.append(f"• Session {session_index + 1}: ❌ BotManager not initialized.")
+            except Exception as e:
+                failed += 1
+                errors.append(f"• Session {session_index + 1}: ❌ Error: {str(e)[:100]}")
+                
+        # Format final summary report
+        summary_text = (
+            "<b>🤖 Bulk Append Bot Tokens Completed</b>\n\n"
+            f"• <b>Total:</b> <code>{len(parsed_entries)}</code>\n"
+            f"• <b>Success:</b> <code>{success}</code>\n"
+            f"• <b>Failed:</b> <code>{failed}</code>\n\n"
+        )
+        if errors:
+            summary_text += "⚠️ <b>Error Details:</b>\n" + "\n".join(errors[:20])
+            if len(errors) > 20:
+                summary_text += f"\n<i>...dan {len(errors) - 20} error lainnya.</i>"
+                
+        await status_msg.edit(summary_text, parse_mode=ParseMode.HTML)
+        
+        # Notify logging channel
+        try:
+            log_chat_id = int(os.getenv("LOG_CHAT_ID", Altruix.config.OWNER_USERS_ID))
+            user_name = html.escape(m.from_user.first_name if m.from_user.first_name else "User")
+            user_link = f"<a href='tg://user?id={m.from_user.id}'>{user_name}</a>"
+            await Altruix.bot.send_message(
+                log_chat_id,
+                f"🤖 <b>BULK APPEND BOT TOKENS</b>\n"
+                f"• User: {user_link}\n"
+                f"• Total: <code>{len(parsed_entries)}</code>\n"
+                f"• Success: <code>{success}</code>\n"
+                f"• Failed: <code>{failed}</code>",
+                parse_mode=ParseMode.HTML
+            )
+        except Exception as le:
+            logger.error(f"Failed to log bulk append bot tokens: {le}")
+    except Exception as e:
+        logger.error(f"Error in execute_bulk_append_bot_tokens: {e}\n{traceback.format_exc()}")
+        try: await m.reply(f"❌ Error during bulk bot token execution: {e}")
+        except: pass
+
+@Altruix.bot.on_callback_query(filters.regex(r"^bulk_append_bot_tokens_menu$"))
+@iuser_check
+@log_errors
+async def bulk_append_bot_tokens_menu_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk menu bulk append bot tokens"""
+    if not await check_authorization(cb): return
+    await cb.answer()
+    
+    try:
+        user_id = cb.from_user.id
+        from Main.utils.file_helpers import get_user_button_style
+        user_style = get_user_button_style(user_id)
+        
+        text = (
+            "<b>🤖 Bulk Append Bot Tokens</b>\n\n"
+            "Fitur ini memungkinkan Anda untuk menambahkan banyak Custom Bot Token sekaligus ke dalam sistem.\n\n"
+            "📂 <b>Metode yang Didukung:</b>\n"
+            "1. <b>ZIP/TXT File:</b> Kirim file ZIP berisi file teks atau file TXT berisi daftar token.\n"
+            "2. <b>Teks Langsung:</b> Kirim satu atau beberapa baris token langsung.\n\n"
+            "📝 <b>Format Daftar Token:</b>\n"
+            "• <code>bot_id:token_hash</code> (Mencari session kosong berikutnya secara otomatis)\n"
+            "• <code>session_index:bot_id:token_hash</code> (Menargetkan session index tertentu, e.g. <code>1:123456789:ABC...</code>)\n"
+            "• <code>phone:bot_id:token_hash</code> (Menargetkan session dengan nomor HP tertentu, e.g. <code>+628xxx:123456789:ABC...</code>)"
+        )
+        
+        buttons = [
+            [InlineKeyboardButton("🚀 Start Appending", callback_data="bulk_append_bot_tokens_start", style=user_style)],
+            [InlineKeyboardButton("🔙 Back", callback_data="bulk_controls_menu", style=user_style)]
+        ]
+        
+        await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
+    except Exception as e:
+        logger.error(f"Error in bulk_append_bot_tokens_menu_handler: {e}\n{traceback.format_exc()}")
+        try: await cb.answer(f"❌ Error: {str(e)[:100]}", show_alert=True)
+        except: pass
+
+@Altruix.bot.on_callback_query(filters.regex(r"^bulk_append_bot_tokens_start$"))
+@iuser_check
+@log_errors
+async def bulk_append_bot_tokens_start_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk memulai proses input append bot tokens"""
+    if not await check_authorization(cb): return
+    await cb.answer()
+    
+    try:
+        user_id = cb.from_user.id
+        user_bulk_append_bot_tokens_state[user_id] = {'step': 'waiting_input'}
+        
+        from Main.utils.file_helpers import get_user_button_style
+        user_style = get_user_button_style(user_id)
+        
+        await edit_cb(cb, 
+            text="<b>🤖 Bulk Append Bot Tokens - Ready</b>\n\n"
+                 "Silakan kirim salah satu dari berikut ini:\n"
+                 "• File <b>.zip</b> berisi file teks token\n"
+                 "• File <b>.txt</b> berisi daftar bot token\n"
+                 "• Daftar bot token langsung melalui pesan teks\n\n"
+                 "❌ <b>Cancel:</b> Klik tombol di bawah atau ketik /cancel",
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", "bulk_append_bot_tokens_cancel", style=user_style)]])
+        )
+    except Exception as e:
+        logger.error(f"Error in bulk_append_bot_tokens_start_handler: {e}\n{traceback.format_exc()}")
+        try: await cb.answer(f"❌ Error: {str(e)[:100]}", show_alert=True)
+        except: pass
+
+@Altruix.bot.on_callback_query(filters.regex(r"^bulk_append_bot_tokens_cancel$"))
+@iuser_check
+@log_errors
+async def bulk_append_bot_tokens_cancel_handler(c: Client, cb: CallbackQuery):
+    """Handler untuk membatalkan proses append bot tokens melalui tombol"""
+    try:
+        user_id = cb.from_user.id
+        if user_id in user_bulk_append_bot_tokens_state:
+            del user_bulk_append_bot_tokens_state[user_id]
+        
+        await cb.answer("❌ Input dibatalkan.")
+        await bulk_append_bot_tokens_menu_handler(c, cb)
+    except Exception as e:
+        logger.error(f"Error in bulk_append_bot_tokens_cancel_handler: {e}\n{traceback.format_exc()}")
+        try: await cb.answer(f"❌ Error: {str(e)[:100]}", show_alert=True)
+        except: pass
+
+async def process_bulk_append_bot_tokens_input(c: Client, m: Message, state: dict):
+    """Memproses input (file atau teks) untuk bulk append bot tokens"""
+    try:
+        user_id = m.from_user.id
+        
+        if m.document:
+            file_name = m.document.file_name.lower()
+            if not (file_name.endswith(".zip") or file_name.endswith(".txt")):
+                await m.reply("❌ <b>Error:</b> Mohon kirim file format <b>.zip</b> atau <b>.txt</b>.")
+                return
+            
+            file_path = await m.download()
+            parsed_entries = []
+            
+            if file_name.endswith(".zip"):
+                proc_msg = await m.reply("⏳ <b>Memproses file ZIP...</b>", parse_mode=ParseMode.HTML)
+                import zipfile
+                import shutil
+                extract_path = f"Main/cache/append_bots_{user_id}"
+                if os.path.exists(extract_path): shutil.rmtree(extract_path)
+                os.makedirs(extract_path, exist_ok=True)
+                
+                try:
+                    with zipfile.ZipFile(file_path, 'r') as zip_ref:
+                        zip_ref.extractall(extract_path)
+                    
+                    for root, dirs, files in os.walk(extract_path):
+                        for f in files:
+                            if f.endswith(".txt") or f.endswith(".json"):
+                                with open(os.path.join(root, f), 'r', encoding='utf-8', errors='ignore') as fh:
+                                    parsed_entries.extend(extract_tokens_from_text(fh.read()))
+                                    
+                    if os.path.exists(extract_path):
+                        shutil.rmtree(extract_path)
+                        
+                    if not parsed_entries:
+                        await proc_msg.edit("❌ <b>Error:</b> Tidak ditemukan token valid di dalam ZIP.")
+                        return
+                    await proc_msg.delete()
+                except Exception as e:
+                    if os.path.exists(extract_path): shutil.rmtree(extract_path)
+                    await proc_msg.edit(f"❌ <b>Error memproses ZIP:</b> {e}")
+                    return
+            else:
+                # Single TXT file
+                try:
+                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as fh:
+                        parsed_entries = extract_tokens_from_text(fh.read())
+                    if not parsed_entries:
+                        await m.reply("❌ <b>Error:</b> Tidak ditemukan token valid di dalam file TXT.")
+                        return
+                except Exception as e:
+                    await m.reply(f"❌ <b>Error memproses TXT:</b> {e}")
+                    return
+                finally:
+                    if os.path.exists(file_path): os.remove(file_path)
+                    
+            # Execute appending
+            if user_id in user_bulk_append_bot_tokens_state:
+                del user_bulk_append_bot_tokens_state[user_id]
+            await execute_bulk_append_bot_tokens(c, m, parsed_entries)
+            
+        else:
+            # Raw text message input
+            input_text = (m.text or m.caption or "").strip()
+            if input_text.lower() in ["/cancel", "cancel", "batal"]:
+                if user_id in user_bulk_append_bot_tokens_state:
+                    del user_bulk_append_bot_tokens_state[user_id]
+                await m.reply("❌ Input dibatalkan.")
+                return
+                
+            parsed_entries = extract_tokens_from_text(input_text)
+            if not parsed_entries:
+                await m.reply("❌ <b>Error:</b> Tidak ada token valid yang ditemukan dalam teks Anda.")
+                return
+                
+            if user_id in user_bulk_append_bot_tokens_state:
+                del user_bulk_append_bot_tokens_state[user_id]
+            await execute_bulk_append_bot_tokens(c, m, parsed_entries)
+    except Exception as e:
+        logger.error(f"Error in process_bulk_append_bot_tokens_input: {e}\n{traceback.format_exc()}")
+        try: await m.reply(f"❌ Error processing input: {e}")
+        except: pass
 

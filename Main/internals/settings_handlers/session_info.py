@@ -51,6 +51,7 @@ from .states import (
     user_creategroup_state, user_limit_check_state, user_exec_state, 
     user_eval_state, user_join_state, user_leave_state, user_send_msg_state, 
     user_bulk_join_state, user_bulk_leave_state, user_bulk_report_state, user_bulk_append_session_state,
+    user_bulk_append_bot_tokens_state,
     user_scan_limit_state, user_profile_edit_state, user_backup_restore_state # extra safety
 )
 from .env_handlers import user_env_input_state, process_env_input, process_env_document
@@ -552,9 +553,11 @@ async def global_cancel_handler(c: Client, m: Message):
         user_profile_edit_state, user_dlphoto_state, user_purge_state,
         user_join_state, user_leave_state, user_send_msg_state, user_privacy_state,
         user_bulk_join_state, user_bulk_leave_state, user_bulk_report_state, user_bulk_append_session_state,
+        user_bulk_append_bot_tokens_state,
         user_env_input_state, user_creategroup_state, user_edit_confirmation_state,
         user_text_confirmation_state, user_scan_limit_state, user_confirmation_state,
-        user_exec_state, user_eval_state, user_backup_restore_state
+        user_exec_state, user_eval_state, user_backup_restore_state,
+        Altruix.user_env_manager_state
     ]
     
     cleared = 0
@@ -574,8 +577,6 @@ async def sessions_info_msg_handler(c: Client, m: Message):
     """Central handler for capturing text inputs like bio, username, purge count, join links, etc."""
     user_id = m.from_user.id
     text = m.text.strip() if m.text else ""
-    logger.info(f"[DEBUG-ROUTER] Received PM from {user_id}. Content: '{text}'. Checking states...")
-
     # The specific /cancel command is now handled by global_cancel_handler (Group -1)
     # This handler ensures other commands don't trigger state logic accidentally.
 
@@ -789,6 +790,10 @@ async def sessions_info_msg_handler(c: Client, m: Message):
     if user_id in user_bulk_append_session_state:
         from .bulk_handlers import process_bulk_append_session_input
         await process_bulk_append_session_input(c, m, user_bulk_append_session_state[user_id])
+        return
+    if user_id in user_bulk_append_bot_tokens_state:
+        from .bulk_handlers import process_bulk_append_bot_tokens_input
+        await process_bulk_append_bot_tokens_input(c, m, user_bulk_append_bot_tokens_state[user_id])
         return
 
     # 7. Privacy & Help Inputs

@@ -46,7 +46,7 @@ import logging
 
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xcreategroup"
-PLUGIN_VERSION = "0.2.392"  # ✅ ADDED: Account Delay (Staggered Startup)
+PLUGIN_VERSION = "0.2.396"  # ✅ ADDED: Smart Recovery Indexing for Indicators
 
 logger = logging.getLogger("altruix.xcreategroup")
 logger.setLevel(logging.INFO)
@@ -201,6 +201,32 @@ async def check_interrupted_tasks():
     
     # Use copy to avoid 'dictionary changed size during iteration' and 'module' shadowing issues
     active_tasks = dict(CREATEGROUP_TASKS)
+    # --- Smart Indexing for Recovery ---
+    # Group tasks by admin_id and start_time (rounded to minute) to guess groups
+    task_groups = {}
+    for key_id, task_data in active_tasks.items():
+        admin_id = task_data.get("admin_id", 0)
+        start_time = task_data.get("start_time")
+        # Round start time to nearest 5 minutes to catch tasks started in a single bulk run
+        if isinstance(start_time, datetime):
+            time_key = start_time.replace(second=0, microsecond=0)
+            time_key = time_key.replace(minute=(time_key.minute // 5) * 5)
+        else:
+            time_key = "unknown"
+            
+        group_key = f"{admin_id}_{time_key}"
+        if group_key not in task_groups:
+            task_groups[group_key] = []
+        task_groups[group_key].append(key_id)
+
+    # Sort each group by actual start_time to assign indices
+    smart_indices = {}
+    for group_key, keys in task_groups.items():
+        sorted_keys = sorted(keys, key=lambda k: active_tasks[k].get("start_time") if isinstance(active_tasks[k].get("start_time"), datetime) else datetime.min)
+        total = len(sorted_keys)
+        for idx, key in enumerate(sorted_keys, 1):
+            smart_indices[key] = (idx, total)
+
     for key_id, task_data in active_tasks.items():
         # Task yang ada di CREATEGROUP_TASKS saat startup dipastikan adalah task yang terhenti
         # karena task yang selesai normal akan dihapus dari dictionary ini.
@@ -241,6 +267,11 @@ async def check_interrupted_tasks():
             logger.info(f"[CreateGroup] Task {key_id} sudah dinotifikasi sebelumnya, skip.")
             continue
             
+        # Get account indicator from params with smart fallback
+        smart_idx, smart_total = smart_indices.get(key_id, (1, 1))
+        acc_idx = params.get("account_idx", smart_idx)
+        tot_accs = params.get("total_accs", smart_total)
+        
         try:
             # Build keyboard
             keyboard = []
@@ -267,7 +298,7 @@ async def check_interrupted_tasks():
             await Altruix.bot.send_message(
                 target_log_chat,
                 f"<blockquote expandable>"
-                f"⚠️ <b>Interrupted Task Detected</b>\n\n"
+                f"⚠️ <b>Interrupted Task Detected {acc_idx}/{tot_accs}</b>\n\n"
                 f"Task CreateGroup terhenti akibat restart.\n"
                 f"• Account: <b>{html.escape(account_name)}</b>\n"
                 f"• Task ID: <code>{tid_display}</code>\n"
@@ -776,7 +807,9 @@ async def creategroup_loop(
     quote_block: bool = True,
     user_id: Optional[int] = None,
     task_id: str = None,
-    is_resume: bool = False
+    is_resume: bool = False,
+    account_idx: int = 1,
+    total_accs: int = 1
 ):
     """Main loop untuk membuat grup"""
     effective_user_id = user_id or (initial_message.from_user.id if initial_message.from_user else None)
@@ -829,6 +862,12 @@ async def creategroup_loop(
             # Keep existing state but ensure it's marked as running
             CREATEGROUP_TASKS[task_key]["running"] = True
             CREATEGROUP_TASKS[task_key]["task_obj"] = asyncio.current_task()
+            
+            # Ensure account indicator is updated/synced on resume
+            if "params" in CREATEGROUP_TASKS[task_key]:
+                CREATEGROUP_TASKS[task_key]["params"]["account_idx"] = account_idx
+                CREATEGROUP_TASKS[task_key]["params"]["total_accs"] = total_accs
+                
             if "pause_event" not in CREATEGROUP_TASKS[task_key]:
                 CREATEGROUP_TASKS[task_key]["pause_event"] = asyncio.Event()
                 CREATEGROUP_TASKS[task_key]["pause_event"].set()
@@ -878,7 +917,9 @@ async def creategroup_loop(
                     "rand_upper": rand_upper,
                     "rand_static": rand_static,
                     "batch_action": batch_action,
-                    "ba_delay": ba_delay
+                    "ba_delay": ba_delay,
+                    "account_idx": account_idx,
+                    "total_accs": total_accs
                 },
                 "task_obj": asyncio.current_task()
             }
@@ -913,7 +954,7 @@ async def creategroup_loop(
              try:
                  control_message = await bot_client.send_message(
                      LOG_CHAT_ID,
-                     f"🚀 <b>Task Control Panel</b>\n"
+                     f"🚀 <b>Task Control Panel {account_idx}/{total_accs}</b>\n"
                      f"• TID: <code>{tid}</code>\n"
                      f"• Account: <b>{html.escape(account_name_raw)}</b>\n"
                      f"• Target: <code>{count}</code> grup\n\n"
@@ -1346,8 +1387,17 @@ async def creategroup_loop(
                             
                             await update_group_log(f"✅ Grup dasar dibuat: <code>{created_chat_id}</code>")
                         except Exception as e:
+                            err_str = str(e)
                             logger.error(f"Gagal membuat grup dasar: {e}\n{traceback.format_exc()}")
-                            await update_group_log(f"❌ Gagal membuat grup dasar: {str(e)}")
+                            
+                            error_msg = f"❌ <b>Gagal membuat Grup Dasar</b>\n• Account: {html.escape(account_name_raw)}\n• Error: <code>{html.escape(err_str)}</code>"
+                            
+                            # 1. Update the consolidated log (edit)
+                            await update_group_log(f"❌ Gagal: {html.escape(err_str)}")
+                            
+                            # 2. Send a FRESH notification to the Log Group (push)
+                            await send_log_notification(bot_client, error_msg, effective_user_id, reply_to_msg_id=reply_id)
+                            
                             i += 1
                             continue
                         
@@ -1442,8 +1492,28 @@ async def creategroup_loop(
                             await update_group_log(f"✅ {type_label_full} dibuat: <code>{created_chat_id}</code>")
                             await update_group_log(f"✅ Description di-set: <i>{html.escape(description[:30])}...</i>")
                         except Exception as e:
+                            err_str = str(e)
                             logger.error(f"Gagal membuat {type_label_full}: {e}\n{traceback.format_exc()}")
-                            await update_group_log(f"❌ Gagal membuat {type_label_full}: {str(e)}")
+                            
+                            error_msg = f"❌ <b>Gagal membuat {type_label_full}</b>\n• Account: {html.escape(account_name_raw)}\n• Error: <code>{html.escape(err_str)}</code>"
+                            
+                            # 1. Update the consolidated log (edit)
+                            await update_group_log(f"❌ Gagal: {html.escape(err_str)}")
+                            
+                            # 2. Send a FRESH notification to the Log Group (push)
+                            await send_log_notification(bot_client, error_msg, effective_user_id, reply_to_msg_id=reply_id)
+                            
+                            # 3. Special handling for "Too many channels" - this is a terminal error for this session
+                            if "CHANNELS_TOO_MUCH" in err_str:
+                                await update_group_log("🛑 <b>Task dihentikan:</b> Limit akun tercapai (Channels Too Much).")
+                                await send_log_notification(
+                                    bot_client, 
+                                    f"🛑 <b>Task Create {type_label_full} Dihentikan</b>\n• Account: {html.escape(account_name_raw)}\n• Reason: <code>CHANNELS_TOO_MUCH</code> (Limit tercapai)",
+                                    effective_user_id,
+                                    reply_to_msg_id=reply_id
+                                )
+                                break # Exit the loop for this session
+                                
                             i += 1
                             continue
 
@@ -2735,7 +2805,9 @@ async def creategroup_control_handler(client: Client, callback_query: CallbackQu
                     ba_delay=params.get("ba_delay", 30),
                     user_id=client_id,
                     task_id=tid,
-                    is_resume=True
+                    is_resume=True,
+                    account_idx=params.get("account_idx", 1),
+                    total_accs=params.get("total_accs", 1)
                 )
             )
             return

@@ -3888,27 +3888,22 @@ async def pgc_callback_handler(c: Client, cb: CallbackQuery):
             
         # Navigation Row
         if total_pages > 1:
-            nav = []
-            # First button
-            nav.append(InlineKeyboardButton("[ First ]", callback_data=f"pgc_synclist_{uid}_page_0", style=btn_style))
-            
-            # Prev button
+            # Row 1: [Prev] [n/n] [Next]
+            nav_row1 = []
             prev_page = max(0, page - 1)
-            nav.append(InlineKeyboardButton("[ Prev ]", callback_data=f"pgc_synclist_{uid}_page_{prev_page}", style=btn_style))
-            
-            # Page info [n/n]
-            nav.append(InlineKeyboardButton(f"[ {page+1}/{total_pages} ]", callback_data=f"pgc_synclist_{uid}_page_{page}", style=btn_style))
-            
-            # Next button
+            nav_row1.append(InlineKeyboardButton("Prev", callback_data=f"pgc_synclist_{uid}_page_{prev_page}", style=btn_style))
+            nav_row1.append(InlineKeyboardButton(f"{page+1}/{total_pages}", callback_data=f"pgc_synclist_{uid}_page_{page}", style=btn_style))
             next_page = min(total_pages - 1, page + 1)
-            nav.append(InlineKeyboardButton("[ Next ]", callback_data=f"pgc_synclist_{uid}_page_{next_page}", style=btn_style))
+            nav_row1.append(InlineKeyboardButton("Next", callback_data=f"pgc_synclist_{uid}_page_{next_page}", style=btn_style))
+            rows.append(nav_row1)
             
-            # Last button
-            nav.append(InlineKeyboardButton("[ Last ]", callback_data=f"pgc_synclist_{uid}_page_{total_pages-1}", style=btn_style))
-            
-            rows.append(nav)
+            # Row 2: [First] [Last]
+            nav_row2 = []
+            nav_row2.append(InlineKeyboardButton("First", callback_data=f"pgc_synclist_{uid}_page_0", style=btn_style))
+            nav_row2.append(InlineKeyboardButton("Last", callback_data=f"pgc_synclist_{uid}_page_{total_pages-1}", style=btn_style))
+            rows.append(nav_row2)
 
-        rows.append([InlineKeyboardButton("⬅️ Back", callback_data=f"pgc_syncmenu_{uid}", style=btn_style)])
+        rows.append([InlineKeyboardButton("Back", callback_data=f"pgc_syncmenu_{uid}", style=btn_style)])
         kb = InlineKeyboardMarkup(rows)
         await safe_edit_message(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
         await safe_cb_answer(cb, f"Select account to sync from (Page {page+1}/{total_pages}).", show_alert=False)

@@ -5,7 +5,7 @@
 # Please see < https://github.com/Altriux/Altruix/blob/main/LICENSE >
 #
 # All rights reserved.
-YTDL_CORE_VERSION = "0.0.239"
+YTDL_CORE_VERSION = "0.0.262"
 
 import os
 import time
@@ -54,6 +54,22 @@ def format_yt_date(date_str: str) -> str:
         return "Unknown"
     return f"{date_str[6:8]}/{date_str[4:6]}/{date_str[0:4]}"
 
+def parse_volume_to_ffmpeg(val: str) -> str:
+    try:
+        if not val or val == "Original":
+            return None
+        if "%" in val:
+            percent_str = val.split("%")[0].strip()
+            try:
+                percent_val = float(percent_str)
+                return f"{percent_val / 100:.2f}"
+            except:
+                pass
+        return None
+    except Exception as ex:
+        Altruix.log(f"parse_volume_to_ffmpeg Error: {ex}\n{traceback.format_exc()}")
+        return None
+
 async def sync_ytdl_task(task_id: str):
     """Syncs the current YTDL task state to the local database."""
     state = Altruix.YTDL_STATE.get(task_id)
@@ -93,6 +109,37 @@ async def run_subprocess(cmd: list):
         except:
             pass
         raise
+    
+async def get_ffmpeg_version() -> str:
+    try:
+        ret, stdout, stderr = await run_subprocess(["ffmpeg", "-version"])
+        if ret == 0 and stdout:
+            first_line = stdout.splitlines()[0]
+            match = re.search(r"version\s+([^\s,]+)", first_line)
+            if match:
+                return match.group(1)
+            return first_line.replace("ffmpeg version ", "").split(" Copyright")[0].strip()
+    except Exception as e:
+        Altruix.log(f"Get FFmpeg Version Fail: {e}")
+    return "Unknown"
+
+async def get_ytdl_engine_info() -> tuple:
+    # Detects if yt-dlp or youtube-dl is used and returns (engine_name, version)
+    try:
+        ret, stdout, stderr = await run_subprocess(["yt-dlp", "--version"])
+        if ret == 0 and stdout:
+            return "yt-dlp", stdout.strip()
+    except:
+        pass
+        
+    try:
+        ret, stdout, stderr = await run_subprocess(["youtube-dl", "--version"])
+        if ret == 0 and stdout:
+            return "youtube-dl", stdout.strip()
+    except:
+        pass
+        
+    return "yt-dlp", "Unknown"
     
 async def run_yt_dlp_with_progress(cmd: list, status_msg, task_id, state):
     """Runs yt-dlp and parses stdout to report progress via progress_callback."""
@@ -137,6 +184,7 @@ async def run_yt_dlp_with_progress(cmd: list, status_msg, task_id, state):
                     media_name, task_id=task_id, audio_lang=a_lang
                 )
                     
+        await process.wait()
         stderr_data = await process.stderr.read()
         return process.returncode, "\n".join(full_stdout), stderr_data.decode(errors="replace").strip()
     except Exception as e:
@@ -223,7 +271,7 @@ async def extract_yt_info(url: str):
 
     # We use -J (--dump-single-json) to ensure we get a single JSON object
     # even for playlists, which makes parsing much more reliable.
-    cmd = ["yt-dlp", "-J", "--flat-playlist"]
+    cmd = ["yt-dlp", "-J", "--flat-playlist", "--extractor-args", "youtube:player_client=all"]
     
     # ✅ Enable remote solvers to fix 'n' challenge with Deno/Node
     cmd.extend(["--remote-components", "ejs:github"])
@@ -297,7 +345,7 @@ async def extract_yt_info(url: str):
     if data.get("_type") == "url":
         target_url = data.get("url") or url
         # Use -J and --no-playlist to ensure we get a single video object with formats
-        cmd_full = ["yt-dlp", "-J", "--no-playlist"]
+        cmd_full = ["yt-dlp", "-J", "--no-playlist", "--extractor-args", "youtube:player_client=all"]
         
         # ✅ Enable remote solvers to fix 'n' challenge with Deno/Node
         cmd_full.extend(["--remote-components", "ejs:github"])
@@ -381,6 +429,7 @@ async def extract_yt_info(url: str):
         "resolutions": sorted(list(v_res), reverse=True),
         "res_sizes": res_sizes,
         "languages": languages, # ✅ Added languages list
+        "chapters": data.get("chapters", []), # ✅ Added chapters list
         "url": data.get("webpage_url") or url,
         "uploader": data.get("uploader") or data.get("channel") or data.get("author") or data.get("uploader_id") or "Unknown Channel",
         "artist": data.get("artist"),
@@ -521,8 +570,8 @@ async def _ytdl_single_unit(status_msg, task_id, state):
                 clean_lang = audio_lang.split(" (")[0] if " (" in audio_lang else audio_lang
                 # Fallback chain without strict extension to catch all dubbed formats
                 format_spec = (
-                    f"bestvideo[height<={quality}]+bestaudio[language*={clean_lang}]/"
-                    f"bestvideo[height<={quality}]+bestaudio[language_note*={clean_lang}]/"
+                    f"bestvideo[height<={quality}]+bestaudio[language*='{clean_lang}']/"
+                    f"bestvideo[height<={quality}]+bestaudio[language_note*='{clean_lang}']/"
                     f"bestvideo[height<={quality}]+bestaudio/"
                     f"best[height<={quality}]/best"
                 )
@@ -532,12 +581,12 @@ async def _ytdl_single_unit(status_msg, task_id, state):
             final_name = "output.mp3"
             if audio_lang != "Default":
                 clean_lang = audio_lang.split(" (")[0] if " (" in audio_lang else audio_lang
-                format_spec = f"bestaudio[language*={clean_lang}]/bestaudio[language_note*={clean_lang}]/bestaudio/best"
+                format_spec = f"bestaudio[language*='{clean_lang}']/bestaudio[language_note*='{clean_lang}']/bestaudio/best"
             else:
                 format_spec = "bestaudio/best"
             
         raw_pattern = os.path.join(temp_path, "raw.%(ext)s")
-        dl_cmd = ["yt-dlp", "-f", format_spec, "-o", raw_pattern, "--no-playlist", "--merge-output-format", "mp4"]
+        dl_cmd = ["yt-dlp", "-f", format_spec, "-o", raw_pattern, "--no-playlist", "--merge-output-format", "mp4", "--extractor-args", "youtube:player_client=all"]
         
         # ✅ Enable remote solvers for download too
         dl_cmd.extend(["--remote-components", "ejs:github"])
@@ -553,7 +602,20 @@ async def _ytdl_single_unit(status_msg, task_id, state):
              dl_cmd.extend(["--extract-audio", "--audio-format", "mp3", "--audio-quality", f"{quality}K"])
              
         ret, out, err = await run_yt_dlp_with_progress(dl_cmd, status_msg, task_id, state)
-        if ret != 0: raise Exception(f"Download Fail: {err}")
+        if ret != 0:
+            err_msg = err.strip()
+            if not err_msg and out:
+                # Scan stdout for ERROR: lines
+                lines = [line.strip() for line in out.splitlines() if line.strip()]
+                for line in reversed(lines):
+                    if "ERROR:" in line or "error:" in line.lower():
+                        err_msg = line
+                        break
+                if not err_msg and lines:
+                    err_msg = lines[-1]
+            if not err_msg:
+                err_msg = "Unknown yt-dlp error"
+            raise Exception(f"Download Fail: {err_msg}")
         
         actual_raw = None
         for f in os.listdir(temp_path):
@@ -592,10 +654,253 @@ async def _ytdl_single_unit(status_msg, task_id, state):
         is_trimmed = (start_s != 0 or end_s != state["duration"])
         wm_enabled = state.get("watermark", False)
         
-        needs_ffmpeg = is_trimmed or (is_video and wm_enabled)
+        v_bitrate = state.get("video_bitrate", "Original")
+        speed_val = state.get("speed", "1.0x")
+        volume_val = state.get("volume", "Original")
+        try: speed_float = float(speed_val.replace("x", ""))
+        except: speed_float = 1.0
+        
+        # Chapters Split Branch
+        split_chapters = state.get("split_chapters", False)
+        chapters = state.get("chapters", [])
+        if split_chapters and chapters:
+            await edit_status(status_msg, f"<b>✂️ Membagi video menjadi {len(chapters)} bab...</b>")
+            for idx, chap in enumerate(chapters):
+                chap_start = chap.get("start_time", 0.0)
+                chap_end = chap.get("end_time", state["duration"])
+                chap_duration = chap_end - chap_start
+                chap_title = chap.get("title", f"Bab {idx+1}")
+                
+                # Check for Task Status (Cancelled/Paused)
+                while True:
+                    registry = getattr(Altruix, "_TASK_REGISTRY", {})
+                    if task_id not in registry: 
+                        return # Task cancelled
+                    if registry.get(task_id, {}).get("paused"):
+                        await asyncio.sleep(2); continue # Paused
+                    break
+                
+                await edit_status(status_msg, f"<b>✂️ Memproses Bab {idx+1}/{len(chapters)}:</b>\n<code>{chap_title}</code>")
+                
+                # Clean title for filename
+                import re
+                clean_title = re.sub(r'[\\/*?:"<>|]', '', chap_title)
+                ext = "mp4" if is_video else "mp3"
+                chap_final_name = f"{idx+1:02d}. {clean_title}.{ext}"
+                chap_target_file = os.path.join(temp_path, chap_final_name)
+                
+                # Build FFmpeg command to cut chap_start to chap_end
+                trim_cmd = ["ffmpeg", "-ss", str(chap_start), "-to", str(chap_end), "-i", actual_raw]
+                
+                # Apply Speed, Watermark, Volume filters to this chapter cut if they are active
+                v_filters = []
+                if speed_float != 1.0:
+                    v_filters.append(f"setpts={1/speed_float:.4f}*PTS")
+                if wm_enabled and is_video:
+                    v_filters.append("drawtext=text='Altroid-X':fontcolor=white:fontsize=h/20:box=1:boxcolor=black@0.5:x=w-tw-20:y=20")
+                    
+                if is_video:
+                    if v_filters:
+                        trim_cmd.extend(["-vf", ",".join(v_filters), "-c:v", "libx264", "-preset", "veryfast"])
+                    else:
+                        trim_cmd.extend(["-c:v", "libx264", "-preset", "veryfast"])
+                        
+                    if v_bitrate != "Original":
+                        v_bitrate_arg = None
+                        if "Mbps" in v_bitrate:
+                            v_bitrate_arg = v_bitrate.replace(" Mbps", "M")
+                        elif "Kbps" in v_bitrate:
+                            v_bitrate_arg = v_bitrate.replace(" Kbps", "k")
+                        if v_bitrate_arg:
+                            trim_cmd.extend(["-b:v", v_bitrate_arg])
+                            
+                    # Audio Filters
+                    a_filters = []
+                    if speed_float != 1.0:
+                        atempo_chain = []
+                        current = speed_float
+                        while current > 2.0:
+                            atempo_chain.append("atempo=2.0")
+                            current /= 2.0
+                        while current < 0.5:
+                            atempo_chain.append("atempo=0.5")
+                            current /= 0.5
+                        atempo_chain.append(f"atempo={current:.2f}")
+                        a_filters.extend(atempo_chain)
+                        
+                    vol_arg = parse_volume_to_ffmpeg(volume_val)
+                    if vol_arg:
+                        a_filters.append(f"volume={vol_arg}")
+                        
+                    if a_filters:
+                        trim_cmd.extend(["-af", ",".join(a_filters), "-c:a", "aac"])
+                    else:
+                        trim_cmd.extend(["-c:a", "copy"])
+                        
+                    trim_cmd.extend([chap_target_file, "-y"])
+                else:
+                    # Audio MP3 format
+                    a_filters = []
+                    if speed_float != 1.0:
+                        atempo_chain = []
+                        current = speed_float
+                        while current > 2.0:
+                            atempo_chain.append("atempo=2.0")
+                            current /= 2.0
+                        while current < 0.5:
+                            atempo_chain.append("atempo=0.5")
+                            current /= 0.5
+                        atempo_chain.append(f"atempo={current:.2f}")
+                        a_filters.extend(atempo_chain)
+                        
+                    vol_arg = parse_volume_to_ffmpeg(volume_val)
+                    if vol_arg:
+                        a_filters.append(f"volume={vol_arg}")
+                        
+                    if a_filters:
+                        trim_cmd.extend(["-af", ",".join(a_filters)])
+                        
+                    trim_cmd.extend(["-acodec", "libmp3lame", "-ab", f"{quality}k", chap_target_file, "-y"])
+                    
+                # Run FFmpeg to cut and filter
+                await run_subprocess(trim_cmd)
+                
+                # Check that cut file exists
+                if not os.path.exists(chap_target_file):
+                    Altruix.log(f"Chapter Cut Fail for {chap_title}")
+                    continue
+                
+                # Audio Metadata & Cover Embedding for MP3 chapters
+                if not is_video:
+                    meta_file = os.path.join(temp_path, "meta_" + chap_final_name)
+                    meta_cmd = ["ffmpeg", "-i", chap_target_file]
+                    if os.path.exists(thumb_file):
+                        meta_cmd.extend(["-i", thumb_file, "-map", "0:0", "-map", "1:0", "-disposition:v", "attached_pic"])
+                    
+                    meta_cmd.extend([
+                        "-c", "copy",
+                        "-id3v2_version", "3",
+                        "-metadata", f"title={chap_title}",
+                        "-metadata", f"artist={state.get('uploader', 'Unknown Channel')}",
+                        "-metadata", f"album={state['title']}",
+                        meta_file, "-y"
+                    ])
+                    m_ret, _, _ = await run_subprocess(meta_cmd)
+                    if m_ret == 0 and os.path.exists(meta_file):
+                        os.remove(chap_target_file)
+                        os.rename(meta_file, chap_target_file)
+                
+                # Let's adjust duration for speed
+                actual_duration = chap_duration
+                if speed_float != 1.0:
+                    actual_duration = int(actual_duration / speed_float)
+                    
+                # Upload chapter file
+                f_size = os.path.getsize(chap_target_file)
+                
+                # Build custom caption for this chapter
+                v_bit_str = f" ({v_bitrate})" if (is_video and v_bitrate != "Original") else ""
+                speed_str = f"\n<b>• Speed:</b> <code>{speed_val}</code>" if speed_val != "1.0x" else ""
+                volume_str_cap = f"\n<b>• Volume:</b> <code>{volume_val}</code>" if volume_val != "Original" else ""
+                
+                qual_suffix = "p" if is_video else "kbps"
+                
+                chap_caption = (
+                    f"<blockquote expandable>"
+                    f"<b>• {state['title']}</b>\n"
+                    f"<b>• Bab {idx+1}/{len(chapters)}:</b> {chap_title}\n"
+                    f"<b>• Channel:</b> {state.get('uploader', 'Unknown')} ({format_count(state.get('subscribers'))} subs)\n"
+                    f"<b>• Upload:</b> {format_yt_date(state.get('upload_date'))}\n"
+                    f"<b>• Durasi:</b> {Essentials.get_readable_time(actual_duration)}\n"
+                    f"<b>• Size:</b> {Essentials.humanbytes(f_size)}\n"
+                    f"<b>• {'Resolusi' if is_video else 'Bitrate'}:</b> {state['quality']}{qual_suffix}{v_bit_str}\n"
+                    f"<b>• Audio Lang:</b> {state.get('audio_lang', 'Default').upper()}"
+                    f"{speed_str}"
+                    f"{volume_str_cap}"
+                )
+                if state.get("show_link", True):
+                    chap_caption += f"\n<b>• Source:</b> {state['url']}"
+                chap_caption += f"</blockquote>"
+                
+                thumb_p = thumb_file if os.path.exists(thumb_file) else None
+                
+                # Perform uploader sending/backup logic
+                c_idx = state.get("client_idx", 0)
+                if c_idx == -1:
+                    uploader = Altruix.bot
+                    sender_name = "Assistant Bot"
+                else:
+                    uploader = Altruix.clients[c_idx] if c_idx < len(Altruix.clients) else Altruix.clients[0]
+                    sender_name = state.get("sender_name", "Userbot")
+                
+                start_time, last_update = time.time(), 0
+                media_type = "Video" if is_video else "Audio"
+                media_quality = f"{state['quality']}{qual_suffix}"
+                
+                async def chap_up_progress(curr, total):
+                    nonlocal last_update
+                    a_lang = state.get("audio_lang", "Default")
+                    last_update = await progress_callback(
+                        curr, total, status_msg, start_time, last_update, 
+                        f"Uploading {idx+1}/{len(chapters)}", sender_name, 
+                        media_type, media_quality, chap_title, task_id=task_id, audio_lang=a_lang
+                    )
+                
+                reply_id = state.get("reply_to")
+                
+                log_chat_id = getattr(Altruix, "log_chat", None)
+                auto_backup = state.get("auto_backup", True)
+                
+                if auto_backup and log_chat_id:
+                    backup_as_bot = state.get("backup_mode") == "bot"
+                    b_client = Altruix.bot if backup_as_bot else uploader
+                    backup_caption = f"{chap_caption}\n\n#backup"
+                    
+                    await edit_status(status_msg, f"<b>📥 Backup Bab {idx+1}/{len(chapters)} (via {'Bot' if backup_as_bot else 'Userbot'})...</b>")
+                    if is_video:
+                        sent_msg = await b_client.send_video(chat_id=log_chat_id, video=chap_target_file, caption=backup_caption, duration=int(actual_duration), thumb=thumb_p, supports_streaming=True, progress=chap_up_progress)
+                    else:
+                        sent_msg = await b_client.send_audio(chat_id=log_chat_id, audio=chap_target_file, caption=backup_caption, duration=int(actual_duration), thumb=thumb_p, title=f"Part {idx+1:02d}: {chap_title}", performer=state.get("uploader", "Unknown Channel"), file_name=chap_final_name, progress=chap_up_progress)
+                    
+                    await edit_status(status_msg, f"<b>📤 Forwarding Bab {idx+1}/{len(chapters)}...</b>")
+                    try:
+                        if b_client == uploader:
+                            await sent_msg.copy(chat_id=state["chat_id"], caption=chap_caption, reply_to_message_id=reply_id)
+                        else:
+                            await uploader.copy_message(chat_id=state["chat_id"], from_chat_id=log_chat_id, message_id=sent_msg.id, caption=chap_caption, reply_to_message_id=reply_id)
+                    except Exception as e:
+                        Altruix.log(f"Chapter Backup Forward Fail: {e}")
+                        if is_video:
+                            await uploader.send_video(chat_id=state["chat_id"], video=chap_target_file, caption=chap_caption, duration=int(actual_duration), thumb=thumb_p, supports_streaming=True, reply_to_message_id=reply_id)
+                        else:
+                            await uploader.send_audio(chat_id=state["chat_id"], audio=chap_target_file, caption=chap_caption, duration=int(actual_duration), thumb=thumb_p, title=f"Part {idx+1:02d}: {chap_title}", performer=state.get("uploader", "Unknown Channel"), file_name=chap_final_name, reply_to_message_id=reply_id)
+                else:
+                    await edit_status(status_msg, f"<b>📤 Sending Bab {idx+1}/{len(chapters)}...</b>")
+                    if is_video:
+                        await uploader.send_video(chat_id=state["chat_id"], video=chap_target_file, caption=chap_caption, duration=int(actual_duration), thumb=thumb_p, supports_streaming=True, progress=chap_up_progress, reply_to_message_id=reply_id)
+                    else:
+                        await uploader.send_audio(chat_id=state["chat_id"], audio=chap_target_file, caption=chap_caption, duration=int(actual_duration), thumb=thumb_p, title=f"Part {idx+1:02d}: {chap_title}", performer=state.get("uploader", "Unknown Channel"), file_name=chap_final_name, progress=chap_up_progress, reply_to_message_id=reply_id)
+                
+                # Cleanup chapter file
+                if os.path.exists(chap_target_file):
+                    os.remove(chap_target_file)
+            
+            # Since we completed all chapters, we return successfully!
+            return
+            
+        needs_ffmpeg = is_trimmed or (speed_float != 1.0) or (volume_val != "Original") or (is_video and (wm_enabled or v_bitrate != "Original"))
         
         if needs_ffmpeg:
-            act_text = "Memotong" if is_trimmed else "Merender Watermark"
+            if is_trimmed:
+                act_text = "Memotong"
+            elif speed_float != 1.0:
+                act_text = "Mengubah Kecepatan"
+            elif volume_val != "Original":
+                act_text = "Menyesuaikan Volume"
+            elif is_video and v_bitrate != "Original":
+                act_text = "Mengompresi Video"
+            else:
+                act_text = "Merender Watermark"
             await edit_status(status_msg, f"<b>✂️ {act_text} ({Essentials.get_readable_time(duration)})...</b>")
             
             if is_video:
@@ -604,19 +909,83 @@ async def _ytdl_single_unit(status_msg, task_id, state):
                       trim_cmd.extend(["-ss", str(start_s), "-to", str(end_s)])
                  trim_cmd.extend(["-i", actual_raw])
                  
+                 # Video Filters: Speed & Watermark
+                 v_filters = []
+                 if speed_float != 1.0:
+                     v_filters.append(f"setpts={1/speed_float:.4f}*PTS")
                  if wm_enabled:
-                      vf_str = "drawtext=text='Altroid-X':fontcolor=white:fontsize=h/20:box=1:boxcolor=black@0.5:x=w-tw-20:y=20"
-                      trim_cmd.extend(["-vf", vf_str, "-c:v", "libx264", "-preset", "veryfast"])
+                     v_filters.append("drawtext=text='Altroid-X':fontcolor=white:fontsize=h/20:box=1:boxcolor=black@0.5:x=w-tw-20:y=20")
+                     
+                 if v_filters:
+                      trim_cmd.extend(["-vf", ",".join(v_filters), "-c:v", "libx264", "-preset", "veryfast"])
                  else:
                       trim_cmd.extend(["-c:v", "libx264", "-preset", "veryfast"])
                       
-                 trim_cmd.extend(["-c:a", "copy", target_file, "-y"])
+                 if v_bitrate != "Original":
+                      v_bitrate_arg = None
+                      if "Mbps" in v_bitrate:
+                          v_bitrate_arg = v_bitrate.replace(" Mbps", "M")
+                      elif "Kbps" in v_bitrate:
+                          v_bitrate_arg = v_bitrate.replace(" Kbps", "k")
+                      if v_bitrate_arg:
+                          trim_cmd.extend(["-b:v", v_bitrate_arg])
+                 
+                 # Audio Filters: Tempo Speed, Volume Boost & Codec Selection
+                 a_filters = []
+                 if speed_float != 1.0:
+                     atempo_chain = []
+                     current = speed_float
+                     while current > 2.0:
+                         atempo_chain.append("atempo=2.0")
+                         current /= 2.0
+                     while current < 0.5:
+                         atempo_chain.append("atempo=0.5")
+                         current /= 0.5
+                     atempo_chain.append(f"atempo={current:.2f}")
+                     a_filters.extend(atempo_chain)
+                     
+                 vol_arg = parse_volume_to_ffmpeg(volume_val)
+                 if vol_arg:
+                     a_filters.append(f"volume={vol_arg}")
+                     
+                 if a_filters:
+                     trim_cmd.extend(["-af", ",".join(a_filters), "-c:a", "aac"])
+                 else:
+                     trim_cmd.extend(["-c:a", "copy"])
+                       
+                 trim_cmd.extend([target_file, "-y"])
             else:
                  trim_cmd = ["ffmpeg"]
                  if is_trimmed: trim_cmd.extend(["-ss", str(start_s), "-to", str(end_s)])
-                 trim_cmd.extend(["-i", actual_raw, "-acodec", "libmp3lame", "-ab", f"{quality}k", target_file, "-y"])
+                 trim_cmd.extend(["-i", actual_raw])
+                 
+                 # Audio Filters: Tempo Speed & Volume Boost
+                 a_filters = []
+                 if speed_float != 1.0:
+                     atempo_chain = []
+                     current = speed_float
+                     while current > 2.0:
+                         atempo_chain.append("atempo=2.0")
+                         current /= 2.0
+                     while current < 0.5:
+                         atempo_chain.append("atempo=0.5")
+                         current /= 0.5
+                     atempo_chain.append(f"atempo={current:.2f}")
+                     a_filters.extend(atempo_chain)
+                     
+                 vol_arg = parse_volume_to_ffmpeg(volume_val)
+                 if vol_arg:
+                     a_filters.append(f"volume={vol_arg}")
+                     
+                 if a_filters:
+                     trim_cmd.extend(["-af", ",".join(a_filters)])
+                     
+                 trim_cmd.extend(["-acodec", "libmp3lame", "-ab", f"{quality}k", target_file, "-y"])
                  
             await run_subprocess(trim_cmd)
+            
+        if speed_float != 1.0:
+            duration = int(duration / speed_float)
         
         # Audio Metadata & Cover Embedding (Premium Feature)
         if not is_video:
@@ -674,6 +1043,14 @@ async def _ytdl_single_unit(status_msg, task_id, state):
              
         start_time, last_update = time.time(), 0
         qual_suffix = "p" if is_video else "kbps"
+        
+        v_bit = state.get("video_bitrate", "Original")
+        v_bit_str = f" ({v_bit})" if (is_video and v_bit != "Original") else ""
+        speed_val = state.get("speed", "1.0x")
+        speed_str = f"\n<b>• Speed:</b> <code>{speed_val}</code>" if speed_val != "1.0x" else ""
+        volume_val = state.get("volume", "Original")
+        volume_str = f"\n<b>• Volume:</b> <code>{volume_val}</code>" if volume_val != "Original" else ""
+        
         caption = (
             f"<blockquote expandable>"
             f"<b>• {state['title']}</b>\n"
@@ -682,8 +1059,10 @@ async def _ytdl_single_unit(status_msg, task_id, state):
             f"<b>• Upload:</b> {format_yt_date(state.get('upload_date'))}\n"
             f"<b>• Durasi:</b> {Essentials.get_readable_time(duration)}\n"
             f"<b>• Size:</b> {Essentials.humanbytes(f_size)}\n"
-            f"<b>• {'Resolusi' if is_video else 'Bitrate'}:</b> {state['quality']}{qual_suffix}\n"
+            f"<b>• {'Resolusi' if is_video else 'Bitrate'}:</b> {state['quality']}{qual_suffix}{v_bit_str}\n"
             f"<b>• Audio Lang:</b> {state.get('audio_lang', 'Default').upper()}"
+            f"{speed_str}"
+            f"{volume_str}"
         )
         if state.get("show_link", True):
              caption += f"\n<b>• Source:</b> {state['url']}"

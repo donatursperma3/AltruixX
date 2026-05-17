@@ -3050,8 +3050,10 @@ class AltruixClient:
                                             state = await self.config.get_env(f"STARTUP_MSG_{user_index}")
                                             custom_key = f"STARTUP_CUSTOM_MSG_{user_index}"
                                         
-                                        state = str(state).lower() if state else "default"
-                                        if state in ["off", "false", "no", "0"] and startup_mode == "on":
+                                        state = str(state).lower() if state else "on"
+                                        if state == "default": state = "on"
+                                        
+                                        if state in ["off", "false", "no", "0"]:
                                             self.log(f"SKIP: [{client_type}] {name} startup log (OFF)")
                                             detailed_results.append(f"• {name}{username}: ⚪ Skipped (OFF)")
                                             return
@@ -3061,9 +3063,9 @@ class AltruixClient:
                                             if custom_msg:
                                                 final_message, parse_mode = await self.resolve_placeholders(custom_msg, index=user_index, client=client)
                                             else:
-                                                state = "default"
+                                                state = "on"
                                         
-                                        if state == "default":
+                                        if state == "on":
                                             alive_words = ["Living", "Breathing", "Animate", "Lively", "Vibrant", "Thriving", "Animated", "Vital", "Dynamic", "Active", "Awake", "Energetic", "Flourishing", "Vigorous", "Surviving", "Extant", "Existing", "Buoyant", "Sprightly", "Alert"]
                                             status_word = random.choice(alive_words)
                                             base_text = f"<b>✅ Altroid-X UB [{user_display_index}/{total_user_sessions}] is {status_word.lower()}!</b>"
@@ -3076,7 +3078,7 @@ class AltruixClient:
                                         sender = self.bot_manager.get_bot(me.id)
                                         self.log(f"REDIRECT: [{client_type}] {name} startup log via Assistant (Session Disabled)")
 
-                                    if startup_mode == "on":
+                                    if startup_mode == "on" and state != "test":
                                         if sender:
                                             await sender.send_message(log_chat_id, final_message, parse_mode=parse_mode, link_preview_options=LinkPreviewOptions(is_disabled=True))
                                         detailed_results.append(f"• {name}{username}: ✅ Sent")
@@ -3146,10 +3148,10 @@ class AltruixClient:
                                         state = await self.config.get_env(f"STARTUP_MSG_{user_index}")
                                         custom_key = f"STARTUP_CUSTOM_MSG_{user_index}"
                                     
-                                    state = str(state).lower() if state else "default"
+                                    state = str(state).lower() if state else "on"
+                                    if state == "default": state = "on"
                                     
-                                    # ✅ Respect individual OFF setting ONLY in ON mode
-                                    if state in ["off", "false", "no", "0"] and startup_mode == "on":
+                                    if state in ["off", "false", "no", "0"]:
                                         self.log(f"SKIP: [{client_type}] {name} startup log (OFF)")
                                         detailed_results.append(f"• {name}{username}: ⚪ Skipped (OFF)")
                                         continue
@@ -3159,29 +3161,15 @@ class AltruixClient:
                                         if custom_msg:
                                             final_message, parse_mode = await self.resolve_placeholders(custom_msg, index=user_index, client=client)
                                         else:
-                                            state = "default" # Fallback
+                                            state = "on" # Fallback
                                     
-                                    if state == "default":
+                                    if state == "on":
                                         # ✅ Randomize "alive" for Userbot as well
-                                        alive_words = [
-                                            "Living", "Breathing", "Animate", "Lively", "Vibrant",
-                                            "Thriving", "Animated", "Vital", "Dynamic", "Active",
-                                            "Awake", "Energetic", "Flourishing", "Vigorous", "Surviving",
-                                            "Extant", "Existing", "Buoyant", "Sprightly", "Alert"
-                                        ]
+                                        alive_words = ["Living", "Breathing", "Animate", "Lively", "Vibrant", "Thriving", "Animated", "Vital", "Dynamic", "Active", "Awake", "Energetic", "Flourishing", "Vigorous", "Surviving", "Extant", "Existing", "Buoyant", "Sprightly", "Alert"]
                                         status_word = random.choice(alive_words)
                                         base_text = f"<b>✅ Altroid-X UB [{user_display_index}/{total_user_sessions}] is {status_word.lower()}!</b>"
-                                        
-                                        # ✅ ADD DISABLE STATUS INDICATOR
-                                        disable_indicator = ""
-                                        if self.is_session_disabled(user_id):
-                                            disable_indicator = "\n🚫 <b>Disable:</b> <code>True</code>"
-                                            
-                                        final_message = (
-                                            f"<blockquote expandable>{base_text}\n"
-                                            f"<b>{client_type}: {mention_user}</b> [ <code>{user_id}</code> ]"
-                                            f"{disable_indicator}</blockquote>\n"
-                                        )
+                                        disable_indicator = "\n🚫 <b>Disable:</b> <code>True</code>" if self.is_session_disabled(user_id) else ""
+                                        final_message = f"<blockquote expandable>{base_text}\n<b>{client_type}: {mention_user}</b> [ <code>{user_id}</code> ]{disable_indicator}</blockquote>\n"
                                         parse_mode = ParseMode.HTML
 
                                 # ✅ REDIRECTION LOGIC: If session is disabled, send via Bot Assistant
@@ -3191,7 +3179,7 @@ class AltruixClient:
                                     self.log(f"REDIRECT: [{client_type}] {name} startup log via Assistant (Session Disabled)")
 
                                 # ✅ EXECUTION BASED ON MODE
-                                if startup_mode == "on":
+                                if startup_mode == "on" and state != "test":
                                     if sender:
                                         await sender.send_message(
                                             log_chat_id,

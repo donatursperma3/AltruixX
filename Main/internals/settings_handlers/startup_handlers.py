@@ -33,15 +33,19 @@ async def startup_menu_handler(c: Client, cb: CallbackQuery):
         key = f"STARTUP_MSG_{index}"
         custom_key = f"STARTUP_CUSTOM_MSG_{index}"
         
-    status = await Altruix.config.get_env(key) or "default"
+    status = await Altruix.config.get_env(key) or "on"
     custom_msg = await Altruix.config.get_env(custom_key) or "(Belum diatur)"
     
     from Main.utils.file_helpers import get_user_button_style
     user_style = get_user_button_style(cb.from_user.id)
     
+    status_label = status.upper()
+    if status == "on": status_label = "ON (Default)"
+    elif status == "test": status_label = "TEST (Ping Only)"
+    
     text = (
         f"<b>🚀 Startup Settings (Session {index+1})</b>\n\n"
-        f"• <b>Status:</b> <code>{status.upper()}</code>\n"
+        f"• <b>Status:</b> <code>{status_label}</code>\n"
         f"• <b>Mode:</b> <code>{apply_type.title()}</code>\n\n"
         f"<b>Custom Message:</b>\n<code>{html.escape(str(custom_msg))}</code>\n\n"
         f"<i>Placeholders: {{mention}}, {{first_name}}, {{id}}</i>"
@@ -49,7 +53,7 @@ async def startup_menu_handler(c: Client, cb: CallbackQuery):
     
     buttons = [
         [
-            InlineKeyboardButton(f"Status: {status.upper()}", f"startup_toggle_status_{index}_{page}", style=user_style),
+            InlineKeyboardButton(f"Status: {status_label}", f"startup_toggle_status_{index}_{page}", style=user_style),
             InlineKeyboardButton(f"Mode: {apply_type.title()}", f"startup_toggle_mode_{index}_{page}", style=user_style)
         ],
         [InlineKeyboardButton("📝 Edit Message", f"startup_custom_input_{index}_{page}", style=user_style)],
@@ -66,9 +70,16 @@ async def startup_toggle_status_handler(c: Client, cb: CallbackQuery):
     apply_type = await Altruix.config.get_env("STARTUP_APPLY_TYPE") or "global"
     key = "STARTUP_MSG_GLOBAL" if apply_type == "global" else f"STARTUP_MSG_{index}"
     
-    current = await Altruix.config.get_env(key) or "default"
-    states = ["off", "default", "custom"]
-    new_idx = (states.index(str(current).lower()) + 1) % len(states)
+    current = await Altruix.config.get_env(key) or "on"
+    # Map legacy 'default' to 'on'
+    if current == "default": current = "on"
+    
+    states = ["off", "on", "test", "custom"]
+    try:
+        new_idx = (states.index(str(current).lower()) + 1) % len(states)
+    except ValueError:
+        new_idx = 1 # Default to 'on'
+        
     new_val = states[new_idx]
     
     await Altruix.config.sync_env_to_db(key, new_val, upsert=True)

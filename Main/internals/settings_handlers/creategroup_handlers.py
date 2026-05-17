@@ -18,7 +18,7 @@ from pyrogram.enums import ParseMode
 
 from .states import user_creategroup_state
 
-HANDLER_VERSION = "0.3.22" # ✅ ADDED: Account Delay UI & Staggered Sync
+HANDLER_VERSION = "0.3.222" # ✅ FIXED: Resume All for Paused Tasks & UI Stability
 logger = logging.getLogger("altruix.creategroup.handlers")
 logger.setLevel(logging.INFO)
 
@@ -230,20 +230,39 @@ async def creategroup_cached_handler(c: Client, cb: CallbackQuery):
 async def creategroup_resall_handler(c: Client, cb: CallbackQuery):
     from Main.plugins.userbot.xcreategroup import CREATEGROUP_TASKS, creategroup_loop
     
-    tasks_to_resume = []
+    resumed_count = 0
+    tasks_to_start = [] # For interrupted tasks (need new loop)
+    
     for tid, task in CREATEGROUP_TASKS.items():
         is_running = task.get("running", False)
         task_obj = task.get("task_obj")
-        # Only resume if it's marked as running but the task object is dead/done
-        if is_running and (not task_obj or task_obj.done()):
-            tasks_to_resume.append(tid)
-            
-    if not tasks_to_resume:
-        return await cb.answer("Tidak ada task terhenti untuk di-resume.", show_alert=True)
+        is_paused = task.get("paused", False)
         
-    await cb.answer(f"Memulai recovery untuk {len(tasks_to_resume)} task...")
+        # 1. Handle Interrupted Tasks (Running but task object is dead)
+        if is_running and (not task_obj or task_obj.done()):
+            tasks_to_start.append(tid)
+            resumed_count += 1
+            
+        # 2. Handle Paused Tasks (Task object is alive but waiting on event)
+        elif is_paused:
+            task["paused"] = False
+            if "pause_event" in task:
+                task["pause_event"].set()
+            
+            # Sync with global registry
+            registry = getattr(Altruix, "_TASK_REGISTRY", {})
+            if tid in registry:
+                registry[tid]["paused"] = False
+                
+            resumed_count += 1
+            
+    if resumed_count == 0:
+        return await cb.answer("Tidak ada task terhenti atau ter-pause untuk di-resume.", show_alert=True)
+        
+    await cb.answer(f"Me-resume {resumed_count} task...")
     
-    for tid in tasks_to_resume:
+    # Start new loops for interrupted tasks
+    for tid in tasks_to_start:
         task_data = CREATEGROUP_TASKS[tid]
         params = task_data.get("params", {})
         client_id = task_data.get("user_id")
@@ -251,7 +270,12 @@ async def creategroup_resall_handler(c: Client, cb: CallbackQuery):
         if not user_client and Altruix.clients: user_client = Altruix.clients[0]
         
         if user_client:
-            # Sync with global registry first
+            # Ensure paused state is False for new loop
+            task_data["paused"] = False
+            if "pause_event" in task_data:
+                task_data["pause_event"].set()
+                
+            # Sync with global registry
             registry = getattr(Altruix, "_TASK_REGISTRY", {})
             if tid in registry:
                 registry[tid]["paused"] = False
@@ -273,11 +297,16 @@ async def creategroup_resall_handler(c: Client, cb: CallbackQuery):
                 rand_len=params.get("rand_len", 0), rand_lower=params.get("rand_lower", False),
                 rand_upper=params.get("rand_upper", False), rand_static=params.get("rand_static", False),
                 batch_action=params.get("batch_action", 30), ba_delay=params.get("ba_delay", 30),
-                user_id=client_id, task_id=tid, is_resume=True
+                user_id=client_id, task_id=tid, is_resume=True,
+                account_idx=params.get("account_idx", 1), total_accs=params.get("total_accs", 1)
             ))
 
-    # Refresh UI
-    await creategroup_cached_handler(c, cb)
+    # Refresh UI with suppression for MessageNotModified
+    try:
+        await creategroup_cached_handler(c, cb)
+    except Exception as e:
+        if "MESSAGE_NOT_MODIFIED" not in str(e):
+            logger.error(f"Error refreshing cache UI: {e}")
 
 
 @Altruix.bot.on_callback_query(filters.regex(r"^creategroup_pauall_(\d+)_(\d+)$"))
@@ -588,7 +617,7 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
     log_dest_lbl = "Both (Log+Saved)" if log_dest == "both" else ("Log Group" if log_dest == "log_group" else "Saved Messages")
     
     text = (
-        "<b>🎛️ Create Group Configuration</b>\n\n"
+        "<b>🎛️ Auto Create Configuration</b>\n\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"<b>{session_text}</b>"
         f"• <b>Type:</b> {type_label}\n"
@@ -884,14 +913,14 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
             InlineKeyboardButton(f"Delay/{'GC' if not is_channel else 'CH'}: {config['delay']}s", callback_data=f"creategroup_submenu_{idx}_{pg}_delay", style=user_style)
         ],
         [
-            InlineKeyboardButton(f"B.Delay: {config['batch_delay']}m", callback_data=f"creategroup_submenu_{idx}_{pg}_batch_delay", style=user_style),
-            InlineKeyboardButton(f"B.Size: {config['batch_size']}{type_indicator}", callback_data=f"creategroup_submenu_{idx}_{pg}_batch_size", style=user_style)
+            InlineKeyboardButton(f"B.Size: {config['batch_size']}{type_indicator}", callback_data=f"creategroup_submenu_{idx}_{pg}_batch_size", style=user_style),
+            InlineKeyboardButton(f"B.Delay: {config['batch_delay']}m", callback_data=f"creategroup_submenu_{idx}_{pg}_batch_delay", style=user_style)
         ],
         [
             InlineKeyboardButton(f"B.Act: {config.get('batch_action', 30)} act", callback_data=f"creategroup_submenu_{idx}_{pg}_batch_action", style=user_style),
             InlineKeyboardButton(f"B.Act Delay: {config.get('ba_delay', 30)}s", callback_data=f"creategroup_submenu_{idx}_{pg}_ba_delay", style=user_style)
         ],
-        [InlineKeyboardButton(f"Name: {config['pattern'][:20]}...", callback_data=f"creategroup_submenu_{idx}_{pg}_pattern", style=user_style)],
+        [InlineKeyboardButton(f"Name: {config['pattern'][:25]}...", callback_data=f"creategroup_submenu_{idx}_{pg}_pattern", style=user_style)],
         [InlineKeyboardButton(f"Desc: {config['description'][:25]}...", callback_data=f"creategroup_submenu_{idx}_{pg}_description", style=user_style)],
         [
             InlineKeyboardButton(f"Username: {config['username'] or 'None'}", callback_data=f"creategroup_submenu_{idx}_{pg}_username", style=user_style),
@@ -918,11 +947,11 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
             InlineKeyboardButton(f"Msg Img: {'Yes' if config.get('msg_img', True) else 'No'}", callback_data=f"creategroup_toggle_{idx}_{pg}_msg_img", style=user_style)
         ],
         [
-            InlineKeyboardButton("Restore Tasks", callback_data=f"creategroup_cached_{idx}_{pg}", style=user_style),
+            InlineKeyboardButton("View Tasks", callback_data=f"creategroup_cached_{idx}_{pg}", style=user_style),
             InlineKeyboardButton("Info", callback_data=f"creategroup_submenu_{idx}_{pg}_info", style=user_style)
         ],
         [
-            InlineKeyboardButton("✅ RUN TASK", callback_data=f"creategroup_run_{idx}_{pg}", style=user_style),
+            InlineKeyboardButton("✅ Run Task", callback_data=f"creategroup_run_{idx}_{pg}", style=user_style),
             InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_menu_{idx}_{pg}", style=user_style)
         ]
     ]
@@ -939,7 +968,7 @@ async def render_creategroup_ui(cb: Optional[CallbackQuery], state: dict, messag
     
     text, reply_markup = await get_creategroup_ui_data(user_id, state["session_index"], state["page"])
     
-    full_text = f"<b>🚀 𝐂𝐑𝐄𝐀𝐓𝐄 𝐆𝐑𝐎𝐔𝐏 𝐃𝐀𝐒𝐇𝐁𝐎𝐀𝐑𝐃</b>\n\n<blockquote expandable>{text}</blockquote>"
+    full_text = f"<b>🚀 𝗔𝗨𝗧𝗢 𝗖𝗥𝗘𝗔𝗧𝗘 𝗗𝗔𝗦𝗛𝗕𝗢𝗔𝗥𝗗</b>\n\n<blockquote expandable>{text}</blockquote>"
     
     try:
         if cb:
@@ -1279,6 +1308,10 @@ async def creategroup_confirm_task_handler(c: Client, cb: CallbackQuery):
         selected = user_creategroup_state[user_id].get("selected_sessions", [idx])
         if not selected: selected = [idx]
         
+        # ✅ Ensure we only count valid sessions for the indicator accuracy
+        selected = [s for s in selected if 1 <= s <= len(Altruix.clients)]
+        if not selected: selected = [idx] # Fallback to current if all filtered out
+        
         del user_creategroup_state[user_id]
         from Main.plugins.userbot.xtaskmanager import generate_task_id
         from Main.plugins.userbot.xcreategroup import creategroup_loop
@@ -1353,7 +1386,9 @@ async def creategroup_confirm_task_handler(c: Client, cb: CallbackQuery):
                     temp_pin=conf.get("temp_pin", True),
                     quote_block=conf.get("quote_block", True),
                     user_id=user_id,
-                    task_id=tid
+                    task_id=tid,
+                    account_idx=i+1,
+                    total_accs=len(selected)
                 ))
             except Exception as e:
                 logger.error(f"Failed to start task for session {s_idx}: {e}")

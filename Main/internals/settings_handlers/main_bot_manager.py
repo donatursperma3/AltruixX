@@ -119,13 +119,13 @@ async def mbm_update_token_cb(c: Client, cb: CallbackQuery):
 async def process_mainbot_token_input(c: Client, m: Message):
     user_id = m.from_user.id
     if user_id not in user_mainbot_token_state:
-        return m.continue_propagation()
+        return await m.continue_propagation()
         
     text = m.text.strip() if m.text else ""
     if text == "/cancel":
         del user_mainbot_token_state[user_id]
         await m.reply("❌ Update Token cancelled.")
-        return m.continue_propagation()
+        return await m.continue_propagation()
         
     # Validasi basic token format (usually ID:Hash)
     if ":" not in text or len(text) < 30:

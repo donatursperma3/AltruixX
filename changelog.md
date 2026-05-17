@@ -4,6 +4,223 @@ All notable changes to the **AltruixX** project from version **0.0.10.0959H** to
 
 ---
 
+## [0.0.10.2441I] - 2026-05-17
+
+### 🏓 Auto Ping All: Detailed Log Reports
+- **Enhanced: Auto Ping Report Logs**:
+  - Integrated real-time **Ping Mode** (e.g. `🔍 Test + Online`, `📡 Test + Message`, `🔍 Test Only`) and **Interval** (e.g. `1h 11m`, `5m`) settings directly into the mass-latency report sent to the log group chat.
+  - Formats raw database/cache interval seconds into elegant human-readable durations.
+
+## [1.0.182] - 2026-05-18
+
+### 📦 YTDL Manager: Premium YouTube Chapter Splitter
+- **New Feature: Premium YouTube Chapter Splitter & Slicer**:
+  - Added a dynamic `📦 Split Chapters: {status}` control button directly to the YTDL main dashboard.
+  - Implemented the `📦 Pengaturan Pembagian Bab (Split Chapters)` sub-menu dynamically listing all detected video chapters with clean start/end times and descriptions.
+  - Symmetrically incorporates the chapter split selection into the single confirmation download screens (e.g. `[Split Chapters: 5 bab]`).
+- **Enhanced: Local Slicing & Sequence Upload Pipeline**:
+  - Downloads the raw video from YouTube only once, then processes local slicing locally via FFmpeg, saving massive amounts of network bandwidth.
+  - Applies all user-selected custom speed, volume, and watermark parameters to each individual chapter slice.
+  - Implemented sequentially automated slicing, ID3v2 metadata embedding (titles, artists, albums, thumbnail cover art), backup logging, and uploads with real-time status bars showing sequence progress (`Uploading 1/5`, `Uploading 2/5`).
+- **Version Bumps**:
+  - **Assistant Bot Plugin**: `1.0.175`
+  - **YTDL Core Engine**: `0.0.263`
+
+---
+
+## [1.0.181] - 2026-05-18
+
+### 🎥 YTDL Manager: Premium Volume & Decibel Booster Sub-Menu
+- **New Feature: Premium Volume Booster & Decibel Adjuster**:
+  - Integrated a premium `🔊 Volume: {volume}` control button on the YTDL main dashboard, grouped symmetrically with the `⚡️ Speed` button.
+  - Implemented the `🔊 Pengaturan Volume & Boost (Desibel)` sub-menu containing 13 widely varied, versatile volume options: **10% (-20 dB), 25% (-12 dB), 50% (-6 dB), 75% (-2.5 dB), Original, 125% (+2 dB), 150% (+3.5 dB), 175% (+5 dB), 200% (+6 dB), 250% (+8 dB), 300% (+9.5 dB), 400% (+12 dB),** and **500% (+14 dB)**.
+  - Automatically incorporates custom volume adjustments into the single and double-confirmation download screens (e.g. `[Volume: 200% (+6 dB)]`).
+  - Logs custom volume settings directly in the final uploaded media file captions for complete traceability.
+- **Enhanced: FFmpeg Unified Speed & Volume Audio Filter Chaining**:
+  - Dynamically constructs a parser helper `parse_volume_to_ffmpeg` that cleanly maps descriptive desibel/percentage strings into precise FFmpeg volume factor floats.
+  - Combines the volume settings filter (`volume=X.XX`) and chained tempo scaling filters (`atempo=X.XX`) into a single, unified `-af` filter chain separated by commas, preventing FFmpeg from crashing or dropping filter pipelines.
+  - Automatically enforces high-quality audio re-encoding (`-c:a aac` for video and `-acodec libmp3lame` for raw MP3 files) and disables standard stream copying (`-c:a copy`) when custom volume adjustment is engaged.
+- **Hardened: Comprehensive Exception Safety & Traceback Logging**:
+  - Wrapped all 4 newly introduced callback handlers (`ytdl_speed_menu_cb`, `ytdl_set_speed_cb`, `ytdl_volume_menu_cb`, `ytdl_set_volume_cb`) and core speed/volume parsing utilities inside thorough `try-except Exception as ex` blocks.
+  - Ensures any runtime failures are fully logged alongside granular tracebacks (`Altruix.log(...)` and `traceback.format_exc()`), and elegantly dispatches high-visibility user-facing callback alert notifications (`show_alert=True`) to prevent the inline button interface from freezing.
+- **Version Bumps**:
+  - **Assistant Bot Plugin**: `1.0.174`
+  - **YTDL Core Engine**: `0.0.262`
+
+---
+
+## [1.0.180] - 2026-05-17
+
+### 🎥 YTDL Manager: Speed Multiplier, Custom Video Bitrate & Audio Language Fixes
+- **New Feature: Premium Video & Audio Speed Multiplier**:
+  - Added a dynamic `⚡️ Speed: {speed_val}` control button directly to the YTDL main dashboard, grouped cleanly with the `Sender` selection button.
+  - Implemented the `⚡️ Pilih Kecepatan Media` sub-menu containing comprehensive, versatile multiplier options: **0.25x, 0.50x, 0.75x, 1.00x, 1.25x, 1.50x, 1.75x,** and **2.00x**.
+  - Dynamically recalculates and formats the estimated output duration in the Telegram caption to reflect the adjusted media length (`duration = int(duration / speed_float)`).
+  - Automatically incorporates the chosen speed setting into the single and double-confirmation screens, as well as the final uploaded media file caption.
+- **Enhanced: FFmpeg Audio & Video Speed Scaling Pipeline**:
+  - Leverages hardware-efficient `-vf "setpts=(1/S)*PTS"` filters to smoothly scale video speed.
+  - Dynamically constructs a chained series of `atempo` filters for audio track speed adjustments (since a single `atempo` only accepts ranges within `[0.5, 2.0]`). Correctly handles extreme values such as `0.25x` (constructs `atempo=0.5,atempo=0.5`) and others seamlessly.
+  - Automatically disables stream copy mode (`-c:a copy`) when custom speed is selected, dynamically engaging safe high-quality audio re-encoding (`-c:a aac` for video containers and `-acodec libmp3lame` for raw MP3 files).
+- **New Feature: Video Bitrate Selection Dashboard**:
+  - Dynamically swaps between `Audio Name` / `Artist` settings (for audio format) and a new `Video Bitrate` button (for video format) to maintain a highly streamlined and context-aware UI.
+  - Implemented the `📺 Pilih Bitrate Video` sub-menu with premium options: **Original, 8 Mbps, 5 Mbps, 3 Mbps, 1.5 Mbps,** and **700 Kbps**.
+  - Displays the selected bitrate on both the single and double-confirmation screens, and logs it in the final uploaded media caption.
+- **Improved: ffmpeg Processing Pipeline**:
+  - Seamlessly maps selected bitrate options to actual ffmpeg `-b:v` parameters (e.g. `8M`, `3M`, `700k`).
+  - Automatically forces and performs video re-encoding (displaying `Mengompresi Video...` status) to achieve the target file compression if a custom bitrate is specified.
+- **Fixed: Audio Language Selection**:
+  - Fixed a callback query regex mismatch in `xyt_tools_bot.py` by converting `[\w-]+` to `(.+)`, allowing the bot to correctly match and capture audio language tracks with spaces and parentheses (e.g. `"en (Original)"`).
+  - Wrapped cleaned language tokens in single quotes (e.g. `[language*='clean_lang']` and `[language_note*='clean_lang']`) in `ytdl_core.py` to prevent any yt-dlp selector string parsing syntax failures.
+  - **dubbed multi-audio tracks extraction & download**: Integrated `--extractor-args "youtube:player_client=all"` into all metadata queries and media download commands in `ytdl_core.py`. This forces YouTube to serve all regional, dubbed, and alternative audio track streams that were previously hidden from default/basic player clients.
+- **Enhanced: Help & Guide Version Menu**:
+  - Integrated dynamic, real-time query detection for system binary CLI dependencies on Page 2 of the guide menu.
+  - Asynchronously reads and displays the exact installed version of **FFmpeg** and detects whether **yt-dlp** or **youtube-dl** is the active CLI downloader engine, outputting their precise versions alongside plugin and core version information.
+- **Fixed: yt-dlp Subprocess Exit Race Condition**:
+  - Added explicit `await process.wait()` in `run_yt_dlp_with_progress` to guarantee the subprocess has fully exited and `process.returncode` is populated, avoiding blank errors due to exit code races.
+  - Created a robust fallback error parser in `_ytdl_single_unit` that automatically scans the `stdout` history for any `ERROR:` statements if `stderr` is empty, presenting the exact error description cleanly.
+- **Version Bumps**:
+  - **Userbot Plugin**: `1.0.126`
+  - **Assistant Bot Plugin**: `1.0.173`
+  - **YTDL Core Engine**: `0.0.245`
+
+## [1.0.179] - 2026-05-17
+
+### 🤖 Bulk Controls: Bulk Append Bot Tokens Exception Hardening
+- **New Version: [0.0.10.2441I]**:
+  - Implemented 100% try-except coverage for all 6 Custom Bot Token append and parsing functions/callbacks in `bulk_handlers.py`.
+  - Added traceback formatting (`traceback.format_exc()`) to ensure granular error diagnostics are fully logged upon failure.
+  - Ensured safe UI fallback answers and detailed traceback error replies to prevent the dashboard from freezing during any execution exceptions.
+
+### 🤖 Bulk Controls: Export Bot Tokens Exception Hardening
+- **Version: [0.0.10.2440I]**:
+  - Implemented 100% try-except coverage for all 4 Custom Bot Token export functions/callbacks in `export_handlers.py`.
+  - Added traceback formatting (`traceback.format_exc()`) to ensure granular error diagnostics are fully logged upon failure.
+  - Ensured safe UI fallback answers to prevent the dashboard from freezing during any execution exceptions.
+
+### 🤖 Bulk Controls: Export & Bulk Append Custom Bot Tokens
+- **Version: [0.0.10.2439I]**:
+  - Implemented **Export Bot Tokens** feature under Bulk Controls Manager, querying the MongoDB `custom_bots` collection and matching active session owners to map each token to its session index/phone number, generating a secure file download sent to the PM.
+  - Implemented **Bulk Append Bot Tokens** feature with stateful input processing in `session_info.py` and `bulk_handlers.py`.
+  - Added support for ZIP, TXT, and raw multi-line text input, featuring a smart parser that handles multi-format tokens (`bot_id:token_hash`, `session_index:bot_id:token_hash`, and `phone:bot_id:token_hash`), mapping them intelligently to available sessions and initiating them dynamically.
+  - Updated Bulk Controls dashboard layout with sleek, symmetrical design integration for both session-level and bot-level export/append controls.
+
+### 🏓 Auto Ping All: Test + Online Mode
+- **Version: [0.0.10.2438I]**:
+  - Added new `'Test + Online'` mode to Auto Ping All Manager.
+  - Implemented explicit Telegram presence updates using raw RPC `account.UpdateStatus(offline=False)` during the ping cycle to keep all active accounts active and prevent automated session deletion/revocation due to inactivity.
+  - Updated the Auto Ping Dashboard UI with dynamic mode button cycling through all 3 modes: `Test Only` 🔍, `Test + Message` 📡, and `Test + Online` 🟢.
+
+### 🛠️ Custom Bot: Comprehensive Exception Wrapping & Traceback Logging
+- **Version: [0.0.10.2437I]**:
+  - Implemented 100% try-except coverage for all 15 callback/message handlers in `custom_bot_handlers.py`.
+  - Added robust traceback formatting (`traceback.format_exc()`) to ensure detailed diagnostics are instantly logged upon any runtime failures.
+  - Implemented safe callback answer fallbacks to ensure user interfaces never hang when an unexpected error occurs.
+
+### 🛠️ Custom Bot: Inline Callback Safety & Handler Priority
+- **Version: [0.0.10.2436I]**:
+  - Fixed `AttributeError: 'NoneType' object has no attribute 'edit'` crash on all 5 `cb.message.edit()` calls by migrating to `edit_cb()` which safely handles inline callbacks where `cb.message` is `None`.
+  - Elevated token input handler priority from `group=-1` to `group=-100` to prevent other Group -1 handlers from intercepting token messages.
+
+### 🛠️ Custom Bot: UI Polish & Stability Fixes
+- **Version: [0.0.10.2435I]**:
+  - Fixed "Double Icon" issue in Custom Bot Manager messages by removing redundant hardcoded emojis.
+  - Cleaned up the status line (⚡) by removing redundant status emojis.
+  - Resolved a critical `NameError` in `custom_bot_handlers.py` that prevented token inputs from responding.
+  - Removed high-priority diagnostic handlers after verifying system stability.
+
+### 🛠️ Custom Bot: Propagation Fix & Group -1 Hardening
+- **Fixed: Custom Bot Token Unresponsiveness**:
+  - Resolved a critical bug in high-priority message handlers (Group -1) where un-awaited propagation calls caused the bot to swallow private messages.
+  - Ensures the dashboard correctly responds to token inputs for session customization.
+- **Improved: Token Input Security & Logic**:
+  - Added debug logging for token receipt and session index validation.
+  - Fixed critical `NameError` bugs (missing `logging` and `enums` imports) that prevented the module from loading.
+  - Implemented robust `session_client.me` fetching to prevent attribute errors during bot initialization.
+  - Hardened `BotManager` persistence logic with comprehensive error handling for `save_token` and `delete_token` operations.
+  - Verified and optimized dual-database support (MongoDB & Local JSON) for custom bot token storage using atomic upserts.
+  - Integrated `user_env_manager_state` into the global `/cancel` logic for easy input reset.
+  
+### 🗄️ Database & Persistence: Append/Restore Hardening
+- **Fixed: Data Loss during 'Append DB'**:
+  - Resolved a race condition where unsaved memory changes (like new bot tokens) were lost when performing a database append.
+  - Implemented mandatory `save_now()` sync before starting any restore or append operations.
+- **Improved: JSON Merge Reliability**:
+  - Hardened `_merge_json` logic to prevent silent data wipes if the primary database file is temporarily unreadable.
+  - Added detailed merge logging to track collection sizes (e.g., custom bots) before and after synchronization.
+
+### 🚀 Startup Settings: Per-Session Test Mode
+- **New Feature: Per-Session 'Test' Mode**:
+  - Added a new `test` state to Startup Message settings, allowing users to verify session connectivity without sending an individual "I'm alive" message to the Log Group.
+  - Useful for stealth startups or multi-account pings without log clutter.
+- **Improved: Startup UI & Logic**:
+  - Unified `on` and legacy `default` states for clearer user configuration.
+  - Updated both parallel and sequential startup engines in `client.py` to respect the `test` status while maintaining full report accuracy.
+- **Enhanced: Split Log Reporting**:
+  - Confirmed and validated automatic message splitting (Part N/N) for the Startup Session Report to handle thousands of accounts gracefully.
+
+---
+
+## [1.0.178] - 2026-05-16
+
+### ⚙️ CreateGroup: Smart Recovery Indexing
+- **New Feature: Smart Account Re-Indexing**:
+  - Implemented a "Smart Recovery" logic that dynamically reconstructs account indicators (`1/N`) for interrupted tasks.
+  - Groups tasks by owner and startup time (within a 5-minute window) to automatically assign the correct sequence.
+  - Ensures that even tasks started before the index-storage update will now show accurate positioning in the Log Group.
+- **Improved: Data Persistence**:
+  - Modified the creation loop to save and sync account indicators to the task parameters whenever a task is resumed.
+  - Guarantees that once a task is recovered, its positioning data remains persistent across all future restarts.
+
+---
+
+## [1.0.177] - 2026-05-16
+
+### ⚙️ CreateGroup: Bulk Resume & UI Hardening
+- **Fixed: Resume All for Paused Tasks**:
+  - Corrected the `Resume All` logic to include tasks that were manually paused.
+  - Ensures that pressing the button correctly triggers the resume event for all active background loops.
+- **Improved: UI Stability**:
+  - Added specific error suppression for `MESSAGE_NOT_MODIFIED` when refreshing the task dashboard.
+  - Prevents the bot from logging unnecessary "Warning" alerts when the UI content hasn't changed during a refresh.
+- **Enhanced: Task Registry Sync**:
+  - Improved synchronization between the local task dictionary and the global system registry during bulk actions.
+
+---
+
+## [1.0.176] - 2026-05-16
+
+### ⚙️ CreateGroup: Full UI Parity for Indicators
+- **New Feature: Account Indicator in Recovery Alert**:
+  - Extended the account indicator (e.g., `1/100`) to the **"Interrupted Task Detected"** recovery message.
+  - Ensures full consistency across all task-related notifications in the Log Group.
+  - Users can now identify which account in a multi-session sequence was interrupted immediately upon system restart.
+
+---
+
+## [1.0.175] - 2026-05-16
+
+### ⚙️ CreateGroup: Enhanced UI & Context
+- **New Feature: Account Indicator in Control Panel**:
+  - Added a dynamic counter to the **Task Control Panel** header (e.g., `🚀 Task Control Panel 1/5`).
+  - Provides immediate context on the account's position within a multi-session task.
+  - Implemented parameter persistence, ensuring the indicator remains accurate after task resumption or system restart.
+
+---
+
+## [1.0.174] - 2026-05-16
+
+### ⚙️ CreateGroup: Enhanced Error Reporting & Logic
+- **New Feature: Push Error Notifications**:
+  - Implemented a "Push" mechanism for creation failures. Instead of just editing the previous log entry, the bot assistant now sends a fresh, prominent message to the **Log Group** when group/channel creation fails.
+  - Ensures users are immediately alerted to critical issues without needing to watch the consolidated log message.
+- **Fixed: CHANNELS_TOO_MUCH Handling**:
+  - Added specific detection for the "Too Many Channels" limit.
+  - When this terminal error is detected, the task now stops gracefully for that account and sends a clear termination alert to the Log Group.
+- **Improved: Diagnostic Clarity**:
+  - All creation error logs now include the Account Name and the specific Telegram error code for faster troubleshooting.
+
+---
+
 ## [1.0.533] - 2026-05-16
 
 ### 🔄 Auto Pro Gcast: Paginated Account Sync
@@ -11,7 +228,10 @@ All notable changes to the **AltruixX** project from version **0.0.10.0959H** to
   - Implemented a robust 6-item pagination system for the "Sync from Account" sub-menu.
   - Handles large numbers of active sessions gracefully without exceeding Telegram's message length limits.
 - **Improved: Navigation Controls**:
-  - Added a full suite of navigation buttons: **[ First ]**, **[ Last ]**, **[ Prev ]**, **[ Next ]**, and **[ n/n ]** (Page Indicator).
+  - Added a full suite of navigation buttons in a structured layout:
+    - Row 1: **[ Prev ]**, **[ n/n ]** (Page Indicator), **[ Next ]**
+    - Row 2: **[ First ]**, **[ Last ]**
+    - Row 3: **[ Back ]**
 - **Refined: Logic Flow & UX**:
   - Updated the **[ Cancel ]** button in the sync confirmation menu to return the user to the exact same page they were browsing, maintaining navigation context.
   - Bumped plugin version to `1.0.533`.
@@ -33,11 +253,19 @@ All notable changes to the **AltruixX** project from version **0.0.10.0959H** to
   - Implemented strict **TID Sanitization** to prevent decorative text from polluting the internal state.
 - **Bug Fix: Cache Manager IndexError**:
   - Resolved a crash when navigating the **Restore Tasks** menu caused by incorrect regex group access.
-  - Refactored parameter extraction to use robust string splitting instead of context-dependent regex matches.
+  - Refartored parameter extraction to use robust string splitting instead of context-dependent regex matches.
 
 ---
 
-## [0.0.10.2431I] - 2026-05-16
+## [0.0.10.2435I] - 2026-05-17
+- **Fixed: Redundant UI Icons**:
+  - Removed double icons in Custom Bot Manager templates where localization strings already provided them.
+  - Cleaned up status display by removing redundant status emojis.
+- **Improved: Module Loading & Stability**:
+  - Resolved critical `NameError` in `custom_bot_handlers.py` that caused token input to be unresponsive.
+  - Removed diagnostic handlers after successful verification of the custom bot flow.
+
+## [0.0.10.2434I] - 2026-05-17
 
 ### ⚙️ Program Controls: Automated Startup Changelog
 - **New Feature: Automated Startup Changelog**:

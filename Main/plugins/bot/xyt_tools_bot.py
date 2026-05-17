@@ -6,7 +6,7 @@
 #
 # All rights reserved.
 
-PLUGIN_VERSION = "1.0.168"
+PLUGIN_VERSION = "1.0.174"
 
 import asyncio
 import httpx
@@ -77,11 +77,13 @@ async def ytdl_inline_menu(c: Client, obj: Union[InlineQuery, CallbackQuery], ta
             
     is_playlist = state.get("type") == "playlist"
     dur_str = Essentials.get_readable_time(state["duration"]) if not is_playlist else f"{state['count']} Videos"
-    
-    # ✅ AUDIO TRACK: Detect and display the selected language
+     # ✅ AUDIO TRACK: Detect and display the selected language
     audio_langs = state.get("languages", [])
     current_lang = state.get("audio_lang", "Default").upper()
     has_multi_audio = len(audio_langs) > 1
+    
+    chapters = state.get("chapters", [])
+    chapters_str = "" if is_playlist else f"<b>• Split Chapters:</b> <code>{'Yes' if state.get('split_chapters', False) else 'No'} ({len(chapters)} bab terdeteksi)</code>\n"
     
     text = (
         f"<blockquote expandable>"
@@ -94,6 +96,9 @@ async def ytdl_inline_menu(c: Client, obj: Union[InlineQuery, CallbackQuery], ta
         f"<b>• Views:</b> {format_count(state.get('views', 0))}\n"
         f"<b>• Year:</b> {format_yt_date(state.get('upload_date'))}\n"
         f"<b>• Audio Lang:</b> <code>{current_lang}</code>\n"
+        f"<b>• Speed:</b> <code>{state.get('speed', '1.0x')}</code>\n"
+        f"<b>• Volume:</b> <code>{state.get('volume', 'Original')}</code>\n"
+        f"{chapters_str}"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"<b>🛠 Task ID:</b> <code>{task_id}</code>\n"
     )
@@ -129,7 +134,7 @@ async def ytdl_inline_menu(c: Client, obj: Union[InlineQuery, CallbackQuery], ta
     fmt_txt = "Title-Artist" if state.get("audio_name_fmt", "title_artist") == "title_artist" else "Artist-Title"
     src_val = state.get("audio_artist_src", "channel")
     src_txt = "Meta" if src_val == "meta" else "None" if src_val == "none" else "Channel"
-
+ 
     aud_row = [
         InlineKeyboardButton(f"🏷 Audio Name: {fmt_txt}", callback_data=f"ytdl_toggle_aname#{task_id}", style=user_style),
         InlineKeyboardButton(f"👤 Artist: {src_txt}", callback_data=f"ytdl_toggle_asrc#{task_id}", style=user_style)
@@ -158,15 +163,31 @@ async def ytdl_inline_menu(c: Client, obj: Union[InlineQuery, CallbackQuery], ta
             InlineKeyboardButton("🎵 Audio", callback_data=f"ytdl_type#{task_id}#audio", style=user_style)
         ])
         buttons.append([InlineKeyboardButton(trim_text, callback_data=f"ytdl_trim_menu#{task_id}", style=user_style)])
-
+ 
     # Common Settings for both Single and Playlist
-    buttons.append([InlineKeyboardButton(f"🏷 Audio Name: {fmt_txt}", callback_data=f"ytdl_toggle_aname#{task_id}", style=user_style)])
-    buttons.append([InlineKeyboardButton(f"👤 Artist: {src_txt}", callback_data=f"ytdl_toggle_asrc#{task_id}", style=user_style)])
+    if state.get("format", "video") == "video":
+        v_bit = state.get("video_bitrate", "Original")
+        buttons.append([InlineKeyboardButton(f"📺 Video Bitrate: {v_bit}", callback_data=f"ytdl_vbit_menu#{task_id}", style=user_style)])
+    else:
+        buttons.append([InlineKeyboardButton(f"🏷 Audio Name: {fmt_txt}", callback_data=f"ytdl_toggle_aname#{task_id}", style=user_style)])
+        buttons.append([InlineKeyboardButton(f"👤 Artist: {src_txt}", callback_data=f"ytdl_toggle_asrc#{task_id}", style=user_style)])
+        
+    speed_val = state.get("speed", "1.0x")
+    volume_val = state.get("volume", "Original")
+    buttons.append([
+        InlineKeyboardButton(f"⚡️ Speed: {speed_val}", callback_data=f"ytdl_speed_menu#{task_id}", style=user_style),
+        InlineKeyboardButton(f"🔊 Volume: {volume_val}", callback_data=f"ytdl_volume_menu#{task_id}", style=user_style)
+    ])
     buttons.append([InlineKeyboardButton(f"👤 Sender: {state.get('sender_name', 'Default')}", callback_data=f"ytdl_sel_sender#{task_id}", style=user_style)])
-
+ 
     # 🔊 AUDIO TRACK: Only show if video has multiple audio options
     if has_multi_audio:
         buttons.append([InlineKeyboardButton(f"🔊 Audio Track (Lang): {current_lang}", callback_data=f"ytdl_audio_lang_menu#{task_id}", style=user_style)])
+ 
+    # 📦 SPLIT CHAPTERS: Only show if single media has chapters
+    if not is_playlist and chapters:
+        split_lbl = f"📦 Split Chapters: {'Yes' if state.get('split_chapters', False) else 'No'}"
+        buttons.append([InlineKeyboardButton(split_lbl, callback_data=f"ytdl_split_menu#{task_id}", style=user_style)])
 
     # Configuration Rows
     buttons.append([
@@ -321,7 +342,7 @@ async def ytdl_audio_lang_menu_cb(c: Client, cb: CallbackQuery):
     buttons.append([InlineKeyboardButton("🔙 Back", callback_data=f"ytdl_back#{task_id}", style=user_style)])
     await cb.edit_message_caption(caption=text, parse_mode=enums.ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
 
-@Altruix.bot.on_callback_query(filters.regex(r"^ytdl_set_audio_lang#([#\w]+)#([\w-]+)"))
+@Altruix.bot.on_callback_query(filters.regex(r"^ytdl_set_audio_lang#([#\w]+)#(.+)"))
 @iuser_check
 async def ytdl_set_audio_lang_cb(c: Client, cb: CallbackQuery):
     task_id, lang = cb.matches[0].groups()
@@ -459,12 +480,28 @@ async def ytdl_confirm_cb(c: Client, cb: CallbackQuery):
         
     start_s, end_s = state['start'], state['end']
     is_trimmed = (start_s != 0 or end_s != state['duration'])
+    
+    v_bit = state.get("video_bitrate", "Original")
+    is_video = state['format'] == 'video'
+    fmt_details = f"{state['quality']}p" if is_video else f"{state['quality']}k"
+    if is_video and v_bit != "Original":
+        fmt_details += f" (Bitrate: {v_bit})"
+    speed_val = state.get("speed", "1.0x")
+    if speed_val != "1.0x":
+        fmt_details += f" [Speed: {speed_val}]"
+    volume_val = state.get("volume", "Original")
+    if volume_val != "Original":
+        fmt_details += f" [Volume: {volume_val}]"
+    split_chapters = state.get("split_chapters", False)
+    if split_chapters:
+        fmt_details += f" [Split Chapters: {len(state.get('chapters', []))} bab]"
+
     confirm_text = (
         f"<blockquote expandable>"
         f"<b>🚀 Konfirmasi Unduhan</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"<b>• Nama:</b> {state['title']}\n"
-        f"<b>• Format:</b> {state['format'].upper()} ({state['quality']}{'p' if state['format'] == 'video' else 'k'})\n"
+        f"<b>• Format:</b> {state['format'].upper()} ({fmt_details})\n"
         f"<b>• Trim:</b> {'✅ Yes' if is_trimmed else '❌ No'}\n"
         f"  └─ <code>{Essentials.get_readable_time(start_s)}</code> - <code>{Essentials.get_readable_time(end_s)}</code>\n"
         f"<b>• Akun Upload:</b> Session {c_idx} [<code>{acc_name}</code>]\n"
@@ -630,6 +667,10 @@ async def ytdl_info_cb(c: Client, cb: CallbackQuery):
         nav_text = "Page 2 »"
         nav_data = f"ytdl_info#{task_id}#1"
     else:
+        from Main.internals.ytdl_core import get_ffmpeg_version, get_ytdl_engine_info
+        ffmpeg_v = await get_ffmpeg_version()
+        engine_name, engine_v = await get_ytdl_engine_info()
+        
         text = (
             f"<blockquote expandable>"
             f"<b>💡 Panduan Tombol (2/2)</b>\n\n"
@@ -643,6 +684,8 @@ async def ytdl_info_cb(c: Client, cb: CallbackQuery):
             f"<b>⚙️ Version Info:</b>\n"
             f"• <b>Plugin:</b> <code>v{PLUGIN_VERSION}</code>\n"
             f"• <b>YTDL Core:</b> <code>v{YTDL_CORE_VERSION}</code>\n"
+            f"• <b>FFmpeg:</b> <code>v{ffmpeg_v}</code>\n"
+            f"• <b>Downloader:</b> <code>{engine_name} v{engine_v}</code>\n"
             f"</blockquote>"
         )
         nav_text = "« Page 1"
@@ -670,6 +713,74 @@ async def ytdl_process_start_cb(c: Client, cb: CallbackQuery):
         try: await cb.edit_message_caption(caption="<b>⏳ Memulai pemrosesan... Mohon tunggu.</b>", parse_mode=enums.ParseMode.HTML)
         except: pass
     asyncio.create_task(ytdl_engine(cb, task_id))
+
+@Altruix.bot.on_callback_query(filters.regex(r"^ytdl_split_menu#([#\w\d_-]+)"))
+@iuser_check
+async def ytdl_split_menu_cb(c: Client, cb: CallbackQuery):
+    task_id = cb.matches[0].group(1)
+    try:
+        state = Altruix.YTDL_STATE.get(task_id)
+        if not state: return await cb.answer("Sesi kedaluwarsa.", show_alert=True)
+        
+        chapters = state.get("chapters", [])
+        if not chapters:
+            return await cb.answer("❌ Video ini tidak memiliki bab/chapter metadata.", show_alert=True)
+            
+        text = (
+            f"<blockquote expandable>"
+            f"<b>📦 Pengaturan Pembagian Bab (Split Chapters)</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"Terdapat <b>{len(chapters)} bab</b> terdeteksi pada video ini. Mengaktifkan opsi ini akan membagi video secara otomatis dan mengirim setiap bab sebagai file terpisah.\n\n"
+        )
+        for idx, chap in enumerate(chapters):
+            c_title = chap.get("title", f"Bab {idx+1}")
+            c_start = chap.get("start_time", 0.0)
+            c_end = chap.get("end_time", state["duration"])
+            text += f" {idx+1:02d}. <b>{c_title}</b> ({Essentials.get_readable_time(c_start)} - {Essentials.get_readable_time(c_end)})\n"
+        text += f"━━━━━━━━━━━━━━━━━━━━\n"
+        text += f"<i>Pilih opsi di bawah untuk mengaktifkan atau menonaktifkan pembagian bab.</i>"
+        text += f"</blockquote>"
+        
+        user_style = get_user_button_style(cb.from_user.id)
+        split_status = state.get("split_chapters", False)
+        
+        yes_lbl = "✅ Yes (Split)" if split_status else "Yes (Split)"
+        no_lbl = "✅ No (Single File)" if not split_status else "No (Single File)"
+        
+        buttons = [
+            [
+                InlineKeyboardButton(yes_lbl, callback_data=f"ytdl_set_split#{task_id}#yes", style=user_style),
+                InlineKeyboardButton(no_lbl, callback_data=f"ytdl_set_split#{task_id}#no", style=user_style)
+            ],
+            [
+                InlineKeyboardButton("« Back to Menu »", callback_data=f"ytdl_back#{task_id}", style=user_style)
+            ]
+        ]
+        
+        await cb.edit_message_caption(caption=text, parse_mode=enums.ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
+    except Exception as ex:
+        Altruix.log(f"Split Menu Error: {ex}\n{traceback.format_exc()}")
+        try: await cb.answer(f"❌ Terjadi kesalahan: {ex}", show_alert=True)
+        except: pass
+
+@Altruix.bot.on_callback_query(filters.regex(r"^ytdl_set_split#([#\w\d_-]+)#(yes|no)"))
+@iuser_check
+async def ytdl_set_split_cb(c: Client, cb: CallbackQuery):
+    task_id, val = cb.matches[0].groups()
+    try:
+        state = Altruix.YTDL_STATE.get(task_id)
+        if not state: return await cb.answer("Sesi kedaluwarsa.", show_alert=True)
+        
+        state["split_chapters"] = (val == "yes")
+        asyncio.create_task(sync_ytdl_task(task_id)) # Background Sync
+        await cb.answer(f"Split Chapters: {'ON' if state['split_chapters'] else 'OFF'}")
+        
+        # Refresh split menu
+        await ytdl_split_menu_cb(c, cb)
+    except Exception as ex:
+        Altruix.log(f"Set Split Error: {ex}\n{traceback.format_exc()}")
+        try: await cb.answer(f"❌ Terjadi kesalahan: {ex}", show_alert=True)
+        except: pass
 
 @Altruix.bot.on_callback_query(filters.regex(r"^ytdl_toggle_backup#([#\w\d_-]+)"))
 @iuser_check
@@ -1276,6 +1387,12 @@ async def ytdl_download_confirm_cb(c: Client, cb: CallbackQuery):
     f = state.get("format", "video").upper()
     lang = state.get("audio_lang", "Default")
     
+    v_bit = state.get("video_bitrate", "Original")
+    is_video = state.get("format", "video") == "video"
+    q_str = f"{q}p" if is_video else f"{q}k"
+    if is_video and v_bit != "Original":
+        q_str += f" (Bitrate: {v_bit})"
+    
     uploader = state.get("sender_name", "Default")
     backup_status = "Enabled" if state.get("auto_backup", True) else "Disabled"
     backup_via = state.get("backup_mode", "userbot").capitalize()
@@ -1285,7 +1402,7 @@ async def ytdl_download_confirm_cb(c: Client, cb: CallbackQuery):
         f"<b>⚠️ DOWNLOAD CONFRIMATION</b>\n\n"
         f"<b>• Title:</b> <code>{state['title']}</code>\n"
         f"<b>• Format:</b> <code>{f}</code>\n"
-        f"<b>• Quality:</b> <code>{q}</code>\n"
+        f"<b>• Quality:</b> <code>{q_str}</code>\n"
         f"<b>• Audio Lang:</b> <code>{lang}</code>\n"
         f"<b>• Uploader Account:</b> <code>{uploader}</code>\n"
         f"<b>• Backup Status:</b> <code>{backup_status} ({backup_via})</code>\n\n"
@@ -1304,3 +1421,191 @@ async def ytdl_download_confirm_cb(c: Client, cb: CallbackQuery):
         await cb.edit_message_text(text=text, parse_mode=enums.ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
     except:
         await cb.edit_message_caption(caption=text, parse_mode=enums.ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
+
+# --- Video Bitrate Configuration ---
+@Altruix.bot.on_callback_query(filters.regex(r"^ytdl_vbit_menu#([#\w\d_-]+)"))
+@iuser_check
+async def ytdl_vbit_menu_cb(c: Client, cb: CallbackQuery):
+    await cb.answer()
+    task_id = cb.matches[0].group(1)
+    state = Altruix.YTDL_STATE.get(task_id)
+    if not state: return await cb.answer("Sesi kedaluwarsa.", show_alert=True)
+    
+    text = (
+        f"<blockquote expandable>"
+        f"<b>📺 Pilih Bitrate Video:</b>\n"
+        f"<i>Silakan pilih target bitrate untuk proses kompresi video.</i>"
+        f"</blockquote>"
+    )
+    user_style = get_user_button_style(cb.from_user.id)
+    cur = state.get("video_bitrate", "Original")
+    
+    options = ["Original", "8 Mbps", "5 Mbps", "3 Mbps", "1.5 Mbps", "700 Kbps"]
+    buttons = []
+    row = []
+    for opt in options:
+        label = f"✅ {opt}" if cur == opt else opt
+        row.append(InlineKeyboardButton(label, callback_data=f"ytdl_set_vbit#{task_id}#{opt}", style=user_style))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+        
+    buttons.append([InlineKeyboardButton("🔙 Back", callback_data=f"ytdl_back#{task_id}", style=user_style)])
+    
+    try:
+        await cb.edit_message_text(text=text, parse_mode=enums.ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
+    except Exception as e:
+        Altruix.log(f"YTDL VBit Edit Fail: {e}\n{traceback.format_exc()}")
+        try: await cb.edit_message_caption(caption=text, parse_mode=enums.ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
+        except: pass
+
+@Altruix.bot.on_callback_query(filters.regex(r"^ytdl_set_vbit#([#\w\d_-]+)#(.+)"))
+@iuser_check
+async def ytdl_set_vbit_cb(c: Client, cb: CallbackQuery):
+    task_id, vbit = cb.matches[0].groups()
+    state = Altruix.YTDL_STATE.get(task_id)
+    if not state: return await cb.answer("Sesi kedaluwarsa.", show_alert=True)
+    
+    state["video_bitrate"] = vbit
+    await cb.answer(f"Video Bitrate set to: {vbit}")
+    await sync_ytdl_task(task_id)
+    await ytdl_inline_menu(c, cb, task_id)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^ytdl_speed_menu#([#\w]+)"))
+@iuser_check
+async def ytdl_speed_menu_cb(c: Client, cb: CallbackQuery):
+    try:
+        await cb.answer()
+        task_id = cb.matches[0].group(1)
+        state = Altruix.YTDL_STATE.get(task_id)
+        if not state: return await cb.answer("Sesi kedaluwarsa.", show_alert=True)
+        
+        text = (
+            f"<blockquote expandable>"
+            f"<b>⚡️ Pilih Kecepatan Media (Speed):</b>\n"
+            f"<i>Silakan pilih nilai pengali kecepatan untuk proses unduhan video & audio Anda.</i>"
+            f"</blockquote>"
+        )
+        user_style = get_user_button_style(cb.from_user.id)
+        cur = state.get("speed", "1.0x")
+        
+        options = ["0.25x", "0.50x", "0.75x", "1.00x", "1.25x", "1.50x", "1.75x", "2.00x"]
+        buttons = []
+        row = []
+        
+        # Extract actual float values for comparisons to ensure exact matching
+        try: cur_float = float(cur.replace("x", ""))
+        except: cur_float = 1.0
+        
+        for opt in options:
+            try: opt_float = float(opt.replace("x", ""))
+            except: opt_float = 1.0
+            
+            label = f"✅ {opt}" if abs(cur_float - opt_float) < 0.01 else opt
+            row.append(InlineKeyboardButton(label, callback_data=f"ytdl_set_speed#{task_id}#{opt}", style=user_style))
+            if len(row) == 2:
+                buttons.append(row)
+                row = []
+        if row:
+            buttons.append(row)
+            
+        buttons.append([InlineKeyboardButton("🔙 Back", callback_data=f"ytdl_back#{task_id}", style=user_style)])
+        
+        try:
+            await cb.edit_message_text(text=text, parse_mode=enums.ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
+        except Exception as e:
+            Altruix.log(f"YTDL Speed Menu Edit Fail: {e}\n{traceback.format_exc()}")
+            try: await cb.edit_message_caption(caption=text, parse_mode=enums.ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
+            except: pass
+    except Exception as ex:
+        Altruix.log(f"YTDL Speed Menu Error: {ex}\n{traceback.format_exc()}")
+        try: await cb.answer(f"Error: {ex}", show_alert=True)
+        except: pass
+
+@Altruix.bot.on_callback_query(filters.regex(r"^ytdl_set_speed#([#\w]+)#([\d.]+x)"))
+@iuser_check
+async def ytdl_set_speed_cb(c: Client, cb: CallbackQuery):
+    try:
+        task_id, sp = cb.matches[0].groups()
+        state = Altruix.YTDL_STATE.get(task_id)
+        if not state: return await cb.answer("Sesi kedaluwarsa.", show_alert=True)
+        
+        if sp == "1.00x":
+            sp = "1.0x"
+            
+        state["speed"] = sp
+        await cb.answer(f"Speed set to: {sp}")
+        await sync_ytdl_task(task_id)
+        await ytdl_inline_menu(c, cb, task_id)
+    except Exception as ex:
+        Altruix.log(f"YTDL Set Speed Error: {ex}\n{traceback.format_exc()}")
+        try: await cb.answer(f"Error: {ex}", show_alert=True)
+        except: pass
+
+@Altruix.bot.on_callback_query(filters.regex(r"^ytdl_volume_menu#([#\w]+)"))
+@iuser_check
+async def ytdl_volume_menu_cb(c: Client, cb: CallbackQuery):
+    try:
+        await cb.answer()
+        task_id = cb.matches[0].group(1)
+        state = Altruix.YTDL_STATE.get(task_id)
+        if not state: return await cb.answer("Sesi kedaluwarsa.", show_alert=True)
+        
+        text = (
+            f"<blockquote expandable>"
+            f"<b>🔊 Pengaturan Volume & Boost (Desibel):</b>\n"
+            f"<i>Silakan pilih nilai penyesuaian atau dorongan volume audio di bawah ini.</i>"
+            f"</blockquote>"
+        )
+        user_style = get_user_button_style(cb.from_user.id)
+        cur = state.get("volume", "Original")
+        
+        options = [
+            "10% (-20 dB)", "25% (-12 dB)", "50% (-6 dB)", "75% (-2.5 dB)",
+            "Original",
+            "125% (+2 dB)", "150% (+3.5 dB)", "175% (+5 dB)", "200% (+6 dB)",
+            "250% (+8 dB)", "300% (+9.5 dB)", "400% (+12 dB)", "500% (+14 dB)"
+        ]
+        buttons = []
+        row = []
+        
+        for opt in options:
+            label = f"✅ {opt}" if cur == opt else opt
+            row.append(InlineKeyboardButton(label, callback_data=f"ytdl_set_volume#{task_id}#{opt}", style=user_style))
+            if len(row) == 2:
+                buttons.append(row)
+                row = []
+        if row:
+            buttons.append(row)
+            
+        buttons.append([InlineKeyboardButton("🔙 Back", callback_data=f"ytdl_back#{task_id}", style=user_style)])
+        
+        try:
+            await cb.edit_message_text(text=text, parse_mode=enums.ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
+        except Exception as e:
+            Altruix.log(f"YTDL Volume Menu Edit Fail: {e}\n{traceback.format_exc()}")
+            try: await cb.edit_message_caption(caption=text, parse_mode=enums.ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
+            except: pass
+    except Exception as ex:
+        Altruix.log(f"YTDL Volume Menu Error: {ex}\n{traceback.format_exc()}")
+        try: await cb.answer(f"Error: {ex}", show_alert=True)
+        except: pass
+
+@Altruix.bot.on_callback_query(filters.regex(r"^ytdl_set_volume#([#\w]+)#(.+)"))
+@iuser_check
+async def ytdl_set_volume_cb(c: Client, cb: CallbackQuery):
+    try:
+        task_id, vol = cb.matches[0].groups()
+        state = Altruix.YTDL_STATE.get(task_id)
+        if not state: return await cb.answer("Sesi kedaluwarsa.", show_alert=True)
+        
+        state["volume"] = vol
+        await cb.answer(f"Volume set to: {vol}")
+        await sync_ytdl_task(task_id)
+        await ytdl_inline_menu(c, cb, task_id)
+    except Exception as ex:
+        Altruix.log(f"YTDL Set Volume Error: {ex}\n{traceback.format_exc()}")
+        try: await cb.answer(f"Error: {ex}", show_alert=True)
+        except: pass

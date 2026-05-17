@@ -224,20 +224,34 @@ async def _merge_json(target_path, source_path):
         return target
 
     # Read target
-    try:
-        with open(target_path, 'r', encoding='utf-8') as f:
-            target_data = json.load(f)
-    except Exception:
+    if os.path.exists(target_path):
+        try:
+            with open(target_path, 'r', encoding='utf-8') as f:
+                target_data = json.load(f)
+        except Exception as e:
+            logger.error(f"Failed to read target DB {target_path}: {e}")
+            return False # Don't overwrite with empty if we can't read it!
+    else:
         target_data = {}
         
     # Read source
     try:
         with open(source_path, 'r', encoding='utf-8') as f:
             source_data = json.load(f)
-    except Exception:
-        source_data = {}
+    except Exception as e:
+        logger.error(f"Failed to read source DB {source_path}: {e}")
+        return False
         
+    # LOG: specifically track custom_bots if present
+    if "custom_bots" in target_data:
+        logger.info(f"Merging DB: Found {len(target_data['custom_bots'])} custom bots in current database.")
+    if "custom_bots" in source_data:
+        logger.info(f"Merging DB: Found {len(source_data['custom_bots'])} custom bots in source backup.")
+
     merged_data = deep_merge(target_data, source_data)
+    
+    if "custom_bots" in merged_data:
+        logger.info(f"Merging DB: Total custom bots after merge: {len(merged_data['custom_bots'])}")
         
     with open(target_path, 'w', encoding='utf-8') as f:
         json.dump(merged_data, f, indent=4)
@@ -285,6 +299,10 @@ async def process_backup_restore_input(c: Client, m: Message, state: dict):
 
         db_dir = get_db_path("")
         
+        # ✅ SYNC: Ensure memory is saved to disk before we start reading it for merge/restore
+        if hasattr(Altruix, 'local_db'):
+            await Altruix.local_db.save_now()
+            
         if not os.path.exists(db_dir):
             os.makedirs(db_dir, exist_ok=True)
             
