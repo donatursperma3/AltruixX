@@ -78,11 +78,11 @@ async def ytdl_inline_menu(c: Client, obj: Union[InlineQuery, CallbackQuery], ta
     is_playlist = state.get("type") == "playlist"
     dur_str = Essentials.get_readable_time(state["duration"]) if not is_playlist else f"{state['count']} Videos"
      # ✅ AUDIO TRACK: Detect and display the selected language
-    audio_langs = state.get("languages", [])
+    audio_langs = state.get("languages") or []
     current_lang = state.get("audio_lang", "Default").upper()
     has_multi_audio = len(audio_langs) > 1
     
-    chapters = state.get("chapters", [])
+    chapters = state.get("chapters") or []
     chapters_str = "" if is_playlist else f"<b>• Split Chapters:</b> <code>{'Yes' if state.get('split_chapters', False) else 'No'} ({len(chapters)} bab terdeteksi)</code>\n"
     
     text = (
@@ -315,7 +315,7 @@ async def ytdl_audio_lang_menu_cb(c: Client, cb: CallbackQuery):
     state = Altruix.YTDL_STATE.get(task_id)
     if not state: return await cb.answer("Sesi kedaluwarsa.", show_alert=True)
     
-    audio_langs = state.get("languages", [])
+    audio_langs = state.get("languages") or []
     if not audio_langs:
         return await cb.answer("Tidak ada opsi bahasa tambahan.", show_alert=True)
     
@@ -722,7 +722,7 @@ async def ytdl_split_menu_cb(c: Client, cb: CallbackQuery):
         state = Altruix.YTDL_STATE.get(task_id)
         if not state: return await cb.answer("Sesi kedaluwarsa.", show_alert=True)
         
-        chapters = state.get("chapters", [])
+        chapters = state.get("chapters") or []
         if not chapters:
             return await cb.answer("❌ Video ini tidak memiliki bab/chapter metadata.", show_alert=True)
             
@@ -1431,6 +1431,23 @@ async def ytdl_vbit_menu_cb(c: Client, cb: CallbackQuery):
     state = Altruix.YTDL_STATE.get(task_id)
     if not state: return await cb.answer("Sesi kedaluwarsa.", show_alert=True)
     
+    # Calculate original average bitrate dynamically based on selected quality size
+    orig_bitrate_str = ""
+    q = state.get("quality")
+    if q:
+        try:
+            v_size = state.get("res_sizes", {}).get(int(q), 0) or state.get("res_sizes", {}).get(str(q), 0)
+            dur = state.get("duration", 0)
+            if v_size and dur > 0:
+                bps = (v_size * 8) / dur
+                kbps = bps / 1000
+                if kbps >= 1000:
+                    orig_bitrate_str = f" ({kbps / 1000:.1f} Mbps)"
+                else:
+                    orig_bitrate_str = f" ({int(kbps)} Kbps)"
+        except Exception as ex:
+            Altruix.log(f"Orig Bitrate Calculation Error: {ex}")
+            
     text = (
         f"<blockquote expandable>"
         f"<b>📺 Pilih Bitrate Video:</b>\n"
@@ -1444,7 +1461,8 @@ async def ytdl_vbit_menu_cb(c: Client, cb: CallbackQuery):
     buttons = []
     row = []
     for opt in options:
-        label = f"✅ {opt}" if cur == opt else opt
+        display_opt = f"Original{orig_bitrate_str}" if opt == "Original" else opt
+        label = f"✅ {display_opt}" if cur == opt else display_opt
         row.append(InlineKeyboardButton(label, callback_data=f"ytdl_set_vbit#{task_id}#{opt}", style=user_style))
         if len(row) == 2:
             buttons.append(row)
@@ -1572,7 +1590,8 @@ async def ytdl_volume_menu_cb(c: Client, cb: CallbackQuery):
         row = []
         
         for opt in options:
-            label = f"✅ {opt}" if cur == opt else opt
+            display_opt = "Original (100% / 0 dB)" if opt == "Original" else opt
+            label = f"✅ {display_opt}" if cur == opt else display_opt
             row.append(InlineKeyboardButton(label, callback_data=f"ytdl_set_volume#{task_id}#{opt}", style=user_style))
             if len(row) == 2:
                 buttons.append(row)

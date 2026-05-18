@@ -2,6 +2,47 @@
 
 All notable changes to the **AltruixX** project from version **0.0.10.0959H** to the latest.
 
+## [1.0.251] - 2026-05-19
+
+### 📦 YTDL Manager: Premium YouTube Chapter Splitter & NoneType Hardening
+- **New Feature: Premium YouTube Chapter Splitter & Slicer**:
+  - Added a dynamic `📦 Split Chapters: {status}` control button directly to the YTDL main dashboard.
+  - Implemented the `📦 Pengaturan Pembagian Bab (Split Chapters)` sub-menu dynamically listing all detected video chapters with clean start/end times and descriptions.
+  - Symmetrically incorporates the chapter split selection into the single confirmation download screens (e.g. `[Split Chapters: 5 bab]`).
+- **New Feature: Dynamic Original Video Bitrate Indicator**:
+  - Automatically calculates the exact original average bitrate of the chosen video quality dynamically based on estimated format size and total duration.
+  - Symmetrically prints this specific original bitrate (e.g., `Original (4.2 Mbps)` or `Original (850 Kbps)`) on the `"Original"` selector button inside the `"📺 Pilih Bitrate Video"` sub-menu, offering advanced visual clarity.
+- **New Feature: Original Audio Volume & Decibel Label**:
+  - Upgraded the `"Original"` audio volume option in the `"🔊 Pengaturan Volume & Boost (Desibel)"` sub-menu to display as `Original (100% / 0 dB)`.
+  - Ensures full symmetric visual alignment with the other percentage and decibel booster button styles.
+- **Enhanced: Local Slicing & Sequence Upload Pipeline**:
+  - Downloads the raw video from YouTube only once, then processes local slicing locally via FFmpeg, saving massive amounts of network bandwidth.
+  - Applies all user-selected custom speed, volume, and watermark parameters to each individual chapter slice.
+  - Implemented sequentially automated slicing, ID3v2 metadata embedding (titles, artists, albums, thumbnail cover art), backup logging, and uploads with real-time status bars showing sequence progress (`Uploading 1/5`, `Uploading 2/5`).
+  - Added the source content's upload date (`Upload: YYYY-MM-DD`) directly to the Chapter Split sequence captions.
+- **Fixed: Robust Defensive Fallbacks (NoneType Fix)**:
+  - Secured `"languages"` and `"chapters"` state retrievals across `xyt_tools_bot.py` and `ytdl_core.py` using the robust `or []` pattern fallback.
+  - Eliminates potential `TypeError: object of type 'NoneType' has no len()` crashes caused by older database entries containing null values for these fields.
+- **Version Bumps**:
+  - **Assistant Bot Plugin**: `1.0.175`
+  - **YTDL Core Engine**: `0.0.263`
+
+---
+
+## [1.0.250] - 2026-05-19
+
+### ⏳ Task Manager Plugin: Paced Resume Control & Safety Delay Menu
+- **Added: Delay Per-Resume Setting Dashboard Controls**:
+  - Implemented a new interactive **"⏳ Delay Per-Resume: Xs"** button in the main `📋 Active Tasks` dashboard menu.
+  - Added a premium configuration sub-menu offering quick adjustments (`-5s`, `-1s`, `+1s`, `+5s`) and standard presets (`0s (Instant)`, `3s (Default)`, `5s`, `10s`).
+- **Added: Safety-Paced Bulk Resuming (Resume All)**:
+  - Upgraded the `resumeall` bulk confirmation flow to respect the configured delay between successive task resumes.
+  - Implemented smart pacing using `asyncio.sleep` to stagger the resumes, preventing Pyrogram/Telegram flood waits and system resource contention.
+  - Keeps log summaries clear with descriptive real-time logs indicating delay sleeps.
+- **Improved: Stable Config & DB Layer**:
+  - Maintained persistent configurations in a safe `taskmanager_settings.json` file inside the centralized `DATABASE` directory.
+  - Equipped all functions with robust `try-except` blocks and detailed traceback error logging for enterprise-grade debuggability.
+
 ---
 
 ## [0.0.10.2456I] - 2026-05-19

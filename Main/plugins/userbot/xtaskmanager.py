@@ -25,7 +25,7 @@ from Main.utils.file_helpers import get_user_button_style
 # Plugin Metadata
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = "xtaskmanager"
-PLUGIN_VERSION = "1.0.249"
+PLUGIN_VERSION = "1.0.250"
 
 logger = logging.getLogger("altruix.xtaskmanager")
 logger.setLevel(logging.INFO)
@@ -439,6 +439,12 @@ def gen_task_list_data(user_id: int, page: int = 1, page_size: int = 5):
             ]
             buttons.append(row)
             
+        # Delay Per-Resume Button Row
+        current_delay = get_delay_per_resume()
+        buttons.append([
+            InlineKeyboardButton(f"⏳ Delay/Resume: {current_delay}s", callback_data="taskmgr_delaymenu", style=user_style)
+        ])
+        
         # Bulk Actions Row
         buttons.append([
             InlineKeyboardButton("Resume All", callback_data="taskmgr_ask_resumeall_all", style=user_style),
@@ -767,6 +773,76 @@ def gen_confirmation_data(user_id: int, action: str, target: str):
         return "❌ <b>Error generating confirmation screen.</b>", None
 
 
+SETTINGS_FILE = get_db_path("taskmanager_settings.json")
+
+def get_delay_per_resume() -> float:
+    """Get the delay per resume value in seconds from settings cache."""
+    try:
+        if os.path.exists(SETTINGS_FILE):
+            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return float(data.get("delay_per_resume", 3.0)) # Default to 3.0 seconds
+    except Exception as e:
+        logger.error(f"Error reading taskmanager settings: {e}")
+    return 3.0 # Default fallback
+
+def save_delay_per_resume(delay: float):
+    """Save the delay per resume value in seconds to settings cache."""
+    try:
+        data = {}
+        if os.path.exists(SETTINGS_FILE):
+            try:
+                with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except:
+                pass
+        data["delay_per_resume"] = delay
+        with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4)
+    except Exception as e:
+        logger.error(f"Error saving taskmanager settings: {e}\n{traceback.format_exc()}")
+
+def gen_delay_menu_data(user_id: int):
+    """Generate text and keyboard for configuring delay per-resume settings."""
+    try:
+        user_style = get_user_button_style(user_id)
+        current_delay = get_delay_per_resume()
+        
+        text = (
+            f"<blockquote expandable>"
+            f"⏳ <b>Configure Delay Per-Resume</b>\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"• Current Delay: <b>{current_delay}s</b>\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"Configure the time delay applied between resuming successive tasks when clicking 'Resume All'.\n"
+            f"This acts as a safety cooldown to prevent flood waits or CPU spikes.\n"
+            f"</blockquote>"
+        )
+        
+        buttons = [
+            [
+                InlineKeyboardButton("-5s", callback_data="taskmgr_setdelay_-5.0", style=user_style),
+                InlineKeyboardButton("-1s", callback_data="taskmgr_setdelay_-1.0", style=user_style),
+                InlineKeyboardButton("+1s", callback_data="taskmgr_setdelay_+1.0", style=user_style),
+                InlineKeyboardButton("+5s", callback_data="taskmgr_setdelay_+5.0", style=user_style)
+            ],
+            [
+                InlineKeyboardButton("0s (Instant)", callback_data="taskmgr_setdelay_0.0", style=user_style),
+                InlineKeyboardButton("3s (Default)", callback_data="taskmgr_setdelay_3.0", style=user_style),
+                InlineKeyboardButton("5s", callback_data="taskmgr_setdelay_5.0", style=user_style),
+                InlineKeyboardButton("10s", callback_data="taskmgr_setdelay_10.0", style=user_style)
+            ],
+            [
+                InlineKeyboardButton("📋 Back to Task List", callback_data="taskmgr_page_1", style=user_style)
+            ]
+        ]
+        
+        return text, InlineKeyboardMarkup(buttons)
+    except Exception as e:
+        logger.error(f"Error in gen_delay_menu_data: {e}\n{traceback.format_exc()}")
+        return "❌ <b>Error generating delay menu.</b>", None
+
+
 # ==================== CLEANUP STALE TASKS ====================
 def cleanup_stale_tasks():
     """Remove tasks that have already completed from the registry."""
@@ -1075,6 +1151,38 @@ async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
                 pass
             return
 
+        if action == "delaymenu":
+            await cb.answer("Opening Delay Settings...", show_alert=False)
+            text, kb = gen_delay_menu_data(user_id)
+            try:
+                await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+            except Exception as e:
+                logger.error(f"Error in delaymenu handler: {e}\n{traceback.format_exc()}")
+            return
+
+        if action == "setdelay":
+            try:
+                val_str = data[2]
+                current = get_delay_per_resume()
+                if val_str.startswith("+") or val_str.startswith("-"):
+                    new_val = current + float(val_str)
+                else:
+                    new_val = float(val_str)
+                
+                # Minimum delay is 0s
+                new_val = max(0.0, new_val)
+                save_delay_per_resume(new_val)
+                
+                await cb.answer(f"⏳ Delay set to {new_val}s", show_alert=False)
+                
+                # Regenerate menu
+                text, kb = gen_delay_menu_data(user_id)
+                await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+            except Exception as e:
+                logger.error(f"Error in setdelay callback: {e}\n{traceback.format_exc()}")
+                await cb.answer(f"❌ Error: {str(e)}", show_alert=True)
+            return
+
         # --- Security Confirmation Flow ---
         if action == "ask":
             # format: taskmgr_ask_{real_action}_{target}
@@ -1106,9 +1214,26 @@ async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
                 elif real_action == "resumeall":
                     registry = get_all_tasks()
                     count = 0
-                    for tid in list(registry.keys()):
+                    delay = get_delay_per_resume()
+                    active_tids = list(registry.keys())
+                    
+                    resumed_tids = []
+                    for tid in active_tids:
+                        entry = registry.get(tid, {})
+                        if entry.get("paused", False) and not entry.get("is_interrupted", False):
+                            resumed_tids.append(tid)
+                    
+                    total_to_resume = len(resumed_tids)
+                    Altruix.log(f"[TaskManager] Resuming all tasks ({total_to_resume} pending) with delay: {delay}s", level=20)
+                    
+                    for idx, tid in enumerate(resumed_tids):
                         s, _ = resume_task_by_id(tid)
-                        if s: count += 1
+                        if s:
+                            count += 1
+                            if delay > 0 and idx < total_to_resume - 1:
+                                Altruix.log(f"[TaskManager] Sleeping for {delay}s before next resume...", level=10)
+                                await asyncio.sleep(delay)
+                                
                     success, msg = True, f"✅ Resumed {count} tasks."
                 elif real_action == "endall":
                     registry = get_all_tasks()

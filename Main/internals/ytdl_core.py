@@ -662,7 +662,7 @@ async def _ytdl_single_unit(status_msg, task_id, state):
         
         # Chapters Split Branch
         split_chapters = state.get("split_chapters", False)
-        chapters = state.get("chapters", [])
+        chapters = state.get("chapters") or []
         if split_chapters and chapters:
             await edit_status(status_msg, f"<b>✂️ Membagi video menjadi {len(chapters)} bab...</b>")
             for idx, chap in enumerate(chapters):
