@@ -111,9 +111,11 @@ async def _start_add_session_process(cb: CallbackQuery):
     # ✅ Log ke grup jika sudo user memulai proses
     if is_sudo:
         await log_to_group(
+            f"<blockquote expandable>"
             f"👮‍♂️ <b>Sudo User Memulai Generate Session</b>\n"
             f"• Nama: {user.first_name} {user.last_name or ''}\n"
             f"• ID: <code>{user_id}</code>"
+            f"</blockquote>"
         )
 
     if user_id in _ACTIVE_ADD_SESSION:
@@ -167,9 +169,11 @@ async def _start_add_session_process(cb: CallbackQuery):
     except Exception as e:
         Altruix.log(f"Error tunggu input: {e}", level=logging.ERROR)
         await log_to_group(
+            f"<blockquote expandable>"
             f"⚠️ <b>ERROR SAAT TUNGGU INPUT</b>\n"
             f"• User ID: <code>{user_id}</code>\n"
             f"• Error: <code>{str(e)}</code>"
+            f"</blockquote>"
         )
         _ACTIVE_ADD_SESSION.discard(user_id)
         await bot.send_message(user_id, "❌ Kesalahan internal.")
@@ -202,9 +206,11 @@ async def _start_add_session_process(cb: CallbackQuery):
         await process_msg.edit("❌ Gagal kirim kode OTP.")
         Altruix.log(f"Kirim kode error: {e}", level=logging.ERROR)
         await log_to_group(
+            f"<blockquote expandable>"
             f"⚠️ <b>ERROR SAAT KIRIM KODE OTP</b>\n"
             f"• User ID: <code>{user_id}</code>\n"
             f"• Error: <code>{str(e)}</code>"
+            f"</blockquote>"
         )
         await app.disconnect()
         _ACTIVE_ADD_SESSION.discard(user_id)
@@ -245,9 +251,11 @@ async def _start_add_session_process(cb: CallbackQuery):
             await process_msg.edit("❌ Password salah atau error.")
             Altruix.log(f"2FA error: {e}", level=logging.ERROR)
             await log_to_group(
+                f"<blockquote expandable>"
                 f"⚠️ <b>ERROR 2FA</b>\n"
                 f"• User ID: <code>{user_id}</code>\n"
                 f"• Error: <code>{str(e)}</code>"
+                f"</blockquote>"
             )
             await app.disconnect()
             _ACTIVE_ADD_SESSION.discard(user_id)
@@ -261,9 +269,11 @@ async def _start_add_session_process(cb: CallbackQuery):
         await process_msg.edit("❌ Gagal login.")
         Altruix.log(f"Sign-in error: {e}", level=logging.ERROR)
         await log_to_group(
+            f"<blockquote expandable>"
             f"⚠️ <b>ERROR LOGIN</b>\n"
             f"• User ID: <code>{user_id}</code>\n"
             f"• Error: <code>{str(e)}</code>"
+            f"</blockquote>"
         )
         await app.disconnect()
         _ACTIVE_ADD_SESSION.discard(user_id)
@@ -279,8 +289,10 @@ async def _start_add_session_process(cb: CallbackQuery):
         await app.disconnect()
         await Altruix.add_session(app_session, process_msg, user=cb.from_user, skip_reload=True)
         await log_to_group(
+            f"<blockquote expandable>"
             f"✅ <b>BERHASIL ADD SESSION</b>\n"
             f"• User ID: <code>{user_id}</code>\n"
+            f"</blockquote>"
         )
         
         from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -301,9 +313,11 @@ async def _start_add_session_process(cb: CallbackQuery):
         await process_msg.edit("❌ Gagal tambahkan session ke bot.")
         Altruix.log(f"Add session error: {e}", level=logging.ERROR)
         await log_to_group(
+            f"<blockquote expandable>"
             f"⚠️ <b>ERROR TAMBAH SESSION</b>\n"
             f"• User ID: <code>{user_id}</code>\n"
             f"• Error: <code>{str(e)}</code>"
+            f"</blockquote>"
         )
         _ACTIVE_ADD_SESSION.discard(user_id)
         return

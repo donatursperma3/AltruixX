@@ -446,6 +446,7 @@ class AltruixClient:
         self.cmd_list_s = []
         self.training_wheels_protocol = False
         self.config = BaseConfig
+        self.secondary_bots = []
         self._init_logger()
         self.db_sudo_users = set() # ✅ Dynamic Cache for Sudo Users from DB
         self.db_sudo_sync_lock = asyncio.Lock()
@@ -2820,6 +2821,18 @@ class AltruixClient:
             self.bot_info = await self.bot.get_me()
             self.bot.myself = self.bot_info
             self.log(f"Assistant : Logged in as @{self.bot_info.username}")
+            
+            # Setup custom secondary bots list
+            self.secondary_bots = []
+            try:
+                await self.load_secondary_bots()
+            except Exception as sec_e:
+                self.log(f"Error loading secondary main bots on startup: {sec_e}", level=logging.ERROR)
+            
+            try:
+                self.patch_bot_send_methods()
+            except Exception as patch_e:
+                self.log(f"Error patching bot send methods: {patch_e}", level=logging.ERROR)
         except Exception as e:
             self.log(f"CRITICAL: Failed to start bot assistant: {e}", level=50)
             raise
@@ -3373,6 +3386,173 @@ class AltruixClient:
             self.log(f"CRITICAL: Session initialization failed: {e}", level=50)
             raise
 
+    async def load_secondary_bots(self):
+        """Load and start all secondary main bots from the database."""
+        import traceback
+        try:
+            self.secondary_bots = []
+            col = self.db.make_collection("secondary_main_bots")
+            async for doc in col.find({}):
+                token = doc.get("token")
+                bot_id = doc.get("_id")
+                if token:
+                    self.log(f"🔄 Starting secondary main bot: {doc.get('username', bot_id)}...")
+                    try:
+                        sec_client = Client(
+                            name=f"secondary_bot_{bot_id}",
+                            api_id=self.config.API_ID,
+                            api_hash=self.config.API_HASH,
+                            bot_token=token,
+                            workdir="cache",
+                            loop=self.loop
+                        )
+                        await sec_client.start()
+                        sec_client.myself = sec_client.me
+                        
+                        # Register handlers
+                        if hasattr(self, 'bot') and self.bot:
+                            for group, handlers in self.bot.dispatcher.groups.items():
+                                for handler in handlers:
+                                    sec_client.add_handler(handler, group)
+                                    
+                        self.secondary_bots.append(sec_client)
+                        self.log(f"✅ Secondary main bot started: @{sec_client.me.username}")
+                    except Exception as e:
+                        tb = traceback.format_exc()
+                        self.log(f"❌ Failed to start secondary main bot: {e}\n{tb}", level=logging.ERROR)
+        except Exception as e:
+            tb = traceback.format_exc()
+            self.log(f"Error loading secondary main bots: {e}\n{tb}", level=logging.ERROR)
+
+    def patch_bot_send_methods(self):
+        """Wrapper for patching message-sending methods to support automatic fallback to secondary bots."""
+        import traceback
+        try:
+            methods_to_patch = ["send_message", "send_document", "send_photo"]
+            for method_name in methods_to_patch:
+                orig_method = getattr(self.bot, method_name, None)
+                if not orig_method:
+                    continue
+                    
+                def make_patched_method(orig=orig_method, name=method_name):
+                    async def patched(*args, **kwargs):
+                        try:
+                            return await orig(*args, **kwargs)
+                        except FloodWait as e:
+                            self.log(f"⚠️ Primary bot hit FloodWait during {name} ({e.value}s). Trying secondary bots...", level=logging.WARNING)
+                            for sec_bot in getattr(self, "secondary_bots", []):
+                                if not sec_bot.is_connected:
+                                    continue
+                                try:
+                                    self.log(f"🔄 Attempting {name} via secondary bot @{sec_bot.me.username}...", level=logging.INFO)
+                                    sec_method = getattr(sec_bot, name)
+                                    return await sec_method(*args, **kwargs)
+                                except FloodWait as fe:
+                                    self.log(f"⚠️ Secondary bot @{sec_bot.me.username} also hit FloodWait during {name} ({fe.value}s). Trying next...", level=logging.WARNING)
+                                    continue
+                                except Exception as ex:
+                                    tb = traceback.format_exc()
+                                    self.log(f"❌ Error running {name} via secondary @{sec_bot.me.username}: {ex}\n{tb}", level=logging.ERROR)
+                                    continue
+                            raise e
+                    return patched
+                    
+                setattr(self.bot, method_name, make_patched_method())
+        except Exception as e:
+            tb = traceback.format_exc()
+            self.log(f"Error patching bot send methods: {e}\n{tb}", level=logging.ERROR)
+
+    async def add_secondary_bot(self, token: str) -> Client:
+        """Dynamically add and start a secondary main bot."""
+        import traceback
+        try:
+            # Extract bot_id directly from the token to avoid double start and double DC migration
+            if ":" not in token:
+                raise ValueError("Invalid token format (missing colon).")
+            try:
+                bot_id = int(token.split(":")[0])
+            except ValueError:
+                raise ValueError("Invalid token format (bot ID must be an integer).")
+
+            # Start it directly with the permanent session name
+            sec_client = Client(
+                name=f"secondary_bot_{bot_id}",
+                api_id=self.config.API_ID,
+                api_hash=self.config.API_HASH,
+                bot_token=token,
+                workdir="cache",
+                loop=self.loop
+            )
+            
+            try:
+                await sec_client.start()
+                me = sec_client.me
+            except Exception as e:
+                tb = traceback.format_exc()
+                self.log(f"Invalid token or failed to connect client: {e}\n{tb}", level=logging.ERROR)
+                raise ValueError(f"Invalid token or failed to connect: {e}")
+                
+            sec_client.myself = sec_client.me
+            
+            # 3. Add handlers from main bot
+            if hasattr(self, 'bot') and self.bot:
+                for group, handlers in self.bot.dispatcher.groups.items():
+                    for handler in handlers:
+                        sec_client.add_handler(handler, group)
+
+            # 4. Save to database
+            col = self.db.make_collection("secondary_main_bots")
+            await col.find_one_and_update(
+                {"_id": bot_id},
+                {
+                    "$set": {
+                        "token": token,
+                        "username": me.username,
+                        "first_name": me.first_name,
+                        "added_at": time.time()
+                    }
+                },
+                upsert=True
+            )
+
+            # 5. Append to memory list
+            # Remove any existing secondary bot with same ID from memory first
+            for old_bot in list(self.secondary_bots):
+                if old_bot.me and old_bot.me.id == bot_id:
+                    try: await old_bot.stop()
+                    except: pass
+                    self.secondary_bots.remove(old_bot)
+
+            self.secondary_bots.append(sec_client)
+            
+            # Re-apply patching to the main bot in case
+            self.patch_bot_send_methods()
+            
+            return sec_client
+        except Exception as e:
+            tb = traceback.format_exc()
+            self.log(f"Error in add_secondary_bot: {e}\n{tb}", level=logging.ERROR)
+            raise
+
+    async def delete_secondary_bot(self, bot_id: int):
+        """Dynamically stop and delete a secondary main bot."""
+        import traceback
+        try:
+            # 1. Stop and remove from memory list
+            for sec_bot in list(self.secondary_bots):
+                if sec_bot.me and sec_bot.me.id == bot_id:
+                    try: await sec_bot.stop()
+                    except: pass
+                    self.secondary_bots.remove(sec_bot)
+                    
+            # 2. Delete from database
+            col = self.db.make_collection("secondary_main_bots")
+            await col.find_one_and_delete({"_id": bot_id})
+        except Exception as e:
+            tb = traceback.format_exc()
+            self.log(f"Error in delete_secondary_bot: {e}\n{tb}", level=logging.ERROR)
+            raise
+
     async def add_session(self, session: str, status: Message = None, user: User = None, skip_reload: bool = False) -> Client:
         """
         Validates and adds a new user session.
@@ -3460,15 +3640,19 @@ class AltruixClient:
             try:
                 log_chat_id = int(os.getenv("LOG_CHAT_ID", self.config.OWNER_ID))
                 log_msg = (
+                    f"<blockquote expandable>"
                     "✅ <b>SESSION BERHASIL DITAMBAHKAN</b>\n\n"
                     f"• <b>User Admin:</b> <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a> (<code>{user.id}</code>)\n"
                     f"• <b>Akun Baru:</b> <a href='tg://user?id={me.id}'>{html.escape(me.first_name or 'None')}</a> (<code>{me.id}</code>)\n"
                     f"• <b>Username:</b> @{me.username or 'None'}\n"
                     f"• <b>Waktu:</b> <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>"
+                    f"</blockquote>"
                 ) if user else (
+                    f"<blockquote expandable>"
                     "✅ <b>SESSION BERHASIL DITAMBAHKAN (System)</b>\n\n"
                     f"• <b>Akun ID:</b> <code>{me.id}</code>\n"
                     f"• <b>Waktu:</b> <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>"
+                    f"</blockquote>"
                 )
                 await self.bot.send_message(log_chat_id, log_msg, parse_mode=ParseMode.HTML)
             except Exception as le:
@@ -3500,11 +3684,13 @@ class AltruixClient:
             try:
                 log_chat_id = int(os.getenv("LOG_CHAT_ID", self.config.OWNER_ID))
                 log_msg = (
+                    f"<blockquote expandable>"
                     "❌ <b>GAGAL MENAMBAH SESSION</b>\n\n"
                     f"• <b>User Admin:</b> <a href='tg://user?id={user.id}'>{html.escape(user.first_name)}</a> (<code>{user.id}</code>)\n"
                     f"• <b>Error:</b> <code>{type(e).__name__}</code>\n"
                     f"• <b>Pesan:</b> <code>{html.escape(str(e))}</code>\n"
                     f"• <b>Waktu:</b> <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>"
+                    f"</blockquote>"
                 ) if user else f"❌ <b>GAGAL MENAMBAH SESSION (System)</b>\n\n• Error: <code>{type(e).__name__}</code>"
                 await self.bot.send_message(log_chat_id, log_msg, parse_mode=ParseMode.HTML)
             except Exception: pass

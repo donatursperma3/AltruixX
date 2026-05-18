@@ -4,6 +4,169 @@ All notable changes to the **AltruixX** project from version **0.0.10.0959H** to
 
 ---
 
+## [0.0.10.2456I] - 2026-05-19
+
+### 🎛️ CreateGroup: Staggered Multi-Account Batching & Pacing Controls
+- **Added: Batch Account & Batch Account Delay Dashboard Controls**:
+  - Implemented interactive buttons `B.Acc` and `B.Acc Delay` in the CreateGroup settings dashboard.
+  - Users can now configure the maximum number of accounts started per batch (`batch_account`, default `3`) and the duration of delay in seconds between account batches (`ba_account_delay`, default `60s`).
+  - Added support in the adjustments keypad to increase/decrease values dynamically with custom steps, boundaries, and type safety constraints.
+- **Added: Dynamic Batch Boundary Sleep Logic**:
+  - Upgraded the multi-account startup stagger loop in `creategroup_confirm_task_handler` to track and trigger a longer sleep duration when crossing a batch boundary.
+  - Status updates to the user now explicitly indicate whether an account is starting under normal staggered delay or batch account sleep.
+- **Added: Detailed Startup Log Support**:
+  - Enhanced `creategroup_loop` start log notification in `xcreategroup.py` to print `Batch Account` size and `Batch Account Delay` durations dynamically in the log channel blockquote.
+- **Added: First & Last Navigation for Creation Reports & Details**:
+  - Integrated standard `[First]` and `[Last]` pagination buttons inside both the `📊 Creation Reports` master list and the `📊 Detail Laporan Dibuat` view for direct navigation.
+  - Relaxed the page rendering threshold to `total_pages > 1` (down from `total_pages > 2`) to ensure these buttons are active on 2-page lists (e.g. `[1/2]`).
+- **Optimized: Detailed Reports UI (Disable Link Preview)**:
+  - Disabled web page / link previews in the `📊 Detail Laporan Dibuat` submenu to keep the dashboard view extremely clean, compact, and free of vertical preview clutter.
+- **Added: Expandable Blockquote for Task Control Panel Log**:
+  - Wrapped the initial `🚀 Task Control Panel` log notification message in `xcreategroup.py` inside a `<blockquote expandable>` element to match the project's visual and log threading standards.
+- **Version Bumps**:
+  - **CreateGroup Handlers**: `0.3.229`
+  - **CreateGroup Plugin**: `0.2.407`
+
+## [0.0.10.2455I] - 2026-05-19
+
+### 📊 CreateGroup: Persistent Creation Reports & Log Exports
+- **Added: Persistent Creation Report Database**:
+  - Implemented `xcreategroup_created_report.json` database that persists group/channel successful creation history.
+  - History is kept completely persistent and is not affected by system restarts or clearing active/restore tasks.
+- **Added: Interactive Creation Reports Submenu**:
+  - Added a new `📊 Reports` button to the primary CreateGroup interactive UI dashboard.
+  - Implemented an accounts summary directory showing total created items, and group vs channel breakdowns for each userbot.
+  - Added a detailed paginated page showing full information for each created item (Name, Type, ID, Link, Task ID, Creation Time).
+- **Added: Log Export/Download Feature**:
+  - Implemented buttons to export specific account reports or master reports covering all accounts.
+  - Reports are generated dynamically and sent directly to the admin chat as beautifully-formatted `.txt` files.
+- **Added: Automated Historic Sync**:
+  - Automatically synchronizes existing records in `CREATEGROUP_TASKS` and `COMPLETED_CREATEGROUP_TASKS` to the report database at startup so no previous data is lost.
+- **Version Bumps**:
+  - **CreateGroup Plugin**: `0.2.405`
+  - **CreateGroup Handlers**: `0.3.224`
+
+## [0.0.10.2454I] - 2026-05-18
+
+### ⚙️ CreateGroup: Recovery Interrupted Log Destination Routing Config
+- **Added: Interrupted Task Detected Log Destination Setting**:
+  - Implemented a new dashboard button row `Interrupted Log` in the CreateGroup submenu allowing users to customize where restart-recovery logs are sent.
+  - Cycle values: `Off` (default - skips sending entirely to prevent spammy startup messages), `Log Group`, `PM Bot` (admin private chat), and `Both`.
+  - Modified the recovery detection startup check `check_interrupted_tasks` in `xcreategroup.py` to fetch each admin's config and route recovery logs dynamically to chosen destinations.
+- **Version Bumps**:
+  - **CreateGroup Plugin**: `0.2.404`
+  - **CreateGroup Handlers**: `0.3.223` (updated in code)
+
+## [0.0.10.2453I] - 2026-05-18
+
+### ⚙️ CreateGroup: Total Task Count in Restore Tasks Header
+- **Added: Total Task Count to Restore Tasks Submenu Header**:
+  - Enhanced the `Restore Tasks` dashboard layout to dynamically append the total task count `Total: {total_tasks}` (e.g. `[1/4 | Total: 16]`) in the header for both empty and paginated states.
+  - Improves task manager management and monitoring visibility.
+
+## [0.0.10.2452I] - 2026-05-18
+
+### 🛡️ PM Logger: Self-Destruct Media Forwarding and Re-Uploading Support
+- **Fixed: Self-Destruct/TTL Media Logging Failures**:
+  - Implemented automatic detection of self-destructing media (TTL photos, videos, video notes, and voice messages) in both `xpm_logger_user.py` and `xpm_logger_bot.py`.
+  - Since Telegram blocks standard forwarding of self-destruct/TTL messages, the logger now automatically downloads the media to local storage immediately upon receipt and re-uploads it directly to the target log group thread.
+  - Automatically cleans up the temporary downloaded file immediately after a successful upload to safeguard storage resources.
+  - Added a dedicated, highly requested `• Self-Destruct: True/False` field directly in the metadata section of the PM log contents.
+  - Unified and polished the Bot PM Logger log layout, upgrading it to match the premium expandable HTML blockquote layout used in the User PM Logger.
+- **Added: Resilient Fallback Media Processing**:
+  - Implemented a smart fallback mechanism: if a normal forward operation fails for any media message, the logger immediately attempts to download the media locally and re-uploads it as a persistent document to the log group chat.
+- **Version Bumps**:
+  - **PM Logger User Plugin**: `1.3.75`
+  - **PM Logger Bot Plugin**: `1.3.26`
+
+## [0.0.10.2451I] - 2026-05-18
+
+### ⚙️ CreateGroup: Expandable Blockquote Layout for Creation Failures
+- **Improved: Group and Supergroup Creation Failure Log Layout**:
+  - Wrapped `Gagal membuat Grup Dasar` and `Gagal membuat Supergroup/Channel` error logs in expandable blockquote tags (`<blockquote expandable>`).
+  - Ensures full aesthetic alignment with other key progress log items in the log group.
+
+## [0.0.10.2450I] - 2026-05-18
+
+### ⚙️ CreateGroup: Redundant Assistant Bot Fallback Migration
+- **Added: Edit FloodWait Assistant Bot Fallback System**:
+  - Implemented dynamic bot assistant fallback migration in `update_group_log`.
+  - When the primary log bot client encounters a `FloodWait` edit rate limit, it automatically filters and assigns an active alternative assistant bot (from `Altruix.bot` and `Altruix.secondary_bots`).
+  - The fallback bot publishes a new copy of the tracking log text, silently deletes the old message to avoid duplication, and updates active memory references so subsequent edits utilize the new bot instance seamlessly.
+
+## [0.0.10.2449I] - 2026-05-18
+
+### ⚙️ CreateGroup: Account Index Indicators in Startup Logs
+- **Added: Account Position Index to Task Started and Resumed Logs**:
+  - Dynamically appended account index position indicators `{account_idx}/{total_accs}` (e.g. `66/82`) to the `Task Started` and `Task Resumed` log headers.
+  - Improves visibility and verification accuracy when multiple accounts run tasks simultaneously.
+
+## [0.0.10.2448I] - 2026-05-18
+
+### ⚙️ CreateGroup: Expandable Blockquote Layout for Key Logs
+- **Improved: Layout for Key Logs in Log Group**:
+  - Wrapped `CHANNELS_TOO_MUCH` (limit reached) task termination notification log in expandable blockquote tags (`<blockquote expandable>`).
+  - Wrapped `Gagal mendapatkan bot` (bot resolving failure) notification log in expandable blockquote tags (`<blockquote expandable>`).
+  - Ensures all main progress log details present a premium, unified layout.
+
+## [0.0.10.2447I] - 2026-05-18
+
+### ⚙️ CreateGroup: Enhanced Bot Entity Resolving Logs
+- **Added: Account Name in Bot Entity Resolving Failure Notifications**:
+  - Appended account name context `(Akun: {account_name_raw})` to the `Gagal mendapatkan bot` error log message.
+  - Allows easy identification of which userbot account failed to resolve a bot entity.
+
+## [0.0.10.2446I] - 2026-05-18
+
+### ⚙️ CreateGroup: Enhanced Log Aesthetics
+- **Improved: Profile Photo Download Notification Layout**:
+  - Wrapped successful profile photo download notifications (source/custom) in expandable HTML blockquotes (`<blockquote expandable>`).
+  - Ensures a clean, modern, and aligned premium display for all log group progress updates.
+
+## [0.0.10.2445I] - 2026-05-18
+
+### ⚙️ CreateGroup: Graceful Callback Query ID Invalid Handling
+- **Fixed: QUERY_ID_INVALID Console Spam & Crash Loops**:
+  - Implemented graceful catching of `QUERY_ID_INVALID` (expired/already answered callback query) exceptions in both `confirm_creategroup_handler` and `creategroup_control_handler` catch blocks.
+  - Silenced these standard Telegram API behaviors to log only as debug messages, preventing false-positive critical logs in the console.
+  - Secured the error-response fallback `callback_query.answer` within a safe `try...except` scope to eliminate secondary unhandled exception propagation.
+
+## [0.0.10.2444I] - 2026-05-18
+
+### 🧹 Purgeme Bot Plugin: Interactive UI Alignment & Grid Symmetry
+- **Improved: Adjustment Button Layout Grid**:
+  - Restructured negative/positive adjustment buttons for `count`, `batch`, `delaymsg`, `delaybc`, `offset`, `max scan`, and `keep_recent` into an elegant, symmetrical dual-column layout.
+  - Aligned adjustment steps and values (e.g. up to `-500`/`+500` for count, `-5000`/`+5000` for max scan, and granular float intervals for message delay) to match the premium aesthetics and usability of `creategroup.py`.
+
+## [0.0.10.2443I] - 2026-05-18
+
+### 🔌 Main Bot Manager: Code Clarity & DC Rate Limit Hardening
+- **Fixed: Redundant Connection & DC Migration FloodWait Rate Limit**:
+  - Completely resolved the double-start DC Migration rate-limit issue in `add_secondary_bot` by directly extracting bot ID from the token string, eliminating redundant `temp_client` start/stop cycles.
+- **Fixed: Token Input Responsiveness & Swallow Bug**:
+  - Elevated token input message handler to `group=-100` and integrated mandatory `continue_propagation()` fallback logic to resolve input unresponsiveness and private message swallowing.
+- **Documentation: Code Readability & Developer Docstrings**:
+  - Added comprehensive, professional docstrings and detailed step-by-step explanatory comments to every function and message handler inside `main_bot_manager.py`.
+
+## [0.0.10.2442I] - 2026-05-18
+
+### 🤖 Settings & Main Bot Manager: Fallback Pool & Persistence
+- **New Feature: Secondary Main Bot Fallback Pool**:
+  - Implemented a robust fallback pool of dynamic Main Bot assistants to safeguard log transmission.
+  - Automatically loads and launches registered secondary bots at startup directly from MongoDB.
+  - **Dynamic Fallback Monkey-Patching**: Automatically intercepts `FloodWait` warnings during `send_message`, `send_photo`, and `send_document` calls on the primary bot and transparently fails over to secondary bots sequentially.
+- **New Feature: Premium Secondary Bot Manager Sub-Menu**:
+  - Added the **🤖 Backup Bots (Main Bot 2, 3, ...)** button inside the settings dashboard.
+  - Interactive status grid displaying active fallback assistants (`🟢 Running` or `🔴 Inactive`).
+  - **🏓 Dynamic Ping Connection**: Test latency response speed of each fallback bot via dynamic callback queries with live inline output.
+  - **🗑️ Teardown & Deletion**: Hot deletion of secondary bots from runtime memory and database without requiring a restart.
+  - **➕ Dynamic Hot Addition**: Hot addition and registration of new token credentials live without requiring any program restart.
+- **Fixed: Settings Configuration Persistence**:
+  - Resolved config persistence bugs in `load_envs_to_db` where hardcoded defaults were overwriting DB states upon restart.
+  - Standardized all default notification/log parameters to `"off"`/`False` for a smoother stealth startup experience.
+- **Hardened: 100% Exception Coverage & Tracebacks**:
+  - Wrapped all newly introduced background systems and callback queries inside thorough `try-except` blocks with complete detailed `traceback` logging (`traceback.format_exc()`) to ensure effortless diagnostics.
+
 ## [0.0.10.2441I] - 2026-05-17
 
 ### 🏓 Auto Ping All: Detailed Log Reports

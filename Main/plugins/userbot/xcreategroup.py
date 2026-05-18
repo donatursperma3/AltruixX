@@ -46,7 +46,7 @@ import logging
 
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xcreategroup"
-PLUGIN_VERSION = "0.2.396"  # ✅ ADDED: Smart Recovery Indexing for Indicators
+PLUGIN_VERSION = "0.2.405"  # ✅ ADDED: Persistent Creation Reports & Log Exports
 
 logger = logging.getLogger("altruix.xcreategroup")
 logger.setLevel(logging.INFO)
@@ -157,6 +157,127 @@ async def load_creategroup_cache():
     except Exception as e:
         logger.error(f"[CreateGroup] Error loading cache: {e}")
 
+async def save_created_group_to_report(account_id: int, account_name: str, username: str, task_id: str, name: str, link: str, chat_id: int, group_type: str):
+    from Main.utils.file_helpers import get_db_path
+    import json
+    import os
+    import traceback
+    
+    file_path = get_db_path("xcreategroup_created_report.json")
+    try:
+        data = {}
+        if os.path.exists(file_path):
+            with open(file_path, "r", encoding="utf-8") as f:
+                try:
+                    data = json.load(f)
+                except Exception:
+                    logger.warning(f"Report file corrupted, resetting: {traceback.format_exc()}")
+        
+        acc_key = str(account_id)
+        if acc_key not in data:
+            data[acc_key] = {
+                "account_name": account_name,
+                "username": username,
+                "created_groups": []
+            }
+        else:
+            data[acc_key]["account_name"] = account_name
+            data[acc_key]["username"] = username
+            
+        exists = any(g.get("id") == chat_id for g in data[acc_key]["created_groups"])
+        if not exists:
+            data[acc_key]["created_groups"].append({
+                "task_id": task_id,
+                "name": name,
+                "link": link,
+                "id": chat_id,
+                "type": group_type,
+                "time": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            })
+            
+            tmp = f"{file_path}.tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            os.replace(tmp, file_path)
+            logger.info(f"[CreateGroup] Saved successful creation of '{name}' to persistent report database.")
+    except Exception as e:
+        logger.error(f"[CreateGroup] Failed to save created group to report: {e}\n{traceback.format_exc()}")
+
+async def sync_existing_created_groups():
+    from Main.utils.file_helpers import get_db_path
+    import json
+    import os
+    
+    file_path = get_db_path("xcreategroup_created_report.json")
+    report_data = {}
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                report_data = json.load(f)
+        except Exception:
+            pass
+            
+    updated = False
+    
+    def add_grp(acc_id, acc_name, username, task_id, grp):
+        nonlocal updated
+        acc_key = str(acc_id)
+        if acc_key not in report_data:
+            report_data[acc_key] = {
+                "account_name": acc_name,
+                "username": username,
+                "created_groups": []
+            }
+        exists = any(g.get("id") == grp.get("id") for g in report_data[acc_key]["created_groups"])
+        if not exists:
+            time_str = grp.get("time")
+            if time_str and len(time_str) == 8:
+                time_str = f"{datetime.now().strftime('%Y-%m-%d')} {time_str}"
+            report_data[acc_key]["created_groups"].append({
+                "task_id": task_id,
+                "name": grp.get("name"),
+                "link": grp.get("link"),
+                "id": grp.get("id"),
+                "type": grp.get("type", "g"),
+                "time": time_str or datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            })
+            updated = True
+
+    for tid, task in CREATEGROUP_TASKS.items():
+        grps = task.get("created_groups", [])
+        if grps:
+            c_id = task.get("user_id")
+            if c_id:
+                acc_name = task.get("account_name", "Unknown Account")
+                user_client = next((c for c in Altruix.clients if c.me and c.me.id == c_id), None)
+                uname = user_client.me.username if (user_client and user_client.me) else ""
+                for g in grps:
+                    add_grp(c_id, acc_name, uname, tid, g)
+                    
+    for tid, task in COMPLETED_CREATEGROUP_TASKS.items():
+        grps = task.get("created_groups", [])
+        if grps:
+            c_id = task.get("client_id") or task.get("user_id")
+            if c_id:
+                user_client = next((c for c in Altruix.clients if c.me and c.me.id == c_id), None)
+                acc_name = "Unknown Account"
+                uname = ""
+                if user_client and user_client.me:
+                    acc_name = f"{user_client.me.first_name or ''} {user_client.me.last_name or ''}".strip()
+                    uname = user_client.me.username or ""
+                for g in grps:
+                    add_grp(c_id, acc_name, uname, tid, g)
+                    
+    if updated:
+        try:
+            tmp = f"{file_path}.tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(report_data, f, indent=2, ensure_ascii=False)
+            os.replace(tmp, file_path)
+            logger.info("[CreateGroup] Synchronized existing created groups history to persistent report database.")
+        except Exception as e:
+            logger.error(f"[CreateGroup] Failed to save synced report: {e}")
+
 async def check_interrupted_tasks():
     """Scan for tasks that were interrupted by a restart and notify user."""
     logger.info("[CreateGroup] Memulai pemeriksaan task yang terhenti...")
@@ -195,6 +316,12 @@ async def check_interrupted_tasks():
         return
     
     logger.info(f"[CreateGroup] Target log chat: {target_log_chat}")
+    
+    # Sync historic creations asynchronously to report database
+    try:
+        await sync_existing_created_groups()
+    except Exception as e:
+        logger.error(f"[CreateGroup] Failed to run startup report sync: {e}")
         
     interrupted_found = False
     tasks_to_clean = []  # Task yang sudah selesai tapi belum dibersihkan
@@ -272,6 +399,30 @@ async def check_interrupted_tasks():
         acc_idx = params.get("account_idx", smart_idx)
         tot_accs = params.get("total_accs", smart_total)
         
+        # Tentukan tujuan pengiriman notifikasi recovery
+        admin_id = task_data.get("admin_id")
+        
+        # Ambil config asisten/recovery log untuk admin ini secara dinamis
+        try:
+            from Main.internals.settings_handlers.creategroup_handlers import load_user_cg_config
+            user_conf = load_user_cg_config(admin_id) if admin_id else {}
+        except Exception as e:
+            logger.warning(f"[CreateGroup] Gagal load user config untuk admin_id {admin_id}: {e}")
+            user_conf = {}
+        interrupted_log_dest = user_conf.get("interrupted_log", "off")
+        
+        if interrupted_log_dest == "off":
+            logger.info(f"[CreateGroup] Skip notifikasi recovery untuk Task {key_id} karena 'interrupted_log' diset OFF.")
+            RECOVERY_NOTIFIED.add(key_id)
+            continue
+            
+        destinations = []
+        if interrupted_log_dest in ["log_group", "both"]:
+            destinations.append(target_log_chat)
+        if interrupted_log_dest in ["pm_bot", "both"] and admin_id:
+            if str(admin_id) != str(target_log_chat):
+                destinations.append(admin_id)
+                
         try:
             # Build keyboard
             keyboard = []
@@ -295,24 +446,29 @@ async def check_interrupted_tasks():
                 
             buttons = InlineKeyboardMarkup(keyboard)
 
-            await Altruix.bot.send_message(
-                target_log_chat,
-                f"<blockquote expandable>"
-                f"⚠️ <b>Interrupted Task Detected {acc_idx}/{tot_accs}</b>\n\n"
-                f"Task CreateGroup terhenti akibat restart.\n"
-                f"• Account: <b>{html.escape(account_name)}</b>\n"
-                f"• Task ID: <code>{tid_display}</code>\n"
-                f"• Progress: {current}/{total} grup (sisa {remaining})\n"
-                f"• Step terakhir: <code>{step_info}</code>\n\n"
-                f"<i>Ingin melanjutkan proses yang tersisa?</i>"
-                f"</blockquote>",
-                reply_markup=buttons,
-                parse_mode=ParseMode.HTML
-            )
+            for dest in destinations:
+                try:
+                    await Altruix.bot.send_message(
+                        chat_id=dest,
+                        text=f"<blockquote expandable>"
+                        f"⚠️ <b>Interrupted Task Detected {acc_idx}/{tot_accs}</b>\n\n"
+                        f"Task CreateGroup terhenti akibat restart.\n"
+                        f"• Account: <b>{html.escape(account_name)}</b>\n"
+                        f"• Task ID: <code>{tid_display}</code>\n"
+                        f"• Progress: {current}/{total} grup (sisa {remaining})\n"
+                        f"• Step terakhir: <code>{step_info}</code>\n\n"
+                        f"<i>Ingin melanjutkan proses yang tersisa?</i>"
+                        f"</blockquote>",
+                        reply_markup=buttons,
+                        parse_mode=ParseMode.HTML
+                    )
+                    logger.info(f"[CreateGroup] ✅ Notifikasi recovery dikirim ke {dest} untuk Task {key_id}")
+                except Exception as send_err:
+                    logger.warning(f"[CreateGroup] Gagal kirim recovery ke {dest} untuk Task {key_id}: {send_err}")
+                    
             RECOVERY_NOTIFIED.add(key_id)
-            logger.info(f"[CreateGroup] ✅ Notifikasi recovery dikirim untuk Task {key_id}")
         except Exception as e:
-            logger.error(f"[CreateGroup] ❌ Gagal kirim notifikasi recovery untuk {key_id}: {e}")
+            logger.error(f"[CreateGroup] ❌ Gagal memproses notifikasi recovery untuk {key_id}: {e}")
     
     # Bersihkan task yang sudah selesai dari cache
     for key_id in tasks_to_clean:
@@ -809,7 +965,9 @@ async def creategroup_loop(
     task_id: str = None,
     is_resume: bool = False,
     account_idx: int = 1,
-    total_accs: int = 1
+    total_accs: int = 1,
+    batch_account: int = 3,
+    ba_account_delay: int = 60
 ):
     """Main loop untuk membuat grup"""
     effective_user_id = user_id or (initial_message.from_user.id if initial_message.from_user else None)
@@ -919,7 +1077,9 @@ async def creategroup_loop(
                     "batch_action": batch_action,
                     "ba_delay": ba_delay,
                     "account_idx": account_idx,
-                    "total_accs": total_accs
+                    "total_accs": total_accs,
+                    "batch_account": batch_account,
+                    "ba_account_delay": ba_account_delay
                 },
                 "task_obj": asyncio.current_task()
             }
@@ -954,11 +1114,13 @@ async def creategroup_loop(
              try:
                  control_message = await bot_client.send_message(
                      LOG_CHAT_ID,
+                     f"<blockquote expandable>"
                      f"🚀 <b>Task Control Panel {account_idx}/{total_accs}</b>\n"
                      f"• TID: <code>{tid}</code>\n"
                      f"• Account: <b>{html.escape(account_name_raw)}</b>\n"
                      f"• Target: <code>{count}</code> grup\n\n"
-                     f"<i>Linear Log threading aktif di bawah pesan ini.</i>",
+                     f"<i>Linear Log threading aktif di bawah pesan ini.</i>"
+                     f"</blockquote>",
                      reply_markup=control_buttons,
                      parse_mode=ParseMode.HTML
                  )
@@ -996,7 +1158,7 @@ async def creategroup_loop(
             if is_resume:
                 resume_msg = (
                     f"<blockquote expandable>"
-                    f"🔄 <b>Task Create {type_label} Resumed</b>\n"
+                    f"🔄 <b>Task Create {type_label} Resumed {account_idx}/{total_accs}</b>\n"
                     f"• Task ID: <code>{tid}</code>\n"
                     f"• Account: <b>{html.escape(account_name_raw)}</b>\n"
                     f"• Melanjutkan dari {unit_label} ke-{CREATEGROUP_TASKS[task_key].get('current_index', 0) + 1}\n"
@@ -1007,7 +1169,7 @@ async def creategroup_loop(
                 await send_log_notification(
                     bot_client,
                 f"<blockquote expandable>"
-                f"🚀 <b>Task Create {type_label} Started</b>\n"
+                f"🚀 <b>Task Create {type_label} Started {account_idx}/{total_accs}</b>\n"
                 f"• Task ID: <code>{tid}</code>\n"
                 f"• Account: <b>{html.escape(f'{user_info.first_name or ''} {user_info.last_name or ''}'.strip() or 'Unknown')}</b>\n"
                 f"• Account ID: <code>{user_info.id}</code>\n"
@@ -1016,7 +1178,8 @@ async def creategroup_loop(
                 f"• Delay Per-{type_label}: <code>{delay}</code> detik\n"
                 f"• Type: {group_type}\n"
                 f"• Batch: <code>{batch_size}</code> {unit_label}, delay <code>{extra_delay_minutes}</code> menit\n"
-                f"• Batch Act: <code>{batch_action}</code> act, delay <code>{ba_delay}</code> detik"
+                f"• Batch Act: <code>{batch_action}</code> act, delay <code>{ba_delay}</code> detik\n"
+                f"• Batch Account: <code>{batch_account}</code> acc, delay <code>{ba_account_delay}</code> detik"
                 f"</blockquote>",
                 effective_user_id,
                 reply_id
@@ -1046,7 +1209,9 @@ async def creategroup_loop(
                 except Exception as e:
                     await send_log_notification(
                         bot_client,
-                        f"⚠️ Gagal mendapatkan bot {bot_id}: {str(e)}",
+                        f"<blockquote expandable>"
+                        f"⚠️ Gagal mendapatkan bot {bot_id} (Akun: {account_name_raw}): {str(e)}"
+                        f"</blockquote>",
                         effective_user_id,
                         reply_id
                     )
@@ -1064,8 +1229,10 @@ async def creategroup_loop(
                 if photo_path:
                     await send_log_notification(
                         bot_client,
+                        f"<blockquote expandable>"
                         f"✅ Foto profil ({source_label}) berhasil di-download ({os.path.getsize(photo_path)} bytes)\n"
-                        f"💡 Use <code>.taskstatus {tid}</code> for details.",
+                        f"💡 Use <code>.taskstatus {tid}</code> for details."
+                        f"</blockquote>",
                         effective_user_id,
                         reply_id
                     )
@@ -1249,11 +1416,55 @@ async def creategroup_loop(
                         lines.append(new_line)
                     current_log_text = "\n".join(lines)
                 
-                for client_type, msg in current_log_msgs:
-                    try:
-                        await msg.edit_text(current_log_text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
-                    except Exception as e:
-                        logger.warning(f"Gagal edit log message ({client_type}): {e}")
+                for idx, (client_type, msg) in enumerate(list(current_log_msgs)):
+                    if client_type == "bot":
+                        try:
+                            await msg.edit_text(current_log_text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+                        except FloodWait as e:
+                            logger.warning(f"FloodWait saat edit log message ({client_type}): {e.value}s. Mengalihkan ke secondary bot...")
+                            
+                            # Coba cari secondary bot yang bisa kirim pesan
+                            secondary_bots = getattr(Altruix, "secondary_bots", [])
+                            candidate_bots = []
+                            if Altruix.bot and (not msg._client or Altruix.bot.me.id != msg._client.me.id):
+                                candidate_bots.append(Altruix.bot)
+                            for sec_bot in secondary_bots:
+                                if sec_bot.me and (not msg._client or sec_bot.me.id != msg._client.me.id):
+                                    candidate_bots.append(sec_bot)
+                            
+                            success_fallback = False
+                            for sec_bot in candidate_bots:
+                                try:
+                                    # Kirim log baru menggunakan bot asisten alternatif
+                                    new_msg = await sec_bot.send_message(
+                                        chat_id=LOG_CHAT_ID,
+                                        text=current_log_text,
+                                        reply_to_message_id=reply_id,
+                                        parse_mode=ParseMode.HTML,
+                                        disable_web_page_preview=True
+                                    )
+                                    # Coba hapus log lama agar tidak double
+                                    try:
+                                        await msg.delete()
+                                    except Exception:
+                                        pass
+                                    # Update reference agar tracker berikutnya menggunakan bot alternatif ini
+                                    current_log_msgs[idx] = ("bot", new_msg)
+                                    success_fallback = True
+                                    logger.info(f"Berhasil memigrasikan log progress ke bot asisten alternatif: @{sec_bot.me.username or sec_bot.me.id}")
+                                    break
+                                except Exception as fallback_err:
+                                    logger.warning(f"Gagal memigrasikan log progress ke bot asisten {sec_bot.me.id if sec_bot.me else 'Unknown'}: {fallback_err}")
+                            
+                            if not success_fallback:
+                                logger.error("Semua bot asisten alternatif gagal digunakan untuk fallback log!")
+                        except Exception as e:
+                            logger.warning(f"Gagal edit log message ({client_type}): {e}")
+                    else:
+                        try:
+                            await msg.edit_text(current_log_text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+                        except Exception as e:
+                            logger.warning(f"Gagal edit log message ({client_type}): {e}")
 
             async def wait_with_countdown(total_seconds, reply_msg=None):
                 if total_seconds <= 0: return
@@ -1390,7 +1601,13 @@ async def creategroup_loop(
                             err_str = str(e)
                             logger.error(f"Gagal membuat grup dasar: {e}\n{traceback.format_exc()}")
                             
-                            error_msg = f"❌ <b>Gagal membuat Grup Dasar</b>\n• Account: {html.escape(account_name_raw)}\n• Error: <code>{html.escape(err_str)}</code>"
+                            error_msg = (
+                                f"<blockquote expandable>"
+                                f"❌ <b>Gagal membuat Grup Dasar</b>\n"
+                                f"• Account: {html.escape(account_name_raw)}\n"
+                                f"• Error: <code>{html.escape(err_str)}</code>"
+                                f"</blockquote>"
+                            )
                             
                             # 1. Update the consolidated log (edit)
                             await update_group_log(f"❌ Gagal: {html.escape(err_str)}")
@@ -1495,7 +1712,13 @@ async def creategroup_loop(
                             err_str = str(e)
                             logger.error(f"Gagal membuat {type_label_full}: {e}\n{traceback.format_exc()}")
                             
-                            error_msg = f"❌ <b>Gagal membuat {type_label_full}</b>\n• Account: {html.escape(account_name_raw)}\n• Error: <code>{html.escape(err_str)}</code>"
+                            error_msg = (
+                                f"<blockquote expandable>"
+                                f"❌ <b>Gagal membuat {type_label_full}</b>\n"
+                                f"• Account: {html.escape(account_name_raw)}\n"
+                                f"• Error: <code>{html.escape(err_str)}</code>"
+                                f"</blockquote>"
+                            )
                             
                             # 1. Update the consolidated log (edit)
                             await update_group_log(f"❌ Gagal: {html.escape(err_str)}")
@@ -1508,7 +1731,11 @@ async def creategroup_loop(
                                 await update_group_log("🛑 <b>Task dihentikan:</b> Limit akun tercapai (Channels Too Much).")
                                 await send_log_notification(
                                     bot_client, 
-                                    f"🛑 <b>Task Create {type_label_full} Dihentikan</b>\n• Account: {html.escape(account_name_raw)}\n• Reason: <code>CHANNELS_TOO_MUCH</code> (Limit tercapai)",
+                                    f"<blockquote expandable>"
+                                    f"🛑 <b>Task Create {type_label_full} Dihentikan</b>\n"
+                                    f"• Account: {html.escape(account_name_raw)}\n"
+                                    f"• Reason: <code>CHANNELS_TOO_MUCH</code> (Limit tercapai)"
+                                    f"</blockquote>",
                                     effective_user_id,
                                     reply_to_msg_id=reply_id
                                 )
@@ -1787,6 +2014,22 @@ async def creategroup_loop(
 
                 # Group completed, move to next
                 created_groups.append({'name': current_group_name, 'link': invite_link, 'id': created_chat_id, 'time': datetime.now().strftime('%H:%M:%S'), 'type': group_type})
+                
+                # Save to persistent report JSON
+                try:
+                    await save_created_group_to_report(
+                        account_id=user_client.me.id,
+                        account_name=f"{user_client.me.first_name or ''} {user_client.me.last_name or ''}".strip(),
+                        username=user_client.me.username or "",
+                        task_id=tid,
+                        name=current_group_name,
+                        link=invite_link,
+                        chat_id=created_chat_id,
+                        group_type=group_type
+                    )
+                except Exception as re:
+                    logger.error(f"[CreateGroup] Failed to auto-save report: {re}")
+                
                 state["current_index"] = i
                 state["current_step"] = None
                 current_step = None
@@ -2573,8 +2816,15 @@ async def confirm_creategroup_handler(client: Client, callback_query: CallbackQu
         # await callback_query.message.reply("✅ Task Started")
         
     except Exception as e:
-        logger.error(f"Error in confirm_creategroup_handler: {e}")
-        await callback_query.answer(f"Error: {str(e)}")
+        err_str = str(e)
+        if "QUERY_ID_INVALID" in err_str:
+            logger.debug(f"Expired/already answered callback query in confirm_creategroup_handler: {e}")
+        else:
+            logger.error(f"Error in confirm_creategroup_handler: {e}")
+            try:
+                await callback_query.answer(f"Error: {err_str}", show_alert=True)
+            except Exception:
+                pass
 
 @Altruix.register_on_cmd(
     ["creategroupstatus", "cgstatus"],
@@ -3090,8 +3340,15 @@ async def creategroup_control_handler(client: Client, callback_query: CallbackQu
                     if callback_query.message: await callback_query.message.delete()
     
     except Exception as e:
-        logger.error(f"Error in creategroup_control_handler: {e}")
-        await callback_query.answer(f"Error: {str(e)}")
+        err_str = str(e)
+        if "QUERY_ID_INVALID" in err_str:
+            logger.debug(f"Expired/already answered callback query in creategroup_control_handler: {e}")
+        else:
+            logger.error(f"Error in creategroup_control_handler: {e}")
+            try:
+                await callback_query.answer(f"Error: {err_str}", show_alert=True)
+            except Exception:
+                pass
 
 @Altruix.register_on_cmd(
     ["cgtid", "cgpanel"],

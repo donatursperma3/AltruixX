@@ -38,7 +38,7 @@ logger = logging.getLogger("altruix.pm_logger_user")
 logger.setLevel(logging.INFO)
 
 PLUGIN_NAME = __plugin_name__ 
-PLUGIN_VERSION = "1.3.74C"  # ✅ Adjusted safe settings fallback logic
+PLUGIN_VERSION = "1.3.75"  # ✅ Added self-destruct media download+reupload support
 from Main.utils.file_helpers import get_db_path, get_user_button_style as get_btn_style
 STORAGE_FILE = Path(get_db_path("pm_logger_user_settings.json"))
 
@@ -579,10 +579,26 @@ async def pm_logger_user_handler(c: Client, m: RawMessage):
                 return
 
         is_restricted = getattr(m, "has_protected_content", False)
-        
-        # Get file size if restricted
+
+        # ✅ Self-Destruct Media Detection
+        is_self_destruct = False
+        ttl_value = None
+        if m.media:
+            _ttl = getattr(m, 'ttl_period', None) or 0
+            if _ttl and _ttl > 0:
+                is_self_destruct = True
+                ttl_value = _ttl
+            if not is_self_destruct:
+                for _attr in ['photo', 'video', 'video_note', 'voice']:
+                    _media_obj = getattr(m, _attr, None)
+                    if _media_obj and getattr(_media_obj, 'ttl_seconds', None):
+                        is_self_destruct = True
+                        ttl_value = _media_obj.ttl_seconds
+                        break
+
+        # Get file size if restricted or self-destruct
         size_str = ""
-        if is_restricted:
+        if is_restricted or is_self_destruct:
             size = 0
             if m.document: size = m.document.file_size
             elif m.photo: size = m.photo.file_size
@@ -598,9 +614,11 @@ async def pm_logger_user_handler(c: Client, m: RawMessage):
                 else: size_str = f" ({size/(1024*1024):.2f} MB)"
 
         log_content = (
-            f"👤 <b>New PM Received (User)</b>"
+            f"ℹ️ <b>New PM Received (User)</b>"
         )
-        if is_restricted:
+        if is_self_destruct:
+            log_content += f"🔥 <b>Self-Destruct Media (TTL: {ttl_value}s){size_str}</b>\n\n"
+        elif is_restricted:
             log_content += f"⚠️ <b>ini adalah restrict content dengan ukuran{size_str}</b>\n\n"
         else:
             log_content += "\n"
@@ -614,7 +632,8 @@ async def pm_logger_user_handler(c: Client, m: RawMessage):
             f"• <b>To Account:</b> {c.me.mention}\n"
             f"• <b>Reply to msg id:</b> <code>{reply_id_val}</code>\n"
             f"• <b>Time:</b> <code>{log_time}</code>\n"
-            f"• <b>Type:</b> <code>{msg_type_str.upper()}</code></blockquote>\n"
+            f"• <b>Type:</b> <code>{msg_type_str.upper()}</code>\n"
+            f"• <b>Self-Destruct:</b> <code>{is_self_destruct}</code></blockquote>\n"
             f"\n📩 <b>Message:</b>\n<blockquote expandable>{html.escape(str(msg_text)[:1000])}</blockquote>"
         )
 
@@ -657,30 +676,87 @@ async def pm_logger_user_handler(c: Client, m: RawMessage):
             ]
         ]
         
-        if is_restricted:
+        if is_restricted or is_self_destruct:
             keyboard[1].append(InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, "🚀 Bypass/Force Forward"), callback_data=f"pmlu_force_fwd_{m.chat.id}_{m.id}_{c.me.id}", style=button_style))
 
-        # Forward message to topic
+        # ─── FORWARD / REUPLOAD ───
         fwd_msg = None
+        reupload_msg = None
+
         if Altruix.log_chat:
-            try:
-                fwd_msg = await c.forward_messages(Altruix.log_chat, m.chat.id, m.id, message_thread_id=topic_id)
-            except Exception as e:
-                logger.debug(f"PMLU Forward failed: {e}")
-        
-        if not fwd_msg and not Altruix.log_chat:
+            if is_self_destruct:
+                # ✅ Self-destruct: download immediately then re-upload
+                try:
+                    logger.info(f"PMLU: Self-destruct media (TTL={ttl_value}s), downloading...")
+                    file_path = await c.download_media(m)
+                    if file_path:
+                        sd_caption = (
+                            f"🔥 <b>Self-Destruct Media</b> (TTL: {ttl_value}s)\n"
+                            f"From: {sender_hyperlink}\nTo: {c.me.mention}"
+                        )
+                        try:
+                            if m.photo:
+                                reupload_msg = await c.send_photo(
+                                    Altruix.log_chat, file_path, caption=sd_caption,
+                                    parse_mode=enums.ParseMode.HTML, message_thread_id=topic_id)
+                            elif m.video or m.animation:
+                                reupload_msg = await c.send_video(
+                                    Altruix.log_chat, file_path, caption=sd_caption,
+                                    parse_mode=enums.ParseMode.HTML, message_thread_id=topic_id)
+                            elif m.video_note:
+                                reupload_msg = await c.send_video_note(
+                                    Altruix.log_chat, file_path, message_thread_id=topic_id)
+                            elif m.voice:
+                                reupload_msg = await c.send_voice(
+                                    Altruix.log_chat, file_path, caption=sd_caption,
+                                    parse_mode=enums.ParseMode.HTML, message_thread_id=topic_id)
+                            else:
+                                reupload_msg = await c.send_document(
+                                    Altruix.log_chat, file_path, caption=sd_caption,
+                                    parse_mode=enums.ParseMode.HTML, message_thread_id=topic_id)
+                        except Exception as up_e:
+                            logger.error(f"PMLU: Self-destruct re-upload failed: {up_e}")
+                        finally:
+                            if os.path.exists(str(file_path)):
+                                os.remove(file_path)
+                        logger.info("PMLU: Self-destruct media saved to log group")
+                    else:
+                        logger.warning("PMLU: Self-destruct download returned empty path")
+                except Exception as e:
+                    logger.error(f"PMLU: Self-destruct download failed: {e}")
+            else:
+                # Normal forward
+                try:
+                    fwd_msg = await c.forward_messages(Altruix.log_chat, m.chat.id, m.id, message_thread_id=topic_id)
+                except Exception as e:
+                    logger.debug(f"PMLU Forward failed: {e}")
+                    # ✅ Fallback: if forward fails for media, try download+reupload
+                    if m.media:
+                        try:
+                            file_path = await c.download_media(m)
+                            if file_path:
+                                reupload_msg = await c.send_document(
+                                    Altruix.log_chat, file_path,
+                                    caption=f"📎 <b>Auto-Saved Media</b>\nFrom: {sender_hyperlink}",
+                                    parse_mode=enums.ParseMode.HTML, message_thread_id=topic_id)
+                                if os.path.exists(str(file_path)):
+                                    os.remove(file_path)
+                        except Exception as dl_e:
+                            logger.error(f"PMLU Fallback reupload failed: {dl_e}")
+
+        if not fwd_msg and not reupload_msg and not Altruix.log_chat:
             return
 
-        # Send Detailed Info using Main Bot (Altruix.bot) for robustness - similar to mention logger
+        # Send Detailed Info using Main Bot (Altruix.bot) for robustness
+        media_ref_id = fwd_msg.id if fwd_msg else (reupload_msg.id if reupload_msg else None)
         try:
-            # Send notification message with interactive buttons
             sent_log = await Altruix.bot.send_message(
                 Altruix.log_chat,
                 log_content,
                 parse_mode=enums.ParseMode.HTML,
                 disable_web_page_preview=True,
                 reply_markup=InlineKeyboardMarkup(keyboard),
-                reply_to_message_id=fwd_msg.id if fwd_msg else None,
+                reply_to_message_id=media_ref_id,
                 message_thread_id=topic_id
             )
             
@@ -689,7 +765,7 @@ async def pm_logger_user_handler(c: Client, m: RawMessage):
             PM_LOG_CACHE[f"{m.chat.id}_{m.id}"] = {
                 "client_id": c.me.id,
                 "log_msg_id": sent_log.id,
-                "fwd_msg_id": fwd_msg.id if fwd_msg else None,
+                "fwd_msg_id": media_ref_id,
                 "thread_id": actual_thread_id,
                 "chat_id": m.chat.id,
                 "msg_id": m.id,
@@ -765,7 +841,7 @@ async def pm_logger_user_edit_handler(c: Client, m: RawMessage):
         reply_id_val = m.reply_to_message_id if m.reply_to_message_id else "False"
         
         log_content = (
-            f"👤 <b>New PM Received (User) [#EDITED]</b>\n"
+            f"ℹ️ <b>New PM Received (User) [#EDITED]</b>\n"
             f"<blockquote expandable>• <b>From:</b> {sender_hyperlink}\n"
             f"• <b>User ID:</b> <code>{sender_id}</code>\n"
             f"• <b>Username:</b> {sender_username}\n"

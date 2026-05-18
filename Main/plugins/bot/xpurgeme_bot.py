@@ -231,83 +231,69 @@ async def get_purgeme_keyboard(chat_id, user_id, unique_id):
             # Count Sub-Menu
             count_lbl = loc("purgeme_count", "Count: {}").format(count)
             buttons.append([InlineKeyboardButton(f"━━ {count_lbl} ━━", callback_data="noop", style=btn_style)])
-            buttons.append([
-                InlineKeyboardButton("-10", callback_data=f"pg_cnt_sub_10_{unique_id}", style=btn_style),
-                InlineKeyboardButton("-1", callback_data=f"pg_cnt_sub_1_{unique_id}", style=btn_style),
-                InlineKeyboardButton("+1", callback_data=f"pg_cnt_add_1_{unique_id}", style=btn_style),
-                InlineKeyboardButton("+10", callback_data=f"pg_cnt_add_10_{unique_id}", style=btn_style),
-            ])
-            buttons.append([
-                InlineKeyboardButton("+50", callback_data=f"pg_cnt_add_50_{unique_id}", style=btn_style),
-                InlineKeyboardButton("+100", callback_data=f"pg_cnt_add_100_{unique_id}", style=btn_style),
-                InlineKeyboardButton("+500", callback_data=f"pg_cnt_add_500_{unique_id}", style=btn_style),
-            ])
+            adj_steps = [1, 5, 10, 50, 100, 500]
+            for s in adj_steps:
+                buttons.append([
+                    InlineKeyboardButton(f"-{s}", callback_data=f"pg_cnt_sub_{s}_{unique_id}", style=btn_style),
+                    InlineKeyboardButton(f"+{s}", callback_data=f"pg_cnt_add_{s}_{unique_id}", style=btn_style)
+                ])
             buttons.append([InlineKeyboardButton("Back", callback_data=f"pg_back_{unique_id}", style=btn_style)])
         
         elif sub_menu == "batch":
             # Batch Sub-Menu
             batch_lbl = f"Batch: {batch_size}"
             buttons.append([InlineKeyboardButton(f"━━ {batch_lbl} ━━", callback_data="noop", style=btn_style)])
-            buttons.append([
-                InlineKeyboardButton("-10", callback_data=f"pg_btc_sub_10_{unique_id}", style=btn_style),
-                InlineKeyboardButton("-5", callback_data=f"pg_btc_sub_5_{unique_id}", style=btn_style),
-                InlineKeyboardButton("+5", callback_data=f"pg_btc_add_5_{unique_id}", style=btn_style),
-                InlineKeyboardButton("+10", callback_data=f"pg_btc_add_10_{unique_id}", style=btn_style),
-            ])
-            buttons.append([
-                InlineKeyboardButton("+50", callback_data=f"pg_btc_add_50_{unique_id}", style=btn_style),
-                InlineKeyboardButton("+100", callback_data=f"pg_btc_add_100_{unique_id}", style=btn_style),
-            ])
+            adj_steps = [5, 10, 30, 50, 100]
+            for s in adj_steps:
+                buttons.append([
+                    InlineKeyboardButton(f"-{s}", callback_data=f"pg_btc_sub_{s}_{unique_id}", style=btn_style),
+                    InlineKeyboardButton(f"+{s}", callback_data=f"pg_btc_add_{s}_{unique_id}", style=btn_style)
+                ])
             buttons.append([InlineKeyboardButton("Back", callback_data=f"pg_back_{unique_id}", style=btn_style)])
         
         elif sub_menu == "keeprecent":
             # Keep Recent Sub-Menu
             kr_lbl = f"Keep Recent: {keep_recent} msg"
             buttons.append([InlineKeyboardButton(f"━━ {kr_lbl} ━━", callback_data="noop", style=btn_style)])
-            buttons.append([
-                InlineKeyboardButton("-10", callback_data=f"pg_kr_sub_10_{unique_id}", style=btn_style),
-                InlineKeyboardButton("-1", callback_data=f"pg_kr_sub_1_{unique_id}", style=btn_style),
-                InlineKeyboardButton("+1", callback_data=f"pg_kr_add_1_{unique_id}", style=btn_style),
-                InlineKeyboardButton("+10", callback_data=f"pg_kr_add_10_{unique_id}", style=btn_style),
-            ])
+            adj_steps = [1, 5, 10, 50, 100]
+            for s in adj_steps:
+                buttons.append([
+                    InlineKeyboardButton(f"-{s}", callback_data=f"pg_kr_sub_{s}_{unique_id}", style=btn_style),
+                    InlineKeyboardButton(f"+{s}", callback_data=f"pg_kr_add_{s}_{unique_id}", style=btn_style)
+                ])
             buttons.append([InlineKeyboardButton("Back", callback_data=f"pg_back_{unique_id}", style=btn_style)])
 
         elif sub_menu == "delay":
             # Delay/Msg Sub-Menu
             delay_lbl = loc("purgeme_delay", "Delay/Msg: {}s").format(delay)
             buttons.append([InlineKeyboardButton(f"━━ {delay_lbl} ━━", callback_data="noop", style=btn_style)])
+            adj_steps = [0.25, 0.5, 1.0, 2.0, 5.0]
+            for s in adj_steps:
+                s_str = f"{s}" if s % 1 != 0 else f"{int(s)}"
+                buttons.append([
+                    InlineKeyboardButton(f"-{s_str}s", callback_data=f"pg_dly_sub_{s_str}_{unique_id}", style=btn_style),
+                    InlineKeyboardButton(f"+{s_str}s", callback_data=f"pg_dly_add_{s_str}_{unique_id}", style=btn_style)
+                ])
             buttons.append([
-                InlineKeyboardButton("-1s", callback_data=f"pg_dly_sub_1.0_{unique_id}", style=btn_style),
-                InlineKeyboardButton("-0.5s", callback_data=f"pg_dly_sub_0.5_{unique_id}", style=btn_style),
-                InlineKeyboardButton("+0.5s", callback_data=f"pg_dly_add_0.5_{unique_id}", style=btn_style),
-                InlineKeyboardButton("+1s", callback_data=f"pg_dly_add_1.0_{unique_id}", style=btn_style),
+                InlineKeyboardButton("Reset (0s)", callback_data=f"pg_dly_reset_{unique_id}", style=btn_style),
+                InlineKeyboardButton("Back", callback_data=f"pg_back_{unique_id}", style=btn_style)
             ])
-            buttons.append([
-                InlineKeyboardButton("-0.25s", callback_data=f"pg_dly_sub_0.25_{unique_id}", style=btn_style),
-                InlineKeyboardButton("+0.25s", callback_data=f"pg_dly_add_0.25_{unique_id}", style=btn_style),
-                InlineKeyboardButton("+5s", callback_data=f"pg_dly_add_5.0_{unique_id}", style=btn_style),
-                InlineKeyboardButton("Reset", callback_data=f"pg_dly_reset_{unique_id}", style=btn_style),
-            ])
-            buttons.append([InlineKeyboardButton("Back", callback_data=f"pg_back_{unique_id}", style=btn_style)])
         
         elif sub_menu == "bdelay":
             # Delay/Batch Sub-Menu
             bd_min = int(batch_delay / 60)
             bd_lbl = f"Delay/Batch: {bd_min}m"
             buttons.append([InlineKeyboardButton(f"━━ {bd_lbl} ━━", callback_data="noop", style=btn_style)])
+            adj_steps = [1, 2, 5, 10, 30]
+            for s in adj_steps:
+                buttons.append([
+                    InlineKeyboardButton(f"-{s}m", callback_data=f"pg_dbc_sub_{s}m_{unique_id}", style=btn_style),
+                    InlineKeyboardButton(f"+{s}m", callback_data=f"pg_dbc_add_{s}m_{unique_id}", style=btn_style)
+                ])
             buttons.append([
-                InlineKeyboardButton("-2m", callback_data=f"pg_dbc_sub_2m_{unique_id}", style=btn_style),
-                InlineKeyboardButton("-1m", callback_data=f"pg_dbc_sub_1m_{unique_id}", style=btn_style),
-                InlineKeyboardButton("+1m", callback_data=f"pg_dbc_add_1m_{unique_id}", style=btn_style),
-                InlineKeyboardButton("+2m", callback_data=f"pg_dbc_add_2m_{unique_id}", style=btn_style),
+                InlineKeyboardButton("Reset (0m)", callback_data=f"pg_dbc_sub_999m_{unique_id}", style=btn_style),
+                InlineKeyboardButton("Back", callback_data=f"pg_back_{unique_id}", style=btn_style)
             ])
-            buttons.append([
-                InlineKeyboardButton("+5m", callback_data=f"pg_dbc_add_5m_{unique_id}", style=btn_style),
-                InlineKeyboardButton("+10m", callback_data=f"pg_dbc_add_10m_{unique_id}", style=btn_style),
-                InlineKeyboardButton("+30m", callback_data=f"pg_dbc_add_30m_{unique_id}", style=btn_style),
-                InlineKeyboardButton("Reset", callback_data=f"pg_dbc_sub_999m_{unique_id}", style=btn_style),
-            ])
-            buttons.append([InlineKeyboardButton("Back", callback_data=f"pg_back_{unique_id}", style=btn_style)])
         
         elif sub_menu == "mode":
             # Mode & Notify Sub-Menu
@@ -328,17 +314,16 @@ async def get_purgeme_keyboard(chat_id, user_id, unique_id):
             # Offset Sub-Menu
             off_lbl = f"Offset: {offset}"
             buttons.append([InlineKeyboardButton(f"━━ {off_lbl} ━━", callback_data="noop", style=btn_style)])
+            adj_steps = [5, 10, 50, 100, 500]
+            for s in adj_steps:
+                buttons.append([
+                    InlineKeyboardButton(f"-{s}", callback_data=f"pg_off_sub_{s}_{unique_id}", style=btn_style),
+                    InlineKeyboardButton(f"+{s}", callback_data=f"pg_off_add_{s}_{unique_id}", style=btn_style)
+                ])
             buttons.append([
-                InlineKeyboardButton("-10", callback_data=f"pg_off_sub_10_{unique_id}", style=btn_style),
-                InlineKeyboardButton("-5", callback_data=f"pg_off_sub_5_{unique_id}", style=btn_style),
-                InlineKeyboardButton("+5", callback_data=f"pg_off_add_5_{unique_id}", style=btn_style),
-                InlineKeyboardButton("+10", callback_data=f"pg_off_add_10_{unique_id}", style=btn_style),
-            ])
-            buttons.append([
-                InlineKeyboardButton("+50", callback_data=f"pg_off_add_50_{unique_id}", style=btn_style),
                 InlineKeyboardButton("Reset", callback_data=f"pg_off_reset_{unique_id}", style=btn_style),
+                InlineKeyboardButton("Back", callback_data=f"pg_back_{unique_id}", style=btn_style)
             ])
-            buttons.append([InlineKeyboardButton("Back", callback_data=f"pg_back_{unique_id}", style=btn_style)])
         
         elif sub_menu == "bounds":
             # ID Range Sub-Menu
@@ -418,20 +403,17 @@ async def get_purgeme_keyboard(chat_id, user_id, unique_id):
         elif sub_menu == "maxscan":
             max_scan = state.get("max_scan", 500)
             buttons.append([InlineKeyboardButton(f"━━ Max Scan: {max_scan} ━━", callback_data="noop", style=btn_style)])
-            buttons.append([
-                InlineKeyboardButton("-500", callback_data=f"pg_scn_sub_500_{unique_id}", style=btn_style),
-                InlineKeyboardButton("-100", callback_data=f"pg_scn_sub_100_{unique_id}", style=btn_style),
-                InlineKeyboardButton("-50", callback_data=f"pg_scn_sub_50_{unique_id}", style=btn_style),
-            ])
-            buttons.append([
-                InlineKeyboardButton("+50", callback_data=f"pg_scn_add_50_{unique_id}", style=btn_style),
-                InlineKeyboardButton("+100", callback_data=f"pg_scn_add_100_{unique_id}", style=btn_style),
-                InlineKeyboardButton("+500", callback_data=f"pg_scn_add_500_{unique_id}", style=btn_style),
-            ])
+            adj_steps = [50, 100, 500, 1000, 5000]
+            for s in adj_steps:
+                buttons.append([
+                    InlineKeyboardButton(f"-{s}", callback_data=f"pg_scn_sub_{s}_{unique_id}", style=btn_style),
+                    InlineKeyboardButton(f"+{s}", callback_data=f"pg_scn_add_{s}_{unique_id}", style=btn_style)
+                ])
             buttons.append([
                 InlineKeyboardButton("Reset", callback_data=f"pg_scn_reset_{unique_id}", style=btn_style),
                 InlineKeyboardButton("Back", callback_data=f"pg_back_{unique_id}", style=btn_style)
             ])
+
 
         elif sub_menu == "filter":
             # Message Type Filter Sub-Menu

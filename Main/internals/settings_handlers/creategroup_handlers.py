@@ -18,7 +18,7 @@ from pyrogram.enums import ParseMode
 
 from .states import user_creategroup_state
 
-HANDLER_VERSION = "0.3.222" # ✅ FIXED: Resume All for Paused Tasks & UI Stability
+HANDLER_VERSION = "0.3.229" # ✅ ADDED: Persistent Creation Reports, Log Exports, & Account Batching
 logger = logging.getLogger("altruix.creategroup.handlers")
 logger.setLevel(logging.INFO)
 
@@ -26,6 +26,7 @@ logger.setLevel(logging.INFO)
 DEFAULT_CREATEGROUP_CONFIG = {
     "delay": 60, "count": 2, "batch_delay": 10, "batch_size": 2, "action_delay": 3.0,
     "account_delay": 0.5, # ✅ NEW: Staggered start delay for multi-account tasks
+    "batch_account": 3, "ba_account_delay": 60, # ✅ NEW: Batch account running settings
     "batch_action": 30, "ba_delay": 30,
     "pattern": "🔰 X(tahun) B(bulan)-T(tanggal)", "username": None, "description": "Powered by @AlphaXProject",
     "bots": "@MissRose_bot @simixbot @Spillgame_bot @truthordaresbot @truthordares_bot @truthordarerp_bot @truthordarerln_bot @truthordares18_bot",
@@ -33,7 +34,8 @@ DEFAULT_CREATEGROUP_CONFIG = {
     "photo_source": "source", "custom_photo_id": None,
     "log_destination": "both", "group_type": "a",
     "log_format": "zip", "pin_first_msg": True, "temp_pin": True, "quote_block": True,
-    "rand_len": 3, "rand_lower": False, "rand_upper": True, "rand_static": True
+    "rand_len": 3, "rand_lower": False, "rand_upper": True, "rand_static": True,
+    "interrupted_log": "off"
 }
 
 
@@ -133,7 +135,7 @@ async def creategroup_cached_handler(c: Client, cb: CallbackQuery):
     user_style = get_user_button_style(session_user_id)
     
     if not CREATEGROUP_TASKS:
-        text = "<blockquote expandable><b>🔄 Restore Tasks</b>\n\n<i>Tidak ada task yang terhenti atau tersimpan di cache saat ini.</i></blockquote>"
+        text = "<blockquote expandable><b>🔄 Restore Tasks (Cache) [0/0 | Total: 0]</b>\n\n<i>Tidak ada task yang terhenti atau tersimpan di cache saat ini.</i></blockquote>"
         buttons = [[InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_menu_{session_index}_{page}", style=user_style)]]
         return await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
         
@@ -183,7 +185,7 @@ async def creategroup_cached_handler(c: Client, cb: CallbackQuery):
             InlineKeyboardButton(f"⚙️ Manage {tid} — {account[:15]}", callback_data=f"creategroup_task_manage_{tid}_{session_index}_{page}_{task_page}", style=user_style)
         ])
         
-    text = f"<blockquote expandable><b>🔄 Restore Tasks (Cache) [{task_page}/{total_pages}]</b>\n\n" + "\n".join(lines) + "\n\n<i>Klik tombol aksi di bawah untuk memproses task spesifik.</i></blockquote>"
+    text = f"<blockquote expandable><b>🔄 Restore Tasks (Cache) [{task_page}/{total_pages} | Total: {total_tasks}]</b>\n\n" + "\n".join(lines) + "\n\n<i>Klik tombol aksi di bawah untuk memproses task spesifik.</i></blockquote>"
     
     # ─── BULK CONTROL BUTTONS ───
     buttons.append([
@@ -576,9 +578,9 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
     
     session_text = ""
     if session_user:
-        session_text = f"<b>• Session:</b> ⭐ <a href='tg://user?id={session_user.id}'>{html.escape(session_user.first_name)}</a>\n"
+        session_text = f"• <b>Session:</b> ⭐ <a href='tg://user?id={session_user.id}'>{html.escape(session_user.first_name)}</a>\n"
     
-    session_text += f"<b>• Selected Acc(s):</b> <code>{sel_count}</code> / <code>{len(Altruix.clients)}</code>\n"
+    session_text += f"• <b>Selected Acc(s):</b> <code>{sel_count}</code> / <code>{len(Altruix.clients)}</code>\n"
 
     photo_status = f"Source Account" if config.get('photo_source') == "source" else "Custom Photo"
     if config.get('photo_source') == "custom":
@@ -626,7 +628,8 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
         f"• <b>Delay:</b> {config['delay']}s\n"
         f"• <b>Batch Delay:</b> {config['batch_delay']}m | <b>Batch Size:</b> {config['batch_size']} {unit_name}\n"
         f"• <b>Batch Act:</b> {config.get('batch_action', 30)} act | <b>B.Act Delay:</b> {config.get('ba_delay', 30)}s\n"
-        f"• <b>Action Delay:</b> {config['action_delay']}s | <b>Account Delay:</b> {config.get('account_delay', 0.5)}s\n"
+        f"• <b>Account Delay:</b> {config.get('account_delay', 0.5)}s | <b>B.Acc Size:</b> {config.get('batch_account', 3)} acc\n"
+        f"• <b>B.Acc Delay:</b> {config.get('ba_account_delay', 60)}s\n"
         f"• <b>Name:</b> {html.escape(name_preview)}\n"
         f"• <b>Username:</b> {config['username'] or 'None'}\n"
         f"• <b>Description:</b> {html.escape(config['description'])}\n"
@@ -640,10 +643,10 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
     )
     
     # ─── SUB-MENUS ───
-    if sub_menu in ["action_delay", "account_delay", "delay", "count", "batch_delay", "batch_size", "batch_action", "ba_delay"]:
+    if sub_menu in ["action_delay", "account_delay", "delay", "count", "batch_delay", "batch_size", "batch_action", "ba_delay", "batch_account", "ba_account_delay"]:
         # Sub-Menu Keypad
         # steps = {"delay": 10, "count": 1, "batch_delay": 1, "batch_size": 1, "action_delay": 0.5}
-        step_map = {"delay": 10, "count": 1, "batch_delay": 1, "batch_size": 1, "action_delay": 0.5, "account_delay": 0.5, "batch_action": 5, "ba_delay": 10}
+        step_map = {"delay": 10, "count": 1, "batch_delay": 1, "batch_size": 1, "action_delay": 0.5, "account_delay": 0.5, "batch_action": 5, "ba_delay": 10, "batch_account": 1, "ba_account_delay": 10}
         step = step_map.get(sub_menu, 1)
         step_str = f"{step}" if step < 1 else f"{int(step)}"
         
@@ -651,7 +654,8 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
         labels = {
             "action_delay": "Action Delay", "account_delay": "Account Delay", "delay": "Group Delay", 
             "count": "Total Groups", "batch_delay": "Batch Delay", "batch_size": "Batch Size",
-            "batch_action": "Batch Act", "ba_delay": "B.Act Delay"
+            "batch_action": "Batch Act", "ba_delay": "B.Act Delay",
+            "batch_account": "Batch Account", "ba_account_delay": "B.Acc Delay"
         }
         unit_map = {
             "action_delay": "s", 
@@ -659,7 +663,8 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
             "delay": "s", 
             "batch_delay": "m", 
             "count": "c" if config.get('group_type', 'a') == 'c' else "g", 
-            "batch_size": "c" if config.get('group_type', 'a') == 'c' else "g"
+            "batch_size": "c" if config.get('group_type', 'a') == 'c' else "g",
+            "batch_account": " acc", "ba_account_delay": "s"
         }
         
         label = labels.get(sub_menu, sub_menu.capitalize())
@@ -682,6 +687,10 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
             adj_steps = [1, 3, 5, 10]
         elif sub_menu == "batch_delay":
             adj_steps = [1, 3, 5, 10]
+        elif sub_menu == "batch_account":
+            adj_steps = [1, 2, 3, 5, 10]
+        elif sub_menu == "ba_account_delay":
+            adj_steps = [5, 10, 30, 60, 120, 300]
         
         buttons = [[InlineKeyboardButton(f"━━ {label}: {curr_val}{unit} ━━", callback_data="noop", style=user_style)]]
         
@@ -899,10 +908,17 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
     is_channel = config.get('group_type', 'a') == 'c'
     type_indicator = "c" if is_channel else "g"
 
+    _il_labels = {'both': 'Both', 'log_group': 'Log Group', 'pm_bot': 'PM Bot', 'off': 'Off'}
+    _il_label = _il_labels.get(config.get('interrupted_log', 'off'), 'Off')
+
     buttons = [
         [
             InlineKeyboardButton(f"Acc(s): {sel_count} Sel", callback_data=f"creategroup_submenu_{idx}_{pg}_select_sessions", style=user_style),
             InlineKeyboardButton(f"Delay/Acc: {config.get('account_delay', 0.5)}s", callback_data=f"creategroup_submenu_{idx}_{pg}_account_delay", style=user_style)
+        ],
+        [
+            InlineKeyboardButton(f"B.Acc: {config.get('batch_account', 3)} acc", callback_data=f"creategroup_submenu_{idx}_{pg}_batch_account", style=user_style),
+            InlineKeyboardButton(f"B.Acc Delay: {config.get('ba_account_delay', 60)}s", callback_data=f"creategroup_submenu_{idx}_{pg}_ba_account_delay", style=user_style)
         ],
         [
             InlineKeyboardButton(f"Type: {'Group' if not is_channel else 'Channel'}", callback_data=f"creategroup_submenu_{idx}_{pg}_group_type", style=user_style),
@@ -947,7 +963,11 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
             InlineKeyboardButton(f"Msg Img: {'Yes' if config.get('msg_img', True) else 'No'}", callback_data=f"creategroup_toggle_{idx}_{pg}_msg_img", style=user_style)
         ],
         [
-            InlineKeyboardButton("View Tasks", callback_data=f"creategroup_cached_{idx}_{pg}", style=user_style),
+            InlineKeyboardButton(f"Interrupt Log: {_il_label}", callback_data=f"creategroup_toggle_{idx}_{pg}_interrupted_log", style=user_style),
+            InlineKeyboardButton("📊 Reports", callback_data=f"creategroup_reports_{idx}_{pg}_1", style=user_style),
+        ],
+        [
+            InlineKeyboardButton("Restore Tasks", callback_data=f"creategroup_cached_{idx}_{pg}", style=user_style),
             InlineKeyboardButton("Info", callback_data=f"creategroup_submenu_{idx}_{pg}_info", style=user_style)
         ],
         [
@@ -1002,8 +1022,8 @@ async def creategroup_adjust_handler(c: Client, cb: CallbackQuery):
          return
          
     conf = user_creategroup_state[user_id]["config"]
-    steps = {"delay": 10, "count": 1, "batch_delay": 1, "batch_size": 1, "action_delay": 0.5, "account_delay": 0.5, "rand_len": 1, "batch_action": 5, "ba_delay": 10}
-    limits = {"delay": (1, 3600), "count": (1, 1000), "batch_delay": (0, 300), "batch_size": (1, 100), "action_delay": (0.1, 30.0), "account_delay": (0.1, 30.0), "rand_len": (0, 64), "batch_action": (1, 500), "ba_delay": (10, 3600)}
+    steps = {"delay": 10, "count": 1, "batch_delay": 1, "batch_size": 1, "action_delay": 0.5, "account_delay": 0.5, "rand_len": 1, "batch_action": 5, "ba_delay": 10, "batch_account": 1, "ba_account_delay": 10}
+    limits = {"delay": (1, 3600), "count": (1, 1000), "batch_delay": (0, 300), "batch_size": (1, 100), "action_delay": (0.1, 30.0), "account_delay": (0.1, 30.0), "rand_len": (0, 64), "batch_action": (1, 500), "ba_delay": (10, 3600), "batch_account": (1, 100), "ba_account_delay": (5, 3600)}
     val = conf.get(key, 0)
     
     # Handle extended step actions (sub10, add60, sub0.5 etc)
@@ -1018,7 +1038,7 @@ async def creategroup_adjust_handler(c: Client, cb: CallbackQuery):
     final_val = max(min_v, min(val, max_v))
     
     # 🔥 CRITICAL FIX: Ensure specific keys don't become floats (User requested ONLY 'count')
-    int_keys = ["count"]
+    int_keys = ["count", "batch_account", "ba_account_delay"]
     if key in int_keys:
         final_val = int(round(final_val))
         
@@ -1217,11 +1237,390 @@ async def creategroup_toggle_handler(c: Client, cb: CallbackQuery):
             if curr == "log_group": conf["log_destination"] = "saved_messages"
             elif curr == "saved_messages": conf["log_destination"] = "both"
             else: conf["log_destination"] = "log_group"
+        elif key == "interrupted_log":
+            curr = conf.get("interrupted_log", "off")
+            if curr == "both": conf["interrupted_log"] = "log_group"
+            elif curr == "log_group": conf["interrupted_log"] = "pm_bot"
+            elif curr == "pm_bot": conf["interrupted_log"] = "off"
+            else: conf["interrupted_log"] = "both"
         elif key == "log_format": conf["log_format"] = "zip" if conf.get("log_format", "txt") == "txt" else "txt"
         elif key in conf: conf[key] = not conf[key]
         elif key == "msg_img": conf["msg_img"] = not conf.get("msg_img", True)
         save_user_cg_config(user_id, conf)
         await render_creategroup_ui(cb, user_creategroup_state[user_id])
+    await cb.answer()
+
+# ─── CREATION REPORTS SUBMENU [NEW] ───
+
+def load_creation_report() -> dict:
+    from Main.utils.file_helpers import get_db_path
+    import json
+    import os
+    
+    file_path = get_db_path("xcreategroup_created_report.json")
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.warning(f"Failed to load creation report json: {e}")
+    return {}
+
+@Altruix.bot.on_callback_query(filters.regex(r"^creategroup_reports_(\d+)_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def creategroup_reports_handler(c: Client, cb: CallbackQuery):
+    try:
+        await cb.answer()
+        
+        session_index = int(cb.matches[0].group(1))
+        page = int(cb.matches[0].group(2))
+        report_page = int(cb.matches[0].group(3))
+        
+        from Main.internals.settings_handlers.custom_alert_handlers import _get_session_user_id
+        session_user_id = _get_session_user_id(session_index)
+        user_style = get_user_button_style(session_user_id)
+        
+        # Sync first in case of new completed tasks in the background
+        try:
+            from Main.plugins.userbot.xcreategroup import sync_existing_created_groups
+            await sync_existing_created_groups()
+        except Exception as se:
+            logger.warning(f"Failed to sync created groups: {se}")
+            
+        report_data = load_creation_report()
+        
+        if not report_data:
+            text = "<blockquote expandable><b>📊 Creation Reports</b>\n\n<i>Belum ada data group/channel yang berhasil dibuat oleh akun mana pun.</i></blockquote>"
+            buttons = [[InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_ui_{session_index}_{page}", style=user_style)]]
+            return await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+            
+        accounts_list = sorted(list(report_data.items()), key=lambda x: len(x[1].get("created_groups", [])), reverse=True)
+        total_accounts = len(accounts_list)
+        limit = 5
+        total_pages = (total_accounts + limit - 1) // limit
+        report_page = max(1, min(report_page, total_pages))
+        
+        start = (report_page - 1) * limit
+        end = start + limit
+        current_accounts = accounts_list[start:end]
+        
+        lines = []
+        buttons = []
+        
+        total_all_created = sum(len(acc[1].get("created_groups", [])) for acc in accounts_list)
+        lines.append(f"<b>Total Keseluruhan:</b> {total_all_created} group/channel\n")
+        lines.append("Pilih akun di bawah untuk melihat detail group/channel yang berhasil dibuat:\n")
+        
+        for acc_id, acc_info in current_accounts:
+            acc_name = acc_info.get("account_name", "Unknown Account")
+            grps = acc_info.get("created_groups", [])
+            total_created = len(grps)
+            
+            groups_count = sum(1 for g in grps if g.get("type", "g") == "g")
+            channels_count = total_created - groups_count
+            
+            detail_desc = []
+            if groups_count > 0: detail_desc.append(f"{groups_count} grup")
+            if channels_count > 0: detail_desc.append(f"{channels_count} channel")
+            detail_str = " (" + ", ".join(detail_desc) + ")" if detail_desc else ""
+            
+            lines.append(f"• <b>{acc_name}</b>: {total_created} dibuat{detail_str}")
+            
+            buttons.append([
+                InlineKeyboardButton(f"👤 {acc_name[:20]} ({total_created})", callback_data=f"creategroup_repdet_{session_index}_{page}_{acc_id}_1", style=user_style)
+            ])
+            
+        text = f"<blockquote expandable><b>📊 Creation Reports [{report_page}/{total_pages}]</b>\n\n" + "\n".join(lines) + "\n\n<i>Klik akun untuk melihat detail lengkap atau mengekspor log.</i></blockquote>"
+        
+        buttons.append([
+            InlineKeyboardButton("📤 Export All Reports", callback_data=f"creategroup_repexp_all_{session_index}_{page}", style=user_style)
+        ])
+        
+        nav = []
+        if report_page > 1:
+            nav.append(InlineKeyboardButton("« Prev", callback_data=f"creategroup_reports_{session_index}_{page}_{report_page-1}", style=user_style))
+        else:
+            nav.append(InlineKeyboardButton("« Prev", callback_data="noop", style=user_style))
+            
+        nav.append(InlineKeyboardButton(f"{report_page}/{total_pages}", callback_data="noop", style=user_style))
+        
+        if report_page < total_pages:
+            nav.append(InlineKeyboardButton("Next »", callback_data=f"creategroup_reports_{session_index}_{page}_{report_page+1}", style=user_style))
+        else:
+            nav.append(InlineKeyboardButton("Next »", callback_data="noop", style=user_style))
+            
+        buttons.append(nav)
+        
+        # First / Last Navigation
+        if total_pages > 1:
+            buttons.append([
+                InlineKeyboardButton("First", callback_data=f"creategroup_reports_{session_index}_{page}_1", style=user_style),
+                InlineKeyboardButton("Last", callback_data=f"creategroup_reports_{session_index}_{page}_{total_pages}", style=user_style)
+            ])
+            
+        buttons.append([InlineKeyboardButton("🔙 Back to Dashboard", callback_data=f"creategroup_ui_{session_index}_{page}", style=user_style)])
+        
+        await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    except Exception as e:
+        logger.error(f"Error in creategroup_reports_handler: {e}\n{traceback.format_exc()}")
+        try:
+            await cb.answer(f"❌ Error: {e}", show_alert=True)
+        except Exception:
+            pass
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^creategroup_repdet_(\d+)_(\d+)_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def creategroup_report_detail_handler(c: Client, cb: CallbackQuery):
+    try:
+        await cb.answer()
+        
+        session_index = int(cb.matches[0].group(1))
+        page = int(cb.matches[0].group(2))
+        target_account_id = cb.matches[0].group(3)
+        detail_page = int(cb.matches[0].group(4))
+        
+        from Main.internals.settings_handlers.custom_alert_handlers import _get_session_user_id
+        session_user_id = _get_session_user_id(session_index)
+        user_style = get_user_button_style(session_user_id)
+        
+        report_data = load_creation_report()
+        acc_info = report_data.get(target_account_id)
+        
+        if not acc_info:
+            text = "<blockquote expandable><b>❌ Error</b>\n\nData untuk akun ini tidak ditemukan.</blockquote>"
+            buttons = [[InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_reports_{session_index}_{page}_1", style=user_style)]]
+            return await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+            
+        acc_name = acc_info.get("account_name", "Unknown Account")
+        username = acc_info.get("username", "")
+        grps = acc_info.get("created_groups", [])
+        total_created = len(grps)
+        
+        limit = 5
+        total_pages = (total_created + limit - 1) // limit
+        detail_page = max(1, min(detail_page, total_pages))
+        
+        start = (detail_page - 1) * limit
+        end = start + limit
+        current_grps = grps[start:end]
+        
+        lines = []
+        lines.append(f"👤 <b>Akun:</b> {acc_name}" + (f" (@{username})" if username else ""))
+        lines.append(f"🆔 <b>ID Akun:</b> <code>{target_account_id}</code>")
+        lines.append(f"📈 <b>Total Dibuat:</b> {total_created} group/channel\n")
+        
+        for idx, g in enumerate(current_grps, start + 1):
+            g_type = "Channel" if g.get("type") == "c" else "Grup"
+            name = g.get("name", "N/A")
+            link = g.get("link", "N/A")
+            c_id = g.get("id", "N/A")
+            time_str = g.get("time", "N/A")
+            task_id = g.get("task_id", "N/A")
+            
+            link_str = f"<a href='{link}'>{link}</a>" if link and link != "N/A" else "N/A"
+            lines.append(
+                f"{idx}. <b>{name}</b> ({g_type})\n"
+                f"   • ID: <code>{c_id}</code> | Task: <code>{task_id}</code>\n"
+                f"   • Link: {link_str}\n"
+                f"   • Waktu: {time_str}"
+            )
+            
+        text = f"<blockquote expandable><b>📊 Detail Laporan Dibuat [{detail_page}/{total_pages}]</b>\n\n" + "\n".join(lines) + "\n\n<i>Anda dapat mengekspor seluruh log akun ini ke file .txt menggunakan tombol di bawah.</i></blockquote>"
+        
+        buttons = [
+            [
+                InlineKeyboardButton("📥 Export This Account Log", callback_data=f"creategroup_repexp_acc_{session_index}_{page}_{target_account_id}", style=user_style)
+            ]
+        ]
+        
+        nav = []
+        if detail_page > 1:
+            nav.append(InlineKeyboardButton("« Prev", callback_data=f"creategroup_repdet_{session_index}_{page}_{target_account_id}_{detail_page-1}", style=user_style))
+        else:
+            nav.append(InlineKeyboardButton("« Prev", callback_data="noop", style=user_style))
+            
+        nav.append(InlineKeyboardButton(f"{detail_page}/{total_pages}", callback_data="noop", style=user_style))
+        
+        if detail_page < total_pages:
+            nav.append(InlineKeyboardButton("Next »", callback_data=f"creategroup_repdet_{session_index}_{page}_{target_account_id}_{detail_page+1}", style=user_style))
+        else:
+            nav.append(InlineKeyboardButton("Next »", callback_data="noop", style=user_style))
+            
+        buttons.append(nav)
+        
+        # First / Last Navigation
+        if total_pages > 1:
+            buttons.append([
+                InlineKeyboardButton("First", callback_data=f"creategroup_repdet_{session_index}_{page}_{target_account_id}_1", style=user_style),
+                InlineKeyboardButton("Last", callback_data=f"creategroup_repdet_{session_index}_{page}_{target_account_id}_{total_pages}", style=user_style)
+            ])
+            
+        buttons.append([InlineKeyboardButton("🔙 Back to Reports List", callback_data=f"creategroup_reports_{session_index}_{page}_1", style=user_style)])
+        
+        await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+    except Exception as e:
+        logger.error(f"Error in creategroup_report_detail_handler: {e}\n{traceback.format_exc()}")
+        try:
+            await cb.answer(f"❌ Error: {e}", show_alert=True)
+        except Exception:
+            pass
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^creategroup_repexp_acc_(\d+)_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def creategroup_report_export_acc_handler(c: Client, cb: CallbackQuery):
+    await cb.answer("Generating report...", show_alert=False)
+    
+    import tempfile
+    import os
+    from datetime import datetime
+    
+    session_index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    target_account_id = cb.matches[0].group(3)
+    
+    report_data = load_creation_report()
+    acc_info = report_data.get(target_account_id)
+    
+    if not acc_info:
+        await cb.answer("❌ Data tidak ditemukan!", show_alert=True)
+        return
+        
+    acc_name = acc_info.get("account_name", "Unknown Account")
+    username = acc_info.get("username", "")
+    grps = acc_info.get("created_groups", [])
+    
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    filename = f"report_creation_{target_account_id}_{timestamp}.txt"
+    temp_path = os.path.join(tempfile.gettempdir(), filename)
+    
+    try:
+        with open(temp_path, "w", encoding="utf-8") as f:
+            f.write(f"AltruixX - LAPORAN DETAIL GROUP/CHANNEL YANG BERHASIL DIBUAT\n")
+            f.write("=" * 60 + "\n\n")
+            f.write(f"AKUN: {acc_name}" + (f" (@{username})" if username else "") + "\n")
+            f.write(f"ID AKUN: {target_account_id}\n")
+            f.write(f"TOTAL YANG BERHASIL DIBUAT: {len(grps)} group/channel\n")
+            f.write(f"WAKTU EXPORT: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+            
+            f.write(f"DAFTAR DETAIL:\n")
+            f.write("-" * 60 + "\n\n")
+            
+            for idx, g in enumerate(grps, 1):
+                g_type = "Channel" if g.get("type") == "c" else "Grup"
+                f.write(
+                    f"{idx}. {g.get('name', 'N/A')} ({g_type})\n"
+                    f"   • ID: {g.get('id', 'N/A')}\n"
+                    f"   • Link: {g.get('link', 'N/A')}\n"
+                    f"   • Task ID: {g.get('task_id', 'N/A')}\n"
+                    f"   • Waktu Pembuatan: {g.get('time', 'N/A')}\n\n"
+                )
+                
+            f.write("=" * 60 + "\n")
+            f.write("Powered by AltruixX Engine\n")
+            
+        await c.send_document(
+            chat_id=cb.message.chat.id,
+            document=temp_path,
+            caption=f"📊 <b>Laporan Pembuatan Akun: {acc_name}</b>\n\nBerhasil diekspor.",
+            parse_mode=ParseMode.HTML
+        )
+        await cb.answer("✅ Report berhasil dikirim!", show_alert=True)
+    except Exception as e:
+        logger.error(f"Failed to export account report: {e}\n{traceback.format_exc()}")
+        await cb.answer(f"❌ Gagal mengekspor report: {e}", show_alert=True)
+    finally:
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^creategroup_repexp_all_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def creategroup_report_export_all_handler(c: Client, cb: CallbackQuery):
+    await cb.answer("Generating master report...", show_alert=False)
+    
+    import tempfile
+    import os
+    from datetime import datetime
+    
+    session_index = int(cb.matches[0].group(1))
+    page = int(cb.matches[0].group(2))
+    
+    report_data = load_creation_report()
+    
+    if not report_data:
+        await cb.answer("❌ Tidak ada data untuk diekspor!", show_alert=True)
+        return
+        
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    filename = f"report_creation_all_accounts_{timestamp}.txt"
+    temp_path = os.path.join(tempfile.gettempdir(), filename)
+    
+    try:
+        with open(temp_path, "w", encoding="utf-8") as f:
+            f.write(f"AltruixX - LAPORAN MASTER PEMBUATAN GROUP/CHANNEL KESELURUHAN\n")
+            f.write("=" * 60 + "\n\n")
+            
+            total_all_created = sum(len(acc_info.get("created_groups", [])) for acc_info in report_data.values())
+            f.write(f"TOTAL AKUN TEREPESENTASI: {len(report_data)}\n")
+            f.write(f"TOTAL KESELURUHAN GROUP/CHANNEL: {total_all_created}\n")
+            f.write(f"WAKTU EXPORT: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+            
+            f.write("RINGKASAN PER-AKUN:\n")
+            f.write("-" * 30 + "\n")
+            for acc_id, acc_info in report_data.items():
+                acc_name = acc_info.get("account_name", "Unknown Account")
+                total = len(acc_info.get("created_groups", []))
+                f.write(f"• {acc_name} ({acc_id}): {total} group/channel\n")
+            f.write("\n" + "=" * 60 + "\n\n")
+            
+            for acc_id, acc_info in report_data.items():
+                acc_name = acc_info.get("account_name", "Unknown Account")
+                username = acc_info.get("username", "")
+                grps = acc_info.get("created_groups", [])
+                
+                f.write(f"👤 AKUN: {acc_name}" + (f" (@{username})" if username else "") + f" | ID: {acc_id}\n")
+                f.write(f"TOTAL DIBUAT: {len(grps)} group/channel\n")
+                f.write("-" * 60 + "\n")
+                
+                for idx, g in enumerate(grps, 1):
+                    g_type = "Channel" if g.get("type") == "c" else "Grup"
+                    f.write(
+                        f"   {idx}. {g.get('name', 'N/A')} ({g_type})\n"
+                        f"      • ID: {g.get('id', 'N/A')}\n"
+                        f"      • Link: {g.get('link', 'N/A')}\n"
+                        f"      • Task ID: {g.get('task_id', 'N/A')}\n"
+                        f"      • Waktu: {g.get('time', 'N/A')}\n\n"
+                    )
+                f.write("=" * 60 + "\n\n")
+                
+            f.write("Powered by AltruixX Engine\n")
+            
+        await c.send_document(
+            chat_id=cb.message.chat.id,
+            document=temp_path,
+            caption=f"📊 <b>Laporan Master Pembuatan Grup/Channel Keseluruhan</b>\n\nTotal {total_all_created} group/channel berhasil diekspor dari {len(report_data)} akun.",
+            parse_mode=ParseMode.HTML
+        )
+        await cb.answer("✅ Master Report berhasil dikirim!", show_alert=True)
+    except Exception as e:
+        logger.error(f"Failed to export master report: {e}\n{traceback.format_exc()}")
+        await cb.answer(f"❌ Gagal mengekspor report: {e}", show_alert=True)
+    finally:
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
+
     await cb.answer()
 
 @Altruix.bot.on_callback_query(filters.regex(r"^creategroup_upload_photo_(\d+)_(\d+)$"))
@@ -1323,19 +1722,31 @@ async def creategroup_confirm_task_handler(c: Client, cb: CallbackQuery):
             await cb.edit_message_text(start_msg, parse_mode=ParseMode.HTML)
             
         acc_delay = conf.get("account_delay", 0.5)
+        batch_account = conf.get("batch_account", 3)
+        ba_account_delay = conf.get("ba_account_delay", 60)
+        
         for i, s_idx in enumerate(selected):
             if s_idx < 1 or s_idx > len(Altruix.clients): continue
             
+            is_batch_boundary = (i > 0 and i % batch_account == 0)
+            
             # Stagger startup if not the first account
-            if i > 0 and acc_delay > 0:
-                await asyncio.sleep(acc_delay)
+            if i > 0:
+                if is_batch_boundary and ba_account_delay > 0:
+                    await asyncio.sleep(ba_account_delay)
+                elif acc_delay > 0:
+                    await asyncio.sleep(acc_delay)
                 
             tid = generate_task_id("CG")
             try:
                 control_msg = None
                 try:
                     msg_text = f"🔄 Initializing task for Session {s_idx} [<code>{tid}</code>]..."
-                    if i > 0: msg_text = f"⏳ Staggered Start ({acc_delay}s)...\n{msg_text}"
+                    if i > 0:
+                        if is_batch_boundary:
+                            msg_text = f"⏳ Batch Account Delay ({ba_account_delay}s)...\n{msg_text}"
+                        else:
+                            msg_text = f"⏳ Staggered Start ({acc_delay}s)...\n{msg_text}"
                     
                     if cb.message:
                         control_msg = await cb.message.reply(msg_text)
@@ -1388,7 +1799,9 @@ async def creategroup_confirm_task_handler(c: Client, cb: CallbackQuery):
                     user_id=user_id,
                     task_id=tid,
                     account_idx=i+1,
-                    total_accs=len(selected)
+                    total_accs=len(selected),
+                    batch_account=conf.get("batch_account", 3),
+                    ba_account_delay=conf.get("ba_account_delay", 60)
                 ))
             except Exception as e:
                 logger.error(f"Failed to start task for session {s_idx}: {e}")

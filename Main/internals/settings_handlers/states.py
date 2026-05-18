@@ -52,3 +52,4 @@ WAIT_UPM_INSTALL = "WAIT_UPM_INSTALL"
 user_mainbot_token_state = {}
 user_mainbot_confirm_delete_state = {}
 user_mainbot_confirm_stop_state = {}
+user_add_backup_bot_token_state = {}
