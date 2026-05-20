@@ -22,7 +22,27 @@ from typing import Any, List, Union, Optional
 from .exceptions import NoDatabaseConnected, EnvVariableTypeError
 
 
-dotenv.load_dotenv()
+# Load .env but skip values that exceed Windows' 32767-char env var limit.
+# Standard dotenv.load_dotenv() would crash with ValueError on Windows
+# if any value exceeds 32767 characters (e.g. SESSIONS with many accounts).
+import os as _os
+_dotenv_values = dotenv.dotenv_values()
+_DIRECT_ENV = {}  # Store oversized values for direct access (bypass os.environ)
+for _k, _v in _dotenv_values.items():
+    if _v is not None and len(_v) > 32767:
+        _DIRECT_ENV[_k] = _v
+        logging.warning(f"ENV '{_k}' ({len(_v)} chars) exceeds OS limit, loaded directly (not via os.environ)")
+    elif _v is not None:
+        _os.environ[_k] = _v
+
+# Patch getenv so that oversized values in _DIRECT_ENV are still accessible
+# via getenv() calls throughout this module (BaseConfig class attrs, methods, etc.)
+_original_getenv = getenv
+def _patched_getenv(key, default=None):
+    if key in _DIRECT_ENV:
+        return _DIRECT_ENV[key]
+    return _original_getenv(key, default)
+getenv = _patched_getenv
 
 
 def safe_int(digit, default=None):

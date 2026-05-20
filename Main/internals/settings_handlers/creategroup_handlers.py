@@ -18,7 +18,7 @@ from pyrogram.enums import ParseMode
 
 from .states import user_creategroup_state
 
-HANDLER_VERSION = "0.3.229" # ✅ ADDED: Persistent Creation Reports, Log Exports, & Account Batching
+HANDLER_VERSION = "0.3.230" # ✅ ADDED: Persistent Creation Reports, Log Exports, & Account Batching
 logger = logging.getLogger("altruix.creategroup.handlers")
 logger.setLevel(logging.INFO)
 
@@ -1271,7 +1271,10 @@ def load_creation_report() -> dict:
 @log_errors
 async def creategroup_reports_handler(c: Client, cb: CallbackQuery):
     try:
-        await cb.answer()
+        try:
+            await cb.answer()
+        except Exception:
+            pass
         
         session_index = int(cb.matches[0].group(1))
         page = int(cb.matches[0].group(2))
@@ -1375,7 +1378,10 @@ async def creategroup_reports_handler(c: Client, cb: CallbackQuery):
 @log_errors
 async def creategroup_report_detail_handler(c: Client, cb: CallbackQuery):
     try:
-        await cb.answer()
+        try:
+            await cb.answer()
+        except Exception:
+            pass
         
         session_index = int(cb.matches[0].group(1))
         page = int(cb.matches[0].group(2))

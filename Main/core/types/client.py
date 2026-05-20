@@ -248,6 +248,7 @@ class CustomClientMethods:
                 
                 # ✅ PERMANENT ERRORS: Identify errors that will not resolve with retries
                 permanent_errors = [
+                    "MessageNotModified", "MESSAGE_NOT_MODIFIED",
                     "MessageIdsEmpty", "MessageEmpty", "MessageIdInvalid", 
                     "UserNotParticipant", "ChatWriteForbidden", "UserIsBlocked",
                     "PeerIdInvalid", "ChannelInvalid", "PEER_ID_INVALID", "CHANNEL_INVALID",

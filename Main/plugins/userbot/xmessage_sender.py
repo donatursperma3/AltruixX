@@ -76,6 +76,30 @@ def save_user_settings(user_id: int, settings: dict):
 
 # ==================== HELPERS ====================
 
+def get_message_link(message: RawMessage) -> str:
+    """Gets a clickable link for a message, even if it's in a private group."""
+    if not message:
+        return None
+    if getattr(message, "link", None):
+        return message.link
+    
+    # Manual construction for private chats/groups
+    chat_id = getattr(message.chat, "id", None) if hasattr(message, "chat") else None
+    msg_id = getattr(message, "id", None)
+    
+    if not chat_id or not msg_id:
+        return None
+        
+    chat_id_str = str(chat_id)
+    if chat_id_str.startswith("-100"):
+        clean_id = chat_id_str[4:]
+        return f"https://t.me/c/{clean_id}/{msg_id}"
+    elif chat_id_str.startswith("-"):
+        clean_id = chat_id_str[1:]
+        return f"https://t.me/c/{clean_id}/{msg_id}"
+        
+    return None
+
 def parse_tg_link(input_str: str) -> tuple:
     """
     Parses a Telegram link or raw ID/username.
@@ -212,7 +236,7 @@ async def send_action_log(client: Client, user_id: int, text: str, sent_msg: Raw
         logger.debug(f"Failed to send log with buttons via bot: {e}")
         
     # Fallback
-    await send_log_message(f"<blockquote expandable>{text}</blockquote>")
+    await send_log_message(f"<blockquote expandable>{text}</blockquote>", reply_markup=markup)
 
 def clean_premium_entities(text: str, entities: list, is_premium: bool):
     """
@@ -238,6 +262,7 @@ async def bypass_protected_send(client: Client, target_chat: int, source_msg, re
     """
     Handles sending/cloning a message or story. 
     If content is protected, it downloads and re-uploads media.
+    Returns: (sent_msg, is_bypassed)
     """
     reply_params = ReplyParameters(message_id=reply_to) if reply_to else None
     
@@ -270,13 +295,14 @@ async def bypass_protected_send(client: Client, target_chat: int, source_msg, re
     
     # Text-only
     if not has_media:
-        return await client.send_message(
+        res = await client.send_message(
             target_chat, 
             text, 
             entities=entities,
             reply_parameters=reply_params,
             parse_mode=enums.ParseMode.HTML if not entities else None
         )
+        return res, False
 
     # Detect protected content
     is_protected = getattr(source_msg, "has_protected_content", False)
@@ -294,13 +320,14 @@ async def bypass_protected_send(client: Client, target_chat: int, source_msg, re
             
             # If custom_text is None, copy_message keeps original caption and entities.
             # If custom_text is provided, we replace the caption/text.
-            return await client.copy_message(
+            res = await client.copy_message(
                 chat_id=target_chat,
                 from_chat_id=source_msg.chat.id,
                 message_id=source_msg.id,
                 caption=custom_text if custom_text is not None else getattr(source_msg, "caption", None),
                 reply_to_message_id=reply_to
             )
+            return res, False
         except Exception as e:
             Altruix.log(f"copy_message failed, falling back to bypass: {e}", level=30)
             # Fall through to download/upload bypass logic
@@ -349,6 +376,7 @@ async def bypass_protected_send(client: Client, target_chat: int, source_msg, re
              
     # Media with protection check
     # We force re-upload for all media to ensure success against content protection
+    temp_file = None
     try:
         Altruix.log(f"Starting download_media for source_msg type {type(source_msg)}")
         temp_file = await client.download_media(source_msg, in_memory=False)
@@ -360,6 +388,7 @@ async def bypass_protected_send(client: Client, target_chat: int, source_msg, re
         raise e
         
     thumb_file = None
+    sent_res = None
     try:
         # Determine media type for re-upload
         # If it's a forwarded story inside a normal message, extract its true media type
@@ -397,9 +426,9 @@ async def bypass_protected_send(client: Client, target_chat: int, source_msg, re
                 thumb_file = None
              
         if is_photo:
-            return await client.send_photo(target_chat, temp_file, caption=caption, caption_entities=entities, reply_parameters=reply_params)
+            sent_res = await client.send_photo(target_chat, temp_file, caption=caption, caption_entities=entities, reply_parameters=reply_params)
         elif is_video:
-            return await client.send_video(
+            sent_res = await client.send_video(
                 target_chat, temp_file,
                 caption=caption, caption_entities=entities,
                 duration=v_duration, width=v_width, height=v_height,
@@ -408,18 +437,18 @@ async def bypass_protected_send(client: Client, target_chat: int, source_msg, re
                 reply_parameters=reply_params
             )
         elif getattr(source_msg, "document", None):
-            return await client.send_document(target_chat, temp_file, caption=caption, caption_entities=entities, thumb=thumb_file, reply_parameters=reply_params)
+            sent_res = await client.send_document(target_chat, temp_file, caption=caption, caption_entities=entities, thumb=thumb_file, reply_parameters=reply_params)
         elif getattr(source_msg, "audio", None):
-            return await client.send_audio(
+            sent_res = await client.send_audio(
                 target_chat, temp_file,
                 caption=caption, caption_entities=entities,
                 duration=v_duration, thumb=thumb_file,
                 reply_parameters=reply_params
             )
         elif getattr(source_msg, "voice", None):
-            return await client.send_voice(target_chat, temp_file, caption=caption, caption_entities=entities, duration=v_duration, reply_parameters=reply_params)
+            sent_res = await client.send_voice(target_chat, temp_file, caption=caption, caption_entities=entities, duration=v_duration, reply_parameters=reply_params)
         elif getattr(source_msg, "animation", None):
-            return await client.send_animation(
+            sent_res = await client.send_animation(
                 target_chat, temp_file,
                 caption=caption, caption_entities=entities,
                 duration=v_duration, width=v_width, height=v_height,
@@ -427,9 +456,11 @@ async def bypass_protected_send(client: Client, target_chat: int, source_msg, re
                 reply_parameters=reply_params
             )
         elif getattr(source_msg, "sticker", None):
-            return await client.send_sticker(target_chat, temp_file, reply_parameters=reply_params)
+            sent_res = await client.send_sticker(target_chat, temp_file, reply_parameters=reply_params)
         else:
-            return await client.send_document(target_chat, temp_file, caption=caption, caption_entities=entities, reply_parameters=reply_params)
+            sent_res = await client.send_document(target_chat, temp_file, caption=caption, caption_entities=entities, reply_parameters=reply_params)
+            
+        return sent_res, True
     finally:
         if temp_file and os.path.exists(temp_file):
             os.remove(temp_file)
@@ -492,7 +523,7 @@ async def sendto_cmd(c: Client, m: Message):
             reply_parameters=ReplyParameters(message_id=reply_id) if reply_id else None
         )
         await wait.edit_msg("✅ <b>Message sent successfully!</b>")
-        t_link = sent_msg.link if sent_msg else None
+        t_link = get_message_link(sent_msg)
         
         # Build detailed log
         target_info = await resolve_chat_info(c, target_chat)
@@ -504,7 +535,8 @@ async def sendto_cmd(c: Client, m: Message):
             f"• Username: <code>{target_info['username']}</code>\n"
             f"• Account: {c.me.mention}\n"
             f"• Target: {target_clickable}\n"
-            f"• Reply to msg ID: <code>{reply_id or 'None'}</code>"
+            f"• Reply to msg ID: <code>{reply_id or 'None'}</code>\n"
+            f"• ByPass: <code>False</code>"
         )
         await send_action_log(c, c.me.id, log_text, sent_msg=sent_msg, target_link=t_link)
         await asyncio.sleep(2)
@@ -576,10 +608,10 @@ async def sendfromto_cmd(c: Client, m: Message):
         if not source_msg or source_msg.empty:
             return await wait.edit_msg("❌ <b>Source message not found.</b>")
             
-        sent_msg = await bypass_protected_send(c, tg_chat, source_msg, reply_id, wait_msg=wait)
+        sent_msg, is_bypassed = await bypass_protected_send(c, tg_chat, source_msg, reply_id, wait_msg=wait)
         await wait.edit_msg("✅ <b>Message cloned successfully!</b>")
-        s_link = source_msg.link if source_msg else None
-        t_link = sent_msg.link if sent_msg else None
+        s_link = get_message_link(source_msg)
+        t_link = get_message_link(sent_msg)
         
         src_info = await resolve_chat_info(c, src_chat)
         target_info = await resolve_chat_info(c, tg_chat)
@@ -593,7 +625,8 @@ async def sendfromto_cmd(c: Client, m: Message):
             f"• To: <code>{tg_chat}</code>\n"
             f"• Account: {c.me.mention}\n"
             f"• Target: {target_clickable}\n"
-            f"• Reply to msg ID: <code>{reply_id or 'None'}</code>"
+            f"• Reply to msg ID: <code>{reply_id or 'None'}</code>\n"
+            f"• ByPass: <code>{is_bypassed}</code>"
         )
         await send_action_log(c, c.me.id, log_text, sent_msg=sent_msg, source_link=s_link, target_link=t_link)
         await asyncio.sleep(2)
@@ -661,10 +694,10 @@ async def sendfromtocus_cmd(c: Client, m: Message):
         if not source_msg or source_msg.empty:
             return await wait.edit_msg("❌ <b>Source message not found.</b>")
             
-        sent_msg = await bypass_protected_send(c, tg_chat, source_msg, reply_id, custom_text=custom_text, wait_msg=wait)
+        sent_msg, is_bypassed = await bypass_protected_send(c, tg_chat, source_msg, reply_id, custom_text=custom_text, wait_msg=wait)
         await wait.edit_msg("✅ <b>Message cloned with custom text!</b>")
-        s_link = source_msg.link if source_msg else None
-        t_link = sent_msg.link if sent_msg else None
+        s_link = get_message_link(source_msg)
+        t_link = get_message_link(sent_msg)
         
         src_info = await resolve_chat_info(c, src_chat)
         target_info = await resolve_chat_info(c, tg_chat)
@@ -678,7 +711,8 @@ async def sendfromtocus_cmd(c: Client, m: Message):
             f"• To: <code>{tg_chat}</code>\n"
             f"• Account: {c.me.mention}\n"
             f"• Target: {target_clickable}\n"
-            f"• Reply to msg ID: <code>{reply_id or 'None'}</code>"
+            f"• Reply to msg ID: <code>{reply_id or 'None'}</code>\n"
+            f"• ByPass: <code>{is_bypassed}</code>"
         )
         await send_action_log(c, c.me.id, log_text, sent_msg=sent_msg, source_link=s_link, target_link=t_link)
         await asyncio.sleep(2)
@@ -748,13 +782,13 @@ async def sendfromtos_cmd(c: Client, m: Message):
                 return await wait.edit_msg("❌ <b>Story not found (empty list).</b>")
                 
         Altruix.log("Calling bypass_protected_send")
-        sent_msg = await bypass_protected_send(c, tg_chat, story, reply_id, wait_msg=wait)
+        sent_msg, is_bypassed = await bypass_protected_send(c, tg_chat, story, reply_id, wait_msg=wait)
         Altruix.log("bypass_protected_send completed")
         await wait.edit_msg("✅ <b>Story cloned successfully!</b>")
         
         # Link not always available easily for stories. Use arg link.
         s_link = args[curr_idx] 
-        t_link = sent_msg.link if sent_msg else None
+        t_link = get_message_link(sent_msg)
         
         src_info = await resolve_chat_info(c, src_chat)
         target_info = await resolve_chat_info(c, tg_chat)
@@ -768,7 +802,8 @@ async def sendfromtos_cmd(c: Client, m: Message):
             f"• To: <code>{tg_chat}</code>\n"
             f"• Account: {c.me.mention}\n"
             f"• Target: {target_clickable}\n"
-            f"• Reply to msg ID: <code>{reply_id or 'None'}</code>"
+            f"• Reply to msg ID: <code>{reply_id or 'None'}</code>\n"
+            f"• ByPass: <code>{is_bypassed}</code>"
         )
         await send_action_log(c, c.me.id, log_text, sent_msg=sent_msg, source_link=s_link, target_link=t_link)
         await asyncio.sleep(2)
@@ -847,11 +882,11 @@ async def sendfromtoscus_cmd(c: Client, m: Message):
                 return await wait.edit_msg("❌ <b>Story not found (empty list).</b>")
                 
         Altruix.log("Calling bypass_protected_send")
-        sent_msg = await bypass_protected_send(c, tg_chat, story, reply_id, custom_text=custom_text, wait_msg=wait)
+        sent_msg, is_bypassed = await bypass_protected_send(c, tg_chat, story, reply_id, custom_text=custom_text, wait_msg=wait)
         Altruix.log("bypass_protected_send completed")
         await wait.edit_msg("✅ <b>Story cloned with custom text!</b>")
         
-        t_link = sent_msg.link if sent_msg else None
+        t_link = get_message_link(sent_msg)
         
         src_info = await resolve_chat_info(c, src_chat)
         target_info = await resolve_chat_info(c, tg_chat)
@@ -865,7 +900,8 @@ async def sendfromtoscus_cmd(c: Client, m: Message):
             f"• To: <code>{tg_chat}</code>\n"
             f"• Account: {c.me.mention}\n"
             f"• Target: {target_clickable}\n"
-            f"• Reply to msg ID: <code>{reply_id or 'None'}</code>"
+            f"• Reply to msg ID: <code>{reply_id or 'None'}</code>\n"
+            f"• ByPass: <code>{is_bypassed}</code>"
         )
         await send_action_log(c, c.me.id, log_text, sent_msg=sent_msg, source_link=story_link_str, target_link=t_link)
         await asyncio.sleep(2)

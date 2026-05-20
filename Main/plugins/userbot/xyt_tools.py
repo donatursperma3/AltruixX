@@ -76,6 +76,7 @@ async def ytdl_cmd(c: Client, m: Message):
             "subscribers": info.get("subscribers"),
             "views": info.get("views"),
             "upload_date": info.get("upload_date"),
+            "extractor": info.get("extractor", "YouTube"),
             "start": 0,
             "end": info.get("duration", 0),
             "format": "video",

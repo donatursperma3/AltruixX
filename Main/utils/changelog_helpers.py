@@ -31,10 +31,20 @@ def parse_changelog() -> List[str]:
         raw_entries = content.split("---")
         
         final_pages = []
-        for entry in raw_entries:
+        for i, entry in enumerate(raw_entries):
             entry = entry.strip()
-            if not entry or entry.startswith("# AltruixX Changelog"):
+            if not entry:
                 continue
+            
+            # If first entry contains the header, strip it instead of skipping the whole entry
+            if i == 0 and entry.startswith("# AltruixX Changelog"):
+                # Find the first version header (## [x.x.x])
+                match = re.search(r'(## \[.*)', entry, re.DOTALL)
+                if match:
+                    entry = match.group(1).strip()
+                else:
+                    # No version header found, probably just a pure header page
+                    continue
             
             # 2. Check if entry is too long (Markdown limit ~3000 to be safe after HTML conversion)
             if len(entry) > 3000:

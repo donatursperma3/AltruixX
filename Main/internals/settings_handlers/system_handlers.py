@@ -65,10 +65,14 @@ async def sys_restart_hard_handler(c: Client, cb: CallbackQuery):
     await cb.answer("Performing Hard Restart...", show_alert=True)
     await edit_cb(cb, "<b>⚙️ Hard Restart Initiated...</b>\nReplacing process. Please wait.")
     try:
+        # Lakukan cleanup session dan logging terpadu sebelum mengganti proses
+        await Altruix._restart(soft=False, last_msg=cb, power_hard=True)
+        
+        # Fallback jika proses pemindahan memerlukan eksekusi manual tambahan
         args = [sys.executable, "-m", "Main"]
         if os.name == 'nt':
             # on windows, use subprocess. Popen to restart the process
-            subprocess.Popen(args, close_fds=True)
+            subprocess.Popen(args, creationflags=subprocess.CREATE_NEW_CONSOLE)
             os._exit(0)
         else:
             # On Linux/Unix, os.execv is the standard way to replace the process.

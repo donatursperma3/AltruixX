@@ -11,8 +11,10 @@ import html
 import asyncio
 import time
 import logging
+import re
 import traceback
 from pyrogram import Client, filters, enums
+from pyrogram.errors import QueryIdInvalid
 from pyrogram.types import (
     InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery,
     InlineQuery, InlineQueryResultArticle, InputTextMessageContent
@@ -25,10 +27,15 @@ from Main.utils.file_helpers import get_user_button_style
 # Plugin Metadata
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = "xtaskmanager"
-PLUGIN_VERSION = "1.0.250"
+PLUGIN_VERSION = "1.0.252"
 
 logger = logging.getLogger("altruix.xtaskmanager")
 logger.setLevel(logging.INFO)
+
+CALLBACK_ANSWER_TEXT_LIMIT = 180
+TASK_LOG_MESSAGE_LIMIT = 3800
+TASK_LOG_CHUNK_SIZE = 2500
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
 
 # ==================== GLOBAL TASK REGISTRY ====================
 # This registry is stored on the Altruix singleton so ALL plugins can access it.
@@ -42,6 +49,103 @@ def _ensure_registry():
     if not hasattr(Altruix, "_TASK_REGISTRY"):
         Altruix._TASK_REGISTRY = {}
     return Altruix._TASK_REGISTRY
+
+def _strip_html(value: str) -> str:
+    """Convert a small HTML fragment into plain text for safe alerts/log fallback."""
+    return _HTML_TAG_RE.sub("", html.unescape(str(value or "")))
+
+def _normalize_plain_text(value: str, keep_newlines: bool = False) -> str:
+    """Normalize whitespace while optionally preserving line structure."""
+    text = str(value or "").replace("\r\n", "\n").replace("\r", "\n")
+    if keep_newlines:
+        text = re.sub(r"[ \t]+\n", "\n", text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text.strip()
+    return " ".join(text.split()).strip()
+
+def _truncate_text(value: str, limit: int, suffix: str = "...") -> str:
+    """Trim text to a safe character limit."""
+    text = str(value or "")
+    if len(text) <= limit:
+        return text
+    if limit <= len(suffix):
+        return suffix[:limit]
+    return text[: limit - len(suffix)].rstrip() + suffix
+
+def _chunk_text(value: str, chunk_size: int) -> list:
+    """Split long text into fixed-size chunks."""
+    text = str(value or "")
+    if not text:
+        return [""]
+    return [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
+
+def _build_task_log_payloads(title: str, text: str, account_name: str, account_id) -> list:
+    """Build one or more HTML log payloads that stay within Telegram limits."""
+    safe_title = html.escape(str(title or "Task Log"))
+    safe_account = html.escape(str(account_name or "Unknown"))
+    account_line = f"Account: <b>{safe_account}</b> (<code>{account_id}</code>)"
+    rich_body = str(text or "-")
+    rich_payload = (
+        f"<blockquote expandable>\n"
+        f"<b>{safe_title}</b>\n"
+        f"{rich_body}\n"
+        f"{account_line}\n"
+        f"</blockquote>"
+    )
+    if len(rich_payload) <= TASK_LOG_MESSAGE_LIMIT:
+        return [rich_payload]
+
+    plain_body = _normalize_plain_text(_strip_html(rich_body), keep_newlines=True) or "-"
+    chunks = _chunk_text(plain_body, TASK_LOG_CHUNK_SIZE)
+    payloads = []
+    total = len(chunks)
+    for index, chunk in enumerate(chunks, start=1):
+        suffix = f" (Part {index}/{total})" if total > 1 else ""
+        payloads.append(
+            f"<blockquote expandable>\n"
+            f"<b>{safe_title}{suffix}</b>\n"
+            f"<pre>{html.escape(chunk)}</pre>\n"
+            f"{account_line}\n"
+            f"</blockquote>"
+        )
+    return payloads
+
+def _inject_status_notice(text: str, notice: str) -> str:
+    """Attach a compact status banner to the top of an existing blockquote view."""
+    safe_notice = html.escape(
+        _truncate_text(
+            _normalize_plain_text(_strip_html(notice)),
+            500
+        )
+    )
+    if not safe_notice:
+        return text
+
+    banner = f"ℹ️ <b>Status:</b> {safe_notice}\n\n"
+    marker = "<blockquote expandable>"
+    if text.startswith(marker):
+        return text.replace(marker, marker + banner, 1)
+    return f"<blockquote expandable>{banner}{text}</blockquote>"
+
+async def safe_cb_answer(cb: CallbackQuery, text: str = "", show_alert: bool = False, cache_time: int = 0) -> bool:
+    """Answer callback queries safely without crashing on expired query IDs."""
+    safe_text = _truncate_text(
+        _normalize_plain_text(_strip_html(text)),
+        CALLBACK_ANSWER_TEXT_LIMIT
+    ) if text else ""
+    try:
+        kwargs = {"show_alert": show_alert}
+        if safe_text:
+            kwargs["text"] = safe_text
+        if cache_time:
+            kwargs["cache_time"] = cache_time
+        await cb.answer(**kwargs)
+        return True
+    except QueryIdInvalid:
+        logger.debug(f"Expired callback query ignored: {getattr(cb, 'data', 'unknown')}")
+    except Exception as e:
+        logger.debug(f"Failed to answer callback query safely: {e}")
+    return False
 
 def scan_and_merge_caches():
     """Scan plugin caches and merge interrupted tasks into the registry if not present."""
@@ -361,36 +465,84 @@ async def send_task_log(client: Client, title: str, text: str):
             if bot:
                 # Ensure log_chat is int if it's a numeric string
                 chat_id = int(log_chat) if str(log_chat).lstrip('-').isdigit() else log_chat
-                full_text = (
-                    f"<blockquote expandable>\n"
-                    f"<b>{title}</b>\n"
-                    f"{text}\n"
-                    f"Account: <b>{html.escape(client.me.first_name)}</b> (<code>{client.me.id}</code>)\n"
-                    f"</blockquote>"
-                )
-                await bot.send_message(chat_id, full_text, parse_mode=enums.ParseMode.HTML)
+                account_name = getattr(client.me, "first_name", "Unknown")
+                payloads = _build_task_log_payloads(title, text, account_name, client.me.id)
+                for payload in payloads:
+                    await bot.send_message(chat_id, payload, parse_mode=enums.ParseMode.HTML)
     except Exception as e:
         logger.error(f"Failed to send task log: {e}")
 
 # ==================== MENU GENERATORS ====================
 
-def gen_task_list_data(user_id: int, page: int = 1, page_size: int = 5):
+def get_filtered_tasks(task_filter: str = None) -> dict:
+    """Get all tasks matching the specified filter."""
+    registry = get_all_tasks()
+    if task_filter is None:
+        task_filter = get_task_filter()
+        
+    if task_filter == "all":
+        return registry
+        
+    filtered = {}
+    for tid, entry in registry.items():
+        is_paused = entry.get("paused", False)
+        is_interrupted = entry.get("is_interrupted", False)
+        
+        if task_filter == "running":
+            if not is_paused and not is_interrupted:
+                filtered[tid] = entry
+        elif task_filter == "interrupted":
+            if is_interrupted:
+                filtered[tid] = entry
+        elif task_filter == "pause":
+            if is_paused and not is_interrupted:
+                filtered[tid] = entry
+    return filtered
+
+def gen_task_list_data(user_id: int, page: int = 1, page_size: int = 5, task_filter: str = None):
     """Generate text and keyboard for the task list."""
     try:
         cleanup_stale_tasks()
         registry = get_all_tasks()
         user_style = get_user_button_style(user_id)
         
-        if not registry:
+        if task_filter is None:
+            task_filter = get_task_filter()
+        
+        # Define filter labels
+        filter_labels = {
+            "all": "All",
+            "running": "Running",
+            "interrupted": "Intrrupted",
+            "pause": "Pause"
+        }
+        
+        # Apply filtering
+        filtered_registry = get_filtered_tasks(task_filter)
+
+        # Filter Buttons Row
+        filter_buttons = []
+        for f_key, f_label in filter_labels.items():
+            # Add brackets to the active filter
+            display_label = f"[{f_label}]" if task_filter == f_key else f_label
+            filter_buttons.append(InlineKeyboardButton(display_label, callback_data=f"taskmgr_filter_{f_key}", style=user_style))
+        
+        if not filtered_registry:
             text = (
                 "<blockquote expandable>"
-                "📋 <b>Active Tasks</b>\n\n"
-                "<i>No active tasks running.</i>"
+                f"📋 <b>Active Tasks ({filter_labels.get(task_filter)})</b>\n\n"
+                "<i>No tasks found matching this filter.</i>"
                 "</blockquote>"
             )
-            return text, None
+            # Still show filter buttons even if empty
+            return text, InlineKeyboardMarkup([
+                filter_buttons, 
+                [InlineKeyboardButton("View Finished Task", callback_data="taskmgr_finished_1", style=user_style)],
+                [InlineKeyboardButton("Refresh", callback_data=f"taskmgr_page_1", style=user_style)], 
+                [InlineKeyboardButton("Close", callback_data="taskmgr_close", style=user_style)]
+            ])
 
-        tasks_list = list(registry.items())
+        tasks_list = list(filtered_registry.items())
         total_pages = (len(tasks_list) + page_size - 1) // page_size
         page = max(1, min(page, total_pages))
         
@@ -400,6 +552,14 @@ def gen_task_list_data(user_id: int, page: int = 1, page_size: int = 5):
         now = time.time()
         lines = []
         buttons = []
+        
+        # Add filter buttons as the first row
+        buttons.append(filter_buttons)
+        
+        # Finished Tasks Button Row
+        buttons.append([
+            InlineKeyboardButton("View Finished Task", callback_data="taskmgr_finished_1", style=user_style)
+        ])
         
         for tid, entry in current_batch:
             task_obj = entry.get("task")
@@ -431,7 +591,7 @@ def gen_task_list_data(user_id: int, page: int = 1, page_size: int = 5):
             lines.append(
                 f"<b>{tid}</b> — {name}{recur_icon}\n"
                 f"   Plugin: <code>{plugin}</code> | {status_icon}\n"
-                f"   Duration: {dur_str} | Owner: <b>{html.escape(str(u_name))}</b>"
+                f"   Duration: {dur_str} | Owner: <spoiler><b>{html.escape(str(u_name))}</b></spoiler>"
             )
             
             row = [
@@ -450,6 +610,13 @@ def gen_task_list_data(user_id: int, page: int = 1, page_size: int = 5):
             InlineKeyboardButton("Resume All", callback_data="taskmgr_ask_resumeall_all", style=user_style),
             InlineKeyboardButton("End All", callback_data="taskmgr_ask_endall_all", style=user_style),
             InlineKeyboardButton("Pause All", callback_data="taskmgr_ask_pauseall_all", style=user_style)
+        ])
+        
+        # Page Actions Row
+        buttons.append([
+            InlineKeyboardButton("Resume Page", callback_data=f"taskmgr_ask_resumepage_{page}", style=user_style),
+            InlineKeyboardButton("End Page", callback_data=f"taskmgr_ask_endpage_{page}", style=user_style),
+            InlineKeyboardButton("Pause Page", callback_data=f"taskmgr_ask_pausepage_{page}", style=user_style)
         ])
         
         nav_row = []
@@ -487,7 +654,7 @@ def gen_task_list_data(user_id: int, page: int = 1, page_size: int = 5):
             InlineKeyboardButton("Close", callback_data="taskmgr_close", style=user_style)
         ])
             
-        header = f"📋 <b>Active Tasks</b> ({len(registry)} total)\n" + "━" * 18 + "\n"
+        header = f"📋 <b>Active Tasks ({filter_labels.get(task_filter, 'All')})</b> ({len(filtered_registry)} filtered / {len(registry)} total)\n" + "━" * 18 + "\n"
         body = "\n\n".join(lines)
         footer = "\n" + "━" * 18 + "\n💡 Click buttons below to manage."
         text = f"<blockquote expandable>{header}{body}{footer}</blockquote>"
@@ -744,7 +911,11 @@ def gen_confirmation_data(user_id: int, action: str, target: str):
             "dorestore": "Restore Task from Cache",
             "endall": "End/Clear ALL Tasks",
             "resumeall": "Resume ALL Paused Tasks",
-            "pauseall": "Pause ALL Running Tasks"
+            "pauseall": "Pause ALL Running Tasks",
+            "resumepage": f"Resume Tasks on Page {target}",
+            "endpage": f"End Tasks on Page {target}",
+            "pausepage": f"Pause Tasks on Page {target}",
+            "cache": "Clear Cache Database"
         }
         display_action = action_map.get(action, action.upper())
         
@@ -760,10 +931,18 @@ def gen_confirmation_data(user_id: int, action: str, target: str):
             f"</blockquote>"
         )
         
+        back_callback = "taskmgr_page_1"
+        if "all" in action:
+            back_callback = "taskmgr_page_1"
+        elif "page" in action:
+            back_callback = f"taskmgr_page_{target}"
+        else:
+            back_callback = f"taskmgr_status_{target}"
+            
         kb = InlineKeyboardMarkup([
             [
                 InlineKeyboardButton("✅ Yes, Proceed", callback_data=f"taskmgr_confirm_{action}_{target}", style=user_style),
-                InlineKeyboardButton("❌ No, Cancel", callback_data="taskmgr_page_1" if "all" in action else f"taskmgr_status_{target}", style=user_style)
+                InlineKeyboardButton("❌ No, Cancel", callback_data=back_callback, style=user_style)
             ]
         ])
         
@@ -774,6 +953,32 @@ def gen_confirmation_data(user_id: int, action: str, target: str):
 
 
 SETTINGS_FILE = get_db_path("taskmanager_settings.json")
+
+def get_task_filter() -> str:
+    """Get the current task filter from settings cache."""
+    try:
+        if os.path.exists(SETTINGS_FILE):
+            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return data.get("task_filter", "all")
+    except Exception as e:
+        logger.error(f"Error reading taskmanager filter: {e}")
+    return "all"
+
+def save_task_filter(task_filter: str):
+    """Save the task filter to settings cache."""
+    try:
+        data = {}
+        if os.path.exists(SETTINGS_FILE):
+            try:
+                with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except: pass
+        data["task_filter"] = task_filter
+        with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4)
+    except Exception as e:
+        logger.error(f"Error saving taskmanager filter: {e}\n{traceback.format_exc()}")
 
 def get_delay_per_resume() -> float:
     """Get the delay per resume value in seconds from settings cache."""
@@ -842,6 +1047,120 @@ def gen_delay_menu_data(user_id: int):
         logger.error(f"Error in gen_delay_menu_data: {e}\n{traceback.format_exc()}")
         return "❌ <b>Error generating delay menu.</b>", None
 
+
+def gen_finished_tasks_data(user_id: int, page: int = 1):
+    """Scan for finished tasks from known plugins and generate a finished tasks menu."""
+    try:
+        all_finished = []
+        user_style = get_user_button_style(user_id)
+        
+        # 1. Check CreateGroup Cache for completed tasks
+        cg_cache_path = get_db_path("xcreategroup_cache.json")
+        if os.path.exists(cg_cache_path):
+            try:
+                with open(cg_cache_path, "r") as f:
+                    data = json.load(f)
+                    completed = data.get("completed", {})
+                    for tid, tdata in completed.items():
+                        all_finished.append({
+                            "tid": tid,
+                            "name": tdata.get("name", "CreateGroup Task"),
+                            "plugin": "xcreategroup",
+                            "status": tdata.get("status", "completed"),
+                            "progress": f"{len(tdata.get('created_groups', []))}/{tdata.get('count', 0)}",
+                            "time": tdata.get("start_time", "-"),
+                            "account": tdata.get("account_name", "Unknown")
+                        })
+            except: pass
+
+        if not all_finished:
+            return "<blockquote expandable>📭 <b>No finished tasks found.</b></blockquote>", \
+                   InlineKeyboardMarkup([
+                       [InlineKeyboardButton("🔙 Back", callback_data="taskmgr_page_1", style=user_style)],
+                       [InlineKeyboardButton("⚙️ Manage Cache", callback_data="taskmgr_cachemgr", style=user_style)]
+                   ])
+
+        # Sort by time if possible (descending)
+        all_finished.reverse() 
+
+        page_size = 5
+        total_pages = (len(all_finished) + page_size - 1) // page_size
+        if page > total_pages: page = total_pages
+        start = (page - 1) * page_size
+        end = start + page_size
+        current_page = all_finished[start:end]
+
+        text = f"✅ <b>Finished Tasks History</b>\n" + "━" * 18 + "\n"
+        buttons = []
+        for t in current_page:
+            status_icon = "✅" if t['status'] == "completed" else "❌"
+            text += f"{status_icon} <code>{t['tid']}</code> | {t['name']} ({t['progress']}) | Owner: <b>{html.escape(t['account'])}</b>\n"
+            # Since these are finished, we might not have specific management for them here,
+            # but we could add a "Re-run" or "View Log" if supported.
+            # For now, just listing.
+        
+        nav = []
+        nav.append(InlineKeyboardButton("« Prev", callback_data=f"taskmgr_finished_{page-1}" if page > 1 else "taskmgr_noop", style=user_style))
+        nav.append(InlineKeyboardButton(f"{page}/{total_pages}", callback_data="taskmgr_noop", style=user_style))
+        nav.append(InlineKeyboardButton("Next »", callback_data=f"taskmgr_finished_{page+1}" if page < total_pages else "taskmgr_noop", style=user_style))
+        buttons.append(nav)
+
+        # First and Last navigation
+        buttons.append([
+            InlineKeyboardButton("First", callback_data="taskmgr_finished_1", style=user_style),
+            InlineKeyboardButton("Last", callback_data=f"taskmgr_finished_{total_pages}", style=user_style)
+        ])
+
+        buttons.append([
+            InlineKeyboardButton("🔙 Back", callback_data="taskmgr_page_1", style=user_style),
+            InlineKeyboardButton("⚙️ Manage Cache", callback_data="taskmgr_cachemgr", style=user_style)
+        ])
+        
+        return text, InlineKeyboardMarkup(buttons)
+    except Exception as e:
+        logger.error(f"Error in gen_finished_tasks_data: {e}\n{traceback.format_exc()}")
+        return f"❌ <b>Error scanning finished tasks.</b>", None
+
+def gen_cache_manager_data(user_id: int):
+    """Generate text and keyboard for cache management."""
+    try:
+        user_style = get_user_button_style(user_id)
+        cg_cache_path = get_db_path("xcreategroup_cache.json")
+        
+        cache_info = "📁 <b>Cache Management</b>\n" + "━" * 18 + "\n"
+        
+        total_size = 0
+        file_stats = []
+        
+        if os.path.exists(cg_cache_path):
+            size = os.path.getsize(cg_cache_path)
+            total_size += size
+            file_stats.append(f"• <code>xcreategroup_cache.json</code>: <b>{size / 1024:.2f} KB</b>")
+        
+        # Add other potential cache files here
+        settings_size = os.path.getsize(SETTINGS_FILE) if os.path.exists(SETTINGS_FILE) else 0
+        total_size += settings_size
+        file_stats.append(f"• <code>taskmanager_settings.json</code>: <b>{settings_size / 1024:.2f} KB</b>")
+        
+        cache_info += "\n".join(file_stats)
+        cache_info += f"\n\n📊 Total Cache Size: <b>{total_size / 1024:.2f} KB</b>\n"
+        cache_info += "━━━━━━━━━━━━━━━\n"
+        cache_info += "💡 Membersihkan cache akan menghapus riwayat task yang sudah selesai dan task yang terinterupsi."
+        
+        buttons = [
+            [
+                InlineKeyboardButton("🔄 Update/Sync Cache", callback_data="taskmgr_cache_update", style=user_style),
+                InlineKeyboardButton("🗑 Clear Cache", callback_data="taskmgr_ask_cache_clear", style=user_style)
+            ],
+            [
+                InlineKeyboardButton("🔙 Back to Finished Tasks", callback_data="taskmgr_finished_1", style=user_style)
+            ]
+        ]
+        
+        return f"<blockquote expandable>{cache_info}</blockquote>", InlineKeyboardMarkup(buttons)
+    except Exception as e:
+        logger.error(f"Error in gen_cache_manager_data: {e}\n{traceback.format_exc()}")
+        return "❌ <b>Error generating cache manager.</b>", None
 
 # ==================== CLEANUP STALE TASKS ====================
 def cleanup_stale_tasks():
@@ -1056,13 +1375,15 @@ async def taskmgr_inline_handler(client: Client, iq: InlineQuery):
         
         results = []
         if qtype == "list":
-            text, kb = gen_task_list_data(uid)
+            # Pass saved filter to inline handler
+            current_filter = get_task_filter()
+            text, kb = gen_task_list_data(uid, task_filter=current_filter)
             results.append(
                 InlineQueryResultArticle(
-                    title="Task List",
+                    title=f"Task List ({current_filter.capitalize()})",
                     input_message_content=InputTextMessageContent(text, parse_mode=enums.ParseMode.HTML),
                     reply_markup=kb,
-                    description="View and manage active tasks"
+                    description=f"View and manage active tasks (Filter: {current_filter})"
                 )
             )
         elif qtype == "status":
@@ -1095,11 +1416,11 @@ async def handle_restore_action(client: Client, cb: CallbackQuery, plugin: str, 
     """Helper to route restore actions to the correct plugin handler."""
     try:
         if plugin == "xcreategroup":
-            from Main.internals.settings_handlers.creategroup_handlers import creategroup_resume_cached_handler
+            from Main.plugins.userbot.xcreategroup import creategroup_control_handler
             # We temporarily modify cb.data to match what the handler expects
             original_data = cb.data
-            cb.data = f"creategroup_restore_{tid}"
-            await creategroup_resume_cached_handler(client, cb)
+            cb.data = f"recover_creategroup:{tid}"
+            await creategroup_control_handler(client, cb)
             cb.data = original_data # restore original data
             return True, f"♻️ Restore request sent for {tid}."
         else:
@@ -1108,6 +1429,36 @@ async def handle_restore_action(client: Client, cb: CallbackQuery, plugin: str, 
         logger.error(f"Error in handle_restore_action: {e}\n{traceback.format_exc()}")
         return False, f"❌ Restore failed: {str(e)}"
 
+
+async def _background_bulk_resume(client, cb, targets, delay, action_name, user_id, target_page):
+    """Background task to handle bulk resumes without blocking the main callback handler."""
+    count = 0
+    total_targets = len(targets)
+    try:
+        for idx, (tid, entry) in enumerate(targets):
+            is_int = entry.get("is_interrupted", False)
+            plugin = entry.get("plugin", "xcreategroup")
+            if is_int:
+                s, _ = await handle_restore_action(client, cb, plugin, tid)
+            else:
+                s, _ = resume_task_by_id(tid)
+            
+            if s:
+                count += 1
+                if delay > 0 and idx < total_targets - 1:
+                    await asyncio.sleep(delay)
+        
+        # Final notification update in the dashboard if message still exists
+        try:
+            msg = f"✅ {action_name} selesai: {count} task diproses."
+            text, kb = gen_task_list_data(user_id, page=target_page)
+            text = _inject_status_notice(text, msg)
+            await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+        except Exception:
+            pass # Message might have been deleted or expired
+            
+    except Exception as e:
+        logger.error(f"Error in background bulk resume: {e}\n{traceback.format_exc()}")
 
 # ==================== CALLBACK HANDLER ====================
 @Altruix.bot.on_callback_query(filters.regex("^taskmgr_"))
@@ -1123,17 +1474,17 @@ async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
         style = get_user_button_style(user_id)
         
         if action == "noop":
-            return await cb.answer()
+            return await safe_cb_answer(cb)
             
         if action == "close":
-            await cb.answer("Dashboard closed")
+            await safe_cb_answer(cb, "Dashboard closed")
             if cb.message:
                 return await cb.message.delete()
             else:
                 return await cb.edit_message_text("🗑 <b>Dashboard Closed</b>", parse_mode=enums.ParseMode.HTML)
             
         if action == "page":
-            await cb.answer("Refreshing list...", show_alert=False)
+            await safe_cb_answer(cb, "Refreshing list...", show_alert=False)
             page = int(data[2])
             text, kb = gen_task_list_data(user_id, page=page)
             try:
@@ -1142,7 +1493,22 @@ async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
                 pass
             return
 
+        if action == "filter":
+            try:
+                new_filter = data[2]
+                save_task_filter(new_filter)
+                await safe_cb_answer(cb, f"Filter: {new_filter.capitalize()}", show_alert=False)
+                
+                # Regenerate list with page 1
+                text, kb = gen_task_list_data(user_id, page=1, task_filter=new_filter)
+                await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+            except Exception as e:
+                logger.error(f"Error in filter callback: {e}\n{traceback.format_exc()}")
+                await safe_cb_answer(cb, f"❌ Error: {str(e)}", show_alert=True)
+            return
+
         if action == "restore":
+            await safe_cb_answer(cb, show_alert=False)
             page = int(data[2]) if len(data) > 2 else 1
             text, kb = gen_restore_menu_data(user_id, page=page)
             try:
@@ -1151,8 +1517,41 @@ async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
                 pass
             return
 
+        if action == "finished":
+            await safe_cb_answer(cb, "Loading history...", show_alert=False)
+            page = int(data[2]) if len(data) > 2 else 1
+            text, kb = gen_finished_tasks_data(user_id, page=page)
+            try:
+                await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+            except Exception:
+                pass
+            return
+
+        if action == "cachemgr":
+            await safe_cb_answer(cb, "Opening Cache Manager...", show_alert=False)
+            text, kb = gen_cache_manager_data(user_id)
+            try:
+                await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+            except Exception:
+                pass
+            return
+
+        if action == "cache":
+            if len(data) > 2 and data[2] == "update":
+                await safe_cb_answer(cb, "Syncing cache...", show_alert=False)
+                # Call scan and merge to sync
+                scan_and_merge_caches()
+                # Refresh manager view
+                text, kb = gen_cache_manager_data(user_id)
+                text = _inject_status_notice(text, "✅ Cache synced successfully.")
+                try:
+                    await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+                except Exception:
+                    pass
+                return
+
         if action == "delaymenu":
-            await cb.answer("Opening Delay Settings...", show_alert=False)
+            await safe_cb_answer(cb, "Opening Delay Settings...", show_alert=False)
             text, kb = gen_delay_menu_data(user_id)
             try:
                 await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
@@ -1173,14 +1572,14 @@ async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
                 new_val = max(0.0, new_val)
                 save_delay_per_resume(new_val)
                 
-                await cb.answer(f"⏳ Delay set to {new_val}s", show_alert=False)
+                await safe_cb_answer(cb, f"⏳ Delay set to {new_val}s", show_alert=False)
                 
                 # Regenerate menu
                 text, kb = gen_delay_menu_data(user_id)
                 await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
             except Exception as e:
                 logger.error(f"Error in setdelay callback: {e}\n{traceback.format_exc()}")
-                await cb.answer(f"❌ Error: {str(e)}", show_alert=True)
+                await safe_cb_answer(cb, f"❌ Error: {str(e)}", show_alert=True)
             return
 
         # --- Security Confirmation Flow ---
@@ -1188,6 +1587,7 @@ async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
             # format: taskmgr_ask_{real_action}_{target}
             real_action = data[2]
             target = data[3]
+            await safe_cb_answer(cb, show_alert=False)
             text, kb = gen_confirmation_data(user_id, real_action, target)
             await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
             return
@@ -1197,6 +1597,7 @@ async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
             try:
                 real_action = data[2]
                 target = data[3]
+                await safe_cb_answer(cb, "Processing request...", show_alert=False)
                 
                 if real_action == "stop":
                     success, msg = cancel_task_by_id(target)
@@ -1205,53 +1606,148 @@ async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
                     plugin = registry.get(target, {}).get("plugin", "xcreategroup")
                     success, msg = await handle_restore_action(client, cb, plugin, target)
                 elif real_action == "pauseall":
-                    registry = get_all_tasks()
+                    registry = get_filtered_tasks()
                     count = 0
                     for tid in list(registry.keys()):
                         s, _ = pause_task_by_id(tid)
                         if s: count += 1
                     success, msg = True, f"✅ Paused {count} tasks."
                 elif real_action == "resumeall":
-                    registry = get_all_tasks()
-                    count = 0
+                    registry = get_filtered_tasks()
                     delay = get_delay_per_resume()
                     active_tids = list(registry.keys())
                     
-                    resumed_tids = []
+                    targets = []
                     for tid in active_tids:
                         entry = registry.get(tid, {})
-                        if entry.get("paused", False) and not entry.get("is_interrupted", False):
-                            resumed_tids.append(tid)
+                        if entry.get("paused", False) or entry.get("is_interrupted", False):
+                            targets.append((tid, entry))
                     
-                    total_to_resume = len(resumed_tids)
-                    Altruix.log(f"[TaskManager] Resuming all tasks ({total_to_resume} pending) with delay: {delay}s", level=20)
-                    
-                    for idx, tid in enumerate(resumed_tids):
-                        s, _ = resume_task_by_id(tid)
-                        if s:
-                            count += 1
-                            if delay > 0 and idx < total_to_resume - 1:
-                                Altruix.log(f"[TaskManager] Sleeping for {delay}s before next resume...", level=10)
-                                await asyncio.sleep(delay)
-                                
-                    success, msg = True, f"✅ Resumed {count} tasks."
+                    total_targets = len(targets)
+                    if total_targets == 0:
+                        success, msg = True, "ℹ️ Tidak ada task yang perlu di-resume."
+                    else:
+                        # Jalankan di background agar tidak timeout
+                        asyncio.create_task(_background_bulk_resume(client, cb, targets, delay, "Resume All", user_id, 1))
+                        success, msg = True, f"⏳ Memproses resume {total_targets} task di background (Delay: {delay}s)..."
                 elif real_action == "endall":
-                    registry = get_all_tasks()
+                    registry = get_filtered_tasks()
                     count = 0
                     for tid in list(registry.keys()):
                         s, _ = cancel_task_by_id(tid)
                         if s: count += 1
                     success, msg = True, f"✅ Ended {count} tasks."
+                elif real_action == "resumepage":
+                    try:
+                        page_num = int(target)
+                    except:
+                        page_num = 1
+                    registry = get_filtered_tasks()
+                    tasks_list = list(registry.items())
+                    page_size = 5
+                    total_pages = (len(tasks_list) + page_size - 1) // page_size
+                    page_num = max(1, min(page_num, total_pages))
+                    start_idx = (page_num - 1) * page_size
+                    visible_tasks = tasks_list[start_idx:start_idx + page_size]
+                    
+                    delay = get_delay_per_resume()
+                    
+                    targets = []
+                    for tid, entry in visible_tasks:
+                        if entry.get("paused", False) or entry.get("is_interrupted", False):
+                            targets.append((tid, entry))
+                            
+                    total_targets = len(targets)
+                    if total_targets == 0:
+                        success, msg = True, f"ℹ️ Tidak ada task di halaman {page_num} yang perlu di-resume."
+                    else:
+                        # Jalankan di background
+                        asyncio.create_task(_background_bulk_resume(client, cb, targets, delay, f"Resume Page {page_num}", user_id, page_num))
+                        success, msg = True, f"⏳ Memproses resume {total_targets} task (Hal {page_num}) di background..."
+                elif real_action == "pausepage":
+                    try:
+                        page_num = int(target)
+                    except:
+                        page_num = 1
+                    registry = get_filtered_tasks()
+                    tasks_list = list(registry.items())
+                    page_size = 5
+                    total_pages = (len(tasks_list) + page_size - 1) // page_size
+                    page_num = max(1, min(page_num, total_pages))
+                    start_idx = (page_num - 1) * page_size
+                    visible_tasks = tasks_list[start_idx:start_idx + page_size]
+                    
+                    count = 0
+                    for tid, _ in visible_tasks:
+                        s, _ = pause_task_by_id(tid)
+                        if s: count += 1
+                    success, msg = True, f"✅ Paused {count} tasks on page {page_num}."
+                elif real_action == "endpage":
+                    try:
+                        page_num = int(target)
+                    except:
+                        page_num = 1
+                    registry = get_filtered_tasks()
+                    tasks_list = list(registry.items())
+                    page_size = 5
+                    total_pages = (len(tasks_list) + page_size - 1) // page_size
+                    page_num = max(1, min(page_num, total_pages))
+                    start_idx = (page_num - 1) * page_size
+                    visible_tasks = tasks_list[start_idx:start_idx + page_size]
+                    
+                    count = 0
+                    for tid, _ in visible_tasks:
+                        s, _ = cancel_task_by_id(tid)
+                        if s: count += 1
+                    success, msg = True, f"✅ Ended {count} tasks on page {page_num}."
+                elif real_action == "cache":
+                    # Clear Cache Action
+                    cg_cache_path = get_db_path("xcreategroup_cache.json")
+                    cleared_files = []
+                    if os.path.exists(cg_cache_path):
+                        try:
+                            # Also clear memory if possible
+                            try:
+                                from Main.plugins.userbot.xcreategroup import CREATEGROUP_TASKS, COMPLETED_CREATEGROUP_TASKS
+                                CREATEGROUP_TASKS.clear()
+                                COMPLETED_CREATEGROUP_TASKS.clear()
+                                Altruix.log("[TaskManager] Memory cache for CreateGroup cleared.", level=20)
+                            except Exception as mem_err:
+                                logger.warning(f"Failed to clear CG memory cache: {mem_err}")
+
+                            # Reset file content to empty structure instead of deleting
+                            with open(cg_cache_path, "w") as f:
+                                json.dump({"tasks": {}, "completed": {}}, f, indent=2)
+                            cleared_files.append("xcreategroup_cache.json")
+                        except Exception as e:
+                            logger.error(f"Failed to clear CG cache: {e}")
+                    
+                    if cleared_files:
+                        success, msg = True, f"✅ Cache cleared: {', '.join(cleared_files)}"
+                    else:
+                        success, msg = False, "⚠️ No cache files found to clear."
+                    
+                    # Redirect to cache manager
+                    text, kb = gen_cache_manager_data(user_id)
+                    text = _inject_status_notice(text, msg)
+                    await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+                    return
                 else:
                     success, msg = False, "Unknown action."
 
-                await cb.answer(msg.replace("<b>", "").replace("</b>", "").replace("<blockquote expandable>", "").replace("</blockquote>", ""), show_alert=True)
-                text, kb = gen_task_list_data(user_id)
+                # Back to the exact same page
+                try:
+                    target_page = int(target) if "page" in real_action else 1
+                except:
+                    target_page = 1
+
+                text, kb = gen_task_list_data(user_id, page=target_page)
+                text = _inject_status_notice(text, msg)
                 await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
                 return
             except Exception as e:
                 logger.error(f"Error in confirm action: {e}\n{traceback.format_exc()}")
-                await cb.answer(f"❌ Error: {str(e)}", show_alert=True)
+                await safe_cb_answer(cb, f"❌ Error: {str(e)}", show_alert=True)
                 return
 
         # --- Single Task Actions ---
@@ -1259,14 +1755,14 @@ async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
         if not tid.startswith("#"): tid = f"#{tid}"
         
         if action == "status":
-            await cb.answer("Updating status...", show_alert=False)
+            await safe_cb_answer(cb, "Updating status...", show_alert=False)
             text, kb = gen_task_status_data(user_id, tid)
             try: await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
             except: pass
             return
 
         if action == "info":
-            await cb.answer("Refreshing info...", show_alert=False)
+            await safe_cb_answer(cb, "Refreshing info...", show_alert=False)
             page = int(data[3]) if len(data) > 3 else 1
             text, kb = gen_task_info_data(user_id, tid, page=page)
             try: await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
@@ -1275,21 +1771,21 @@ async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
 
         if action == "pause":
             success, msg = pause_task_by_id(tid)
-            await cb.answer(msg.replace("<b>", "").replace("</b>", "").replace("<blockquote expandable>", "").replace("</blockquote>", ""), show_alert=True)
+            await safe_cb_answer(cb, msg, show_alert=True)
             text, kb = gen_task_status_data(user_id, tid)
             await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
             return
 
         if action == "resume":
             success, msg = resume_task_by_id(tid)
-            await cb.answer(msg.replace("<b>", "").replace("</b>", "").replace("<blockquote expandable>", "").replace("</blockquote>", ""), show_alert=True)
+            await safe_cb_answer(cb, msg, show_alert=True)
             text, kb = gen_task_status_data(user_id, tid)
             await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
             return
 
         if action == "recur":
             success, msg = toggle_recurring_by_id(tid)
-            await cb.answer(msg.replace("<b>", "").replace("</b>", "").replace("<blockquote expandable>", "").replace("</blockquote>", ""), show_alert=True)
+            await safe_cb_answer(cb, msg, show_alert=True)
             text, kb = gen_task_status_data(user_id, tid)
             await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
             return
@@ -1308,21 +1804,21 @@ async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
             try:
                 await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
             except Exception as e:
-                await cb.answer(f"❌ Error rendering info: {str(e)[:50]}", show_alert=True)
+                await safe_cb_answer(cb, f"❌ Error rendering info: {str(e)[:50]}", show_alert=True)
             return
 
         if action == "pause":
             success, msg = pause_task_by_id(tid)
-            await cb.answer(msg.replace("<blockquote expandable>", "").replace("</blockquote>", ""), show_alert=True)
+            await safe_cb_answer(cb, msg, show_alert=True)
         elif action == "resume":
             success, msg = resume_task_by_id(tid)
-            await cb.answer(msg.replace("<blockquote expandable>", "").replace("</blockquote>", ""), show_alert=True)
+            await safe_cb_answer(cb, msg, show_alert=True)
         elif action == "stop":
             success, msg = cancel_task_by_id(tid)
-            await cb.answer(msg.replace("<blockquote expandable>", "").replace("</blockquote>", ""), show_alert=True)
+            await safe_cb_answer(cb, msg, show_alert=True)
         elif action == "recur":
             success, msg = toggle_recurring_by_id(tid)
-            await cb.answer(msg.replace("<blockquote expandable>", "").replace("</blockquote>", ""), show_alert=True)
+            await safe_cb_answer(cb, msg, show_alert=True)
 
         # Refresh current view
         msg_text = cb.message.text if cb.message else ""
@@ -1346,4 +1842,4 @@ async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
             f"Data: <code>{cb.data}</code>\n\n"
             f"<b>Traceback:</b>\n<pre>{html.escape(err_trace)}</pre>"
         )
-        await cb.answer(f"❌ Callback Error: {str(e)}", show_alert=True)
+        await safe_cb_answer(cb, f"❌ Callback Error: {str(e)}", show_alert=True)

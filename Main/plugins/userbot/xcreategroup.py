@@ -142,9 +142,8 @@ async def load_creategroup_cache():
                     except: pass
                 task_data["pause_event"] = asyncio.Event()
                 task_data["pause_event"].set()
-                # Ensure the key is the TID (#CGabcd)
-                key = task_data.get("tid", tid)
-                CREATEGROUP_TASKS[key] = task_data
+                # ✅ FIX: Gunakan tid asli dari JSON sebagai key di memory agar unik per-akun
+                CREATEGROUP_TASKS[tid] = task_data
                 
             for tid, comp_data in data.get("completed", {}).items():
                 if "start_time" in comp_data and isinstance(comp_data["start_time"], str):
@@ -995,7 +994,9 @@ async def creategroup_loop(
         # Prevent "Dirty TID" pollution from message text extraction
         tid = str(tid).split('\n')[0].replace('━', '').replace('⚙️ Manage Task:', '').strip()
     
-    task_key = tid
+    # ✅ FIX: task_key HARUS menggunakan task_id (unik per-akun) bukan cuma tid pendek (#CG...)
+    # Jika task_id tidak ada, gunakan tid.
+    task_key = task_id or tid
 
     created_groups = []
     batch_groups = [] # Buffer for current batch
@@ -1230,7 +1231,7 @@ async def creategroup_loop(
                     await send_log_notification(
                         bot_client,
                         f"<blockquote expandable>"
-                        f"✅ Foto profil ({source_label}) berhasil di-download ({os.path.getsize(photo_path)} bytes)\n"
+                        f"✅ Foto profil ({source_label}) berhasil di-download ({os.path.getsize(photo_path)} bytes) (Akun: {html.escape(account_name_raw)})\n"
                         f"💡 Use <code>.taskstatus {tid}</code> for details."
                         f"</blockquote>",
                         effective_user_id,
@@ -1366,7 +1367,7 @@ async def creategroup_loop(
             # Actually, we can update the header later. For now, let's keep it simple and update line 554/559.
             
             type_name = "Channel" if group_type == "c" else "Grup"
-            current_log_header = f"🏗 <b>Memproses {type_name} {i}/{int(count)}</b>\n"
+            current_log_header = f"🏗 <b>Memproses {type_name} {i}/{int(count)} | Session {account_idx}/{total_accs}</b>\n"
             current_log_text = (
                 f"<blockquote expandable>"
                 f"{current_log_header}"
@@ -1439,15 +1440,12 @@ async def creategroup_loop(
                                     new_msg = await sec_bot.send_message(
                                         chat_id=LOG_CHAT_ID,
                                         text=current_log_text,
-                                        reply_to_message_id=reply_id,
+                                        reply_to_message_id=msg.id,
                                         parse_mode=ParseMode.HTML,
                                         disable_web_page_preview=True
                                     )
-                                    # Coba hapus log lama agar tidak double
-                                    try:
-                                        await msg.delete()
-                                    except Exception:
-                                        pass
+                                    # Skip menghapus log lama sesuai instruksi user (jangan ada log yang dihapus)
+                                    pass
                                     # Update reference agar tracker berikutnya menggunakan bot alternatif ini
                                     current_log_msgs[idx] = ("bot", new_msg)
                                     success_fallback = True
@@ -2399,20 +2397,61 @@ async def send_completion_report(
                      final_buttons.inline_keyboard = group_buttons + final_buttons.inline_keyboard
 
                 account_name = f"{user_info.first_name or ''} {user_info.last_name or ''}".strip() if user_info else "Unknown"
-                await control_message.edit_text(
-                    f"<blockquote expandable>"
-                    f"✅ <b>Laporan Create {type_label} Selesai</b>\n\n"
-                    f"• <b>User:</b> {html.escape(account_name)}\n"
-                    f"• <b>Detail:</b> Berhasil {success_count}/{requested_count} {unit_label}\n"
-                    f"• <b>Durasi:</b> {format_duration(total_duration)}\n"
-                    f"• <b>Log:</b> {log_info}"
-                    f"</blockquote>",
-                    reply_markup=final_buttons,
-                    parse_mode=ParseMode.HTML
-                )
+                try:
+                    await control_message.edit_text(
+                        f"<blockquote expandable>"
+                        f"✅ <b>Laporan Create {type_label} Selesai</b>\n\n"
+                        f"• <b>User:</b> {html.escape(account_name)}\n"
+                        f"• <b>Detail:</b> Berhasil {success_count}/{requested_count} {unit_label}\n"
+                        f"• <b>Durasi:</b> {format_duration(total_duration)}\n"
+                        f"• <b>Log:</b> {log_info}"
+                        f"</blockquote>",
+                        reply_markup=final_buttons,
+                        parse_mode=ParseMode.HTML
+                    )
+                except FloodWait as fw:
+                    logger.warning(f"Terkena FloodWait saat edit_text ({fw.value}s). Mencoba sleep dan retry...")
+                    if fw.value <= 40:
+                        await asyncio.sleep(fw.value + 1)
+                        try:
+                            await control_message.edit_text(
+                                f"<blockquote expandable>"
+                                f"✅ <b>Laporan Create {type_label} Selesai</b>\n\n"
+                                f"• <b>User:</b> {html.escape(account_name)}\n"
+                                f"• <b>Detail:</b> Berhasil {success_count}/{requested_count} {unit_label}\n"
+                                f"• <b>Durasi:</b> {format_duration(total_duration)}\n"
+                                f"• <b>Log:</b> {log_info}"
+                                f"</blockquote>",
+                                reply_markup=final_buttons,
+                                parse_mode=ParseMode.HTML
+                            )
+                            return
+                        except Exception as retry_err:
+                            logger.error(f"Retry edit_text gagal: {retry_err}")
+                    
+                    # Fallback: Kirim laporan baru menggunakan bot_client (Hanya akun bot asisten)
+                    try:
+                        logger.info("Mencoba kirim laporan baru via bot_client ke LOG_CHAT_ID...")
+                        new_msg = await bot_client.send_message(
+                            LOG_CHAT_ID,
+                            f"<blockquote expandable>"
+                            f"✅ <b>[FALLBACK] Laporan Create {type_label} Selesai</b>\n\n"
+                            f"• <b>User:</b> {html.escape(account_name)}\n"
+                            f"• <b>Detail:</b> Berhasil {success_count}/{requested_count} {unit_label}\n"
+                            f"• <b>Durasi:</b> {format_duration(total_duration)}\n"
+                            f"• <b>Log:</b> {log_info}"
+                            f"</blockquote>",
+                            reply_markup=final_buttons,
+                            parse_mode=ParseMode.HTML
+                        )
+                        logger.info(f"Fallback laporan baru sukses dikirim via bot_client (ID: {new_msg.id})")
+                        return
+                    except Exception as fallback_bot_err:
+                        logger.error(f"Fallback bot_client gagal: {fallback_bot_err}")
+                except Exception as e:
+                    logger.error(f"Gagal update control message final: {e}\n{traceback.format_exc()}")
             except Exception as e:
-                logger.error(f"Gagal update control message final: {e}\n{traceback.format_exc()}")
-        
+                logger.error(f"Gagal mempersiapkan tombol atau laporan final: {e}\n{traceback.format_exc()}")
     except Exception as e:
         error_tb = traceback.format_exc()
         logger.error(f"Error sending completion report: {e}\n{error_tb}")

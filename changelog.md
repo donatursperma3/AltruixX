@@ -2,6 +2,113 @@
 
 All notable changes to the **AltruixX** project from version **0.0.10.0959H** to the latest.
 
+## [0.0.10.2456I] - 2026-05-21
+
+### 📑 Task Manager Plugin: Persistent Task Filtering & Advanced Menu UX
+- **Added: Interactive Task Status Filtering**:
+  - Integrated a new primary filter button row: **`[All]`**, **`[Running]`**, **`[Intrrupted]`**, and **`[Pause]`** directly into the `📋 Active Tasks` dashboard.
+  - Allows users to quickly toggle between active running tasks, manual pauses, and system-interrupted/cached tasks.
+- **Added: Persistent Filter State**:
+  - Implemented automatic filter state persistence in `taskmanager_settings.json`. The selected filter remains active across dashboard reloads and bot restarts.
+- **Improved: Filter-Aware Bulk Actions**:
+  - Upgraded all bulk actions (`End Page`, `Resume All`, `Pause All`, etc.) to automatically respect the active filter. Operations now only target tasks matching the current view.
+- **Added: Dynamic Status Headers & Filter Labels**:
+  - Enhanced the dashboard header to dynamically display the active filter name and a filtered/total task count ratio (e.g., `📋 Active Tasks (Running) (5 filtered / 12 total)`).
+- **Added: Finished Task History Dashboard**:
+  - Integrated a new **`[View Finished Task]`** sub-menu to display the history of completed and failed background tasks.
+  - Features advanced list views showing task status (✅/❌), task ID, progress, and **Owner Account Name** for each entry.
+  - Includes **`[First]`** and **`[Last]`** navigation buttons for quick traversal of large history queues.
+- **Added: Integrated Cache Management Sub-menu**:
+  - Implemented a dedicated **`⚙️ Manage Cache`** panel showing real-time database sizes for `xcreategroup_cache.json` and settings files.
+  - Added interactive **`🔄 Update/Sync Cache`** and **`🗑 Clear Cache`** (with security confirmation) to maintain database health and clear historical "zombie" data.
+
+### 🛡️ Task Engine Stability & Performance Hardening
+- **Fixed: Task Manager Key Collision (Multi-Account Overwrites)**:
+  - Resolved a critical bug in `xcreategroup.py` where multiple accounts using identical short TIDs (`#CG...`) would overwrite each other in the global registry during cache loading.
+  - Migrated the internal memory indexing to a unique, account-specific `task_id` system, ensuring 100% data integrity when handling hundreds of simultaneous tasks.
+- **Optimized: Non-Blocking Background Bulk Actions**:
+  - Re-engineered the `[Resume All]` and `[Resume Page]` pipelines to run as asynchronous background tasks.
+  - Prevents Telegram API callback timeouts and dashboard "freezing" when restoring large task queues (e.g., 170+ tasks), offering a smooth and responsive UI experience.
+- **Improved: Robust Cache Restoration & Sync**:
+  - Hardened the `load_creategroup_cache` routine to safely handle corrupted JSON files with automatic backup (`.bak`) and fresh reset logic.
+
+### 📨 Message Sender Plugin: Enhanced Log Visibility & Private Chat Support
+- **Fixed: Missing "From/To msg_id" Buttons in Private Chats**:
+  - Implemented a new manual link generation helper `get_message_link` that correctly constructs clickable Telegram links (`https://t.me/c/chat_id/msg_id`) for private groups and channels where Pyrogram's native `.link` property returns `None`.
+- **Fixed: Interactive Button Fallback Logging**:
+  - Upgraded the `send_action_log` pipeline to ensure that `reply_markup` (containing the interactive message links) is correctly passed to the fallback `send_log_message` function when Bot Assistant delivery is bypassed or fails.
+- **Improved: Unified Log Aesthetics & Expandable Blockquotes**:
+  - Guaranteed that all log notifications (Direct Message, Clones, Story Clones, and Settings) are wrapped in `<blockquote expandable>` tags for a clean, premium visual experience in the Log Group.
+  - Added a new **`• ByPass: {True/False}`** field to the log notifications to indicate if a message was cloned via direct copy or through the download/re-upload bypass pipeline.
+- **Improved: Media Bypass Safety**:
+  - Hardened the `bypass_protected_send` routine with strict `finally` blocks to ensure temporary media and thumbnail files are always purged from the local filesystem after processing.
+
+### 🎬 YouTube Tools (YTDL) Plugin: Visual Dashboard Enhancement & Stability
+- **Fixed: Dashboard Thumbnail Visibility**:
+  - Migrated the primary inline dashboard response from `InlineQueryResultArticle` to `InlineQueryResultPhoto`. This ensures the YouTube video thumbnail is persistently displayed as a media message instead of a plain text bubble with a disappearing preview.
+- **Improved: Intelligent Media-Aware Dashboard Updates**:
+  - Upgraded the dashboard refresh and navigation logic to automatically detect the current message type (Media vs. Text).
+  - Implements a seamless transition between `edit_message_caption` and `edit_message_text` to prevent API errors during state toggles (e.g., when moving between media-rich menus and text-only sub-menus).
+- **Improved: Robust Menu Navigation Fallbacks**:
+  - Hardened all YTDL sub-menus (Quality, Language, Sender, Trimmer, Split Chapters, and Playlist) with multi-stage `try-except` fallbacks.
+  - Guarantees that the dashboard remains interactive even if session data or message types change unexpectedly during a live download configuration.
+- **Added: Source Platform & URL Visibility**:
+  - Integrated a new **`• Platform: {Extractor}`** field to the main dashboard and final media captions, automatically detecting the source service (YouTube, TikTok, Instagram, etc.).
+  - Added a clickable **`🔗 Source: {URL}`** field to the dashboard and media captions for easy access to the original content link.
+  - Synchronized platform and source data across all state persistence (DB/JSON) and recovery pipelines.
+
+---
+
+## [0.0.10.2455I] - 2026-05-20
+
+### 🛡️ API & Transport Resilience Hardening
+- **Fixed: MessageNotModified Flood & Latency Loop**:
+  - Added `MessageNotModified` and `MESSAGE_NOT_MODIFIED` to the static list of `permanent_errors` inside Pyrogram's `invoke` decorator wrapper (`Main/core/types/client.py`).
+  - By identifying same-content message edits as non-retryable permanent errors immediately, the system bypasses redundant 5-time backoff retries and avoids unnecessary 7.5-second thread delays/log clutter.
+
+---
+
+## [0.0.10.2454I] - 2026-05-20
+
+### 📑 Task Manager Plugin: [Resume Page] and [Resume All] Robust Restoration Routing
+- **Fixed: [Resume Page] / [Resume All] Bulk Resumptions**:
+  - Upgraded both `resumepage` and `resumeall` bulk actions inside the Task Manager callback handler to dynamically support both paused active tasks and persistent interrupted tasks.
+  - Automatically routes interrupted tasks (`is_interrupted: True`) to the restored handler (`handle_restore_action`), while routing paused tasks to the standard resume helper.
+- **Fixed: Task Manager Restoration Helper**:
+  - Restored `handle_restore_action` to import `creategroup_control_handler` from `Main.plugins.userbot.xcreategroup` and correctly format callback data (`recover_creategroup:{tid}`) to native requirements.
+  - Fully resolves the missing `creategroup_resume_cached_handler` import error.
+
+### 🔄 Unified Restart Flow & Debug Logging
+- **Optimized: Unified Restart Pipeline**:
+  - Hardened the `Full Restart (Hard)` action in `/settings` (under both `SESSION MANAGER` and `bulk control` menus) to natively route through `Altruix._restart` for a single, bulletproof, cross-platform process replacement pipeline.
+- **Added: Conditional DEBUG Restart Method Logging**:
+  - If `DEBUG=True` in the configuration settings, the system logs which stagger method (`Parallel` or `Sequential`) is used during session connection restarts directly to the terminal, prepended with the clean structural styling prefix `[DEBUG_ON]: » `.
+
+---
+
+## [0.0.10.2453I] - 2026-05-20
+
+### 🚀 High-Speed Startup Report Index Addition
+- **New Feature: Startup Session Indexes**:
+  - Preallocated and synchronized detailed session entries to print the correct sequential index `[idx]` (e.g. `[0]`, `[1]`, `[2]`, ..., `[100]`) inside the consolidated Startup Report.
+  - Guaranteed exact order preservation for parallel and sequential startup logging methods.
+
+---
+
+## [1.0.252] - 2026-05-19
+
+### 📑 Task Manager Plugin: Page-Specific Bulk Actions & Snappy UX
+- **Added: Page-Specific Bulk Actions**:
+  - Integrated three new powerful interactive buttons: **`[Resume Page]`**, **`[End Page]`**, and **`[Pause Page]`** directly on the `📋 Active Tasks` paginated dashboard.
+  - Allows bulk operations to act strictly on visible active tasks listed on the current page rather than terminating/resuming the entire global queue.
+- **Added: Advanced UX Navigation & Smart Return Routing**:
+  - Implemented smart return page routing; after approving a page bulk action, the dashboard automatically reloads and displays the *exact same page* the user was viewing, rather than resetting to page 1.
+  - Symmetrically maps confirmation and cancellation actions (e.g. `❌ No, Cancel` returns to the specific page it was triggered from).
+- **Added: Paced Resumes & Safety Alignment**:
+  - Automatically incorporates the safety `⏳ Delay Per-Resume` pacing configuration inside page resumes to protect the userbot from network flood limits.
+
+---
+
 ## [1.0.251] - 2026-05-19
 
 ### 📦 YTDL Manager: Premium YouTube Chapter Splitter & NoneType Hardening
@@ -64,9 +171,21 @@ All notable changes to the **AltruixX** project from version **0.0.10.0959H** to
   - Disabled web page / link previews in the `📊 Detail Laporan Dibuat` submenu to keep the dashboard view extremely clean, compact, and free of vertical preview clutter.
 - **Added: Expandable Blockquote for Task Control Panel Log**:
   - Wrapped the initial `🚀 Task Control Panel` log notification message in `xcreategroup.py` inside a `<blockquote expandable>` element to match the project's visual and log threading standards.
+- **Hardened: FloodWait Resiliency & Assistant Bot Log Exclusive**:
+  - Engineered an automatic `FloodWait` detection and retry system when sending final completion reports.
+  - If a short rate limit occurs (e.g. `<= 40` seconds), the program automatically sleeps and retries.
+  - Enforced that only the Main Assistant Bot (`bot_client`) handles log transmissions and updates (userbot sessions are completely skipped to keep account activities clean). If rate limits are high, the system handles fallback logging seamlessly via a fresh log message delivered by the assistant bot.
+  - Disabled all log message deletion routines (specifically during secondary bot migrations) to ensure all updated log message history remains 100% preserved and intact.
+  - Configured secondary/fallback bot migration messages to **directly reply to the original/old log message ID (`msg.id`)** so that log updates are visually threaded and chronological, eliminating the need to delete old logs.
+- **Added: Session Progress & Account Preview in Creation Logs**:
+  - Enhanced the `🏗 Memproses` group progress header inside `xcreategroup.py` to dynamically display the active multi-session account index (`Session {account_idx}/{total_accs}`).
+  - Upgraded the profile photo download success log notification to dynamically display the active session/account name `(Akun: {account_name_raw})` for ultimate transparency.
+- **Fixed: Harmless QueryIdInvalid Safety Wrapper**:
+  - Wrapped the initial `await cb.answer()` calls in both `creategroup_reports_handler` and `creategroup_report_detail_handler` inside clean `try-except` blocks.
+  - This ensures that if a Telegram callback query expires due to latency or lag, the page loading logic continues flawlessly rather than crashing the menu with a QUERY_ID_INVALID error.
 - **Version Bumps**:
-  - **CreateGroup Handlers**: `0.3.229`
-  - **CreateGroup Plugin**: `0.2.407`
+  - **CreateGroup Handlers**: `0.3.230`
+  - **CreateGroup Plugin**: `0.2.413`
 
 ## [0.0.10.2455I] - 2026-05-19
 

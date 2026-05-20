@@ -170,3 +170,5 @@ qr_login.log
 Main/assets/bin/
 *.exe
 message
+test_changelog.py
+test_logic.py 

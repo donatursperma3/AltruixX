@@ -337,7 +337,8 @@ async def extract_yt_info(url: str):
             "uploader": data.get("uploader") or data.get("channel") or data.get("uploader_id") or "Unknown Channel",
             "subscribers": data.get("channel_follower_count") or data.get("subscriber_count") or 0,
             "views": data.get("view_count") or data.get("playlist_count") or 0,
-            "upload_date": data.get("upload_date")
+            "upload_date": data.get("upload_date"),
+            "extractor": data.get("extractor_key") or data.get("extractor") or "YouTube"
         }
 
     # 2. Handle Video (or URL reference)
@@ -436,7 +437,8 @@ async def extract_yt_info(url: str):
         "track": data.get("track"),
         "subscribers": data.get("channel_follower_count") or data.get("subscriber_count") or 0,
         "views": data.get("view_count") or 0,
-        "upload_date": data.get("upload_date")
+        "upload_date": data.get("upload_date"),
+        "extractor": data.get("extractor_key") or data.get("extractor") or "YouTube"
     }
 
 async def ytdl_engine(msg, task_id):
@@ -811,6 +813,7 @@ async def _ytdl_single_unit(status_msg, task_id, state):
                     f"<b>• Bab {idx+1}/{len(chapters)}:</b> {chap_title}\n"
                     f"<b>• Channel:</b> {state.get('uploader', 'Unknown')} ({format_count(state.get('subscribers'))} subs)\n"
                     f"<b>• Upload:</b> {format_yt_date(state.get('upload_date'))}\n"
+                    f"<b>• Platform:</b> {state.get('extractor', 'YouTube').capitalize()}\n"
                     f"<b>• Durasi:</b> {Essentials.get_readable_time(actual_duration)}\n"
                     f"<b>• Size:</b> {Essentials.humanbytes(f_size)}\n"
                     f"<b>• {'Resolusi' if is_video else 'Bitrate'}:</b> {state['quality']}{qual_suffix}{v_bit_str}\n"
@@ -1057,6 +1060,7 @@ async def _ytdl_single_unit(status_msg, task_id, state):
             f"<b>• Channel:</b> {state.get('uploader', 'Unknown')} ({format_count(state.get('subscribers'))} subs)\n"
             f"<b>• Views:</b> {format_count(state.get('views'))}\n"
             f"<b>• Upload:</b> {format_yt_date(state.get('upload_date'))}\n"
+            f"<b>• Platform:</b> {state.get('extractor', 'YouTube').capitalize()}\n"
             f"<b>• Durasi:</b> {Essentials.get_readable_time(duration)}\n"
             f"<b>• Size:</b> {Essentials.humanbytes(f_size)}\n"
             f"<b>• {'Resolusi' if is_video else 'Bitrate'}:</b> {state['quality']}{qual_suffix}{v_bit_str}\n"

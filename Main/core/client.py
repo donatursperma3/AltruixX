@@ -3020,7 +3020,7 @@ class AltruixClient:
                     all_clients = [self.bot] + self.clients
                     success_count = 0
                     failed_clients = []
-                    detailed_results = [] # For split log report
+                    detailed_results = [None] * len(all_clients) # Preallocate list to maintain index sequence in parallel
                     
                     self.log(self.get_string("sending_startup").format(len(all_clients)))
                     
@@ -3028,7 +3028,7 @@ class AltruixClient:
                     if stagger_method == "parallel":
                         sem_logs = asyncio.Semaphore(self.LOG_CONCURRENCY) # Conservative for logs
                         
-                        async def send_startup_parallel(client):
+                        async def send_startup_parallel(idx, client):
                             async with sem_logs:
                                 try:
                                     me = client.myself if hasattr(client, "myself") else await client.get_me()
@@ -3068,9 +3068,9 @@ class AltruixClient:
                                         
                                         if state in ["off", "false", "no", "0"]:
                                             self.log(f"SKIP: [{client_type}] {name} startup log (OFF)")
-                                            detailed_results.append(f"• {name}{username}: ⚪ Skipped (OFF)")
+                                            detailed_results[idx] = f"• [{idx}] {name}{username}: ⚪ Skipped (OFF)"
                                             return
-
+ 
                                         if state == "custom":
                                             custom_msg = await self.config.get_env(custom_key)
                                             if custom_msg:
@@ -3085,19 +3085,19 @@ class AltruixClient:
                                             disable_indicator = "\n🚫 <b>Disable:</b> <code>True</code>" if self.is_session_disabled(user_id) else ""
                                             final_message = f"<blockquote expandable>{base_text}\n<b>{client_type}: {mention_user}</b> [ <code>{user_id}</code> ]{disable_indicator}</blockquote>\n"
                                             parse_mode = ParseMode.HTML
-
+ 
                                     sender = client
                                     if client != self.bot and self.is_session_disabled(me.id):
                                         sender = self.bot_manager.get_bot(me.id)
                                         self.log(f"REDIRECT: [{client_type}] {name} startup log via Assistant (Session Disabled)")
-
+ 
                                     if startup_mode == "on" and state != "test":
                                         if sender:
                                             await sender.send_message(log_chat_id, final_message, parse_mode=parse_mode, link_preview_options=LinkPreviewOptions(is_disabled=True))
-                                        detailed_results.append(f"• {name}{username}: ✅ Sent")
+                                        detailed_results[idx] = f"• [{idx}] {name}{username}: ✅ Sent"
                                         await asyncio.sleep(0.5) # Stagger log messages
                                     else:
-                                        detailed_results.append(f"• {name}{username}: ✅ Active (Test)")
+                                        detailed_results[idx] = f"• [{idx}] {name}{username}: ✅ Active (Test)"
                                     
                                     nonlocal success_count
                                     success_count += 1
@@ -3110,14 +3110,14 @@ class AltruixClient:
                                 except Exception as e:
                                     me = client.myself if hasattr(client, "myself") else None
                                     name = me.first_name if me else "Unknown"
-                                    detailed_results.append(f"• {name}: ❌ Failed ({type(e).__name__})")
+                                    detailed_results[idx] = f"• [{idx}] {name}: ❌ Failed ({type(e).__name__})"
                                     self.log(f"GAGAL: {name} → {e}", level=30)
-
-                        await asyncio.gather(*[send_startup_parallel(c) for c in all_clients])
-
+ 
+                        await asyncio.gather(*[send_startup_parallel(i, c) for i, c in enumerate(all_clients)])
+ 
                     else:
                         # Legacy Sequential Log Sending
-                        for client in all_clients:
+                        for idx, client in enumerate(all_clients):
                             try:
                                 me = client.myself if hasattr(client, "myself") else await client.get_me()
                                 name = f"{me.first_name or ''} {me.last_name or ''}".strip() or "Unknown"
@@ -3166,7 +3166,7 @@ class AltruixClient:
                                     
                                     if state in ["off", "false", "no", "0"]:
                                         self.log(f"SKIP: [{client_type}] {name} startup log (OFF)")
-                                        detailed_results.append(f"• {name}{username}: ⚪ Skipped (OFF)")
+                                        detailed_results[idx] = f"• [{idx}] {name}{username}: ⚪ Skipped (OFF)"
                                         continue
                                     
                                     if state == "custom":
@@ -3184,13 +3184,13 @@ class AltruixClient:
                                         disable_indicator = "\n🚫 <b>Disable:</b> <code>True</code>" if self.is_session_disabled(user_id) else ""
                                         final_message = f"<blockquote expandable>{base_text}\n<b>{client_type}: {mention_user}</b> [ <code>{user_id}</code> ]{disable_indicator}</blockquote>\n"
                                         parse_mode = ParseMode.HTML
-
+ 
                                 # ✅ REDIRECTION LOGIC: If session is disabled, send via Bot Assistant
                                 sender = client
                                 if client != self.bot and self.is_session_disabled(me.id):
                                     sender = self.bot_manager.get_bot(me.id)
                                     self.log(f"REDIRECT: [{client_type}] {name} startup log via Assistant (Session Disabled)")
-
+ 
                                 # ✅ EXECUTION BASED ON MODE
                                 if startup_mode == "on" and state != "test":
                                     if sender:
@@ -3200,12 +3200,12 @@ class AltruixClient:
                                             parse_mode=parse_mode,
                                             link_preview_options=LinkPreviewOptions(is_disabled=True)
                                         )
-                                    detailed_results.append(f"• {name}{username}: ✅ Sent")
+                                    detailed_results[idx] = f"• [{idx}] {name}{username}: ✅ Sent"
                                     # delay 0.5 second
                                     await asyncio.sleep(0.5)
                                 else:
                                     # TEST MODE: Only local test/ping
-                                    detailed_results.append(f"• {name}{username}: ✅ Active (Test)")
+                                    detailed_results[idx] = f"• [{idx}] {name}{username}: ✅ Active (Test)"
                                 
                                 success_count += 1
                                 if client == self.bot:
@@ -3217,7 +3217,7 @@ class AltruixClient:
                                     total_userbots = len(self.clients)
                                     log_msg = f"✔ SL_MSG BY: [{userbot_index}/{total_userbots}] 🦸🏼 UB: {name}"
                                 self.log(log_msg, level=20)
-
+ 
                             except FloodWait as e:
                                 self.log(f"FloodWait terdeteksi. Menunggu {e.value} detik...", level=30)
                                 await asyncio.sleep(e.value + 6)
@@ -3229,9 +3229,9 @@ class AltruixClient:
                                 username = f" @{me.username}" if me and me.username else ""
                                 client_type = "Bot" if client == self.bot else "User"
                                 failed_clients.append(f"• <b>{name}{username}</b> → {error_type}")
-                                detailed_results.append(f"• {name}{username}: ❌ Failed ({error_type})")
+                                detailed_results[idx] = f"• [{idx}] {name}{username}: ❌ Failed ({error_type})"
                                 self.log(f"GAGAL: [{client_type}] {name}{username} → {error_type}: {error_msg}", level=30)
-
+ 
                     # ✅ SEND CONSOLIDATED STARTUP REPORT (SPLIT LOG SUPPORT)
                     if log_chat_id:
                         try:
@@ -3259,6 +3259,8 @@ class AltruixClient:
                             current_len = 0
                             
                             for res in detailed_results:
+                                if res is None:
+                                    continue
                                 if current_len + len(res) + 1 > max_chars:
                                     chunks.append("\n".join(current_chunk))
                                     current_chunk = []
@@ -4009,7 +4011,11 @@ class AltruixClient:
 
                 if stagger_method == "parallel":
                     self.log(f"🔄 Parallel Session Restart initiated (Semaphore: {self.CONCURRENT_SESSIONS})...", level=30)
-                    self.log(f"🚀 [RESTART]: Using Parallel Method", level=logging.DEBUG)
+                    msg_log = "🚀 [RESTART]: Using Parallel Method"
+                    if getattr(self.config, "DEBUG", False):
+                        self.log(f"[DEBUG_ON]: » {msg_log}", level=30)
+                    else:
+                        self.log(msg_log, level=logging.DEBUG)
                     semaphore = asyncio.Semaphore(self.CONCURRENT_SESSIONS)
                     
                     async def restart_client(client):
@@ -4023,7 +4029,11 @@ class AltruixClient:
                     await asyncio.gather(*tasks)
                 else:
                     self.log(f"🔄 Sequential Session Restart initiated...", level=30)
-                    self.log(f"🐌 [RESTART]: Using Sequential Method", level=logging.DEBUG)
+                    msg_log = "🐌 [RESTART]: Using Sequential Method"
+                    if getattr(self.config, "DEBUG", False):
+                        self.log(f"[DEBUG_ON]: » {msg_log}", level=30)
+                    else:
+                        self.log(msg_log, level=logging.DEBUG)
                     for each in self.clients:
                         try:
                             await each.restart()

@@ -85,6 +85,9 @@ async def ytdl_inline_menu(c: Client, obj: Union[InlineQuery, CallbackQuery], ta
     chapters = state.get("chapters") or []
     chapters_str = "" if is_playlist else f"<b>• Split Chapters:</b> <code>{'Yes' if state.get('split_chapters', False) else 'No'} ({len(chapters)} bab terdeteksi)</code>\n"
     
+    platform = state.get("extractor", "YouTube").capitalize()
+    source_url = state.get("url", "Unknown")
+
     text = (
         f"<blockquote expandable>"
         f"<b>🎬 YouTube Tools {'(Playlist)' if is_playlist else ''}</b>\n"
@@ -95,11 +98,13 @@ async def ytdl_inline_menu(c: Client, obj: Union[InlineQuery, CallbackQuery], ta
         f"<b>• Channel:</b> {state.get('uploader', 'Unknown')} ({format_count(state.get('subscribers'))} subs)\n"
         f"<b>• Views:</b> {format_count(state.get('views', 0))}\n"
         f"<b>• Year:</b> {format_yt_date(state.get('upload_date'))}\n"
+        f"<b>• Platform:</b> <code>{platform}</code>\n"
         f"<b>• Audio Lang:</b> <code>{current_lang}</code>\n"
         f"<b>• Speed:</b> <code>{state.get('speed', '1.0x')}</code>\n"
         f"<b>• Volume:</b> <code>{state.get('volume', 'Original')}</code>\n"
         f"{chapters_str}"
         f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"<b>🔗 Source:</b> <code>{source_url}</code>\n"
         f"<b>🛠 Task ID:</b> <code>{task_id}</code>\n"
     )
     if is_playlist:
@@ -214,15 +219,14 @@ async def ytdl_inline_menu(c: Client, obj: Union[InlineQuery, CallbackQuery], ta
     if is_iq:
         await obj.answer(
             results=[
-                InlineQueryResultArticle(
+                InlineQueryResultPhoto(
                     id=f"ytdl_{task_id.replace('#', '')}",
+                    photo_url=thumb,
+                    thumb_url=thumb,
                     title=state["title"],
                     description=f"Duration: {dur_str}",
-                    thumb_url=thumb if thumb and thumb.startswith("http") else None,
-                    input_message_content=InputTextMessageContent(
-                        message_text=text,
-                        parse_mode=enums.ParseMode.HTML
-                    ),
+                    caption=text,
+                    parse_mode=enums.ParseMode.HTML,
                     reply_markup=InlineKeyboardMarkup(buttons)
                 )
             ],
@@ -232,21 +236,36 @@ async def ytdl_inline_menu(c: Client, obj: Union[InlineQuery, CallbackQuery], ta
     else:
         # It's a callback, edit current message
         try:
-            await obj.edit_message_text(
-                text=text,
-                parse_mode=enums.ParseMode.HTML,
-                reply_markup=InlineKeyboardMarkup(buttons)
-            )
+            # Prefer caption if it's already a media message
+            if obj.message and (obj.message.photo or obj.message.video or obj.message.animation):
+                await obj.edit_message_caption(
+                    caption=text,
+                    parse_mode=enums.ParseMode.HTML,
+                    reply_markup=InlineKeyboardMarkup(buttons)
+                )
+            else:
+                await obj.edit_message_text(
+                    text=text,
+                    parse_mode=enums.ParseMode.HTML,
+                    reply_markup=InlineKeyboardMarkup(buttons)
+                )
         except:
-            # Fallback for older sessions that might be photos
+            # Fallback
             try:
                 await obj.edit_message_caption(
                     caption=text,
                     parse_mode=enums.ParseMode.HTML,
                     reply_markup=InlineKeyboardMarkup(buttons)
                 )
-            except Exception as e:
-                Altruix.log(f"YTDL Dashboard Edit Fail: {e}\n{traceback.format_exc()}")
+            except:
+                try:
+                    await obj.edit_message_text(
+                        text=text,
+                        parse_mode=enums.ParseMode.HTML,
+                        reply_markup=InlineKeyboardMarkup(buttons)
+                    )
+                except Exception as e:
+                    Altruix.log(f"YTDL Dashboard Edit Fail: {e}\n{traceback.format_exc()}")
 
 @Altruix.bot.on_callback_query(filters.regex(r"^ytdl_type#([#\w]+)#(\w+)"))
 @iuser_check
@@ -293,7 +312,10 @@ async def ytdl_type_cb(c: Client, cb: CallbackQuery):
         ]
         
     buttons.append([InlineKeyboardButton("🔙 Back", callback_data=f"ytdl_back#{task_id}", style=user_style)])
-    await cb.edit_message_caption(caption=text, parse_mode=enums.ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
+    try:
+        await cb.edit_message_caption(caption=text, parse_mode=enums.ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
+    except:
+        await cb.edit_message_text(text=text, parse_mode=enums.ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
 
 @Altruix.bot.on_callback_query(filters.regex(r"^ytdl_qual#([#\w]+)#(\w+)"))
 @iuser_check
@@ -340,7 +362,10 @@ async def ytdl_audio_lang_menu_cb(c: Client, cb: CallbackQuery):
         buttons.append(row)
         
     buttons.append([InlineKeyboardButton("🔙 Back", callback_data=f"ytdl_back#{task_id}", style=user_style)])
-    await cb.edit_message_caption(caption=text, parse_mode=enums.ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
+    try:
+        await cb.edit_message_caption(caption=text, parse_mode=enums.ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
+    except:
+        await cb.edit_message_text(text=text, parse_mode=enums.ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
 
 @Altruix.bot.on_callback_query(filters.regex(r"^ytdl_set_audio_lang#([#\w]+)#(.+)"))
 @iuser_check
@@ -501,6 +526,7 @@ async def ytdl_confirm_cb(c: Client, cb: CallbackQuery):
         f"<b>🚀 Konfirmasi Unduhan</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"<b>• Nama:</b> {state['title']}\n"
+        f"<b>• Platform:</b> {state.get('extractor', 'YouTube').capitalize()}\n"
         f"<b>• Format:</b> {state['format'].upper()} ({fmt_details})\n"
         f"<b>• Trim:</b> {'✅ Yes' if is_trimmed else '❌ No'}\n"
         f"  └─ <code>{Essentials.get_readable_time(start_s)}</code> - <code>{Essentials.get_readable_time(end_s)}</code>\n"
@@ -515,7 +541,10 @@ async def ytdl_confirm_cb(c: Client, cb: CallbackQuery):
         [InlineKeyboardButton("✅ Start Process", callback_data=f"ytdl_start_go#{task_id}", style=user_style)],
         [InlineKeyboardButton("🔙 Back", callback_data=f"ytdl_back_type#{task_id}", style=user_style), InlineKeyboardButton("❌ Cancel", callback_data=f"ytdl_cancel#{task_id}", style=user_style)]
     ]
-    await cb.edit_message_caption(caption=confirm_text, parse_mode=enums.ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
+    try:
+        await cb.edit_message_caption(caption=confirm_text, parse_mode=enums.ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
+    except:
+        await cb.edit_message_text(text=confirm_text, parse_mode=enums.ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
 
 @Altruix.bot.on_callback_query(filters.regex(r"^ytdl_back_type#([#\w\d_-]+)"))
 @iuser_check
@@ -586,7 +615,10 @@ async def ytdl_trim_menu_cb(c: Client, cb: CallbackQuery):
         [InlineKeyboardButton("✅ Save Settings", callback_data=f"ytdl_back#{task_id}", style=user_style), InlineKeyboardButton("🔃 Reset All", callback_data=f"ytdl_trim_reset#{task_id}", style=user_style)],
         [InlineKeyboardButton("« Back to Menu »", callback_data=f"ytdl_back#{task_id}", style=user_style)]
     ]
-    await cb.edit_message_caption(caption=text, parse_mode=enums.ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
+    try:
+        await cb.edit_message_caption(caption=text, parse_mode=enums.ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
+    except:
+        await cb.edit_message_text(text=text, parse_mode=enums.ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
 
 @Altruix.bot.on_callback_query(filters.regex(r"^ytdl_trim_tab#([#\w]+)#([se])"))
 @iuser_check
@@ -757,7 +789,10 @@ async def ytdl_split_menu_cb(c: Client, cb: CallbackQuery):
             ]
         ]
         
-        await cb.edit_message_caption(caption=text, parse_mode=enums.ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
+        try:
+            await cb.edit_message_caption(caption=text, parse_mode=enums.ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
+        except:
+            await cb.edit_message_text(text=text, parse_mode=enums.ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
     except Exception as ex:
         Altruix.log(f"Split Menu Error: {ex}\n{traceback.format_exc()}")
         try: await cb.answer(f"❌ Terjadi kesalahan: {ex}", show_alert=True)
@@ -1191,7 +1226,10 @@ async def ytdl_pl_auto_cb(c: Client, cb: CallbackQuery):
         ],
         [InlineKeyboardButton("« Back to Menu »", callback_data=f"ytdl_back#{task_id}", style=user_style)]
     ]
-    await cb.edit_message_caption(caption=text, parse_mode=enums.ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
+    try:
+        await cb.edit_message_caption(caption=text, parse_mode=enums.ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
+    except:
+        await cb.edit_message_text(text=text, parse_mode=enums.ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
 
 # --- Executing Batch / Multi-Select ---
 @Altruix.bot.on_callback_query(filters.regex(r"^ytdl_pl_go#(multi|batch)#([#\w]+)#(\w+)#(\d+)"))
@@ -1401,6 +1439,7 @@ async def ytdl_download_confirm_cb(c: Client, cb: CallbackQuery):
         f"<blockquote expandable>"
         f"<b>⚠️ DOWNLOAD CONFRIMATION</b>\n\n"
         f"<b>• Title:</b> <code>{state['title']}</code>\n"
+        f"<b>• Platform:</b> <code>{state.get('extractor', 'YouTube').capitalize()}</code>\n"
         f"<b>• Format:</b> <code>{f}</code>\n"
         f"<b>• Quality:</b> <code>{q_str}</code>\n"
         f"<b>• Audio Lang:</b> <code>{lang}</code>\n"
