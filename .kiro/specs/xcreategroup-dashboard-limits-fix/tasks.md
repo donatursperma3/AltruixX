@@ -1,0 +1,101 @@
+# Implementation Plan
+
+- [ ] 1. Write bug condition exploration test
+  - **Property 1: Bug Condition** - Invalid Limit Boundaries (Zero-floor & Upper Bound)
+  - **CRITICAL**: This test MUST FAIL on unfixed code — failure confirms the bug exists
+  - **DO NOT attempt to fix the test or the code when it fails**
+  - **NOTE**: This test encodes the expected behavior — it will validate the fix when it passes after implementation
+  - **GOAL**: Surface counterexamples that demonstrate the three limit bugs exist
+  - **Scoped PBT Approach**: Scope the property to concrete failing cases:
+    - `account_delay = 0` (any value that should clamp to 0)
+    - `ba_account_delay = 0` (any value that should clamp to 0)
+    - `batch_account` in range `[101, 1000]` (values that should pass through unchanged)
+  - Test `applyLimit("account_delay", 0)` → Expected `0`, Actual `0.1` (di-clamp oleh `limits` dict)
+  - Test `applyLimit("ba_account_delay", 0)` → Expected `0`, Actual `5` (di-clamp oleh `limits` dict)
+  - Test `applyLimit("batch_account", v)` for `v in [101..1000]` → Expected `v`, Actual `100` (di-clamp oleh `limits` dict)
+  - Test manual input handler: `field = "batch_account"`, input `"500"` → Expected disimpan sebagai `500`, Actual jatuh ke branch `else` (unrecognized field)
+  - Test manual input handler: `field = "ba_account_delay"`, input `"0"` → Expected disimpan sebagai `0`, Actual jatuh ke branch `else` (unrecognized field)
+  - Run test on UNFIXED code
+  - **EXPECTED OUTCOME**: Test FAILS (this is correct — it proves the bug exists)
+  - Document counterexamples found (e.g., `applyLimit("account_delay", 0)` returns `0.1` instead of `0`)
+  - Mark task complete when test is written, run, and failure is documented
+  - _Requirements: 1.1, 1.2, 1.3, 2.1, 2.2, 3.1, 3.2, 3.3_
+
+- [ ] 2. Write preservation property tests (BEFORE implementing fix)
+  - **Property 2: Preservation** - Non-buggy Inputs Unchanged
+  - **IMPORTANT**: Follow observation-first methodology
+  - Observe behavior on UNFIXED code for inputs where `isBugCondition` returns `False`:
+    - `applyLimit("action_delay", 0.1)` → `0.1` (minimum tetap `0.1`)
+    - `applyLimit("action_delay", 0.05)` → `0.1` (di-clamp ke minimum `0.1`)
+    - `applyLimit("delay", 60)` → `60`
+    - `applyLimit("count", 5)` → `5`
+    - `applyLimit("batch_account", 50)` → `50` (nilai 1–100 tetap valid)
+    - `applyLimit("account_delay", 1.5)` → `1.5` (nilai positif tetap valid)
+    - `applyLimit("ba_account_delay", 30)` → `30` (nilai positif tetap valid)
+  - Write property-based tests dari Preservation Requirements di design:
+    - For all `action_delay` values in `[0.1, 30.0]`: `applyLimit_fixed` = `applyLimit_original`
+    - For all `delay` values in `[1, 3600]`: `applyLimit_fixed` = `applyLimit_original`
+    - For all `count` values in `[1, 1000]`: `applyLimit_fixed` = `applyLimit_original`
+    - For all `batch_account` values in `[1, 100]`: `applyLimit_fixed` = `applyLimit_original`
+    - For all `account_delay` values in `(0, 30.0]`: `applyLimit_fixed` = `applyLimit_original`
+    - For all `ba_account_delay` values in `(0, 3600]`: `applyLimit_fixed` = `applyLimit_original`
+    - For all `batch_size`, `batch_delay`, `batch_action`, `ba_delay`, `rand_len` values in valid range: `applyLimit_fixed` = `applyLimit_original`
+  - Verify tests PASS on UNFIXED code (confirms baseline behavior to preserve)
+  - **EXPECTED OUTCOME**: Tests PASS (this confirms baseline behavior to preserve)
+  - Mark task complete when tests are written, run, and passing on unfixed code
+  - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7_
+
+- [ ] 3. Fix limit validation bugs di `creategroup_handlers.py`
+
+  - [ ] 3.1 Fix `limits` dict di `creategroup_adjust_handler`
+    - File: `Main/internals/settings_handlers/creategroup_handlers.py`
+    - Fungsi: `creategroup_adjust_handler` (~line 1027)
+    - Ubah `"account_delay": (0.1, 30.0)` → `"account_delay": (0, 30.0)` (min 0, no delay allowed)
+    - Ubah `"batch_account": (1, 100)` → `"batch_account": (1, 1000)` (max 1000)
+    - Ubah `"ba_account_delay": (5, 3600)` → `"ba_account_delay": (0, 3600)` (min 0, no delay allowed)
+    - Perubahan ini otomatis memperbaiki perilaku keypad `+`/`-` karena operasi clamp `max(min_v, min(val, max_v))` akan menggunakan batas yang benar
+    - Tidak perlu mengubah `adj_steps` — step yang ada sudah bisa mencapai `0` secara matematis setelah batas diperbaiki
+    - _Bug_Condition: `isBugCondition(field, value)` where `(field="account_delay" AND value=0) OR (field="ba_account_delay" AND value=0) OR (field="batch_account" AND value>100 AND value<=1000)`_
+    - _Expected_Behavior: `applyLimit'(field, value) = value` untuk semua input yang memenuhi `isBugCondition`_
+    - _Preservation: Semua field lain (`delay`, `count`, `batch_delay`, `batch_size`, `action_delay`, `batch_action`, `ba_delay`, `rand_len`) tetap menggunakan limit yang sama_
+    - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.6, 2.7_
+
+  - [ ] 3.2 Fix manual input handler di `process_CG`
+    - File: `Main/internals/settings_handlers/creategroup_handlers.py`
+    - Fungsi: `process_CG` message handler (~line 2054)
+    - Tambahkan `"batch_account"` dan `"ba_account_delay"` ke branch `elif field in [...]`
+    - Branch sebelum: `elif field in ["delay", "count", "batch_delay", "batch_size", "action_delay", "account_delay"]:`
+    - Branch sesudah: `elif field in ["delay", "count", "batch_delay", "batch_size", "action_delay", "account_delay", "batch_account", "ba_account_delay"]:`
+    - Tambahkan validasi limit inline di dalam branch agar nilai yang diinput manual juga di-clamp sesuai batas yang benar (konsisten dengan `creategroup_adjust_handler`)
+    - `batch_account` dan `ba_account_delay` adalah integer field — `text.isdigit()` sudah cukup untuk validasi format (tidak perlu masuk ke `is_float_field`)
+    - _Bug_Condition: `field in ["batch_account", "ba_account_delay"]` jatuh ke branch `else` (unrecognized field) pada kode unfixed_
+    - _Expected_Behavior: Input manual untuk `batch_account` dan `ba_account_delay` diproses, di-clamp sesuai limit baru, dan disimpan ke config_
+    - _Preservation: Field lain yang sudah ada di branch tetap diproses dengan cara yang sama; branch `else` tetap menangkap field yang benar-benar tidak dikenal_
+    - _Requirements: 2.3, 2.5, 2.8_
+
+  - [ ] 3.3 Verify bug condition exploration test now passes
+    - **Property 1: Expected Behavior** - Invalid Limit Boundaries (Zero-floor & Upper Bound)
+    - **IMPORTANT**: Re-run the SAME test from task 1 — do NOT write a new test
+    - The test from task 1 encodes the expected behavior
+    - When this test passes, it confirms the expected behavior is satisfied
+    - Run bug condition exploration test from step 1
+    - **EXPECTED OUTCOME**: Test PASSES (confirms all three limit bugs are fixed)
+    - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8_
+
+  - [ ] 3.4 Verify preservation tests still pass
+    - **Property 2: Preservation** - Non-buggy Inputs Unchanged
+    - **IMPORTANT**: Re-run the SAME tests from task 2 — do NOT write new tests
+    - Run preservation property tests from step 2
+    - **EXPECTED OUTCOME**: Tests PASS (confirms no regressions)
+    - Confirm all tests still pass after fix (no regressions)
+    - Pastikan `action_delay` masih memiliki minimum `0.1` (field ini tidak diubah)
+    - Pastikan `batch_account` nilai `1`–`100` masih diterima dan disimpan dengan benar
+    - Pastikan nilai positif `account_delay` dan `ba_account_delay` masih diterima dengan benar
+
+- [ ] 4. Checkpoint — Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+  - Verifikasi: `account_delay = 0` diterima dan disimpan (bukan di-clamp ke `0.1`)
+  - Verifikasi: `ba_account_delay = 0` diterima dan disimpan (bukan di-clamp ke `5`)
+  - Verifikasi: `batch_account = 500` diterima dan disimpan (bukan di-clamp ke `100`)
+  - Verifikasi: `action_delay` masih memiliki minimum `0.1` (tidak terpengaruh fix)
+  - Verifikasi: semua field lain tetap menggunakan limit yang sama

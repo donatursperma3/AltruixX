@@ -3,7 +3,32 @@
 All notable changes to the **Altroid-X** project from version **0.0.10.0959H** to the latest.
 Latest updates are always added at the top (newest → oldest).
 
+## [0.0.10.2463I] - 2026-05-24
+
+### 🛠️ CreateGroup: Limit Adjustments & Validation Fixes
+- **Fixed: Delay Limit constraints preventing 0s values**:
+  - Relaxed minimum limit parameters in the `limits` dictionary (`creategroup_handlers.py`) to allow **`0`** for key delay settings:
+    - `delay` (Group Delay)
+    - `action_delay` (Delay/Act)
+    - `account_delay` (Delay/Acc)
+    - `ba_delay` (B.Act Delay)
+    - `ba_account_delay` (B.Acc Delay)
+  - Also relaxed `batch_action` (Batch Act) minimum limit to `0`.
+- **Fixed: Batch Account limit constraint**:
+  - Raised maximum limit for `batch_account` (B.Acc) from `100` to `999` to support larger userbot session fleets.
+- **Fixed: Missing manual text input handling**:
+  - Expanded `process_creategroup_input` to correctly validate and save manual inputs for:
+    - `batch_action`
+    - `ba_delay`
+    - `batch_account`
+    - `ba_account_delay`
+- **Fixed: Missing UI unit labels**:
+  - Added missing entries in `unit_map` for `batch_action` (`" act"`) and `ba_delay` (`"s"`), resolving empty labels in the respective adjustment sub-menus.
+
+---
+
 ## [0.0.10.2462I] - 2026-05-24
+
 
 ### 🛡️ Core Transport: FloodWait Guard & Flood Cooldown Accuracy Fix
 - **Fixed: Off-by-one error on FloodWait retry guard** (`Main/core/types/client.py`):

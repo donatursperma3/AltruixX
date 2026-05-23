@@ -665,7 +665,8 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
             "batch_delay": "m", 
             "count": "c" if config.get('group_type', 'a') == 'c' else "g", 
             "batch_size": "c" if config.get('group_type', 'a') == 'c' else "g",
-            "batch_account": " acc", "ba_account_delay": "s"
+            "batch_account": " acc", "ba_account_delay": "s",
+            "batch_action": " act", "ba_delay": "s"
         }
         
         label = labels.get(sub_menu, sub_menu.capitalize())
@@ -1024,7 +1025,7 @@ async def creategroup_adjust_handler(c: Client, cb: CallbackQuery):
          
     conf = user_creategroup_state[user_id]["config"]
     steps = {"delay": 10, "count": 1, "batch_delay": 1, "batch_size": 1, "action_delay": 0.5, "account_delay": 0.5, "rand_len": 1, "batch_action": 5, "ba_delay": 10, "batch_account": 1, "ba_account_delay": 10}
-    limits = {"delay": (1, 3600), "count": (1, 1000), "batch_delay": (0, 300), "batch_size": (1, 100), "action_delay": (0.1, 30.0), "account_delay": (0.1, 30.0), "rand_len": (0, 64), "batch_action": (1, 500), "ba_delay": (10, 3600), "batch_account": (1, 100), "ba_account_delay": (5, 3600)}
+    limits = {"delay": (0, 3600), "count": (1, 1000), "batch_delay": (0, 300), "batch_size": (1, 100), "action_delay": (0, 30.0), "account_delay": (0, 30.0), "rand_len": (0, 64), "batch_action": (0, 500), "ba_delay": (0, 3600), "batch_account": (1, 999), "ba_account_delay": (0, 3600)}
     val = conf.get(key, 0)
     
     # Handle extended step actions (sub10, add60, sub0.5 etc)
@@ -2070,7 +2071,7 @@ async def process_creategroup_input(c: Client, m: Message, text: str = None):
              for b in bots: clean_bots.append(b if (b.startswith("@") or b.isdigit()) else f"@{b}")
              state["config"]["bots"] = " ".join(clean_bots)
              dl.info(f"[DEBUG-CG] Field 'bots' successfully updated {len(clean_bots)} bots.")
-        elif field in ["delay", "count", "batch_delay", "batch_size", "action_delay", "account_delay"]:
+        elif field in ["delay", "count", "batch_delay", "batch_size", "action_delay", "account_delay", "batch_action", "ba_delay", "batch_account", "ba_account_delay"]:
             is_float_field = field in ["action_delay", "account_delay"]
             if text.isdigit() or (is_float_field and text.replace(".", "", 1).isdigit()):
                  val = float(text) if is_float_field else int(text)
