@@ -563,12 +563,12 @@ def gen_task_list_data(user_id: int, page: int = 1, page_size: int = 5, task_fil
         
         for tid, entry in current_batch:
             task_obj = entry.get("task")
-            name = entry.get("name", "Unknown")
-            plugin = entry.get("plugin", "?")
+            name = str(entry.get("name") or "Unknown")
+            plugin = str(entry.get("plugin") or "?")
             started = entry.get("started_at", now)
             try: started = float(started)
             except (ValueError, TypeError): started = now
-            u_name = entry.get("user_name", "Unknown")
+            u_name = str(entry.get("user_name") or "Unknown")
             is_paused = entry.get("paused", False)
             is_recur = entry.get("recurring", False)
             is_interrupted = entry.get("is_interrupted", False)
@@ -674,14 +674,14 @@ def gen_task_status_data(user_id: int, tid: str):
             return f"⚠️ Task <code>{tid}</code> not found.", None
             
         task_obj = entry.get("task")
-        name = entry.get("name", "Unknown")
-        plugin = entry.get("plugin", "?")
+        name = str(entry.get("name") or "Unknown")
+        plugin = str(entry.get("plugin") or "?")
         started = entry.get("started_at", time.time())
         try: started = float(started)
         except (ValueError, TypeError): started = time.time()
         u_id = entry.get("user_id", "?")
-        u_name = entry.get("user_name")
-        details = entry.get("details", "")
+        u_name = str(entry.get("user_name") or "Unknown")
+        details = str(entry.get("details", ""))
         is_paused = entry.get("paused", False)
         is_recur = entry.get("recurring", False)
         
@@ -784,11 +784,11 @@ def gen_task_info_data(user_id: int, tid: str, page: int = 1):
             return "❌ Task not found.", None
 
         entry = registry[tid]
-        name = entry.get("name", "Unknown")
-        plugin = entry.get("plugin", "?")
-        details = str(entry.get("details", "-"))
+        name = str(entry.get("name") or "Unknown")
+        plugin = str(entry.get("plugin") or "?")
+        details = str(entry.get("details") or "-")
         u_id = entry.get("user_id", "?")
-        u_name = entry.get("user_name", "?")
+        u_name = str(entry.get("user_name") or "?")
         started = entry.get("started_at", time.time())
         
         from datetime import datetime
@@ -859,7 +859,7 @@ def gen_restore_menu_data(user_id: int, page: int = 1):
                     for tid, tdata in tasks.items():
                         all_cached.append({
                             "tid": tid,
-                            "name": tdata.get("name", "CreateGroup Task"),
+                            "name": str(tdata.get("name") or "CreateGroup Task"),
                             "plugin": "xcreategroup",
                             "progress": f"{tdata.get('current_index', 0)}/{tdata.get('params', {}).get('count', 0)}",
                             "data": tdata
@@ -1064,12 +1064,12 @@ def gen_finished_tasks_data(user_id: int, page: int = 1):
                     for tid, tdata in completed.items():
                         all_finished.append({
                             "tid": tid,
-                            "name": tdata.get("name", "CreateGroup Task"),
+                            "name": str(tdata.get("name") or "CreateGroup Task"),
                             "plugin": "xcreategroup",
                             "status": tdata.get("status", "completed"),
                             "progress": f"{len(tdata.get('created_groups', []))}/{tdata.get('count', 0)}",
                             "time": tdata.get("start_time", "-"),
-                            "account": tdata.get("account_name", "Unknown")
+                            "account": str(tdata.get("account_name") or "Unknown")
                         })
             except: pass
 
@@ -1585,6 +1585,10 @@ async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
         # --- Security Confirmation Flow ---
         if action == "ask":
             # format: taskmgr_ask_{real_action}_{target}
+            if len(data) < 4:
+                logger.warning(f"Malformed taskmgr ask callback: {cb.data}")
+                await safe_cb_answer(cb, "⚠️ Invalid action payload. Coba tekan Refresh.", show_alert=True)
+                return
             real_action = data[2]
             target = data[3]
             await safe_cb_answer(cb, show_alert=False)
@@ -1595,6 +1599,10 @@ async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
         if action == "confirm":
             # format: taskmgr_confirm_{real_action}_{target}
             try:
+                if len(data) < 4:
+                    logger.warning(f"Malformed taskmgr confirm callback: {cb.data}")
+                    await safe_cb_answer(cb, "⚠️ Invalid action payload. Coba tekan Refresh.", show_alert=True)
+                    return
                 real_action = data[2]
                 target = data[3]
                 await safe_cb_answer(cb, "Processing request...", show_alert=False)
@@ -1613,7 +1621,7 @@ async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
                         if s: count += 1
                     success, msg = True, f"✅ Paused {count} tasks."
                 elif real_action == "resumeall":
-                    registry = get_filtered_tasks()
+                    registry = get_all_tasks()
                     delay = get_delay_per_resume()
                     active_tids = list(registry.keys())
                     

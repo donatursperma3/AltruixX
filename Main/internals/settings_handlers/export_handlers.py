@@ -46,14 +46,20 @@ async def export_all_sessions_confirmation_handler(c: Client, cb: CallbackQuery)
             InlineKeyboardButton("❌ No", callback_data="export_all_sessions_confirm_no", style=user_style)
         ]
     ]
+
+    text = (
+        "<blockquote expandable>"
+        "❓ <b>Export All Sessions Confirmation</b>\n\n"
+        "Are you sure you want to export ALL session strings?\n\n"
+        "⚠️ <b>WARNING:</b>\n"
+        "• This will export session strings for ALL your accounts\n"
+        "• Session strings can be used to login to your accounts\n"
+        "• Keep them secure and DO NOT share with anyone"
+        "</blockquote>"
+    )
     
     await edit_cb(cb, 
-        text="❓ <b>Export All Sessions Confirmation</b>\n\n"
-             "Are you sure you want to export ALL session strings?\n\n"
-             "⚠️ <b>WARNING:</b>\n"
-             "• This will export session strings for ALL your accounts\n"
-             "• Session strings can be used to login to your accounts\n"
-             "• Keep them secure and DO NOT share with anyone",
+        text=text,
         reply_markup=InlineKeyboardMarkup(confirmation_buttons),
         parse_mode=ParseMode.HTML
     )
@@ -115,14 +121,20 @@ async def export_all_phones_confirmation_handler(c: Client, cb: CallbackQuery):
             InlineKeyboardButton("❌ No", callback_data="export_all_phones_confirm_no", style=user_style)
         ]
     ]
+
+    text = (
+        "<blockquote expandable>"
+        "❓ <b>Export All Phone Numbers Confirmation</b>\n\n"
+        "Are you sure you want to export ALL phone numbers?\n\n"
+        "⚠️ <b>NOTE:</b>\n"
+        "• This will export phone numbers for ALL your accounts\n"
+        "• Phone numbers are sensitive information\n"
+        "• Keep them secure and share only with trusted parties"
+        "</blockquote>"
+    )
     
     await edit_cb(cb, 
-        text="❓ <b>Export All Phone Numbers Confirmation</b>\n\n"
-             "Are you sure you want to export ALL phone numbers?\n\n"
-             "⚠️ <b>NOTE:</b>\n"
-             "• This will export phone numbers for ALL your accounts\n"
-             "• Phone numbers are sensitive information\n"
-             "• Keep them secure and share only with trusted parties",
+        text=text,
         reply_markup=InlineKeyboardMarkup(confirmation_buttons),
         parse_mode=ParseMode.HTML
     )
@@ -182,7 +194,11 @@ async def execute_export_all_sessions(c: Client, event):
             await m.reply("❌ No sessions available to export.")
         return
     
-    status_msg = await m.reply("📤 Preparing to export all sessions...")
+    if isinstance(event, CallbackQuery):
+        await edit_cb(event, "📤 Preparing to export all sessions...")
+        status_msg = event.message
+    else:
+        status_msg = await m.reply("📤 Preparing to export all sessions...")
     
     try:
         session_data = []
@@ -218,24 +234,46 @@ async def execute_export_all_sessions(c: Client, event):
         file_stream = io.BytesIO(file_content.encode())
         file_stream.name = f"all_sessions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
         
-        await c.send_document(
-            chat_id=user_id,
-            document=file_stream,
-            caption="📤 **All Sessions Exported**",
-            parse_mode=ParseMode.HTML
-        )
+        try:
+            await c.send_document(
+                chat_id=user_id,
+                document=file_stream,
+                caption="📤 <b>All Sessions Exported</b>",
+                parse_mode=ParseMode.HTML
+            )
+        except Exception as e:
+            Altruix.log(f"❌ [ExportSessions] send_document error: {e}")
         
-        await Altruix.bot.send_message(
-            log_chat_id,
-            f"📤 <b>EXPORT ALL SESSIONS COMPLETED</b>\n"
-            f"• User: {user_link}\n• Status: ✅ Success",
-            parse_mode=ParseMode.HTML
+        try:
+            await Altruix.bot.send_message(
+                log_chat_id,
+                f"<blockquote expandable>"
+                f"📤 <b>EXPORT ALL SESSIONS COMPLETED</b>\n"
+                f"• User: {user_link}\n• Status: ✅ Success"
+                f"</blockquote>",
+                parse_mode=ParseMode.HTML
+            )
+        except Exception as e:
+            Altruix.log(f"❌ [ExportSessions] log_notification error: {e}")
+        from Main.utils.file_helpers import get_user_button_style
+        user_style = get_user_button_style(user_id)
+        await status_msg.edit(
+            "✅ All sessions exported and sent to your PM.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", "bulk_controls_menu", style=user_style)]])
         )
-        await status_msg.edit("✅ All sessions exported and sent to your PM.")
         
     except Exception as e:
-        await m.reply(f"❌ Failed to export: {e}")
         logger.error(f"Error in execute_export_all_sessions: {e}")
+        try:
+            from Main.utils.file_helpers import get_user_button_style
+            user_style = get_user_button_style(user_id)
+            await status_msg.edit(
+                f"❌ Failed to export: {e}",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", "bulk_controls_menu", style=user_style)]])
+            )
+        except:
+            try: await m.reply(f"❌ Failed to export: {e}")
+            except: pass
 
 async def execute_export_all_phones(c: Client, event):
     """Executes the export of all phone numbers to a file."""
@@ -247,7 +285,11 @@ async def execute_export_all_phones(c: Client, event):
     user_name = html.escape(user.first_name if user.first_name else "User")
     user_link = f"<a href='tg://user?id={user_id}'>{user_name}</a>"
     
-    status_msg = await m.reply("📲 Preparing to export all phone numbers...")
+    if isinstance(event, CallbackQuery):
+        await edit_cb(event, "📲 Preparing to export all phone numbers...")
+        status_msg = event.message
+    else:
+        status_msg = await m.reply("📲 Preparing to export all phone numbers...")
     
     try:
         phone_data = []
@@ -269,17 +311,40 @@ async def execute_export_all_phones(c: Client, event):
         file_stream = io.BytesIO(file_content.encode())
         file_stream.name = f"all_phones_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
         
-        await c.send_document(chat_id=user_id, document=file_stream, caption="📲 **All Phones Exported**")
-        await Altruix.bot.send_message(
-            log_chat_id,
-            f"📲 <b>EXPORT ALL PHONES COMPLETED</b>\n"
-            f"• User: {user_link}\n• Status: ✅ Success",
-            parse_mode=ParseMode.HTML
+        try:
+            await c.send_document(chat_id=user_id, document=file_stream, caption="📲 **All Phones Exported**")
+        except Exception as e:
+            Altruix.log(f"❌ [ExportPhones] send_document error: {e}")
+
+        try:
+            await Altruix.bot.send_message(
+                log_chat_id,
+                f"<blockquote expandable>"
+                f"📲 <b>EXPORT ALL PHONES COMPLETED</b>\n"
+                f"• User: {user_link}\n• Status: ✅ Success"
+                f"</blockquote>",
+                parse_mode=ParseMode.HTML
+            )
+        except Exception as e:
+            Altruix.log(f"❌ [ExportPhones] log_notification error: {e}")
+        from Main.utils.file_helpers import get_user_button_style
+        user_style = get_user_button_style(user_id)
+        await status_msg.edit(
+            "✅ All phone numbers exported and sent to your PM.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", "bulk_controls_menu", style=user_style)]])
         )
-        await status_msg.edit("✅ All phone numbers exported and sent to your PM.")
         
     except Exception as e:
-        await m.reply(f"❌ Failed to export: {e}")
+        try:
+            from Main.utils.file_helpers import get_user_button_style
+            user_style = get_user_button_style(user_id)
+            await status_msg.edit(
+                f"❌ Failed to export: {e}",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", "bulk_controls_menu", style=user_style)]])
+            )
+        except:
+            try: await m.reply(f"❌ Failed to export: {e}")
+            except: pass
 
 # ====================== EXPORT BOT TOKENS FEATURE ======================
 @Altruix.bot.on_callback_query(filters.regex(r"^export_all_bot_tokens_confirmation$"))
@@ -307,14 +372,20 @@ async def export_all_bot_tokens_confirmation_handler(c: Client, cb: CallbackQuer
                 InlineKeyboardButton("❌ No", callback_data="export_all_bot_tokens_confirm_no", style=user_style)
             ]
         ]
+
+        text = (
+            "<blockquote expandable>"
+            "❓ <b>Export All Bot Tokens Confirmation</b>\n\n"
+            "Are you sure you want to export ALL Custom Bot Tokens?\n\n"
+            "⚠️ <b>WARNING:</b>\n"
+            "• This will export bot tokens for ALL your custom bots\n"
+            "• Anyone with access to these tokens can control your bots\n"
+            "• Keep them secure and DO NOT share with anyone"
+            "</blockquote>"
+        )
         
         await edit_cb(cb, 
-            text="❓ <b>Export All Bot Tokens Confirmation</b>\n\n"
-                 "Are you sure you want to export ALL Custom Bot Tokens?\n\n"
-                 "⚠️ <b>WARNING:</b>\n"
-                 "• This will export bot tokens for ALL your custom bots\n"
-                 "• Anyone with access to these tokens can control your bots\n"
-                 "• Keep them secure and DO NOT share with anyone",
+            text=text,
             reply_markup=InlineKeyboardMarkup(confirmation_buttons),
             parse_mode=ParseMode.HTML
         )
@@ -380,7 +451,11 @@ async def execute_export_all_bot_tokens(c: Client, event):
             await m.reply("⛔ You are not authorized to use this feature.")
         return
     
-    status_msg = await m.reply("🤖 Preparing to export all custom bot tokens...")
+    if isinstance(event, CallbackQuery):
+        await edit_cb(event, "🤖 Preparing to export all custom bot tokens...")
+        status_msg = event.message
+    else:
+        status_msg = await m.reply("🤖 Preparing to export all custom bot tokens...")
     
     try:
         # Query bot tokens from the custom_bots database collection
@@ -417,26 +492,46 @@ async def execute_export_all_bot_tokens(c: Client, event):
         file_stream = io.BytesIO(file_content.encode())
         file_stream.name = f"bot_tokens_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
         
-        await c.send_document(
-            chat_id=user_id,
-            document=file_stream,
-            caption="🤖 **All Custom Bot Tokens Exported**",
-            parse_mode=ParseMode.HTML
-        )
+        try:
+            await c.send_document(
+                chat_id=user_id,
+                document=file_stream,
+                caption="🤖 <b>All Custom Bot Tokens Exported</b>",
+                parse_mode=ParseMode.HTML
+            )
+        except Exception as e:
+            Altruix.log(f"❌ [ExportBotTokens] send_document error: {e}")
         
-        await Altruix.bot.send_message(
-            log_chat_id,
-            f"🤖 <b>EXPORT ALL BOT TOKENS COMPLETED</b>\n"
-            f"• User: {user_link}\n• Status: ✅ Success",
-            parse_mode=ParseMode.HTML
+        try:
+            await Altruix.bot.send_message(
+                log_chat_id,
+                f"<blockquote expandable>"
+                f"🤖 <b>EXPORT ALL BOT TOKENS COMPLETED</b>\n"
+                f"• User: {user_link}\n• Status: ✅ Success"
+                f"</blockquote>",
+                parse_mode=ParseMode.HTML
+            )
+        except Exception as e:
+            Altruix.log(f"❌ [ExportBotTokens] log_notification error: {e}")
+        from Main.utils.file_helpers import get_user_button_style
+        user_style = get_user_button_style(user_id)
+        await status_msg.edit(
+            "✅ All custom bot tokens exported and sent to your PM.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", "bulk_controls_menu", style=user_style)]])
         )
-        await status_msg.edit("✅ All custom bot tokens exported and sent to your PM.")
         
     except Exception as e:
         Altruix.log(f"❌ [ExportBotTokens] execute error: {e}\n{traceback.format_exc()}", level=logging.ERROR)
         try:
-            await m.reply(f"❌ Failed to export bot tokens: {e}")
-        except: pass
+            from Main.utils.file_helpers import get_user_button_style
+            user_style = get_user_button_style(user_id)
+            await status_msg.edit(
+                f"❌ Failed to export bot tokens: {e}",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", "bulk_controls_menu", style=user_style)]])
+            )
+        except: 
+            try: await m.reply(f"❌ Failed to export bot tokens: {e}")
+            except: pass
 
 async def clear_user_state_after_timeout(user_id: int, timeout: int):
     """Clears user state after a specified timeout period."""

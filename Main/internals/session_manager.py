@@ -17,12 +17,22 @@ from pyrogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup
 @log_errors
 async def add_session_command_handler(_, m: Message):
     # ✅ AUTHORIZATION CHECK (Centralized)
-    if not await Altruix.is_sudo(m.from_user.id):
-        return await m.reply_text("Hey, I'm just a bot. Powered by @AltruixUB.")
+    user = m.from_user
+    if not await Altruix.is_sudo(user.id):
+        return await m.reply_text("Hey, I'm just a bot. Powered by @AltroidXUB.")
+    
     from Main.utils.file_helpers import get_user_button_style
-    user_style = get_user_button_style(m.from_user.id)
+    user_style = get_user_button_style(user.id)
+    
+    full_name = f"{user.first_name or ''} {user.last_name or ''}".strip()
+    text = (
+        f"👤 **Account:** `{full_name}`\n"
+        f"🆔 **User ID:** `{user.id}`\n\n"
+        "Do you have the string session already generated?."
+    )
+    
     await m.reply(
-        "Do you have the string session already generated?.",
+        text,
         reply_markup=InlineKeyboardMarkup(
             [
                 [

@@ -556,7 +556,8 @@ class AltruixClient:
         self.executor = ThreadPoolExecutor(max_workers=multiprocessing.cpu_count() * 5)
         print_boot_msg("Loading Environment Configuration...")
         self.config = Config(self.db.env_col, loop=self.loop, executor=self.executor)
-        self.log_chat = None
+        # ✅ FIX: Initialize log_chat with fallback to OWNER_ID
+        self.log_chat = self.config.digit_wrap(os.getenv("LOG_CHAT_ID") or self.config.OWNER_ID)
         self._command_help_message_data = {}
         
         # Shared state for PM and Mention Loggers
@@ -2149,9 +2150,8 @@ class AltruixClient:
         self.disabled_sudo_plugin_list = await self.config.get_env(
             "DISABLED_SUDO_CMD_LIST", []
         )
-        self.log_chat = self.config.digit_wrap(await self.config.get_env("LOG_CHAT_ID"))
-        if self.log_chat is None:
-            logger.warning("LOG_CHAT_ID not set. Mention notifications will not be sent. Please set LOG_CHAT_ID in .env or config.")
+        # ✅ FIX: Enhanced log_chat resolution with DB sync and fallback
+        self.log_chat = self.config.digit_wrap(await self.config.get_env("LOG_CHAT_ID") or os.getenv("LOG_CHAT_ID") or self.config.OWNER_ID)
         self.bot_mode = (str(await self.config.get_env("BOT_MODE"))).lower() in {
             "yes",
             "true",
@@ -3001,123 +3001,43 @@ class AltruixClient:
             # =============================================
             # SEMUA CLIENT (BOT + USER SESSION) KIRIM PESAN STARTUP KE LOG_CHAT_ID
             # =============================================
-            if self.log_chat:
-                # ✅ PERBAIKAN 3: Validasi log_chat sebelum digunakan
+            # ✅ PERBAIKAN: Selalu tentukan log_chat_id (Fallback ke OWNER_ID)
+            try:
+                log_chat_id = int(self.log_chat) if self.log_chat else self.config.OWNER_ID
+                # Opsional: Cek akses (Jangan gagalkan startup jika hanya bot tidak bisa akses log chat)
                 try:
-                    log_chat_id = int(self.log_chat)
-                    await self.bot.get_chat(log_chat_id) # Pastikan bot bisa akses
-                except (PeerIdInvalid, UserNotParticipant, ValueError, RPCError) as ve:
-                    self.log(f"log_chat tidak valid atau bot tidak bisa akses: {ve}", level=40)
-                    log_chat_id = None
-                else:
-                    from datetime import datetime
-                    startup_time = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+                    await self.bot.get_chat(log_chat_id)
+                except Exception:
+                    # Jika bot tidak bisa akses log_chat, gunakan OWNER_ID
+                    log_chat_id = self.config.OWNER_ID
+            except Exception:
+                log_chat_id = self.config.OWNER_ID
+
+            if log_chat_id:
+                from datetime import datetime
+                startup_time = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+            else:
+                from datetime import datetime
+                startup_time = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+
+            if log_chat_id:
+                # ✅ STARTUP MODE CHECK (ON/TEST)
+                startup_mode = await self.config.get_env("STARTUP_MODE", default="on")
+                startup_mode = str(startup_mode).lower()
+                
+                all_clients = [self.bot] + self.clients
+                success_count = 0
+                failed_clients = []
+                detailed_results = [None] * len(all_clients) # Preallocate list to maintain index sequence in parallel
+                
+                self.log(self.get_string("sending_startup").format(len(all_clients)))
                     
-                    # ✅ STARTUP MODE CHECK (ON/TEST)
-                    startup_mode = await self.config.get_env("STARTUP_MODE", default="on")
-                    startup_mode = str(startup_mode).lower()
+                # ✅ PERFORMANCE: Use parallel startup log sending if method is parallel
+                if stagger_method == "parallel":
+                    sem_logs = asyncio.Semaphore(self.LOG_CONCURRENCY) # Conservative for logs
                     
-                    all_clients = [self.bot] + self.clients
-                    success_count = 0
-                    failed_clients = []
-                    detailed_results = [None] * len(all_clients) # Preallocate list to maintain index sequence in parallel
-                    
-                    self.log(self.get_string("sending_startup").format(len(all_clients)))
-                    
-                    # ✅ PERFORMANCE: Use parallel startup log sending if method is parallel
-                    if stagger_method == "parallel":
-                        sem_logs = asyncio.Semaphore(self.LOG_CONCURRENCY) # Conservative for logs
-                        
-                        async def send_startup_parallel(idx, client):
-                            async with sem_logs:
-                                try:
-                                    me = client.myself if hasattr(client, "myself") else await client.get_me()
-                                    name = f"{me.first_name or ''} {me.last_name or ''}".strip() or "Unknown"
-                                    username = f" @{me.username}" if me.username else ""
-                                    startup_emojis = [
-                                        "🧟", "🤔", "👩🏻‍🦳", "🛸", "💪", "🛡", "⚡️", "💥", "✨", "🌟",
-                                        "🔥", "🏆", "🥇", "⭐️", "🫡", "🚀", "🤩", "😝", "💖", "🗿"
-                                    ]
-                                    emoji_choice = random.choice(startup_emojis)
-                                    user_id = me.id
-                                    client_type = "🤖 Bot" if client == self.bot else f"{emoji_choice} UB"
-                                    mention_user = f'<a href="tg://user?id={user_id}">{html.escape(name)}</a>'
-                                    total_user_sessions = len(self.clients)
-                                    final_message = ""
-                                    parse_mode = ParseMode.HTML
-                                    
-                                    if client == self.bot:
-                                        # Randomize alive
-                                        alive_words = ["Living", "Breathing", "Animate", "Lively", "Vibrant", "Thriving", "Animated", "Vital", "Dynamic", "Active", "Awake", "Energetic", "Flourishing", "Vigorous", "Surviving", "Extant", "Existing", "Buoyant", "Sprightly", "Alert"]
-                                        status_word = random.choice(alive_words)
-                                        base_text = f"<b>✅ Altroid-X Bot Assistant is {status_word.lower()}!</b>"
-                                        final_message = f"<blockquote expandable>{base_text}\n<b>{client_type}: {mention_user}</b> [ <code>{user_id}</code> ]</blockquote>\n"
-                                    else:
-                                        user_index = self.clients.index(client)
-                                        user_display_index = user_index + 1
-                                        apply_type = await self.config.get_env("STARTUP_APPLY_TYPE") or "global"
-                                        if str(apply_type).lower() == "global":
-                                            state = await self.config.get_env("STARTUP_MSG_GLOBAL")
-                                            custom_key = "STARTUP_CUSTOM_MSG_GLOBAL"
-                                        else:
-                                            state = await self.config.get_env(f"STARTUP_MSG_{user_index}")
-                                            custom_key = f"STARTUP_CUSTOM_MSG_{user_index}"
-                                        
-                                        state = str(state).lower() if state else "on"
-                                        if state == "default": state = "on"
-                                        
-                                        if state in ["off", "false", "no", "0"]:
-                                            self.log(f"SKIP: [{client_type}] {name} startup log (OFF)")
-                                            detailed_results[idx] = f"• [{idx}] {name}{username}: ⚪ Skipped (OFF)"
-                                            return
- 
-                                        if state == "custom":
-                                            custom_msg = await self.config.get_env(custom_key)
-                                            if custom_msg:
-                                                final_message, parse_mode = await self.resolve_placeholders(custom_msg, index=user_index, client=client)
-                                            else:
-                                                state = "on"
-                                        
-                                        if state == "on":
-                                            alive_words = ["Living", "Breathing", "Animate", "Lively", "Vibrant", "Thriving", "Animated", "Vital", "Dynamic", "Active", "Awake", "Energetic", "Flourishing", "Vigorous", "Surviving", "Extant", "Existing", "Buoyant", "Sprightly", "Alert"]
-                                            status_word = random.choice(alive_words)
-                                            base_text = f"<b>✅ Altroid-X UB [{user_display_index}/{total_user_sessions}] is {status_word.lower()}!</b>"
-                                            disable_indicator = "\n🚫 <b>Disable:</b> <code>True</code>" if self.is_session_disabled(user_id) else ""
-                                            final_message = f"<blockquote expandable>{base_text}\n<b>{client_type}: {mention_user}</b> [ <code>{user_id}</code> ]{disable_indicator}</blockquote>\n"
-                                            parse_mode = ParseMode.HTML
- 
-                                    sender = client
-                                    if client != self.bot and self.is_session_disabled(me.id):
-                                        sender = self.bot_manager.get_bot(me.id)
-                                        self.log(f"REDIRECT: [{client_type}] {name} startup log via Assistant (Session Disabled)")
- 
-                                    if startup_mode == "on" and state != "test":
-                                        if sender:
-                                            await sender.send_message(log_chat_id, final_message, parse_mode=parse_mode, link_preview_options=LinkPreviewOptions(is_disabled=True))
-                                        detailed_results[idx] = f"• [{idx}] {name}{username}: ✅ Sent"
-                                        await asyncio.sleep(0.5) # Stagger log messages
-                                    else:
-                                        detailed_results[idx] = f"• [{idx}] {name}{username}: ✅ Active (Test)"
-                                    
-                                    nonlocal success_count
-                                    success_count += 1
-                                    
-                                    # Log to terminal
-                                    if client == self.bot: log_msg = f"✔ SL_MSG BY: [1/1] 🤖 Bot: {name}"
-                                    else: log_msg = f"✔ SL_MSG BY: [{self.clients.index(client)+1}/{len(self.clients)}] 🦸🏼 UB: {name}"
-                                    self.log(log_msg, level=20)
-                                    
-                                except Exception as e:
-                                    me = client.myself if hasattr(client, "myself") else None
-                                    name = me.first_name if me else "Unknown"
-                                    detailed_results[idx] = f"• [{idx}] {name}: ❌ Failed ({type(e).__name__})"
-                                    self.log(f"GAGAL: {name} → {e}", level=30)
- 
-                        await asyncio.gather(*[send_startup_parallel(i, c) for i, c in enumerate(all_clients)])
- 
-                    else:
-                        # Legacy Sequential Log Sending
-                        for idx, client in enumerate(all_clients):
+                    async def send_startup_parallel(idx, client):
+                        async with sem_logs:
                             try:
                                 me = client.myself if hasattr(client, "myself") else await client.get_me()
                                 name = f"{me.first_name or ''} {me.last_name or ''}".strip() or "Unknown"
@@ -3135,24 +3055,14 @@ class AltruixClient:
                                 parse_mode = ParseMode.HTML
                                 
                                 if client == self.bot:
-                                    # ✅ PERFORMANCE: Randomize "alive" to avoid spam detection
-                                    alive_words = [
-                                        "Living", "Breathing", "Animate", "Lively", "Vibrant",
-                                        "Thriving", "Animated", "Vital", "Dynamic", "Active",
-                                        "Awake", "Energetic", "Flourishing", "Vigorous", "Surviving",
-                                        "Extant", "Existing", "Buoyant", "Sprightly", "Alert"
-                                    ]
+                                    # Randomize alive
+                                    alive_words = ["Living", "Breathing", "Animate", "Lively", "Vibrant", "Thriving", "Animated", "Vital", "Dynamic", "Active", "Awake", "Energetic", "Flourishing", "Vigorous", "Surviving", "Extant", "Existing", "Buoyant", "Sprightly", "Alert"]
                                     status_word = random.choice(alive_words)
                                     base_text = f"<b>✅ Altroid-X Bot Assistant is {status_word.lower()}!</b>"
-                                    final_message = (
-                                        f"<blockquote expandable>{base_text}\n"
-                                        f"<b>{client_type}: {mention_user}</b> [ <code>{user_id}</code> ]</blockquote>\n"
-                                    )
+                                    final_message = f"<blockquote expandable>{base_text}\n<b>{client_type}: {mention_user}</b> [ <code>{user_id}</code> ]</blockquote>\n"
                                 else:
                                     user_index = self.clients.index(client)
                                     user_display_index = user_index + 1
-                                    
-                                    # ✅ SYNC WITH STARTUP SETTINGS ( Respect STARTUP_APPLY_TYPE )
                                     apply_type = await self.config.get_env("STARTUP_APPLY_TYPE") or "global"
                                     if str(apply_type).lower() == "global":
                                         state = await self.config.get_env("STARTUP_MSG_GLOBAL")
@@ -3167,17 +3077,16 @@ class AltruixClient:
                                     if state in ["off", "false", "no", "0"]:
                                         self.log(f"SKIP: [{client_type}] {name} startup log (OFF)")
                                         detailed_results[idx] = f"• [{idx}] {name}{username}: ⚪ Skipped (OFF)"
-                                        continue
-                                    
+                                        return
+ 
                                     if state == "custom":
                                         custom_msg = await self.config.get_env(custom_key)
                                         if custom_msg:
                                             final_message, parse_mode = await self.resolve_placeholders(custom_msg, index=user_index, client=client)
                                         else:
-                                            state = "on" # Fallback
+                                            state = "on"
                                     
                                     if state == "on":
-                                        # ✅ Randomize "alive" for Userbot as well
                                         alive_words = ["Living", "Breathing", "Animate", "Lively", "Vibrant", "Thriving", "Animated", "Vital", "Dynamic", "Active", "Awake", "Energetic", "Flourishing", "Vigorous", "Surviving", "Extant", "Existing", "Buoyant", "Sprightly", "Alert"]
                                         status_word = random.choice(alive_words)
                                         base_text = f"<b>✅ Altroid-X UB [{user_display_index}/{total_user_sessions}] is {status_word.lower()}!</b>"
@@ -3185,205 +3094,330 @@ class AltruixClient:
                                         final_message = f"<blockquote expandable>{base_text}\n<b>{client_type}: {mention_user}</b> [ <code>{user_id}</code> ]{disable_indicator}</blockquote>\n"
                                         parse_mode = ParseMode.HTML
  
-                                # ✅ REDIRECTION LOGIC: If session is disabled, send via Bot Assistant
                                 sender = client
                                 if client != self.bot and self.is_session_disabled(me.id):
                                     sender = self.bot_manager.get_bot(me.id)
                                     self.log(f"REDIRECT: [{client_type}] {name} startup log via Assistant (Session Disabled)")
  
-                                # ✅ EXECUTION BASED ON MODE
                                 if startup_mode == "on" and state != "test":
                                     if sender:
-                                        await sender.send_message(
-                                            log_chat_id,
-                                            final_message,
-                                            parse_mode=parse_mode,
-                                            link_preview_options=LinkPreviewOptions(is_disabled=True)
-                                        )
+                                        await sender.send_message(log_chat_id, final_message, parse_mode=parse_mode, link_preview_options=LinkPreviewOptions(is_disabled=True))
                                     detailed_results[idx] = f"• [{idx}] {name}{username}: ✅ Sent"
-                                    # delay 0.5 second
-                                    await asyncio.sleep(0.5)
+                                    await asyncio.sleep(0.5) # Stagger log messages
                                 else:
-                                    # TEST MODE: Only local test/ping
                                     detailed_results[idx] = f"• [{idx}] {name}{username}: ✅ Active (Test)"
                                 
+                                nonlocal success_count
                                 success_count += 1
-                                if client == self.bot:
-                                    # Bot logic: [1/1]
-                                    log_msg = f"✔ SL_MSG BY: [1/1] 🤖 Bot: {name}"
-                                # ... existing log msg ...
-                                else:
-                                    userbot_index = self.clients.index(client) + 1
-                                    total_userbots = len(self.clients)
-                                    log_msg = f"✔ SL_MSG BY: [{userbot_index}/{total_userbots}] 🦸🏼 UB: {name}"
+                                
+                                # Log to terminal
+                                if client == self.bot: log_msg = f"✔ SL_MSG BY: [1/1] 🤖 Bot: {name}"
+                                else: log_msg = f"✔ SL_MSG BY: [{self.clients.index(client)+1}/{len(self.clients)}] 🦸🏼 UB: {name}"
                                 self.log(log_msg, level=20)
- 
-                            except FloodWait as e:
-                                self.log(f"FloodWait terdeteksi. Menunggu {e.value} detik...", level=30)
-                                await asyncio.sleep(e.value + 6)
+                                
                             except Exception as e:
-                                error_type = type(e).__name__
-                                error_msg = str(e)
                                 me = client.myself if hasattr(client, "myself") else None
                                 name = me.first_name if me else "Unknown"
-                                username = f" @{me.username}" if me and me.username else ""
-                                client_type = "Bot" if client == self.bot else "User"
-                                failed_clients.append(f"• <b>{name}{username}</b> → {error_type}")
-                                detailed_results[idx] = f"• [{idx}] {name}{username}: ❌ Failed ({error_type})"
-                                self.log(f"GAGAL: [{client_type}] {name}{username} → {error_type}: {error_msg}", level=30)
+                                detailed_results[idx] = f"• [{idx}] {name}: ❌ Failed ({type(e).__name__})"
+                                self.log(f"GAGAL: {name} → {e}", level=30)
  
-                    # ✅ SEND CONSOLIDATED STARTUP REPORT (SPLIT LOG SUPPORT)
-                    if log_chat_id:
+                    await asyncio.gather(*[send_startup_parallel(i, c) for i, c in enumerate(all_clients)])
+ 
+                else:
+                    # Legacy Sequential Log Sending
+                    for idx, client in enumerate(all_clients):
                         try:
-                            status_icon = "✅" if success_count == len(all_clients) else "⚠️"
-                            report_title = "🚀 STARTUP SESSION REPORT" if startup_mode == "on" else "🔍 STARTUP SESSION TEST REPORT"
+                            me = client.myself if hasattr(client, "myself") else await client.get_me()
+                            name = f"{me.first_name or ''} {me.last_name or ''}".strip() or "Unknown"
+                            username = f" @{me.username}" if me.username else ""
+                            startup_emojis = [
+                                "🧟", "🤔", "👩🏻‍🦳", "🛸", "💪", "🛡", "⚡️", "💥", "✨", "🌟",
+                                "🔥", "🏆", "🥇", "⭐️", "🫡", "🚀", "🤩", "😝", "💖", "🗿"
+                            ]
+                            emoji_choice = random.choice(startup_emojis)
+                            user_id = me.id
+                            client_type = "🤖 Bot" if client == self.bot else f"{emoji_choice} UB"
+                            mention_user = f'<a href="tg://user?id={user_id}">{html.escape(name)}</a>'
+                            total_user_sessions = len(self.clients)
+                            final_message = ""
+                            parse_mode = ParseMode.HTML
                             
-                            header = (
-                                f"{status_icon} <b>{report_title}</b>\n"
-                                f"{'━' * 25}\n"
-                                f"• <b>Total:</b> <code>{len(all_clients)}</code>\n"
-                                f"• <b>Berhasil:</b> <code>{success_count}</code>\n"
-                                f"• <b>Gagal:</b> <code>{len(all_clients) - success_count}</code>\n"
-                                f"• <b>Mode:</b> <code>{startup_mode.upper()}</code>\n\n"
-                                f"<b>Detail Sesi:</b>\n"
-                            )
-                            footer = (
-                                f"\n{'━' * 25}\n"
-                                f"• <b>Waktu:</b> <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>"
-                            )
-                            
-                            # Split logic
-                            max_chars = 3800
-                            chunks = []
-                            current_chunk = []
-                            current_len = 0
-                            
-                            for res in detailed_results:
-                                if res is None:
-                                    continue
-                                if current_len + len(res) + 1 > max_chars:
-                                    chunks.append("\n".join(current_chunk))
-                                    current_chunk = []
-                                    current_len = 0
-                                current_chunk.append(res)
-                                current_len += len(res) + 1
-                            if current_chunk:
-                                chunks.append("\n".join(current_chunk))
-                            
-                            for i, chunk in enumerate(chunks):
-                                part = f" (Part {i+1}/{len(chunks)})" if len(chunks) > 1 else ""
-                                final_report = f"<blockquote expandable>{header}{chunk}{footer}{part}</blockquote>"
-                                await self.bot.send_message(log_chat_id, final_report, parse_mode=ParseMode.HTML)
-                                if len(chunks) > 1: await asyncio.sleep(0.5)
-                                
-                        except Exception as re:
-                            self.log(f"Gagal kirim startup report: {re}", level=logging.WARNING)
-
-                    self.log("=== RINGKASAN PENGIRIMAN STARTUP LOG ===")
-                    self.log(f"✔ Successfully processed: {success_count}/{len(all_clients)} client", level=20)
-                    if failed_clients:
-                        self.log("✖ Failed client:", level=30)
-                        for fail in failed_clients:
-                            self.log(f" {fail}", level=30)
-                    else:
-                        self.log(self.get_string("startup_summary_success").format(log_chat_id), level=20)
-
-                    if success_count > 0:
-                        try:
-                            branch = get_current_git_branch()
-                            altruix_version = getattr(self, "__version__", "unknown")
-                            db_type = "MongoDB" if self.config.DB_URI else "LocalDB"
-                            
-                            # Get system stats untuk ditampilkan di startup log
-                            system_stats = self.get_system_stats()
-                            
-                            # Check untuk resource warnings (CPU/RAM > 80%)
-                            warnings = {}
-                            cpu_percent = system_stats.get('cpu', {}).get('percent')
-                            ram_percent = system_stats.get('ram', {}).get('percent')
-                            
-                            if isinstance(cpu_percent, (int, float)) and cpu_percent > 80:
-                                warnings['cpu'] = cpu_percent
-                            if isinstance(ram_percent, (int, float)) and ram_percent > 80:
-                                warnings['ram'] = ram_percent
-                            
-                            # Format pesan dengan blockquote expandable
-                            summary = self.format_startup_log_blockquote(
-                                total_sessions=len(self.clients),
-                                success_count=success_count,
-                                failed_count=len(failed_clients),
-                                owner_id=self.config.OWNER_ID,
-                                branch=branch,
-                                db_type=db_type,
-                                version=altruix_version,
-                                startup_time=startup_time,
-                                system_stats=system_stats,
-                                warnings=warnings if warnings else None
-                            )
-                            
-                            # Kirim dengan parse_mode HTML
-                            await self.bot.send_message(
-                                log_chat_id, 
-                                summary,
-                                parse_mode=ParseMode.HTML
-                            )
-                            self.log(f"Ringkasan akhir berhasil dikirim. Branch: {branch}, Versi: {altruix_version}", level=20)
-
-                            # =============================================
-                            # 📜 CHANGELOG NOTIFICATION ON STARTUP
-                            # =============================================
-                            try:
-                                changelog_notif = str(await self.config.get_env("CHANGELOG_NOTIF_ENABLED", default="on")).lower()
-                                if changelog_notif == "on":
-                                    from Main.utils.changelog_helpers import parse_changelog, format_entry_to_html
-                                    entries = parse_changelog()
-                                    if entries:
-                                        latest_entry = entries[0]
-                                        entry_html = format_entry_to_html(latest_entry)
-                                        # Truncate if too long for a single message (safe limit ~3800)
-                                        if len(entry_html) > 3600:
-                                            entry_html = entry_html[:3600] + "\n\n<i>... (truncated)</i>"
-                                        changelog_msg = (
-                                            "<blockquote expandable>"
-                                            "📜 <b>Latest Changelog Update</b>\n"
-                                            "━━━━━━━━━━━━━━━━━━━━\n\n"
-                                            f"{entry_html}\n"
-                                            "━━━━━━━━━━━━━━━━━━━━\n"
-                                            "<i>Auto-sent on startup. Disable via Settings → Program Controls.</i>"
-                                            "</blockquote>"
-                                        )
-                                        await self.bot.send_message(
-                                            log_chat_id,
-                                            changelog_msg,
-                                            parse_mode=ParseMode.HTML,
-                                            link_preview_options=LinkPreviewOptions(is_disabled=True)
-                                        )
-                                        self.log("📜 Changelog notification sent to log group.", level=20)
-                                    else:
-                                        self.log("📜 Changelog notification enabled but changelog.md is empty.", level=logging.DEBUG)
-                                else:
-                                    self.log("📜 Changelog notification is disabled.", level=logging.DEBUG)
-                            except Exception as clog_err:
-                                self.log(f"📜 Failed to send changelog notification: {clog_err}", level=logging.WARNING)
-
-                        except Exception as e:
-                            # Fallback ke format plain text jika HTML error
-                            self.log(f"Error sending HTML format, trying plain text: {e}", level=logging.WARNING)
-                            try:
-                                summary_plain = (
-                                    self.get_string("startup_complete_title") +
-                                    self.get_string("startup_total_session").format(len(self.clients)) +
-                                    self.get_string("startup_success_count").format(success_count) +
-                                    self.get_string("startup_failed_count").format(len(failed_clients)) +
-                                    self.get_string("startup_owner_id").format(BaseConfig.OWNER_ID) +
-                                    self.get_string("startup_branch").format(branch) +
-                                    self.get_string("startup_db").format(db_type) +
-                                    self.get_string("startup_ver").format(altruix_version) +
-                                    self.get_string("startup_time").format(startup_time)
+                            if client == self.bot:
+                                # ✅ PERFORMANCE: Randomize "alive" to avoid spam detection
+                                alive_words = [
+                                    "Living", "Breathing", "Animate", "Lively", "Vibrant",
+                                    "Thriving", "Animated", "Vital", "Dynamic", "Active",
+                                    "Awake", "Energetic", "Flourishing", "Vigorous", "Surviving",
+                                    "Extant", "Existing", "Buoyant", "Sprightly", "Alert"
+                                ]
+                                status_word = random.choice(alive_words)
+                                base_text = f"<b>✅ Altroid-X Bot Assistant is {status_word.lower()}!</b>"
+                                final_message = (
+                                    f"<blockquote expandable>{base_text}\n"
+                                    f"<b>{client_type}: {mention_user}</b> [ <code>{user_id}</code> ]</blockquote>\n"
                                 )
-                                await self.bot.send_message(log_chat_id, summary_plain)
-                            except Exception as e2:
-                                self.log(self.get_string("startup_summary_fail").format(e2), level=logging.ERROR)
+                            else:
+                                user_index = self.clients.index(client)
+                                user_display_index = user_index + 1
+                                
+                                # ✅ SYNC WITH STARTUP SETTINGS ( Respect STARTUP_APPLY_TYPE )
+                                apply_type = await self.config.get_env("STARTUP_APPLY_TYPE") or "global"
+                                if str(apply_type).lower() == "global":
+                                    state = await self.config.get_env("STARTUP_MSG_GLOBAL")
+                                    custom_key = "STARTUP_CUSTOM_MSG_GLOBAL"
+                                else:
+                                    state = await self.config.get_env(f"STARTUP_MSG_{user_index}")
+                                    custom_key = f"STARTUP_CUSTOM_MSG_{user_index}"
+                                
+                                state = str(state).lower() if state else "on"
+                                if state == "default": state = "on"
+                                
+                                if state in ["off", "false", "no", "0"]:
+                                    self.log(f"SKIP: [{client_type}] {name} startup log (OFF)")
+                                    detailed_results[idx] = f"• [{idx}] {name}{username}: ⚪ Skipped (OFF)"
+                                    continue
+                                
+                                if state == "custom":
+                                    custom_msg = await self.config.get_env(custom_key)
+                                    if custom_msg:
+                                        final_message, parse_mode = await self.resolve_placeholders(custom_msg, index=user_index, client=client)
+                                    else:
+                                        state = "on" # Fallback
+                                
+                                if state == "on":
+                                    # ✅ Randomize "alive" for Userbot as well
+                                    alive_words = ["Living", "Breathing", "Animate", "Lively", "Vibrant", "Thriving", "Animated", "Vital", "Dynamic", "Active", "Awake", "Energetic", "Flourishing", "Vigorous", "Surviving", "Extant", "Existing", "Buoyant", "Sprightly", "Alert"]
+                                    status_word = random.choice(alive_words)
+                                    base_text = f"<b>✅ Altroid-X UB [{user_display_index}/{total_user_sessions}] is {status_word.lower()}!</b>"
+                                    disable_indicator = "\n🚫 <b>Disable:</b> <code>True</code>" if self.is_session_disabled(user_id) else ""
+                                    final_message = f"<blockquote expandable>{base_text}\n<b>{client_type}: {mention_user}</b> [ <code>{user_id}</code> ]{disable_indicator}</blockquote>\n"
+                                    parse_mode = ParseMode.HTML
+ 
+                            # ✅ REDIRECTION LOGIC: If session is disabled, send via Bot Assistant
+                            sender = client
+                            if client != self.bot and self.is_session_disabled(me.id):
+                                sender = self.bot_manager.get_bot(me.id)
+                                self.log(f"REDIRECT: [{client_type}] {name} startup log via Assistant (Session Disabled)")
+ 
+                            # ✅ EXECUTION BASED ON MODE
+                            if startup_mode == "on" and state != "test":
+                                if sender:
+                                    await sender.send_message(
+                                        log_chat_id,
+                                        final_message,
+                                        parse_mode=parse_mode,
+                                        link_preview_options=LinkPreviewOptions(is_disabled=True)
+                                    )
+                                detailed_results[idx] = f"• [{idx}] {name}{username}: ✅ Sent"
+                                # delay 0.5 second
+                                await asyncio.sleep(0.5)
+                            else:
+                                # TEST MODE: Only local test/ping
+                                detailed_results[idx] = f"• [{idx}] {name}{username}: ✅ Active (Test)"
+                            
+                            success_count += 1
+                            if client == self.bot:
+                                # Bot logic: [1/1]
+                                log_msg = f"✔ SL_MSG BY: [1/1] 🤖 Bot: {name}"
+                            # ... existing log msg ...
+                            else:
+                                userbot_index = self.clients.index(client) + 1
+                                total_userbots = len(self.clients)
+                                log_msg = f"✔ SL_MSG BY: [{userbot_index}/{total_userbots}] 🦸🏼 UB: {name}"
+                            self.log(log_msg, level=20)
+ 
+                        except FloodWait as e:
+                            self.log(f"FloodWait terdeteksi. Menunggu {e.value} detik...", level=30)
+                            await asyncio.sleep(e.value + 6)
+                        except Exception as e:
+                            error_type = type(e).__name__
+                            error_msg = str(e)
+                            me = client.myself if hasattr(client, "myself") else None
+                            name = me.first_name if me else "Unknown"
+                            username = f" @{me.username}" if me and me.username else ""
+                            client_type = "Bot" if client == self.bot else "User"
+                            failed_clients.append(f"• <b>{name}{username}</b> → {error_type}")
+                            detailed_results[idx] = f"• [{idx}] {name}{username}: ❌ Failed ({error_type})"
+                            self.log(f"GAGAL: [{client_type}] {name}{username} → {error_type}: {error_msg}", level=30)
+ 
+                # ✅ SEND CONSOLIDATED STARTUP REPORT (SPLIT LOG SUPPORT)
+                if log_chat_id:
+                    try:
+                        status_icon = "✅" if success_count == len(all_clients) else "⚠️"
+                        report_title = "🚀 STARTUP SESSION REPORT" if startup_mode == "on" else "🔍 STARTUP SESSION TEST REPORT"
+                        
+                        header = (
+                            f"{status_icon} <b>{report_title}</b>\n"
+                            f"{'━' * 25}\n"
+                            f"• <b>Total:</b> <code>{len(all_clients)}</code>\n"
+                            f"• <b>Berhasil:</b> <code>{success_count}</code>\n"
+                            f"• <b>Gagal:</b> <code>{len(all_clients) - success_count}</code>\n"
+                            f"• <b>Mode:</b> <code>{startup_mode.upper()}</code>\n\n"
+                            f"<b>Detail Sesi:</b>\n"
+                        )
+                        footer = (
+                            f"\n{'━' * 25}\n"
+                            f"• <b>Waktu:</b> <code>{datetime.now().strftime('%d-%m-%Y %H:%M:%S')}</code>"
+                        )
+                        
+                        # Split logic
+                        max_chars = 3800
+                        chunks = []
+                        current_chunk = []
+                        current_len = 0
+                        
+                        for res in detailed_results:
+                            if res is None:
+                                continue
+                            if current_len + len(res) + 1 > max_chars:
+                                chunks.append("\n".join(current_chunk))
+                                current_chunk = []
+                                current_len = 0
+                            current_chunk.append(res)
+                            current_len += len(res) + 1
+                        if current_chunk:
+                            chunks.append("\n".join(current_chunk))
+                        
+                        for i, chunk in enumerate(chunks):
+                            part = f" (Part {i+1}/{len(chunks)})" if len(chunks) > 1 else ""
+                            final_report = f"<blockquote expandable>{header}{chunk}{footer}{part}</blockquote>"
+                            await self.bot.send_message(log_chat_id, final_report, parse_mode=ParseMode.HTML)
+                            if len(chunks) > 1: await asyncio.sleep(0.5)
+                            
+                    except Exception as re:
+                        self.log(f"Gagal kirim startup report: {re}", level=logging.WARNING)
+
+                self.log("=== RINGKASAN PENGIRIMAN STARTUP LOG ===")
+                self.log(f"✔ Successfully processed: {success_count}/{len(all_clients)} client", level=20)
+                if failed_clients:
+                    self.log("✖ Failed client:", level=30)
+                    for fail in failed_clients:
+                        self.log(f" {fail}", level=30)
+                else:
+                    self.log(self.get_string("startup_summary_success").format(log_chat_id), level=20)
+
+            # =============================================
+            # 📜 CHANGELOG NOTIFICATION ON STARTUP
+            # =============================================
+            # ✅ PERBAIKAN: Jalankan secara independen dari success_count report
+            try:
+                if not log_chat_id:
+                    self.log("📜 Skip changelog notification: log_chat_id is not set.", level=logging.DEBUG)
+                else:
+                    changelog_notif_raw = await self.config.get_env("CHANGELOG_NOTIF_ENABLED", default="on")
+                    changelog_notif = str(changelog_notif_raw).lower()
+                    
+                    if changelog_notif in ["on", "true", "yes", "1"]:
+                        from Main.utils.changelog_helpers import build_changelog_page
+                        try:
+                            text, kb = await build_changelog_page(self.config.OWNER_ID, page=0)
+                            
+                            await self.bot.send_message(
+                                log_chat_id,
+                                text,
+                                reply_markup=kb,
+                                parse_mode=ParseMode.HTML,
+                                link_preview_options=LinkPreviewOptions(is_disabled=True)
+                            )
+                            self.log("📜 Paginated changelog notification sent to log group.", level=20)
+                        except Exception as inner_clog_err:
+                            # Fallback to simple parse if builder fails
+                            import traceback
+                            self.log(f"📜 Paginated builder failed, trying basic notification: {inner_clog_err}", level=logging.WARNING)
+                            self.log(traceback.format_exc(), level=logging.DEBUG)
+                            
+                            from Main.utils.changelog_helpers import parse_changelog, format_entry_to_html
+                            entries = parse_changelog()
+                            if entries:
+                                latest_entry = entries[0]
+                                entry_html = format_entry_to_html(latest_entry)
+                                if len(entry_html) > 3600:
+                                    entry_html = entry_html[:3600] + "\n\n<i>... (truncated)</i>"
+                                changelog_msg = (
+                                    "<blockquote expandable>"
+                                    "📜 <b>Latest Changelog Update</b>\n"
+                                    "━━━━━━━━━━━━━━━━━━━━\n\n"
+                                    f"{entry_html}\n"
+                                    "━━━━━━━━━━━━━━━━━━━━\n"
+                                    "<i>Auto-sent on startup.</i>"
+                                    "</blockquote>"
+                                )
+                                await self.bot.send_message(
+                                    log_chat_id,
+                                    changelog_msg,
+                                    parse_mode=ParseMode.HTML,
+                                    link_preview_options=LinkPreviewOptions(is_disabled=True)
+                                )
+                                self.log("📜 Basic changelog notification sent (fallback).", level=20)
+                    else:
+                        self.log(f"📜 Changelog notification is disabled (Value: {changelog_notif})", level=20)
+            except Exception as clog_err:
+                import traceback
+                self.log(f"📜 Failed to send changelog notification: {clog_err}", level=logging.WARNING)
+                self.log(traceback.format_exc(), level=logging.DEBUG)
+
+            if success_count > 0:
+                try:
+                    branch = get_current_git_branch()
+                    altruix_version = getattr(self, "__version__", "unknown")
+                    db_type = "MongoDB" if self.config.DB_URI else "LocalDB"
+                    
+                    # Get system stats untuk ditampilkan di startup log
+                    system_stats = self.get_system_stats()
+                    
+                    # Check untuk resource warnings (CPU/RAM > 80%)
+                    warnings = {}
+                    cpu_percent = system_stats.get('cpu', {}).get('percent')
+                    ram_percent = system_stats.get('ram', {}).get('percent')
+                    
+                    if isinstance(cpu_percent, (int, float)) and cpu_percent > 80:
+                        warnings['cpu'] = cpu_percent
+                    if isinstance(ram_percent, (int, float)) and ram_percent > 80:
+                        warnings['ram'] = ram_percent
+                    
+                    # Format pesan dengan blockquote expandable
+                    summary = self.format_startup_log_blockquote(
+                        total_sessions=len(self.clients),
+                        success_count=success_count,
+                        failed_count=len(failed_clients),
+                        owner_id=self.config.OWNER_ID,
+                        branch=branch,
+                        db_type=db_type,
+                        version=altruix_version,
+                        startup_time=startup_time,
+                        system_stats=system_stats,
+                        warnings=warnings if warnings else None
+                    )
+                    
+                    # Kirim dengan parse_mode HTML
+                    try:
+                        await self.bot.send_message(
+                            log_chat_id, 
+                            summary,
+                            parse_mode=ParseMode.HTML
+                        )
+                        self.log(f"Ringkasan akhir berhasil dikirim. Branch: {branch}, Versi: {altruix_version}", level=20)
+                    except Exception as e:
+                        # Fallback ke format plain text jika HTML error
+                        self.log(f"Error sending HTML format, trying plain text: {e}", level=logging.WARNING)
+                        try:
+                            summary_plain = (
+                                self.get_string("startup_complete_title") +
+                                self.get_string("startup_total_session").format(len(self.clients)) +
+                                self.get_string("startup_success_count").format(success_count) +
+                                self.get_string("startup_failed_count").format(len(failed_clients)) +
+                                self.get_string("startup_owner_id").format(BaseConfig.OWNER_ID) +
+                                self.get_string("startup_branch").format(branch) +
+                                self.get_string("startup_db").format(db_type) +
+                                self.get_string("startup_ver").format(altruix_version) +
+                                self.get_string("startup_time").format(startup_time)
+                            )
+                            await self.bot.send_message(log_chat_id, summary_plain)
+                        except Exception as e2:
+                            self.log(self.get_string("startup_summary_fail").format(e2), level=logging.ERROR)
+                except Exception as e:
+                    self.log(f"Error in startup completion logic: {e}", level=logging.ERROR)
+
         except Exception as e:
             self.log(f"CRITICAL: Session initialization failed: {e}", level=50)
             raise

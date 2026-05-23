@@ -2295,9 +2295,9 @@ async def send_completion_report(
                     caption=(
                         f"<blockquote expandable>"
                         f"📊 <b>Laporan Create {type_label} Selesai</b>\n\n"
-                        f"• ✅ Berhasil: {success_count}/{requested_count} {unit_label}\n"
+                        f"✅ Berhasil: {success_count}/{requested_count} {unit_label}\n"
                         f"• Durasi: {format_duration(total_duration)}\n"
-                        f"• Batch: {batch_action} act / {ba_delay}s\n\n"
+                        f"• Batch: {batch_action} act / {ba_delay}s\n"
                         f"• Account: {html.escape(f'{user_info.first_name or ''} {user_info.last_name or ''}'.strip() or 'N/A')}\n"
                         f"• Account ID: <code>{user_info.id}</code>\n\n"
                         f"<i>Module by @AlphaXproject team</i>"
@@ -2330,7 +2330,7 @@ async def send_completion_report(
                      f"📊 <b>Laporan Create {type_label} Selesai</b>\n"
                      f"• User: {user_info.first_name}\n"
                      f"• Detail: Berhasil {success_count}/{requested_count} {unit_label}\n"
-                     f"• 📁 Log: Terkirim ke {log_info}."
+                     f"• Log: Terkirim ke {log_info}."
                      f"</blockquote>",
                      parse_mode=ParseMode.HTML,
                      reply_to_message_id=reply_id

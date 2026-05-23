@@ -11,6 +11,8 @@ import logging
 import os
 import html
 import contextlib
+import traceback
+import time
 from Main import Altruix
 from pyrogram.enums import ParseMode
 from pyrogram import enums
@@ -23,7 +25,8 @@ from pyrogram.types import (
 from pyrogram.errors import (
     FloodWait, ApiIdInvalid, UsernameInvalid, PhoneCodeExpired,
     PhoneCodeInvalid, UsernameOccupied, PhoneNumberInvalid,
-    UsernameNotModified, SessionPasswordNeeded, UserIsBlocked, PeerIdInvalid
+    UsernameNotModified, SessionPasswordNeeded, UserIsBlocked, PeerIdInvalid,
+    UserDeactivated
 )
 
 
@@ -107,6 +110,9 @@ async def _start_add_session_process(cb: CallbackQuery):
     user_id = user.id
     bot = Altruix.bot  # ✅ Gunakan bot sebagai client
     is_sudo = user_id != Altruix.config.OWNER_USERS_ID
+    app = None
+    temp_msg = None
+    process_msg = None
 
     # ✅ Log ke grup jika sudo user memulai proses
     if is_sudo:
@@ -123,203 +129,213 @@ async def _start_add_session_process(cb: CallbackQuery):
 
     _ACTIVE_ADD_SESSION.add(user_id)
 
-    # ✅ KIRIM PESAN VIA BOT (BUKAN VIA USER) — AMAN DI PM!
     try:
-        temp_msg = await bot.send_message(
-            chat_id=user_id,
-            text="📲 Kirim kontak Anda untuk ambil nomor telepon.\n"
-                 "<i>Data tidak disimpan — hanya untuk buat session.</i>\n\n"
-                 "Ketik /cancel untuk batalkan.",
-            reply_markup=ReplyKeyboardMarkup(
-                [[KeyboardButton("Share Contact", request_contact=True)]],
-                resize_keyboard=True,
-                one_time_keyboard=True,
-            ),
-        )
-    except Exception as e:
-        Altruix.log(f"Gagal kirim pesan ke {user_id}: {e}", level=logging.ERROR)
-        _ACTIVE_ADD_SESSION.discard(user_id)
-        await cb.message.edit("❌ Gagal memulai proses.")
-        return
-
-    phone_number = None
-    try:
-        # ✅ DENGARKAN RESPON VIA BOT — DENGAN FILTER YANG BENAR
-        # Pyromod: listen(filters=..., timeout=...)
-        while True:
-            response: Message = await bot.listen(
-                filters=filters.user(user_id),
-                timeout=120
-            )
-            if response.contact:
-                phone_number = response.contact.phone_number
-                break
-            elif response.text and response.text.strip().lower() == "/cancel":
-                await temp_msg.delete()
-                await bot.send_message(user_id, "❌ Dibatalkan.", reply_markup=ReplyKeyboardRemove())
-                _ACTIVE_ADD_SESSION.discard(user_id)
-                return
-            else:
-                await bot.send_message(user_id, "❌ Harap kirim kontak atau ketik /cancel.")
-    except asyncio.TimeoutError:
-        await temp_msg.delete()
-        await bot.send_message(user_id, "⏰ Waktu habis.", reply_markup=ReplyKeyboardRemove())
-        _ACTIVE_ADD_SESSION.discard(user_id)
-        return
-    except Exception as e:
-        Altruix.log(f"Error tunggu input: {e}", level=logging.ERROR)
-        await log_to_group(
-            f"<blockquote expandable>"
-            f"⚠️ <b>ERROR SAAT TUNGGU INPUT</b>\n"
-            f"• User ID: <code>{user_id}</code>\n"
-            f"• Error: <code>{str(e)}</code>"
-            f"</blockquote>"
-        )
-        _ACTIVE_ADD_SESSION.discard(user_id)
-        await bot.send_message(user_id, "❌ Kesalahan internal.")
-        return
-
-    await bot.send_message(user_id, "📞 Nomor diterima. Membuat session...", reply_markup=ReplyKeyboardRemove())
-    process_msg = await bot.send_message(user_id, "<i>Mohon tunggu...</i>")
-
-    # Buat klien sementara
-    try:
-        app = await client_session(Altruix.config.API_ID, Altruix.config.API_HASH)
-        await app.connect()
-        sent_code = await app.send_code(phone_number)
-    except FloodWait as e:
-        await process_msg.edit(f"⏳ FloodWait! Tunggu {e.value} detik.")
-        await app.disconnect()
-        _ACTIVE_ADD_SESSION.discard(user_id)
-        return
-    except PhoneNumberInvalid:
-        await process_msg.edit("❌ Nomor telepon tidak valid.")
-        await app.disconnect()
-        _ACTIVE_ADD_SESSION.discard(user_id)
-        return
-    except ApiIdInvalid:
-        await process_msg.edit("❌ API ID/Hash tidak valid.")
-        await app.disconnect()
-        _ACTIVE_ADD_SESSION.discard(user_id)
-        return
-    except Exception as e:
-        await process_msg.edit("❌ Gagal kirim kode OTP.")
-        Altruix.log(f"Kirim kode error: {e}", level=logging.ERROR)
-        await log_to_group(
-            f"<blockquote expandable>"
-            f"⚠️ <b>ERROR SAAT KIRIM KODE OTP</b>\n"
-            f"• User ID: <code>{user_id}</code>\n"
-            f"• Error: <code>{str(e)}</code>"
-            f"</blockquote>"
-        )
-        await app.disconnect()
-        _ACTIVE_ADD_SESSION.discard(user_id)
-        return
-
-    # Minta kode OTP
-    try:
-        ans = await bot.ask(
-            chat_id=user_id,
-            text="🔑 Kirim kode OTP format <code>1-2-3-4-5</code>",
-            reply_markup=ForceReply(selective=True),
-            timeout=300,
-            filters=filters.user(user_id)
-        )
-        if ans.text and ans.text.strip().lower() == "/cancel":
-            await process_msg.edit("❌ Dibatalkan oleh user.")
-            await app.disconnect()
-            _ACTIVE_ADD_SESSION.discard(user_id)
-            return
-        code = ans.text.replace("-", "").replace(" ", "")
-        await app.sign_in(phone_number, sent_code.phone_code_hash, code)
-    except SessionPasswordNeeded:
+        # ✅ KIRIM PESAN VIA BOT (BUKAN VIA USER) — AMAN DI PM!
         try:
-            ans2 = await bot.ask(
+            temp_msg = await bot.send_message(
                 chat_id=user_id,
-                text="🔐 Masukkan password 2FA:",
+                text="📲 Kirim kontak Anda untuk ambil nomor telepon.\n"
+                     "<i>Data tidak disimpan — hanya untuk buat session.</i>\n\n"
+                     "Ketik /cancel untuk batalkan.",
+                reply_markup=ReplyKeyboardMarkup(
+                    [[KeyboardButton("Share Contact", request_contact=True)]],
+                    resize_keyboard=True,
+                    one_time_keyboard=True,
+                ),
+            )
+        except Exception as e:
+            Altruix.log(f"Gagal kirim pesan ke {user_id}: {e}", level=logging.ERROR)
+            await cb.message.edit("❌ Gagal memulai proses.")
+            return
+
+        phone_number = None
+        try:
+            # ✅ DENGARKAN RESPON VIA BOT — DENGAN FILTER YANG BENAR
+            while True:
+                response: Message = await bot.listen(
+                    filters=filters.user(user_id),
+                    timeout=120
+                )
+                if response.contact:
+                    phone_number = response.contact.phone_number
+                    break
+                elif response.text and response.text.strip().lower() == "/cancel":
+                    if temp_msg: await temp_msg.delete()
+                    await bot.send_message(user_id, "❌ Dibatalkan.", reply_markup=ReplyKeyboardRemove())
+                    return
+                else:
+                    await bot.send_message(user_id, "❌ Harap kirim kontak atau ketik /cancel.")
+        except asyncio.TimeoutError:
+            if temp_msg: await temp_msg.delete()
+            await bot.send_message(user_id, "⏰ Waktu habis.", reply_markup=ReplyKeyboardRemove())
+            return
+        except Exception as e:
+            Altruix.log(f"Error tunggu input: {e}", level=logging.ERROR)
+            await log_to_group(
+                f"<blockquote expandable>"
+                f"⚠️ <b>ERROR SAAT TUNGGU INPUT</b>\n"
+                f"• User ID: <code>{user_id}</code>\n"
+                f"• Error: <code>{str(e)}</code>\n"
+                f"• Traceback:\n<code>{traceback.format_exc()[-1000:]}</code>"
+                f"</blockquote>"
+            )
+            await bot.send_message(user_id, "❌ Kesalahan internal.")
+            return
+
+        await bot.send_message(user_id, "📞 Nomor diterima. Membuat session...", reply_markup=ReplyKeyboardRemove())
+        process_msg = await bot.send_message(user_id, "<i>Mohon tunggu...</i>")
+
+        # Buat klien sementara
+        try:
+            start_time = time.perf_counter()
+            app = await client_session(Altruix.config.API_ID, Altruix.config.API_HASH)
+            await app.connect()
+            sent_code = await app.send_code(phone_number)
+            Altruix.log(f"OTP Sent for {user_id} in {time.perf_counter() - start_time:.2f}s", level=20)
+        except FloodWait as e:
+            await process_msg.edit(f"⏳ FloodWait! Tunggu {e.value} detik.")
+            return
+        except PhoneNumberInvalid:
+            await process_msg.edit("❌ Nomor telepon tidak valid.")
+            return
+        except ApiIdInvalid:
+            await process_msg.edit("❌ API ID/Hash tidak valid.")
+            return
+        except Exception as e:
+            await process_msg.edit("❌ Gagal kirim kode OTP.")
+            Altruix.log(f"Kirim kode error: {e}", level=logging.ERROR)
+            await log_to_group(
+                f"<blockquote expandable>"
+                f"⚠️ <b>ERROR SAAT KIRIM KODE OTP</b>\n"
+                f"• User ID: <code>{user_id}</code>\n"
+                f"• Error: <code>{str(e)}</code>\n"
+                f"• Traceback:\n<code>{traceback.format_exc()[-1000:]}</code>"
+                f"</blockquote>"
+            )
+            return
+
+        # Minta kode OTP
+        try:
+            ans = await bot.ask(
+                chat_id=user_id,
+                text="🔑 Kirim kode OTP format <code>1-2-3-4-5</code>",
                 reply_markup=ForceReply(selective=True),
                 timeout=300,
                 filters=filters.user(user_id)
             )
-            if ans2.text.strip().lower() == "/cancel":
-                await process_msg.edit("❌ Dibatalkan.")
-                await app.disconnect()
-                _ACTIVE_ADD_SESSION.discard(user_id)
+            if ans.text and ans.text.strip().lower() == "/cancel":
+                await process_msg.edit("❌ Dibatalkan oleh user.")
                 return
-            await app.check_password(ans2.text)
+            
+            code = ans.text.replace("-", "").replace(" ", "")
+            
+            # ✅ OPTIMIZATION: Start sign-in and catch 2FA quickly
+            start_time = time.perf_counter()
+            try:
+                await app.sign_in(phone_number, sent_code.phone_code_hash, code)
+                Altruix.log(f"Sign-in successful for {user_id} in {time.perf_counter() - start_time:.2f}s", level=20)
+            except SessionPasswordNeeded:
+                Altruix.log(f"2FA Required for {user_id} (detected in {time.perf_counter() - start_time:.2f}s)", level=20)
+                ans2 = await bot.ask(
+                    chat_id=user_id,
+                    text="🔐 Masukkan password 2FA:",
+                    reply_markup=ForceReply(selective=True),
+                    timeout=300,
+                    filters=filters.user(user_id)
+                )
+                if ans2.text.strip().lower() == "/cancel":
+                    await process_msg.edit("❌ Dibatalkan.")
+                    return
+                
+                try:
+                    start_time_2fa = time.perf_counter()
+                    await app.check_password(ans2.text)
+                    Altruix.log(f"2FA Password accepted for {user_id} in {time.perf_counter() - start_time_2fa:.2f}s", level=20)
+                except Exception as e:
+                    await process_msg.edit("❌ Password 2FA salah atau terjadi kesalahan.")
+                    Altruix.log(f"2FA error: {e}", level=logging.ERROR)
+                    await log_to_group(
+                        f"<blockquote expandable>"
+                        f"⚠️ <b>ERROR 2FA</b>\n"
+                        f"• User ID: <code>{user_id}</code>\n"
+                        f"• Error: <code>{str(e)}</code>\n"
+                        f"• Traceback:\n<code>{traceback.format_exc()[-1000:]}</code>"
+                        f"</blockquote>"
+                    )
+                    return
+            
+        except (PhoneCodeInvalid, PhoneCodeExpired):
+            await process_msg.edit("❌ Kode OTP salah/kadaluarsa.")
+            return
+        except UserDeactivated:
+            await process_msg.edit("❌ Nomor ini telah terbanned oleh Telegram.")
+            Altruix.log(f"User banned: {user_id}", level=logging.WARNING)
+            return
         except Exception as e:
-            await process_msg.edit("❌ Password salah atau error.")
-            Altruix.log(f"2FA error: {e}", level=logging.ERROR)
+            await process_msg.edit(f"❌ Gagal login: {str(e)}")
+            Altruix.log(f"Sign-in error: {e}", level=logging.ERROR)
             await log_to_group(
                 f"<blockquote expandable>"
-                f"⚠️ <b>ERROR 2FA</b>\n"
+                f"⚠️ <b>ERROR LOGIN</b>\n"
                 f"• User ID: <code>{user_id}</code>\n"
-                f"• Error: <code>{str(e)}</code>"
+                f"• Error: <code>{str(e)}</code>\n"
+                f"• Traceback:\n<code>{traceback.format_exc()[-1000:]}</code>"
                 f"</blockquote>"
             )
-            await app.disconnect()
-            _ACTIVE_ADD_SESSION.discard(user_id)
             return
-    except (PhoneCodeInvalid, PhoneCodeExpired):
-        await process_msg.edit("❌ Kode OTP salah/kadaluarsa.")
-        await app.disconnect()
-        _ACTIVE_ADD_SESSION.discard(user_id)
-        return
-    except Exception as e:
-        await process_msg.edit("❌ Gagal login.")
-        Altruix.log(f"Sign-in error: {e}", level=logging.ERROR)
-        await log_to_group(
-            f"<blockquote expandable>"
-            f"⚠️ <b>ERROR LOGIN</b>\n"
-            f"• User ID: <code>{user_id}</code>\n"
-            f"• Error: <code>{str(e)}</code>"
-            f"</blockquote>"
-        )
-        await app.disconnect()
-        _ACTIVE_ADD_SESSION.discard(user_id)
-        return
 
-    # Ekspor dan simpan session
-    try:
-        app_session = await app.export_session_string()
-        await app.send_message(
-            "me", 
-            f"✅ <b>Session Berhasil!</b>\n\n<code>{app_session}</code>\n\n• String: Pyrogram\n• Powered by: Altroid-X\n\n⚠️ <b>JANGAN DIBAGIKAN!</b>"
-        )
-        await app.disconnect()
-        await Altruix.add_session(app_session, process_msg, user=cb.from_user, skip_reload=True)
-        await log_to_group(
-            f"<blockquote expandable>"
-            f"✅ <b>BERHASIL ADD SESSION</b>\n"
-            f"• User ID: <code>{user_id}</code>\n"
-            f"</blockquote>"
-        )
-        
-        from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-        from Main.utils.file_helpers import get_user_button_style
-        user_style = get_user_button_style(cb.from_user.id)
-        await cb.message.reply(
-            "✅ **Session added successfully!**\n\n"
-            "Do you want to reload the system modules now to apply changes?\n"
-            "*(Choose 'No' if you want to add more sessions first to save time)*",
-            reply_markup=InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton("Yes, Reload Now", callback_data="reload_sys_yes", style=user_style),
-                    InlineKeyboardButton("No, Later", callback_data="reload_sys_no", style=user_style)
-                ]
-            ])
-        )
-    except Exception as e:
-        await process_msg.edit("❌ Gagal tambahkan session ke bot.")
-        Altruix.log(f"Add session error: {e}", level=logging.ERROR)
-        await log_to_group(
-            f"<blockquote expandable>"
-            f"⚠️ <b>ERROR TAMBAH SESSION</b>\n"
-            f"• User ID: <code>{user_id}</code>\n"
-            f"• Error: <code>{str(e)}</code>"
-            f"</blockquote>"
-        )
-        _ACTIVE_ADD_SESSION.discard(user_id)
-        return
+        # Ekspor dan simpan session
+        try:
+            app_session = await app.export_session_string()
+            await app.send_message(
+                "me", 
+                f"✅ <b>Session Berhasil!</b>\n\n<code>{app_session}</code>\n\n• String: Pyrogram\n• Powered by: Altroid-X\n\n⚠️ <b>JANGAN DIBAGIKAN!</b>"
+            )
+            
+            # Penting: disconnect sebelum add_session agar tidak ada konflik file lock/db
+            await app.disconnect()
+            app = None 
 
-    _ACTIVE_ADD_SESSION.discard(user_id)
+            await Altruix.add_session(app_session, process_msg, user=cb.from_user, skip_reload=True)
+            await log_to_group(
+                f"<blockquote expandable>"
+                f"✅ <b>BERHASIL ADD SESSION</b>\n"
+                f"• User ID: <code>{user_id}</code>\n"
+                f"</blockquote>"
+            )
+            
+            from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+            from Main.utils.file_helpers import get_user_button_style
+            user_style = get_user_button_style(cb.from_user.id)
+            await bot.send_message(
+                user_id,
+                "✅ **Session added successfully!**\n\n"
+                "Do you want to reload the system modules now to apply changes?\n"
+                "*(Choose 'No' if you want to add more sessions first to save time)*",
+                reply_markup=InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton("Yes, Reload Now", callback_data="reload_sys_yes", style=user_style),
+                        InlineKeyboardButton("No, Later", callback_data="reload_sys_no", style=user_style)
+                    ]
+                ])
+            )
+        except Exception as e:
+            if process_msg: await process_msg.edit("❌ Gagal tambahkan session ke bot.")
+            Altruix.log(f"Add session error: {e}", level=logging.ERROR)
+            await log_to_group(
+                f"<blockquote expandable>"
+                f"⚠️ <b>ERROR TAMBAH SESSION</b>\n"
+                f"• User ID: <code>{user_id}</code>\n"
+                f"• Error: <code>{str(e)}</code>\n"
+                f"• Traceback:\n<code>{traceback.format_exc()[-1000:]}</code>"
+                f"</blockquote>"
+            )
+            return
+
+    finally:
+        _ACTIVE_ADD_SESSION.discard(user_id)
+        if app:
+            try:
+                await app.disconnect()
+            except:
+                pass

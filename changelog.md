@@ -2,7 +2,96 @@
 
 All notable changes to the **AltruixX** project from version **0.0.10.0959H** to the latest.
 
+## [0.0.10.2460I] - 2026-05-22
+
+### 🤖 Bot Assistant: Paginated Startup Changelog Notification
+- **Added: Paginated Startup Changelog Notification**:
+  - Replaced the static "Latest Changelog Update" notification with a fully interactive, paginated UI system in [client.py](file:///f:/2026/APRIL/AltruixX/Main/core/client.py).
+  - Integrated with [xchangelog_builder.py](file:///f:/2026/APRIL/AltruixX/Main/internals/xchangelog_builder.py) to provide a rich navigation experience directly in the Log Group.
+- **Added: Interactive Navigation Controls**:
+  - Implemented standard pagination buttons: **`«` (Prev)**, **`»` (Next)**, **`First`**, and **`Last`** for easy traversal of the entire changelog history.
+  - Added a central **`[n/n]`** page indicator button (e.g., `1/10`) for quick page reference.
+- **Improved: Auto-Chunking & Long Entry Support**:
+  - Upgraded the changelog parser in [changelog_helpers.py](file:///f:/2026/APRIL/AltruixX/Main/utils/changelog_helpers.py) to automatically split exceptionally long entries (> 3000 chars) into multiple parts.
+  - Ensures compliance with Telegram's message character limits while maintaining a clean, aesthetic HTML layout.
+- **Improved: Logic Flow & Error Resilience**:
+  - Enhanced startup sequence with `try-except` safety wrappers and comprehensive logging to ensure the bot continues to boot even if changelog parsing fails.
+  - Optimized resource loading by utilizing lazy imports for UI builders during the startup phase.
+  - **Fixed: Changelog Delivery Logic**:
+    - Upgraded the parser in [changelog_helpers.py](file:///f:/2026/APRIL/AltruixX/Main/utils/changelog_helpers.py) with a fallback mechanism to automatically split entries by version header (`## [`) if horizontal rules are missing.
+    - Implemented a robust **dual-layer fallback** in [client.py](file:///f:/2026/APRIL/AltruixX/Main/core/client.py) that automatically reverts to basic HTML notification if the paginated builder encounters an error, ensuring logs are always delivered.
+    - **Decoupled Notification Flow**: Separated the changelog notification logic from the startup summary report to ensure it is not skipped if the summary message fails.
+    - **Broadened Config Support**: Enhanced `CHANGELOG_NOTIF_ENABLED` to recognize multiple active states: `on`, `true`, `yes`, and `1`.
+    - Resolved potential `TypeError` in button style resolution during early startup.
+
+## [0.0.10.2459I] - 2026-05-22
+
+### 📨 Recent Messages: Advanced Scan Limit Control
+- **Added: Independent "Set Scan Limit Chat" Control**:
+  - Integrated a new **`⚙️ Set Scan Limit Chat`** button in the Recent Messages sub-menu in [session_handlers.py](file:///f:/2026/APRIL/AltruixX/Main/internals/settings_handlers/session_handlers.py).
+  - Decoupled "Scan Limit (Chat)" from "Limit (Messages)" to allow granular control over how many dialogs are scanned vs how many messages are fetched per chat.
+- **Improved: Limit-Aware Scanning Engine**:
+  - Upgraded `recent_messages_list_handler` and `forward_recent_messages_handler` to strictly respect the **`RECENT_CHATS_LIMIT`** configuration for dialog discovery.
+  - Upgraded `recent_messages_view_chat_handler` and `forward_specific_chat_recent_handler` to utilize the **`RECENT_MSGS_LIMIT`** for history extraction.
+- **Improved: Logic Flow & Database Sync**:
+  - Implemented automatic configuration persistence to database with real-time cache updates.
+  - Enhanced UI feedback with dynamic labels: `Limit (Messages)` and `Scan Limit (Chat)`.
+- **Improved: Robustness & Logging**:
+  - Added comprehensive `traceback` logging for all limit-based operations to ensure stability and rapid diagnostics.
+  - **Fixed: Protected Content Bypass Logic**:
+    - Resolved an issue where text messages in protected chats were not being forwarded due to failed media download attempts.
+    - Implemented a new `handle_bypass_forward` helper to correctly route text and various media types (Photo, Video, Voice, Document) during bypass.
+    - Added automatic fallback to bypass logic if `forward_messages` fails with `CHAT_FORWARDS_RESTRICTED`.
+    - Enhanced logging for the bypass process to provide clear visibility into download and upload status.
+  - **Fixed: Navigation & Callback Mismatches**:
+    - Resolved a broken "Back" button on the Forward Complete screen by ensuring `f_type` (user/bot/all/select) is correctly passed through the callback chain.
+    - Updated `forward_specific_chat_recent_handler` regex and internal logic to support dynamic return routing.
+
+## [0.0.10.2458I] - 2026-05-22
+
+### 📨 Recent Messages: Custom Delays & Specific Chat Selection
+- **Added: Configurable Delay Settings (Chat & Message)**:
+  - Integrated sub-menus to adjust **`Delay/Chat`** and **`Delay/Msg`** with granular values (0.25s, 0.5s, 1s, 3s) using **`[-]`** and **`[+]`** buttons.
+  - Helps prevent `FloodWait` during bulk forwarding operations.
+- **Added: Specific Chat Selection Menu**:
+  - Implemented **`🎯 Select Chat`** sub-menu with paginated dialog list (10 per page) to target specific conversations for recent message extraction.
+  - Includes a dedicated chat view showing history with individual forward options to Log Group or PM Bot.
+- **Improved: Delay-Aware Forwarding Engine**:
+  - Upgraded both global and specific forward handlers to strictly respect the user-defined delay settings.
+  - Enhanced UI progress feedback to display the active delay value during the forwarding process.
+- **Version Bumps**:
+  - **Session Handlers**: `0.3.350` (added delays & chat picker)
+
+## [0.0.10.2457I] - 2026-05-21
+
+### 📨 Recent Messages: Forwarding & Bypass Content Support
+- **Added: Interactive "Forward Recent Messages" Menu**:
+  - Integrated new action buttons: **`[Forward Log Group]`** and **`[Forward PM Bot]`** directly inside the Recent Messages list view in [session_handlers.py](file:///f:/2026/APRIL/AltruixX/Main/internals/settings_handlers/session_handlers.py).
+  - Allows bulk forwarding of the latest messages from any chat/session to centralized logs or admin private messages.
+- **Added: Advanced Bypass for Protected & Self-Destruct Content**:
+  - Implemented automatic detection and bypass for "Protected Content" and "Self-Destruct (TTL) Media".
+  - Since standard forwarding is blocked by Telegram for these types, the system now automatically downloads the media locally and re-uploads it as a persistent document to the target destination.
+- **Improved: Robust Forwarding Logic & Error Handling**:
+  - Added comprehensive `traceback` logging and per-message `try-except` wrappers to ensure the forwarding process continues even if specific messages fail.
+  - Implemented dynamic status updates in the UI showing real-time progress (`Processing: {chat_name} (X/Y)`).
+- **Added: Forward Activity Logging & Stats**:
+  - Integrated automatic saving of the last forwarding results (`Success/Failed`) to the database (`LAST_FWD_STATS_{index}`) for audit trails.
+
 ## [0.0.10.2456I] - 2026-05-21
+
+### 🤖 Bot Assistant: Optimized Session Management & 2FA Flow
+- **Improved: High-Speed Session Creation Flow**:
+  - Re-engineered the 2FA password request pipeline to eliminate the previous delay between OTP input and the password prompt.
+  - Integrated high-precision performance monitoring using `time.perf_counter()` to track and log the duration of each authentication stage (OTP Delivery, Sign-in, and 2FA Verification).
+- **Fixed: Robust Error Handling & Banned Number Detection**:
+  - Restored specific error catching for 2FA verification failures with accurate user feedback.
+  - Added native detection and reporting for banned accounts (`UserDeactivated`), providing clear status messages instead of generic login failures.
+  - Implemented comprehensive `traceback` logging for all session-related exceptions, automatically routed to the Log Group for rapid developer diagnostic.
+- **Improved: Resource Management & Process Locking**:
+  - Wrapped the entire session generation alur in a global `try...finally` block to guarantee that active process locks (`_ACTIVE_ADD_SESSION`) are always cleared.
+  - Ensured that temporary clients are strictly disconnected before finalizing the primary session addition to prevent database lock contention and ensure data integrity.
+- **Added: Enhanced User Info on /add Command**:
+  - Integrated automatic display of the requester's Account Name and User ID in the initial `/add` confirmation prompt.
 
 ### 📑 Task Manager Plugin: Persistent Task Filtering & Advanced Menu UX
 - **Added: Interactive Task Status Filtering**:
@@ -23,6 +112,9 @@ All notable changes to the **AltruixX** project from version **0.0.10.0959H** to
   - Added interactive **`🔄 Update/Sync Cache`** and **`🗑 Clear Cache`** (with security confirmation) to maintain database health and clear historical "zombie" data.
 
 ### 🛡️ Task Engine Stability & Performance Hardening
+- **Fixed: 'NoneType' Subscriptable Error in gen_task_list_data**:
+  - Resolved a critical UI crash (`TypeError: 'NoneType' object is not subscriptable`) when a task entry contained `None` for its name or plugin fields.
+  - Implemented robust type casting and fallback defaults (`str(val or "Unknown")`) across all Task Manager list generators (Active, Restore, and Finished tasks).
 - **Fixed: Task Manager Key Collision (Multi-Account Overwrites)**:
   - Resolved a critical bug in `xcreategroup.py` where multiple accounts using identical short TIDs (`#CG...`) would overwrite each other in the global registry during cache loading.
   - Migrated the internal memory indexing to a unique, account-specific `task_id` system, ensuring 100% data integrity when handling hundreds of simultaneous tasks.
@@ -56,6 +148,18 @@ All notable changes to the **AltruixX** project from version **0.0.10.0959H** to
   - Integrated a new **`• Platform: {Extractor}`** field to the main dashboard and final media captions, automatically detecting the source service (YouTube, TikTok, Instagram, etc.).
   - Added a clickable **`🔗 Source: {URL}`** field to the dashboard and media captions for easy access to the original content link.
   - Synchronized platform and source data across all state persistence (DB/JSON) and recovery pipelines.
+
+### 📤 Export Handlers: Optimized Flow & UI Hardening
+- **Fixed: Export Menu "Stuck" Issue**:
+  - Resolved an issue where the confirmation menu remained active after clicking "Yes" by implementing immediate message edits to show status.
+- **Added: Navigation & UX Improvements**:
+  - Integrated a **`🔙 Back`** button (linking to `bulk_controls_menu`) upon completion or failure of all export actions (Sessions, Phones, and Bot Tokens).
+  - Enhanced UI by wrapping all confirmation prompts in `<blockquote expandable>` tags for a cleaner, modern visual experience.
+- **Improved: Robustness & Error Handling**:
+  - Added comprehensive `try...except` protections for file delivery (`send_document`) and log notifications to prevent process crashes.
+  - Ensured all error states provide a functional "Back" button for seamless menu recovery.
+- **Optimized: Internal Code Structure**:
+  - Refactored message text variable management in `export_handlers.py` for improved readability and maintainability.
 
 ---
 
