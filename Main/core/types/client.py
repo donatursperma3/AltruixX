@@ -145,10 +145,25 @@ class CustomClientMethods:
                 
             except (FloodWait, SlowmodeWait) as e:
                 # 7. TELEGRAM THROTTLING: Handle FloodWait/SlowmodeWait with Coordination (v1.0.602)
-                if max_count > mmax_:
+                if max_count >= mmax_:
                     raise e
                 
+                me_obj = getattr(self, "me", None) or getattr(self, "myself", None)
+                is_bot_client = bool(getattr(me_obj, "is_bot", False))
+                msg_ops_list = [
+                    getattr(raw.functions.messages, "SendMessage", None),
+                    getattr(raw.functions.messages, "SendMedia", None),
+                    getattr(raw.functions.messages, "SendMultiMedia", None),
+                    getattr(raw.functions.messages, "EditMessage", None),
+                    getattr(raw.functions.messages, "EditInlineBotMessage", None),
+                ]
+                msg_ops = tuple(x for x in msg_ops_list if x is not None)
+                if is_bot_client and msg_ops and isinstance(op, msg_ops):
+                    raise e
+
                 wait_time = e.value + 3 # Add a 3s safety buffer
+                if wait_time < 0:
+                    wait_time = 0
                 
                 # Coordination Lock: Prevent multiple concurrent tasks from logging and sleeping separately
                 if client_id:
@@ -169,12 +184,13 @@ class CustomClientMethods:
                         
                         # First task to hit the wall in this window: Log and sleep
                         # Set cooldown BEFORE sleeping so concurrent tasks can see the window
-                        self._FLOOD_COOLDOWNS[client_id] = hit_ts + wait_time
-                        Altruix.log(f"[{e.__class__.__name__}] {client_info} | sleeping for - {wait_time}s.", client=self)
+                        # Use time.time() here (inside lock) for accurate window calculation
+                        self._FLOOD_COOLDOWNS[client_id] = time.time() + wait_time
+                        Altruix.log(f"[{e.__class__.__name__}] {client_info} | sleeping for {wait_time}s.", client=self)
                         await asyncio.sleep(wait_time)
                 else:
                     # Fallback for unbound clients
-                    Altruix.log(f"[{e.__class__.__name__}] {client_info} | sleeping for - {wait_time}s.", client=self)
+                    Altruix.log(f"[{e.__class__.__name__}] {client_info} | sleeping for {wait_time}s.", client=self)
                     await asyncio.sleep(wait_time)
                 
                 max_count += 1
@@ -268,7 +284,12 @@ class CustomClientMethods:
                     if is_non_critical:
                         debug_mode = getattr(Altruix.config, "DEBUG", False)
                         msg_str = error_str if debug_mode else error_str[:150]
-                        Altruix.log(f"[NonCritical-Permanent-Skipped] {error_type}: {msg_str}", level=30, client=self)
+                        is_msg_not_modified = ("MessageNotModified" in error_type) or ("MESSAGE_NOT_MODIFIED" in msg_str)
+                        if is_msg_not_modified:
+                            if debug_mode:
+                                Altruix.log(f"[NonCritical-Permanent-Skipped] {error_type}: {msg_str}", level=20, client=self)
+                        else:
+                            Altruix.log(f"[NonCritical-Permanent-Skipped] {error_type}: {msg_str}", level=30, client=self)
                         return self._get_dummy_result(op_name)
                     raise e
                 

@@ -932,7 +932,9 @@ def gen_confirmation_data(user_id: int, action: str, target: str):
         )
         
         back_callback = "taskmgr_page_1"
-        if "all" in action:
+        if action == "cache":
+            back_callback = "taskmgr_cachemgr"
+        elif "all" in action:
             back_callback = "taskmgr_page_1"
         elif "page" in action:
             back_callback = f"taskmgr_page_{target}"
@@ -950,6 +952,35 @@ def gen_confirmation_data(user_id: int, action: str, target: str):
     except Exception as e:
         logger.error(f"Error in gen_confirmation_data: {e}\n{traceback.format_exc()}")
         return "❌ <b>Error generating confirmation screen.</b>", None
+
+
+async def _background_bulk_action(cb: CallbackQuery, targets: list, action_fn, action_name: str, user_id: int, target_page: int):
+    """
+    Jalankan bulk action (pause/end) di background agar callback query tidak nge-freeze/timeout.
+    
+    - targets: list task_id yang akan diproses.
+    - action_fn: fungsi sync yang mengembalikan (success: bool, message: str).
+    - Setelah selesai, dashboard di-refresh dan status banner disisipkan.
+    """
+    count = 0
+    try:
+        for tid in targets:
+            try:
+                s, _ = action_fn(tid)
+                if s:
+                    count += 1
+            except Exception:
+                continue
+
+        try:
+            msg = f"✅ {action_name} selesai: {count} task diproses."
+            text, kb = gen_task_list_data(user_id, page=target_page)
+            text = _inject_status_notice(text, msg)
+            await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+        except Exception:
+            pass
+    except Exception as e:
+        logger.error(f"Error in background bulk action ({action_name}): {e}\n{traceback.format_exc()}")
 
 
 SETTINGS_FILE = get_db_path("taskmanager_settings.json")
@@ -1412,11 +1443,14 @@ async def taskmgr_inline_handler(client: Client, iq: InlineQuery):
         except: pass
 
 
-async def handle_restore_action(client: Client, cb: CallbackQuery, plugin: str, tid: str) -> tuple:
+async def handle_restore_action(client: Client, cb: CallbackQuery, plugin: str, tid: str, silent: bool = False) -> tuple:
     """Helper to route restore actions to the correct plugin handler."""
     try:
         if plugin == "xcreategroup":
-            from Main.plugins.userbot.xcreategroup import creategroup_control_handler
+            from Main.plugins.userbot.xcreategroup import creategroup_control_handler, recover_creategroup_task
+            if silent:
+                return await recover_creategroup_task(tid)
+                
             # We temporarily modify cb.data to match what the handler expects
             original_data = cb.data
             cb.data = f"recover_creategroup:{tid}"
@@ -1439,7 +1473,7 @@ async def _background_bulk_resume(client, cb, targets, delay, action_name, user_
             is_int = entry.get("is_interrupted", False)
             plugin = entry.get("plugin", "xcreategroup")
             if is_int:
-                s, _ = await handle_restore_action(client, cb, plugin, tid)
+                s, _ = await handle_restore_action(client, cb, plugin, tid, silent=True)
             else:
                 s, _ = resume_task_by_id(tid)
             
@@ -1462,6 +1496,8 @@ async def _background_bulk_resume(client, cb, targets, delay, action_name, user_
 
 # ==================== CALLBACK HANDLER ====================
 @Altruix.bot.on_callback_query(filters.regex("^taskmgr_"))
+@iuser_check
+@log_errors
 async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
     """Handle callback queries for task management interactions."""
     try:
@@ -1590,7 +1626,7 @@ async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
                 await safe_cb_answer(cb, "⚠️ Invalid action payload. Coba tekan Refresh.", show_alert=True)
                 return
             real_action = data[2]
-            target = data[3]
+            target = "_".join(data[3:])
             await safe_cb_answer(cb, show_alert=False)
             text, kb = gen_confirmation_data(user_id, real_action, target)
             await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
@@ -1604,7 +1640,7 @@ async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
                     await safe_cb_answer(cb, "⚠️ Invalid action payload. Coba tekan Refresh.", show_alert=True)
                     return
                 real_action = data[2]
-                target = data[3]
+                target = "_".join(data[3:])
                 await safe_cb_answer(cb, "Processing request...", show_alert=False)
                 
                 if real_action == "stop":
@@ -1615,11 +1651,9 @@ async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
                     success, msg = await handle_restore_action(client, cb, plugin, target)
                 elif real_action == "pauseall":
                     registry = get_filtered_tasks()
-                    count = 0
-                    for tid in list(registry.keys()):
-                        s, _ = pause_task_by_id(tid)
-                        if s: count += 1
-                    success, msg = True, f"✅ Paused {count} tasks."
+                    targets = list(registry.keys())
+                    asyncio.create_task(_background_bulk_action(cb, targets, pause_task_by_id, "Pause All", user_id, 1))
+                    success, msg = True, f"⏳ Memproses pause {len(targets)} task di background..."
                 elif real_action == "resumeall":
                     registry = get_all_tasks()
                     delay = get_delay_per_resume()
@@ -1640,11 +1674,9 @@ async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
                         success, msg = True, f"⏳ Memproses resume {total_targets} task di background (Delay: {delay}s)..."
                 elif real_action == "endall":
                     registry = get_filtered_tasks()
-                    count = 0
-                    for tid in list(registry.keys()):
-                        s, _ = cancel_task_by_id(tid)
-                        if s: count += 1
-                    success, msg = True, f"✅ Ended {count} tasks."
+                    targets = list(registry.keys())
+                    asyncio.create_task(_background_bulk_action(cb, targets, cancel_task_by_id, "End All", user_id, 1))
+                    success, msg = True, f"⏳ Memproses end {len(targets)} task di background..."
                 elif real_action == "resumepage":
                     try:
                         page_num = int(target)
@@ -1685,11 +1717,9 @@ async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
                     start_idx = (page_num - 1) * page_size
                     visible_tasks = tasks_list[start_idx:start_idx + page_size]
                     
-                    count = 0
-                    for tid, _ in visible_tasks:
-                        s, _ = pause_task_by_id(tid)
-                        if s: count += 1
-                    success, msg = True, f"✅ Paused {count} tasks on page {page_num}."
+                    targets = [tid for tid, _ in visible_tasks]
+                    asyncio.create_task(_background_bulk_action(cb, targets, pause_task_by_id, f"Pause Page {page_num}", user_id, page_num))
+                    success, msg = True, f"⏳ Memproses pause {len(targets)} task (Hal {page_num}) di background..."
                 elif real_action == "endpage":
                     try:
                         page_num = int(target)
@@ -1703,11 +1733,9 @@ async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
                     start_idx = (page_num - 1) * page_size
                     visible_tasks = tasks_list[start_idx:start_idx + page_size]
                     
-                    count = 0
-                    for tid, _ in visible_tasks:
-                        s, _ = cancel_task_by_id(tid)
-                        if s: count += 1
-                    success, msg = True, f"✅ Ended {count} tasks on page {page_num}."
+                    targets = [tid for tid, _ in visible_tasks]
+                    asyncio.create_task(_background_bulk_action(cb, targets, cancel_task_by_id, f"End Page {page_num}", user_id, page_num))
+                    success, msg = True, f"⏳ Memproses end {len(targets)} task (Hal {page_num}) di background..."
                 elif real_action == "cache":
                     # Clear Cache Action
                     cg_cache_path = get_db_path("xcreategroup_cache.json")

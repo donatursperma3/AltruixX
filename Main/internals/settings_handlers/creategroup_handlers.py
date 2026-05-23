@@ -591,8 +591,9 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
     bot_list_text = f"{num_bots} bots{' (Default)' if is_default_bots else ''}"
 
     g_type = config.get('group_type', 'a')
-    type_label = "Group" if g_type == 'a' else "Channel"
-    unit_name = "groups" if g_type == 'a' else "channels"
+    is_channel = g_type == 'c'
+    type_label = "Channel" if is_channel else "Group"
+    unit_name = "channels" if is_channel else "groups"
 
     # Generate name preview
     import random
@@ -1320,8 +1321,8 @@ async def creategroup_reports_handler(c: Client, cb: CallbackQuery):
             grps = acc_info.get("created_groups", [])
             total_created = len(grps)
             
-            groups_count = sum(1 for g in grps if g.get("type", "g") == "g")
-            channels_count = total_created - groups_count
+            channels_count = sum(1 for g in grps if g.get("type") == "c")
+            groups_count = total_created - channels_count
             
             detail_desc = []
             if groups_count > 0: detail_desc.append(f"{groups_count} grup")

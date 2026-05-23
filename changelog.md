@@ -1,6 +1,69 @@
-# AltruixX Changelog
+# Altroid-X Changelog
 
-All notable changes to the **AltruixX** project from version **0.0.10.0959H** to the latest.
+All notable changes to the **Altroid-X** project from version **0.0.10.0959H** to the latest.
+Latest updates are always added at the top (newest → oldest).
+
+## [0.0.10.2462I] - 2026-05-24
+
+### 🛡️ Core Transport: FloodWait Guard & Flood Cooldown Accuracy Fix
+- **Fixed: Off-by-one error on FloodWait retry guard** (`Main/core/types/client.py`):
+  - Corrected `if max_count > mmax_:` → `if max_count >= mmax_:` in the `FloodWait`/`SlowmodeWait` handler.
+  - Previously the guard only raised after the **7th** attempt (`max_count == 6`) instead of the intended **6th** (`max_count == 5`), causing one extra unnecessary retry cycle beyond `mmax_`.
+  - Now consistent with all other retry guards in the `invoke` loop that use `max_count < mmax_` / `max_count >= mmax_`.
+- **Fixed: Race condition in flood cooldown timestamp** (`Main/core/types/client.py`):
+  - Changed `self._FLOOD_COOLDOWNS[client_id] = hit_ts + wait_time` → `self._FLOOD_COOLDOWNS[client_id] = time.time() + wait_time` (evaluated **inside** the async lock).
+  - `hit_ts` was captured before acquiring `_FLOOD_LOCKS`, so if a task waited in the lock queue, the cooldown window was shorter than the actual `wait_time`, potentially allowing a retry too early.
+  - Using `time.time()` at the moment the lock is held ensures the cooldown window is always exactly `wait_time` seconds from when the sleep actually begins.
+
+---
+
+## [0.0.10.2461I] - 2026-05-24
+
+### 🤖 Bot Assistant: FloodWait Fallback (Main Bot 2/3)
+- **Improved: Automatic failover on bot FloodWait**:
+  - If the primary bot assistant hits `FloodWait` during bot identity fetch (`get_me`) or log delivery, CreateGroup now automatically switches to an available secondary main bot (Main Bot 2, 3, dst.) to keep control/log messages flowing in [xcreategroup.py](file:///f:/2026/APRIL/AltruixX/Main/plugins/userbot/xcreategroup.py).
+- **Improved: Push runtime errors to Log Group**:
+  - CreateGroup now forwards important runtime errors/warnings (e.g. cache save failures and FloodWait warnings) to `LOG_CHAT_ID` via the bot assistant, so issues are readable directly in the Group Log, not only in terminal output.
+
+### 🗃️ CreateGroup: Windows Cache Save Reliability
+- **Fixed: WinError 5 Access is denied on atomic cache save**:
+  - Serialized cache writes with an async lock, switched to unique temp filenames, and added retry/backoff around `os.replace` to prevent concurrent-save collisions on Windows in [xcreategroup.py](file:///f:/2026/APRIL/AltruixX/Main/plugins/userbot/xcreategroup.py).
+  - Added a safe fallback write path if atomic replace keeps failing (keeps bot running without losing state updates).
+
+### 🛡️ Core Transport: Reduce Harmless MessageNotModified Log Noise
+- **Improved: NonCritical permanent error logging**:
+  - Suppressed spammy `[NonCritical-Permanent-Skipped] MessageNotModified` warnings (only visible in `DEBUG=True`) to keep logs clean during same-content message edits in [client.py](file:///f:/2026/APRIL/AltruixX/Main/core/types/client.py).
+
+### ✅ Task Manager: Security Confirmation Responsiveness & Callback Hardening
+- **Fixed: Dashboard confirmation felt "macet" on bulk actions**:
+  - Migrated bulk operations (`Pause All`, `End All`, `Pause Page`, `End Page`) to background execution to prevent callback blocking/timeouts in [xtaskmanager.py](file:///f:/2026/APRIL/AltruixX/Main/plugins/userbot/xtaskmanager.py).
+  - Preserved UI feedback by injecting a status banner while processing and refreshing the dashboard after completion.
+- **Fixed: Confirmation payload parsing reliability**:
+  - Hardened parsing for `taskmgr_ask_*` / `taskmgr_confirm_*` by joining the remaining segments, preventing malformed targets when callback payload contains underscores.
+- **Fixed: Cache confirmation cancel routing**:
+  - Corrected "No, Cancel" routing for cache actions to return to `Cache Manager` instead of an invalid task status route.
+- **Improved: Callback safety & authorization feedback**:
+  - Added `@iuser_check` and `@log_errors` protection to the Task Manager callback handler to prevent silent failures and ensure consistent popup feedback on errors/unauthorized access.
+
+### 📋 Task Manager & CreateGroup: Robust Recovery & Silent Restore
+- **Fixed: Critical 'NoneType' AttributeError in CreateGroup**:
+  - Resolved `AttributeError: 'NoneType' object has no attribute 'id'` occurring during task recovery in [xcreategroup.py](file:///f:/2026/APRIL/AltruixX/Main/plugins/userbot/xcreategroup.py).
+  - Implemented multi-layer safe attribute access using `getattr` for `control_message`, `chat`, and `from_user` objects to prevent crashes when message entities are missing from Telegram's cache.
+- **Fixed: Task KeyError during Recovery Loop**:
+  - Resolved `KeyError` when accessing `CREATEGROUP_TASKS` during task resumption by implementing an early emergency state re-initialization mechanism at the beginning of the loop.
+  - Upgraded task ID detection to correctly recognize both `#CG` and `CG-` formats, ensuring consistent state mapping across restarts.
+  - Replaced all direct dictionary accesses in `creategroup_loop` with safe `state` reference and `.get()` methods to prevent crashes even if memory is partially cleared.
+- **Improved: Task Recovery & Logic Flow**:
+  - Re-engineered the restore process by decoupling UI interaction from core task recovery.
+  - Added **`recover_creategroup_task` (Silent Restore)** in [xcreategroup.py](file:///f:/2026/APRIL/AltruixX/Main/plugins/userbot/xcreategroup.py) to support stable bulk operations without dashboard flickering or `QueryIdInvalid` errors.
+  - Enhanced [xtaskmanager.py](file:///f:/2026/APRIL/AltruixX/Main/plugins/userbot/xtaskmanager.py) to utilize silent recovery for **`[Resume All]`** and **`[Resume Page]`** actions, ensuring all interrupted tasks are resumed in the background seamlessly.
+  - Implemented **Auto-Interaction for Peer Initialization**: Userbot accounts now automatically send `/start` to the Assistant Bot if `PeerIdInvalid` occurs during log notifications, resolving initialization errors for new sessions.
+  - **Added FloodWait Resilience**: Implemented automatic detection and waiting for Telegram `FLOOD_WAIT` errors during task initialization, preventing immediate task failure during heavy load.
+- **Improved: Robustness & Logging**:
+  - Added comprehensive `try-except` blocks with full `traceback` logging to all recovery handlers and countdown functions.
+  - Ensured all log notifications and countdown messages have automatic fallback destinations (`LOG_CHAT_ID`) if original reply message objects are no longer available.
+- **Fixed: Logic Flow & State Synchronization**:
+  - Synchronized state management between [xtaskmanager.py](file:///f:/2026/APRIL/AltruixX/Main/plugins/userbot/xtaskmanager.py) and plugin-specific caches to ensure `paused` and `interrupted` flags are correctly propagated across the entire ecosystem.
 
 ## [0.0.10.2460I] - 2026-05-22
 
