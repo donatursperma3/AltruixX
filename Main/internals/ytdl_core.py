@@ -5,7 +5,7 @@
 # Please see < https://github.com/Altriux/Altruix/blob/main/LICENSE >
 #
 # All rights reserved.
-YTDL_CORE_VERSION = "0.0.262"
+YTDL_CORE_VERSION = "0.0.265"
 
 import os
 import time
@@ -140,6 +140,39 @@ async def get_ytdl_engine_info() -> tuple:
         pass
         
     return "yt-dlp", "Unknown"
+
+async def _get_ytdl_cookie_args() -> list:
+    args = []
+    try:
+        cookies_file = await Altruix.config.get_env("YTDL_COOKIES_FILE") or await Altruix.config.get_env("YTDL_COOKIE_FILE")
+        if cookies_file:
+            cookies_file = str(cookies_file).strip().strip('"').strip("'")
+            if os.path.exists(cookies_file):
+                args.extend(["--cookies", cookies_file])
+            else:
+                Altruix.log(f"YTDL cookies file not found: {cookies_file}", level=10)
+                cookies_file = None
+
+        if not cookies_file:
+            # Check default cookies.txt in root or Main
+            # prioritize root, then Main
+            for path in ["cookies.txt", "Main/cookies.txt"]:
+                if os.path.exists(path):
+                    args.extend(["--cookies", path])
+                    cookies_file = path
+                    break
+
+        if not cookies_file:
+            cookies_browser = (
+                await Altruix.config.get_env("YTDL_COOKIES_FROM_BROWSER")
+                or await Altruix.config.get_env("YTDL_COOKIES_BROWSER")
+            )
+            if cookies_browser:
+                cookies_browser = str(cookies_browser).strip()
+                args.extend(["--cookies-from-browser", cookies_browser])
+    except Exception as e:
+        Altruix.log(f"YTDL cookie args error: {e}\n{traceback.format_exc()}", level=10)
+    return args
     
 async def run_yt_dlp_with_progress(cmd: list, status_msg, task_id, state):
     """Runs yt-dlp and parses stdout to report progress via progress_callback."""
@@ -271,7 +304,7 @@ async def extract_yt_info(url: str):
 
     # We use -J (--dump-single-json) to ensure we get a single JSON object
     # even for playlists, which makes parsing much more reliable.
-    cmd = ["yt-dlp", "-J", "--flat-playlist", "--extractor-args", "youtube:player_client=all"]
+    cmd = ["yt-dlp", "-J", "--flat-playlist", "--extractor-args", "youtube:player_client=android,web,mweb,ios"]
     
     # ✅ Enable remote solvers to fix 'n' challenge with Deno/Node
     cmd.extend(["--remote-components", "ejs:github"])
@@ -280,11 +313,23 @@ async def extract_yt_info(url: str):
     runtime = get_js_runtime()
     if runtime:
         cmd.extend(["--js-runtimes", runtime])
+
+    cmd.extend(await _get_ytdl_cookie_args())
         
     cmd.append(url)
     ret, out, err = await run_subprocess(cmd)
     if not out or ret != 0:
-        error_msg = err or "Output kosong dari YT-DLP."
+        error_msg = err or out or "Output kosong dari YT-DLP."
+        err_lower = error_msg.lower()
+        if any(x in err_lower for x in ["sign in to confirm", "confirm you're not a bot", "confirm youre not a bot", "bot detection"]):
+            raise Exception(
+                "YT-DLP Error: YouTube meminta verifikasi anti-bot.\n\n"
+                "🛠 **Solusi:**\n"
+                "1. Letakkan file <code>cookies.txt</code> di folder utama (Main).\n"
+                "2. Atau set ENV <code>YTDL_COOKIES_FILE</code> dengan path cookies.\n"
+                "3. Atau set ENV <code>YTDL_COOKIES_FROM_BROWSER</code> (contoh: chrome).\n\n"
+                "<i>Gunakan ekstensi 'Get cookies.txt LOCALLY' di browser untuk export cookies.</i>"
+            )
         raise Exception(f"YT-DLP Error: {error_msg}")
     
     import json
@@ -334,6 +379,7 @@ async def extract_yt_info(url: str):
             "entries": entries,
             "count": len(entries),
             "thumbnail": pl_thumb,
+            "description": data.get("description"),
             "uploader": data.get("uploader") or data.get("channel") or data.get("uploader_id") or "Unknown Channel",
             "subscribers": data.get("channel_follower_count") or data.get("subscriber_count") or 0,
             "views": data.get("view_count") or data.get("playlist_count") or 0,
@@ -342,11 +388,12 @@ async def extract_yt_info(url: str):
         }
 
     # 2. Handle Video (or URL reference)
-    # If the returned data is just a URL reference, we must fetch full info
-    if data.get("_type") == "url":
-        target_url = data.get("url") or url
+    # If it's not a playlist, we need full info (formats, etc.) 
+    # because the first call used --flat-playlist which hides formats.
+    if data.get("_type") != "playlist":
+        target_url = data.get("webpage_url") or data.get("url") or url
         # Use -J and --no-playlist to ensure we get a single video object with formats
-        cmd_full = ["yt-dlp", "-J", "--no-playlist", "--extractor-args", "youtube:player_client=all"]
+        cmd_full = ["yt-dlp", "-J", "--no-playlist", "--extractor-args", "youtube:player_client=android,web,mweb,ios"]
         
         # ✅ Enable remote solvers to fix 'n' challenge with Deno/Node
         cmd_full.extend(["--remote-components", "ejs:github"])
@@ -354,6 +401,8 @@ async def extract_yt_info(url: str):
         runtime = get_js_runtime()
         if runtime:
             cmd_full.extend(["--js-runtimes", runtime])
+
+        cmd_full.extend(await _get_ytdl_cookie_args())
             
         cmd_full.append(target_url)
         ret, out, err = await run_subprocess(cmd_full)
@@ -431,6 +480,7 @@ async def extract_yt_info(url: str):
         "res_sizes": res_sizes,
         "languages": languages, # ✅ Added languages list
         "chapters": data.get("chapters", []), # ✅ Added chapters list
+        "description": data.get("description"), # ✅ Added description
         "url": data.get("webpage_url") or url,
         "uploader": data.get("uploader") or data.get("channel") or data.get("author") or data.get("uploader_id") or "Unknown Channel",
         "artist": data.get("artist"),
@@ -588,7 +638,7 @@ async def _ytdl_single_unit(status_msg, task_id, state):
                 format_spec = "bestaudio/best"
             
         raw_pattern = os.path.join(temp_path, "raw.%(ext)s")
-        dl_cmd = ["yt-dlp", "-f", format_spec, "-o", raw_pattern, "--no-playlist", "--merge-output-format", "mp4", "--extractor-args", "youtube:player_client=all"]
+        dl_cmd = ["yt-dlp", "-f", format_spec, "-o", raw_pattern, "--no-playlist", "--merge-output-format", "mp4", "--extractor-args", "youtube:player_client=android,web,mweb,ios"]
         
         # ✅ Enable remote solvers for download too
         dl_cmd.extend(["--remote-components", "ejs:github"])
@@ -597,6 +647,8 @@ async def _ytdl_single_unit(status_msg, task_id, state):
         runtime = get_js_runtime()
         if runtime:
             dl_cmd.extend(["--js-runtimes", runtime])
+
+        dl_cmd.extend(await _get_ytdl_cookie_args())
             
         dl_cmd.append(url)
         
@@ -617,6 +669,17 @@ async def _ytdl_single_unit(status_msg, task_id, state):
                     err_msg = lines[-1]
             if not err_msg:
                 err_msg = "Unknown yt-dlp error"
+
+            err_lower = err_msg.lower()
+            if any(x in err_lower for x in ["sign in to confirm", "confirm you're not a bot", "confirm youre not a bot", "bot detection"]):
+                raise Exception(
+                    "YT-DLP Error: YouTube meminta verifikasi anti-bot.\n\n"
+                    "🛠 **Solusi:**\n"
+                    "1. Letakkan file <code>cookies.txt</code> di folder utama (Main).\n"
+                    "2. Atau set ENV <code>YTDL_COOKIES_FILE</code> dengan path cookies.\n"
+                    "3. Atau set ENV <code>YTDL_COOKIES_FROM_BROWSER</code> (contoh: chrome).\n\n"
+                    "<i>Gunakan ekstensi 'Get cookies.txt LOCALLY' di browser untuk export cookies.</i>"
+                )
             raise Exception(f"Download Fail: {err_msg}")
         
         actual_raw = None
@@ -823,6 +886,14 @@ async def _ytdl_single_unit(status_msg, task_id, state):
                 )
                 if state.get("show_link", True):
                     chap_caption += f"\n<b>• Source:</b> {state['url']}"
+                
+                if state.get("show_desc") and state.get("description"):
+                    # Limit description length to avoid hitting caption limits (max 1024)
+                    desc = state["description"]
+                    if len(desc) > 300:
+                        desc = desc[:300] + "..."
+                    chap_caption += f"\n<b>• Description:</b> <code>{desc}</code>"
+                    
                 chap_caption += f"</blockquote>"
                 
                 thumb_p = thumb_file if os.path.exists(thumb_file) else None
@@ -1070,6 +1141,14 @@ async def _ytdl_single_unit(status_msg, task_id, state):
         )
         if state.get("show_link", True):
              caption += f"\n<b>• Source:</b> {state['url']}"
+             
+        if state.get("show_desc") and state.get("description"):
+             # Limit description length to avoid hitting caption limits (max 1024)
+             desc = state["description"]
+             if len(desc) > 300:
+                 desc = desc[:300] + "..."
+             caption += f"\n<b>• Description:</b> <code>{desc}</code>"
+             
         caption += f"</blockquote>"
         
         thumb_p = thumb_file if os.path.exists(thumb_file) else None

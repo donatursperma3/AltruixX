@@ -172,3 +172,5 @@ Main/assets/bin/
 message
 test_changelog.py
 test_logic.py 
+creategroup*.zip
+test_*.py

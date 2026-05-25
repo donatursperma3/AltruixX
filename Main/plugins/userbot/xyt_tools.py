@@ -72,6 +72,7 @@ async def ytdl_cmd(c: Client, m: Message):
             "url": url,
             "duration": info.get("duration", 0),
             "thumb": info["thumbnail"],
+            "description": info.get("description"),
             "uploader": info.get("uploader"),
             "subscribers": info.get("subscribers"),
             "views": info.get("views"),
@@ -87,6 +88,7 @@ async def ytdl_cmd(c: Client, m: Message):
             "chat_id": m.chat.id,
             "reply_to": reply_to,
             "show_link": True,
+            "show_desc": False, # Default: OFF to avoid caption flood
             "auto_backup": True,
             "backup_mode": "bot",
             "languages": info.get("languages", []),
@@ -155,5 +157,6 @@ async def ytdl_cmd(c: Client, m: Message):
             clean_err = "URL YouTube tidak lengkap atau terpotong. Pastikan Anda menyalin URL dengan benar."
         elif "yt-dlp error" in clean_err.lower():
             clean_err = clean_err.split("YT-DLP Error: ")[-1]
+        clean_err = clean_err.replace("�", "'").replace("\ufffd", "'")
             
         await status.edit(f"❌ <b>Error:</b> <code>{clean_err}</code>")

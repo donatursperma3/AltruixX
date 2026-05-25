@@ -6,6 +6,7 @@ import logging
 import traceback
 from typing import Optional
 from pyrogram import Client, filters
+from pyrogram.errors import QueryIdInvalid
 from pyrogram.types import (
     CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton,
     InlineQuery, InlineQueryResultArticle, InputTextMessageContent,
@@ -22,6 +23,18 @@ HANDLER_VERSION = "0.3.230" # ✅ ADDED: Persistent Creation Reports, Log Export
 logger = logging.getLogger("altruix.creategroup.handlers")
 logger.setLevel(logging.INFO)
 
+async def safe_cb_answer(cb: CallbackQuery, text: str = None, show_alert: bool = True):
+    """Safely answer callback queries when the query may have expired."""
+    try:
+        if text is None:
+            await cb.answer(show_alert=show_alert)
+        else:
+            await cb.answer(text, show_alert=show_alert)
+    except QueryIdInvalid:
+        logger.warning("Ignored invalid callback query while answering.")
+    except Exception as e:
+        logger.debug(f"Ignored callback answer failure: {e}")
+
 # Default Configuration
 DEFAULT_CREATEGROUP_CONFIG = {
     "delay": 60, "count": 2, "batch_delay": 10, "batch_size": 2, "action_delay": 3.0,
@@ -35,7 +48,8 @@ DEFAULT_CREATEGROUP_CONFIG = {
     "log_destination": "both", "group_type": "a",
     "log_format": "zip", "pin_first_msg": True, "temp_pin": True, "quote_block": True,
     "rand_len": 3, "rand_lower": False, "rand_upper": True, "rand_static": True,
-    "interrupted_log": "off"
+    "interrupted_log": "off", "start_log_mode": "both", "start_photo_log_mode": "both",
+    "progress_log_mode": "both", "panel_log_mode": "log_group", "delay_log_mode": "both"
 }
 
 
@@ -49,12 +63,12 @@ def save_user_cg_config(user_id: int, config: dict):
     try:
         data = {}
         if os.path.exists(_USER_CG_CONFIG_FILE):
-            with open(_USER_CG_CONFIG_FILE, "r") as f:
+            with open(_USER_CG_CONFIG_FILE, "r", encoding="utf-8") as f:
                 data = _json.load(f)
         data[str(user_id)] = config
         tmp = f"{_USER_CG_CONFIG_FILE}.tmp"
-        with open(tmp, "w") as f:
-            _json.dump(data, f, indent=2)
+        with open(tmp, "w", encoding="utf-8") as f:
+            _json.dump(data, f, indent=2, ensure_ascii=False)
         os.replace(tmp, _USER_CG_CONFIG_FILE)
     except Exception as e:
         logger.error(f"Failed to save user CG config: {e}\n{traceback.format_exc()}")
@@ -63,7 +77,7 @@ def load_user_cg_config(user_id: int) -> dict:
     """Load user's saved CreateGroup config, or return defaults."""
     try:
         if os.path.exists(_USER_CG_CONFIG_FILE):
-            with open(_USER_CG_CONFIG_FILE, "r") as f:
+            with open(_USER_CG_CONFIG_FILE, "r", encoding="utf-8") as f:
                 data = _json.load(f)
             saved = data.get(str(user_id))
             if saved:
@@ -618,6 +632,14 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
 
     log_dest = config.get('log_destination', 'both')
     log_dest_lbl = "Both (Log+Saved)" if log_dest == "both" else ("Log Group" if log_dest == "log_group" else "Saved Messages")
+    start_log = config.get('start_log_mode', 'both')
+    start_log_lbl = "Both" if start_log == "both" else ("Group Log" if start_log == "log_group" else ("PM Bot" if start_log == "pm_bot" else "Off"))
+    photo_log = config.get('start_photo_log_mode', 'both')
+    photo_log_lbl = "Both" if photo_log == "both" else ("Group Log" if photo_log == "log_group" else ("PM Bot" if photo_log == "pm_bot" else "Off"))
+    prog_log = config.get('progress_log_mode', 'both')
+    prog_log_lbl = "Both" if prog_log == "both" else ("Group Log" if prog_log == "log_group" else ("PM Bot" if prog_log == "pm_bot" else "Off"))
+    panel_log = config.get('panel_log_mode', 'log_group')
+    panel_log_lbl = "Both" if panel_log == "both" else ("Group Log" if panel_log == "log_group" else ("PM Bot" if panel_log == "pm_bot" else "Off"))
     
     text = (
         "<b>🎛️ Auto Create Configuration</b>\n\n"
@@ -640,7 +662,9 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
         f"• <b>Bot List:</b> {bot_list_text}\n"
         f"• <b>Pin First Msg:</b> {'Yes' if config.get('pin_first_msg', True) else 'No'} | <b>Temp Pin:</b> {'Yes' if config.get('temp_pin', True) else 'No'}\n"
         f"• <b>Quote Block:</b> {'Yes' if config.get('quote_block', True) else 'No'}\n"
-        f"• <b>Log To:</b> {log_dest_lbl} | <b>Format:</b> {config.get('log_format', 'zip').upper()}"
+        f"• <b>Log To:</b> {log_dest_lbl} | <b>Format:</b> {config.get('log_format', 'zip').upper()}\n"
+        f"• <b>Start Log:</b> {start_log_lbl} | <b>Photo Log:</b> {photo_log_lbl}\n"
+        f"• <b>Progress Log:</b> {prog_log_lbl} | <b>Panel Log:</b> {panel_log_lbl}"
     )
     
     # ─── SUB-MENUS ───
@@ -684,13 +708,13 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
         elif sub_menu == "action_delay" or sub_menu == "account_delay":
             adj_steps = [0.25, 0.5, 1, 3, 5]
         elif sub_menu == "count":
-            adj_steps = [1, 3, 5, 10]
+            adj_steps = [1, 3, 5, 10, 50, 100]
         elif sub_menu == "batch_size":
-            adj_steps = [1, 3, 5, 10]
+            adj_steps = [1, 3, 5, 10, 50, 100]
         elif sub_menu == "batch_delay":
-            adj_steps = [1, 3, 5, 10]
+            adj_steps = [1, 3, 5, 10, 30, 60]
         elif sub_menu == "batch_account":
-            adj_steps = [1, 2, 3, 5, 10]
+            adj_steps = [1, 3, 5, 10, 50, 100]
         elif sub_menu == "ba_account_delay":
             adj_steps = [5, 10, 30, 60, 120, 300]
         
@@ -883,6 +907,12 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
             
             buttons.append([InlineKeyboardButton(f"{icon} {actual_idx}. {name}{current_tag}", callback_data=f"creategroup_tsel_{actual_idx}_{pg}", style=user_style)])
             
+        # Select Page / Deselect Page
+        buttons.append([
+            InlineKeyboardButton("☑️ Select Page", callback_data=f"creategroup_selp_{s_page}_{pg}", style=user_style),
+            InlineKeyboardButton("☐ Deselect Page", callback_data=f"creategroup_dselp_{s_page}_{pg}", style=user_style)
+        ])
+
         # Select All / Deselect All
         buttons.append([
             InlineKeyboardButton("✅ Select All", callback_data=f"creategroup_sall_{s_page}_{pg}", style=user_style),
@@ -906,12 +936,54 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
         buttons.append([InlineKeyboardButton("🔙 Back to Dashboard", callback_data=f"creategroup_back_submenu_{idx}_{pg}", style=user_style)])
         return text, InlineKeyboardMarkup(buttons)
 
+    elif sub_menu == "log_settings":
+        log_dest = config.get("log_destination", "both")
+        _il_labels = {'both': 'Both', 'log_group': 'Log Group', 'pm_bot': 'PM Bot', 'off': 'Off'}
+        _il_label = _il_labels.get(config.get('interrupted_log', 'off'), 'Off')
+        _sl_labels = {'both': 'Both', 'log_group': 'Group Log', 'pm_bot': 'PM Bot', 'off': 'Off'}
+        _sl_label = _sl_labels.get(config.get('start_log_mode', 'both'), 'Both')
+        _pl_labels = {'both': 'Both', 'log_group': 'Group Log', 'pm_bot': 'PM Bot', 'off': 'Off'}
+        _pl_label = _pl_labels.get(config.get('start_photo_log_mode', 'both'), 'Both')
+        _pgl_labels = {'both': 'Both', 'log_group': 'Group Log', 'pm_bot': 'PM Bot', 'off': 'Off'}
+        _pgl_label = _pgl_labels.get(config.get('progress_log_mode', 'both'), 'Both')
+        _pnl_labels = {'both': 'Both', 'log_group': 'Group Log', 'pm_bot': 'PM Bot', 'off': 'Off'}
+        _pnl_label = _pnl_labels.get(config.get('panel_log_mode', 'log_group'), 'Group Log')
+        _dl_labels = {'both': 'Both', 'log_group': 'Group Log', 'pm_bot': 'PM Bot', 'off': 'Off'}
+        _dl_label = _dl_labels.get(config.get('delay_log_mode', 'both'), 'Both')
+
+        text = (
+            f"<blockquote expandable>"
+            "<b>📂 Log & Notification Settings</b>\n\n"
+            "Atur preferensi log untuk meminimalkan spam dan melacak progres.\n"
+            f"• <b>Destination:</b> {'Both' if log_dest == 'both' else ('GroupLog' if log_dest == 'log_group' else 'SavedMsg')}\n"
+            f"• <b>Format:</b> {config.get('log_format', 'zip').upper()}\n"
+            f"</blockquote>"
+        )
+
+        buttons = [
+            [
+                InlineKeyboardButton(f"Start Log: {_sl_label}", callback_data=f"creategroup_toggle_{idx}_{pg}_start_log_mode", style=user_style),
+                InlineKeyboardButton(f"Photo Log: {_pl_label}", callback_data=f"creategroup_toggle_{idx}_{pg}_start_photo_log_mode", style=user_style)
+            ],
+            [
+                InlineKeyboardButton(f"Prog Log: {_pgl_label}", callback_data=f"creategroup_toggle_{idx}_{pg}_progress_log_mode", style=user_style),
+                InlineKeyboardButton(f"Panel Log: {_pnl_label}", callback_data=f"creategroup_toggle_{idx}_{pg}_panel_log_mode", style=user_style)
+            ],
+            [
+                InlineKeyboardButton(f"Interrupt Log: {_il_label}", callback_data=f"creategroup_toggle_{idx}_{pg}_interrupted_log", style=user_style),
+                InlineKeyboardButton(f"Delay Log: {_dl_label}", callback_data=f"creategroup_toggle_{idx}_{pg}_delay_log_mode", style=user_style)
+            ],
+            [
+                InlineKeyboardButton(f"FileLog To: {'Both' if log_dest == 'both' else ('GroupLog' if log_dest == 'log_group' else 'SavedMsg')}", callback_data=f"creategroup_toggle_{idx}_{pg}_log_destination", style=user_style),
+                InlineKeyboardButton(f"Log Format: {config.get('log_format', 'zip').upper()}", callback_data=f"creategroup_toggle_{idx}_{pg}_log_format", style=user_style)
+            ],
+            [InlineKeyboardButton("🔙 Back to Dashboard", callback_data=f"creategroup_back_submenu_{idx}_{pg}", style=user_style)]
+        ]
+        return text, InlineKeyboardMarkup(buttons)
+
     # ─── MAIN DASHBOARD ───
     is_channel = config.get('group_type', 'a') == 'c'
     type_indicator = "c" if is_channel else "g"
-
-    _il_labels = {'both': 'Both', 'log_group': 'Log Group', 'pm_bot': 'PM Bot', 'off': 'Off'}
-    _il_label = _il_labels.get(config.get('interrupted_log', 'off'), 'Off')
 
     buttons = [
         [
@@ -953,10 +1025,6 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
             InlineKeyboardButton(f"Bots: {len(config['bots'].split() if config['bots'] else [])}", callback_data=f"creategroup_submenu_{idx}_{pg}_bots", style=user_style)
         ],
         [
-            InlineKeyboardButton(f"Log To: {'Both' if log_dest == 'both' else ('GroupLog' if log_dest == 'log_group' else 'SavedMsg')}", callback_data=f"creategroup_toggle_{idx}_{pg}_log_destination", style=user_style),
-            InlineKeyboardButton(f"Log Format: {config.get('log_format', 'zip').upper()}", callback_data=f"creategroup_toggle_{idx}_{pg}_log_format", style=user_style)
-        ],
-        [
             InlineKeyboardButton(f"Pin First: {'Yes' if config.get('pin_first_msg', True) else 'No'}", callback_data=f"creategroup_toggle_{idx}_{pg}_pin_first_msg", style=user_style),
             InlineKeyboardButton(f"Temp Pin: {'Yes' if config.get('temp_pin', True) else 'No'}", callback_data=f"creategroup_toggle_{idx}_{pg}_temp_pin", style=user_style)
         ],
@@ -965,16 +1033,16 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
             InlineKeyboardButton(f"Msg Img: {'Yes' if config.get('msg_img', True) else 'No'}", callback_data=f"creategroup_toggle_{idx}_{pg}_msg_img", style=user_style)
         ],
         [
-            InlineKeyboardButton(f"Interrupt Log: {_il_label}", callback_data=f"creategroup_toggle_{idx}_{pg}_interrupted_log", style=user_style),
-            InlineKeyboardButton("📊 Reports", callback_data=f"creategroup_reports_{idx}_{pg}_1", style=user_style),
+            InlineKeyboardButton("Log Configs", callback_data=f"creategroup_submenu_{idx}_{pg}_log_settings", style=user_style),
+            InlineKeyboardButton("All Reports", callback_data=f"creategroup_reports_{idx}_{pg}_1", style=user_style)
         ],
         [
             InlineKeyboardButton("Restore Tasks", callback_data=f"creategroup_cached_{idx}_{pg}", style=user_style),
             InlineKeyboardButton("Info", callback_data=f"creategroup_submenu_{idx}_{pg}_info", style=user_style)
         ],
         [
-            InlineKeyboardButton("✅ Run Task", callback_data=f"creategroup_run_{idx}_{pg}", style=user_style),
-            InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_menu_{idx}_{pg}", style=user_style)
+            InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_menu_{idx}_{pg}", style=user_style),
+            InlineKeyboardButton("✅ Run Task", callback_data=f"creategroup_run_{idx}_{pg}", style=user_style)
         ]
     ]
     
@@ -1114,6 +1182,37 @@ async def creategroup_session_select_all_handler(c: Client, cb: CallbackQuery):
     await render_creategroup_ui(cb, user_creategroup_state[user_id])
     await cb.answer("All sessions selected")
 
+@Altruix.bot.on_callback_query(filters.regex(r"^creategroup_selp_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def creategroup_session_select_page_handler(c: Client, cb: CallbackQuery):
+    try:
+        s_page, pg = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
+        user_id = cb.from_user.id
+        if user_id not in user_creategroup_state:
+            return await cb.answer("Session expired", show_alert=True)
+
+        state = user_creategroup_state[user_id]
+        state["session_page"] = s_page
+
+        per_page = 8
+        total_sessions = len(Altruix.clients)
+        start = max(0, s_page) * per_page
+        end = min(start + per_page, total_sessions)
+
+        page_indices = list(range(start + 1, end + 1))
+        selected = state.get("selected_sessions", [])
+
+        merged = set(selected)
+        merged.update(page_indices)
+        state["selected_sessions"] = sorted(merged)
+
+        await render_creategroup_ui(cb, state)
+        await cb.answer("Page selected")
+    except Exception as e:
+        logger.error(f"Error in creategroup_session_select_page_handler: {e}\n{traceback.format_exc()}")
+        await safe_cb_answer(cb, "❌ Error select page", show_alert=True)
+
 @Altruix.bot.on_callback_query(filters.regex(r"^creategroup_dsall_(\d+)_(\d+)$"))
 @iuser_check
 @log_errors
@@ -1123,6 +1222,34 @@ async def creategroup_session_deselect_all_handler(c: Client, cb: CallbackQuery)
     user_creategroup_state[user_id]["selected_sessions"] = []
     await render_creategroup_ui(cb, user_creategroup_state[user_id])
     await cb.answer("All sessions deselected")
+
+@Altruix.bot.on_callback_query(filters.regex(r"^creategroup_dselp_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def creategroup_session_deselect_page_handler(c: Client, cb: CallbackQuery):
+    try:
+        s_page, pg = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
+        user_id = cb.from_user.id
+        if user_id not in user_creategroup_state:
+            return await cb.answer("Session expired", show_alert=True)
+
+        state = user_creategroup_state[user_id]
+        state["session_page"] = s_page
+
+        per_page = 8
+        total_sessions = len(Altruix.clients)
+        start = max(0, s_page) * per_page
+        end = min(start + per_page, total_sessions)
+
+        page_indices = set(range(start + 1, end + 1))
+        selected = state.get("selected_sessions", [])
+        state["selected_sessions"] = [x for x in selected if x not in page_indices]
+
+        await render_creategroup_ui(cb, state)
+        await cb.answer("Page deselected")
+    except Exception as e:
+        logger.error(f"Error in creategroup_session_deselect_page_handler: {e}\n{traceback.format_exc()}")
+        await safe_cb_answer(cb, "❌ Error deselect page", show_alert=True)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^creategroup_setv_(\d+)_(\d+)_(\w+)_(\w+)$"))
 @iuser_check
@@ -1245,6 +1372,24 @@ async def creategroup_toggle_handler(c: Client, cb: CallbackQuery):
             elif curr == "log_group": conf["interrupted_log"] = "pm_bot"
             elif curr == "pm_bot": conf["interrupted_log"] = "off"
             else: conf["interrupted_log"] = "both"
+        elif key == "start_log_mode":
+            curr = conf.get("start_log_mode", "both")
+            if curr == "both": conf["start_log_mode"] = "log_group"
+            elif curr == "log_group": conf["start_log_mode"] = "pm_bot"
+            elif curr == "pm_bot": conf["start_log_mode"] = "off"
+            else: conf["start_log_mode"] = "both"
+        elif key == "start_photo_log_mode":
+            curr = conf.get("start_photo_log_mode", "both")
+            if curr == "both": conf["start_photo_log_mode"] = "log_group"
+            elif curr == "log_group": conf["start_photo_log_mode"] = "pm_bot"
+            elif curr == "pm_bot": conf["start_photo_log_mode"] = "off"
+            else: conf["start_photo_log_mode"] = "both"
+        elif key in ["progress_log_mode", "panel_log_mode", "delay_log_mode"]:
+            curr = conf.get(key, "both" if key != "panel_log_mode" else "log_group")
+            if curr == "both": conf[key] = "log_group"
+            elif curr == "log_group": conf[key] = "pm_bot"
+            elif curr == "pm_bot": conf[key] = "off"
+            else: conf[key] = "both"
         elif key == "log_format": conf["log_format"] = "zip" if conf.get("log_format", "txt") == "txt" else "txt"
         elif key in conf: conf[key] = not conf[key]
         elif key == "msg_img": conf["msg_img"] = not conf.get("msg_img", True)
@@ -1680,6 +1825,9 @@ async def creategroup_run_handler(c: Client, cb: CallbackQuery):
     conf = user_creategroup_state[user_id]["config"]
     photo_text = ("👤 Source Account" if conf.get('photo_source') == 'source' else "🖼 Custom Photo") + (" ✅" if conf.get('photo_source') == 'custom' and conf.get('custom_photo_id') else "")
     type_lbl = "Supergroup" if conf.get('group_type', 'a') == 'a' else "Channel"
+    _mode_labels = {'both': 'Both', 'log_group': 'Group Log', 'pm_bot': 'PM Bot', 'off': 'Off'}
+    prog_lbl = _mode_labels.get(conf.get("progress_log_mode", "both"), "Both")
+    pnl_lbl = _mode_labels.get(conf.get("panel_log_mode", "log_group"), "Group Log")
     text = (
         f"<blockquote expandable>"
         f"<b>⚠️ Task Create {type_lbl} Confirmation</b>\n\n"
@@ -1693,6 +1841,7 @@ async def creategroup_run_handler(c: Client, cb: CallbackQuery):
         f"• <b>Invite Bots:</b> {'Yes' if conf['invite_bots'] else 'No'} ({len(conf['bots'].split() if conf['bots'] else [])})\n"
         f"• <b>Pin First Msg:</b> {'Yes' if conf.get('pin_first_msg', True) else 'No'}\n"
         f"• <b>Log Destination:</b> {'📡 Both' if conf.get('log_destination', 'both') == 'both' else ('📡 Group Log' if conf.get('log_destination') == 'log_group' else '📥 Saved Messages')}\n\n"
+        f"• <b>Progress Log:</b> <code>{prog_lbl}</code> | <b>Panel Log:</b> <code>{pnl_lbl}</code>\n\n"
         f"Apakah Anda yakin ingin menjalankan task ini di <b>{sel_count} akun</b>?"
         f"</blockquote>"
     )
@@ -1757,9 +1906,9 @@ async def creategroup_confirm_task_handler(c: Client, cb: CallbackQuery):
                             msg_text = f"⏳ Staggered Start ({acc_delay}s)...\n{msg_text}"
                     
                     if cb.message:
-                        control_msg = await cb.message.reply(msg_text)
+                        control_msg = await cb.message.reply(f"<blockquote expandable>{msg_text}</blockquote>")
                     else:
-                        control_msg = await c.send_message(cb.from_user.id, msg_text)
+                        control_msg = await c.send_message(cb.from_user.id, f"<blockquote expandable>{msg_text}</blockquote>")
                 except Exception as e:
                     from pyrogram.errors import PeerIdInvalid, UserIsBlocked
                     if isinstance(e, (PeerIdInvalid, UserIsBlocked)):
@@ -1809,12 +1958,16 @@ async def creategroup_confirm_task_handler(c: Client, cb: CallbackQuery):
                     account_idx=i+1,
                     total_accs=len(selected),
                     batch_account=conf.get("batch_account", 3),
-                    ba_account_delay=conf.get("ba_account_delay", 60)
+                    ba_account_delay=conf.get("ba_account_delay", 60),
+                    start_log_mode=conf.get("start_log_mode", "both"),
+                    start_photo_log_mode=conf.get("start_photo_log_mode", "both"),
+                    progress_log_mode=conf.get("progress_log_mode", "both"),
+                    panel_log_mode=conf.get("panel_log_mode", "log_group")
                 ))
             except Exception as e:
                 logger.error(f"Failed to start task for session {s_idx}: {e}")
                 
-        await cb.answer(f"Successfully started {len(selected)} tasks!", show_alert=True)
+        await safe_cb_answer(cb, f"Successfully started {len(selected)} tasks!", show_alert=True)
     except Exception as e:
         logger.error(f"Error in creategroup_confirm_task_handler: {e}\n{traceback.format_exc()}")
         err_msg = f"❌ <b>Error starting tasks:</b>\n<code>{e}</code>\n\n#LOG_ERROR"

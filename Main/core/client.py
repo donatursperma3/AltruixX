@@ -1243,16 +1243,17 @@ class AltruixClient:
 
         logging.getLogger("pyrogram").setLevel(logging.ERROR)
         
-        # ✅ DYNAMIC: Enable connection logging if Keepalive Toggle or DEBUG is ON
-        # Use a filter to force them to DEBUG level so they get the : » prefix
-        target_logger = logging.getLogger("pyrogram.connection.connection")
-        target_logger.addFilter(LogDemoter())
-        
+        # ✅ DYNAMIC: Enable keepalive connection logging only when explicitly requested.
+        # Even when DEBUG=True, pyrogram connection spam is hidden unless KEEPALIVE_LOG_ENABLED is on.
+        connection_logger_names = ["pyrogram.connection.connection", "pyrogram.connection"]
         keepalive_on = str(getattr(self.config, "KEEPALIVE_LOG_ENABLED", "off")).lower() == "on"
-        if self.config.DEBUG or keepalive_on:
-            target_logger.setLevel(logging.DEBUG)
-        else:
-            target_logger.setLevel(logging.ERROR)
+        for logger_name in connection_logger_names:
+            target_logger = logging.getLogger(logger_name)
+            target_logger.addFilter(LogDemoter())
+            if keepalive_on:
+                target_logger.setLevel(logging.DEBUG)
+            else:
+                target_logger.setLevel(logging.ERROR)
 
         # ✅ APScheduler: Demote "Scheduler started" and similar logs to DEBUG
         # so they only appear with : » prefix when DEBUG=True

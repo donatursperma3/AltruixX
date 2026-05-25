@@ -1,4 +1,4 @@
-PLUGIN_VERSION = "0.0.444"
+PLUGIN_VERSION = "0.0.447"
 
 """
 Purgeme Interactive Plugin for Altruix Userbot
@@ -18,6 +18,7 @@ from Main.internals.settings import send_log_notification
 from Main.utils.essentials import Essentials
 from Main.utils.file_helpers import get_user_button_style
 from Main.core.decorators import log_errors
+from Main.internals.settings_handlers.purgeme_handlers import load_user_purgeme_config
 from pyrogram.raw.functions.channels import GetAdminedPublicChannels
 
 # Initialize shared state storage if not exists
@@ -115,6 +116,7 @@ def get_purgeme_status_text(state):
 
     elif status == "running":
         status_line = f"<b>Deleting...</b>\nDeleted: <code>{processed}/{count}</code>"
+        if state.get("forwarded", 0) > 0: status_line += f"\nForwarded: <code>{state['forwarded']}</code>"
         if delay > 0: status_line += f"\nDelay: <code>{delay}s</code>"
         return f"<blockquote expandable>{title}\n━━━━━━━━━━━━━━━━━━━━\n{header_content}\n━━━━━━━━━━━━━━━━━━━━\n{status_line}</blockquote>"
 
@@ -122,17 +124,20 @@ def get_purgeme_status_text(state):
         status_line = (loc("purgeme_paused_detailed") or "<b>PAUSED</b>\nDeleted: <code>{processed}/{count}</code>").format(
             processed=processed, count=count
         )
+        if state.get("forwarded", 0) > 0: status_line += f"\nForwarded: <code>{state['forwarded']}</code>"
         return f"<blockquote expandable>{title}\n━━━━━━━━━━━━━━━━━━━━\n{header_content}\n━━━━━━━━━━━━━━━━━━━━\n{status_line}</blockquote>"
 
     elif status == "finished":
         duration = round(time.time() - start_time, 2) if start_time > 0 else 0
         failed = state.get("failed", 0)
+        forwarded = state.get("forwarded", 0)
         
         display_name = f"<a href='{chat_link}'>{chat_name}</a>" if chat_link else f"<b>{chat_name}</b>"
         fin_text = (
             f"✅ <b>Finished!</b>\n"
             f"━━━━━━━━━━━━━━━━━━\n"
             f"• <b>Deleted:</b> <code>{processed}</code> messages\n"
+            f"• <b>Forwarded:</b> <code>{forwarded}</code> messages\n"
             f"• <b>Failed/Skip:</b> <code>{failed}</code> messages\n"
             f"• <b>Time:</b> <code>{duration}s</code>\n"
             f"• <b>Chat:</b> {display_name}\n"
@@ -143,6 +148,7 @@ def get_purgeme_status_text(state):
             f"• <b>Batch:</b> <code>{batch_size}</code>\n"
             f"• <b>Delay/Msg:</b> <code>{delay}s</code>\n"
             f"• <b>Delay/Batch:</b> <code>{int(batch_delay/60)}m</code>\n"
+            f"• <b>Delay/Forward:</b> <code>{state.get('fwd_delay', 0.5)}s</code>\n"
             f"━━━━━━━━━━━━━━━━━━"
         )
         return f"<blockquote expandable>{title}\n\n{fin_text}</blockquote>"
@@ -271,7 +277,7 @@ async def collect_user_messages_optimized(
                 if len(collected_ids) >= limit or scanned_total >= max_scan:
                     break
         except Exception as e:
-            Altruix.log(f"Purgeme Method 1 Error: {e}", level=30)
+            Altruix.log(f"Purgeme Method 1 Error: {e}\n{traceback.format_exc()}", level=30)
 
         # STEP 2: Method 2 - Absolute Oldest Scan (Fallback for Oldest Mode)
         if mode == "oldest" and len(collected_ids) < limit:
@@ -310,7 +316,7 @@ async def collect_user_messages_optimized(
                     if len(collected_ids) >= limit or scanned_total >= max_scan:
                         break
             except Exception as e:
-                Altruix.log(f"Purgeme Method 2 Error: {e}", level=30)
+                Altruix.log(f"Purgeme Method 2 Error: {e}\n{traceback.format_exc()}", level=30)
 
         # STEP 3: Method 3 - Global History Scan (Deepest Fallback)
         if len(collected_ids) < limit:
@@ -376,7 +382,7 @@ async def collect_user_messages_optimized(
                 if skipped > 0:
                     Altruix.log(f"Purgeme: Keep Recent filter applied. Skipped {skipped} newest messages.")
         except Exception as e:
-            Altruix.log(f"Purgeme: Error applying Keep Recent filter: {e}")
+            Altruix.log(f"Purgeme: Error applying Keep Recent filter: {e}\n{traceback.format_exc()}")
 
     return collected_ids
 
@@ -547,20 +553,29 @@ async def purgeme_cmd(client: Client, message: Message):
 
     # Initialize State
     async with STATE_LOCK:
+        user_config = load_user_purgeme_config(user_id)
+        
         Altruix.PURGEME_STATE[unique_id] = {
             "unique_id": unique_id,
-            "count": 20, # Default changed to 20
-            "delay": 1.0, # Default changed to 1.0s
-            "types": ["all"],
-            "mode": "oldest",
+            "count": user_config.get("count", 20),
+            "delay": user_config.get("delay", 1.0),
+            "types": user_config.get("types", ["all"]),
+            "mode": user_config.get("mode", "oldest"),
             "from_id": "me", # New: Sender ID (me or channel id)
             "sender_list": sender_list, # New: List of available senders
-            "batch_size": 30,
+            "batch_size": user_config.get("batch_size", 30),
             "send_as_locally_available": send_as_locally_available,
-            "batch_delay": 0, # Default 0 (only active if toggled)
-            "keep_recent": 0, # New: Safety Buffer (skip newest N messages)
-            "max_scan": 500,
-            "min_id": 0,
+            "batch_delay": user_config.get("batch_delay", 0), 
+            "keep_recent": user_config.get("keep_recent", 0), 
+            "max_scan": user_config.get("max_scan", 500),
+            "offset": user_config.get("offset", 0),
+            "min_id": user_config.get("min_id", 0),
+            "max_id": user_config.get("max_id", 0),
+            "min_days": user_config.get("min_days", 0),
+            "max_days": user_config.get("max_days", 0),
+            "forward_log": user_config.get("forward_log", "off"),
+            "fwd_delay": user_config.get("fwd_delay", 0.5),
+            "forwarded": 0,
             "status": "config",
             "event": asyncio.Event(),
             "stop_event": asyncio.Event(),
@@ -578,7 +593,7 @@ async def purgeme_cmd(client: Client, message: Message):
             "dashboard_chat_id": None,
             "log_msg_id": None,
             "inline_message_id": None,
-            "notify": False
+            "notify": user_config.get("notify", False)
         }
         # Pause event is set to True initially (not paused)
         if Altruix.PURGEME_STATE[unique_id].get("pause_event"):
@@ -900,11 +915,48 @@ async def purgeme_cmd(client: Client, message: Message):
                         asyncio.create_task(update_dashboard(state))
 
                     # Process the batch (sub-chunking if delay is present)
-                    inner_chunk_size = 1 if delay > 0 else 100
+                    inner_chunk_size = 1 if (delay > 0 or state.get("forward_log", "off") != "off") else 100
                     
                     for i in range(0, len(batch_ids), inner_chunk_size):
                         chunk = batch_ids[i:i+inner_chunk_size]
                         
+                        # ─── FORWARD LOG LOGIC ───
+                        # Determine destination and forward messages before deletion
+                        fwd_mode = state.get("forward_log", "off")
+                        if fwd_mode != "off":
+                            try:
+                                # Map destination keywords to actual IDs/entities
+                                dest = None
+                                if fwd_mode == "group_log":
+                                    dest = Altruix.log_chat
+                                elif fwd_mode == "pm_bot":
+                                    dest = user_id
+                                elif fwd_mode == "saved":
+                                    dest = "me"
+                                
+                                # Execute forwarding if destination is valid
+                                if dest:
+                                    if fwd_mode == "pm_bot":
+                                        # Use assistant bot to receive forward
+                                        bot_me = await _get_bot(user_id).get_me()
+                                        await client.forward_messages(bot_me.id, chat_id, chunk)
+                                    else:
+                                        # Use userbot to forward to group log or saved messages
+                                        await client.forward_messages(dest, chat_id, chunk)
+                                        
+                                    # Track total forwarded messages
+                                    state["forwarded"] = state.get("forwarded", 0) + len(chunk)
+                                    
+                                    # ─── FORWARD DELAY ───
+                                    # Pause between forward and delete to respect rate limits
+                                    fwd_delay = state.get("fwd_delay", 0.5)
+                                    if fwd_delay > 0:
+                                        await asyncio.sleep(fwd_delay)
+                                        
+                            except Exception as fe:
+                                # Log any forward errors without stopping the purge process
+                                Altruix.log(f"Purgeme Forward Error: {fe}\n{traceback.format_exc()}")
+
                         retry_count = 0
                         max_retries = 3
                         delete_success = False
@@ -946,7 +998,7 @@ async def purgeme_cmd(client: Client, message: Message):
                                 await asyncio.sleep(fw.value)
                             except Exception as e:
                                 retry_count += 1
-                                Altruix.log(f"Purgeme Delete Error: {e}")
+                                Altruix.log(f"Purgeme Delete Error: {e}\n{traceback.format_exc()}")
                                 if retry_count >= max_retries:
                                     failed_count += len(chunk)
                                     if fail_reason == "None":
@@ -1078,6 +1130,11 @@ async def purgeme_cmd(client: Client, message: Message):
             f"• <b>Deleted:</b> <code>{deleted_count} messages</code>\n"
         )
         
+        # ✅ ADDED: Forwarded Count in Log
+        forwarded_count = state.get("forwarded", 0)
+        if forwarded_count > 0:
+            log_msg += f"• <b>Forwarded:</b> <code>{forwarded_count} messages</code>\n"
+        
         if failed_count > 0:
             log_msg += f"• <b>Failed/Skip:</b> <code>{failed_count} messages</code>\n"
         else:
@@ -1093,6 +1150,7 @@ async def purgeme_cmd(client: Client, message: Message):
             f"• <b>Batch:</b> <code>{batch_size}</code>\n"
             f"• <b>Delay/Msg:</b> <code>{delay}s</code>\n"
             f"• <b>Delay/Batch:</b> <code>{int(batch_delay/60)}m</code>\n"
+            f"• <b>Delay/Forward:</b> <code>{state.get('fwd_delay', 0.5)}s</code>\n"
             f"{'━━━━━━━━━━━━━━━━━━'}</blockquote>"
         )
 

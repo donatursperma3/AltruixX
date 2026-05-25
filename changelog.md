@@ -3,6 +3,190 @@
 All notable changes to the **Altroid-X** project from version **0.0.10.0959H** to the latest.
 Latest updates are always added at the top (newest → oldest).
 
+## [0.0.10.2472I] - 2026-05-26
+
+### 📊 Task Manager: Real-time Status Updates
+- **Improved: Last Step Synchronization**:
+  - Added logic to update 'Last Step' and progress info dynamically in the `Manage Task` menu of `.tasklist`.
+  - Added `update_task_info` API in [xtaskmanager.py] for plugins to push status updates to the global registry.
+- **Improved: Refresh Logic**:
+  - The `Refresh` button in [xtaskmanager.py] now triggers a re-scan of plugin caches to ensure the displayed data is always up-to-date.
+- **Enhanced: CreateGroup Integration**:
+  - Added `sync_to_registry` calls in [xcreategroup.py] loop to provide real-time updates on `current_step` (create, setup, copy_msg, etc.) and `current_index`.
+  - Updated [xtaskmanager.py] to recognize `current_step` from CreateGroup cache for legacy compatibility.
+
+---
+
+## [0.0.10.2471I] - 2026-05-26
+
+### 🧹 Purgeme: Bug Fixes & Stability
+- **Fixed: Forward Log Selection**: 
+  - Resolved an issue where selecting destinations with underscores (e.g., `Group Log`, `PM Bot`) caused errors due to incorrect callback data parsing in [xpurgeme_bot.py].
+- **Fixed: UI Auto-Close**:
+  - Fixed a bug where the configuration menu would automatically close after 3 seconds when changing any setting. The menu now stays open and updates the UI normally in [xpurgeme_bot.py].
+- **Improved: Error Handling**:
+  - Added detailed logging with `traceback.format_exc()` to all critical sections of [xpurgeme_userbot.py] for easier debugging.
+- **Refined: Config Persistence**:
+  - Optimized the auto-save logic to ensure settings are saved without interrupting the user experience in [xpurgeme_bot.py].
+
+---
+
+## [0.0.10.2470I] - 2026-05-26
+
+### 🧹 Purgeme: Forward Delay & Reporting
+- **Added: Forward Delay Control**:
+  - Added a new sub-menu to adjust the delay between forwarding a message and deleting it (`Forward Delay`).
+  - **Changed**: Default `Forward Delay` is now set to **0.5 seconds** for better stability.
+  - Logic flow updated: **Forward -> Delay -> Delete** for better control and safety in [xpurgeme_userbot.py].
+- **Improved: Forward Reporting**:
+  - Added `Forwarded` message count to the interactive dashboard during execution.
+  - Added detailed forward results (count and delay) to the final completion log in [xpurgeme_userbot.py].
+- **Added: Configuration Persistence**:
+  - `Forward Delay` setting is now saved to `xpurgeme_user_configs.json`.
+
+---
+
+## [0.0.10.2469I] - 2026-05-26
+
+### 🧹 Purgeme: Forward Log & Persistence
+- **Added: Forward Log Feature**:
+  - Added "Forward Log" button to the interactive `.purgeme` dashboard.
+  - Supports forwarding messages to **Group Log**, **PM Bot**, or **Saved Messages** before deletion.
+  - Implemented sub-menu for easy destination selection in [xpurgeme_bot.py].
+  - Synchronized forwarding delay with `Delay/Msg` and `Delay/Batch` in [xpurgeme_userbot.py].
+- **Added: Configuration Persistence**:
+  - Created `xpurgeme_user_configs.json` to save user preferences (Count, Delay, Batch, Mode, Forward Log, etc.) in [purgeme_handlers.py].
+  - Settings are now automatically saved and loaded across sessions.
+- **🛠️ Refinement**:
+  - Improved logic flow with proper try-except blocks and detailed logging with traceback in [xpurgeme_userbot.py].
+
+---
+
+## [0.0.10.2473I] - 2026-05-25
+
+### 🛠️ CreateGroup: UI Reorganization
+- **Added: Log Settings Sub-menu**:
+  - Created a new sub-menu **`📂 Log Settings`** to consolidate all log-related configurations, making the main dashboard cleaner and more organized in [creategroup_handlers.py].
+  - Moved the following controls to the new sub-menu: `Start Log`, `Photo Log`, `Prog Log`, `Panel Log`, `Interrupt Log`, `Delay Log`, `Log To`, and `Log Format`.
+  - Updated the main dashboard layout to include a direct link to the log settings and reorganized the remaining buttons for better accessibility.
+
+---
+
+## [0.0.10.2472I] - 2026-05-25
+
+### 🛠️ CreateGroup: Delay Log Control
+- **Added: Delay Log Mode Toggle**:
+  - Introduced a new control button **`Delay Log`** in the `.cgui` dashboard to manage countdown logs (e.g., "Proses akan dilanjutkan dalam...").
+  - Supported modes: **PM Bot**, **Group Log**, **Both**, and **Off** (Disable) to reduce log spam in groups.
+  - Implemented logic in [xcreategroup.py] to respect the selected log mode during `wait_with_countdown` intervals.
+  - Added `delay_log_mode` to the persistent configuration system in [creategroup_handlers.py].
+
+---
+
+## [0.0.10.2471I] - 2026-05-25
+
+### 🛠️ CreateGroup: Code Cleanup
+- **Fixed: Duplicate Function Definition**:
+  - Removed the redundant `format_duration` function from [xcreategroup.py](previously at line 719).
+  - Consolidated to the more advanced version of `format_duration` (at line 78) which supports months, days, hours, minutes, and seconds.
+
+---
+
+## [0.0.10.2470I] - 2026-05-25
+
+### 🛠️ CreateGroup: User-Friendly Duration Format
+- **Improved: Completion Report Duration Formatting**:
+  - Implemented `format_duration` in [xcreategroup.py] to provide a more readable duration format (months, days, hours, minutes, seconds) instead of just minutes/seconds.
+  - Applied the new format to both the interactive completion report and the exported log files.
+
+---
+
+## [0.0.10.2469I] - 2026-05-25
+
+### 🛠️ CreateGroup: Dynamic Task Labels
+- **Improved: Automatic Task Labeling (Group/Channel)**:
+  - Updated the task registration label in [xcreategroup.py] to automatically show "Create Group" or "Create Channel" based on the task type.
+  - Updated the failure message in the control panel to use dynamic labels (e.g., "Task Create Channel Gagal") instead of the static "CreateGroup" string in [xcreategroup.py].
+
+---
+
+## [0.0.10.2468I] - 2026-05-25
+
+### 🛠️ CreateGroup: Progress Log Improvement
+- **Task ID Visibility**:
+  - Added Task ID info to the initial progress log message ("📊 Memulai Tracker Progress...") in [xcreategroup.py] to make it easier to track specific tasks.
+
+---
+
+## [0.0.10.2468I] - 2026-05-25
+
+### 🎥 YouTube Tools: Resolution & Extractor Fixes
+- **Fixed: Limited Resolutions (360p Only)**:
+  - Fixed a logic bug in [ytdl_core.py](file:///f:/2026/APRIL/AltruixX/Main/internals/ytdl_core.py) where the `--flat-playlist` flag used for initial analysis was preventing full format extraction for single videos.
+  - Implemented a two-stage extraction process: use `--flat-playlist` only to identify playlists, and perform a full fetch for single videos to ensure all resolutions (720p, 1080p, etc.) are available.
+- **Improved: High-Resolution Format Support**:
+  - Expanded `player_client` list to `android,web,mweb,ios`. Adding `android` enables access to more high-quality DASH formats that were previously missing when using only `ios`.
+  - Applied these improvements to both [ytdl_core.py](file:///f:/2026/APRIL/AltruixX/Main/internals/ytdl_core.py) and [xalliance_vc.py](file:///f:/2026/APRIL/AltruixX/Main/plugins/userbot/xalliance_vc.py).
+
+---
+
+## [0.0.10.2467I] - 2026-05-25
+
+### 🎥 YouTube Tools: Caption Description Toggle
+- **Added: "Insert Info Description" Toggle**:
+  - Added a new button **`📝 Desc`** to the interactive dashboard to enable or disable video description in the media caption in [xyt_tools_bot.py].
+  - Implemented automatic extraction of video descriptions during the analysis phase in [ytdl_core.py].
+  - Added logic to append the description (with a 300-character limit to avoid Telegram caption limits) to both single media and chapter-based uploads in [ytdl_core.py].
+  - Integrated state persistence using `sync_ytdl_task` to ensure the toggle state is preserved across interactions.
+
+---
+
+## [0.0.10.2466I] - 2026-05-25
+
+### 🎥 YouTube Tools: Bot Detection Bypass & Cookie Support
+- **Fixed: YT-DLP "Sign in to confirm you're not a bot" Error**:
+  - Improved bot detection error handling with case-insensitive checks and more flexible keyword matching (e.g. `youre` vs `you're`) in [ytdl_core.py].
+  - Provides a clear, actionable error message with solutions (cookies.txt / ENV settings) when blocked by YouTube.
+- **Added: Auto-Detection for `cookies.txt`**:
+  - The system now automatically looks for `cookies.txt` in the root or `Main/` directory to facilitate authentication bypass without requiring manual environment variable configuration.
+  - Implemented in [ytdl_core.py] (subprocess) and [xalliance_vc.py] (yt-dlp library).
+- **Improved: Resilient Player Clients**:
+  - Updated `yt-dlp` extractor arguments to use a combination of `ios,web,mweb` player clients, which are currently more resistant to YouTube's bot detection mechanisms.
+  - Applied to both interactive downloads in [ytdl_core.py] and Voice Chat streaming in [xalliance_vc.py].
+
+---
+
+## [0.0.10.2465I] - 2026-05-25
+
+### 🎛️ CreateGroup UI: Page Selectors + Spam-Safe Log Modes
+- **Added: Multi-Session Selection (Per-Page) Controls**:
+  - Added **`📄 Select Page`** and **`📄 Deselect Page`** buttons inside **👥 Multi-Session Selection** to select/deselect only the sessions shown on the current page (without affecting other pages) in [creategroup_handlers.py](AltruixX/Main/internals/settings_handlers/creategroup_handlers.py).
+  - Preserved existing global controls (**Select All / Deselect All**) and the existing task execution flow.
+- **Added: .cgui Log Mode Toggles to Reduce Spam**:
+  - Added dedicated toggles for **`Progress Log`** (per-group “🏗 Memproses …”) and **`Panel Log`** (control panel “🚀 Task Control Panel …”) with modes: **PM Bot / Group Log / Both / Off** in [creategroup_handlers.py](AltruixX/Main/internals/settings_handlers/creategroup_handlers.py).
+  - Routed CreateGroup runtime output to follow these modes (separating progress logs vs control panel logs) in [xcreategroup.py](AltruixX/Main/plugins/userbot/xcreategroup.py).
+- **Improved: Config Compatibility & Sync (Old ↔ New)**:
+  - Implemented a unified CreateGroup config loader that prioritizes the persistent JSON used by **.cgui** while remaining compatible with legacy `Altruix.config.get_user_config` (auto-mirrors legacy values into JSON when needed) in [xcreategroup.py](AltruixX/Main/plugins/userbot/xcreategroup.py).
+
+---
+
+## [0.0.10.2464I] - 2026-05-24
+
+### 🎛️ CreateGroup: Dynamic Log-Control & Separate Log Toggles
+- **Added: Dynamic Log-Control Buttons (Task Control Panel)**:
+  - Added dedicated **`PM Bot`**, **`Group Log`**, **`Both`**, and **`Disable`** buttons directly into the *Task Control Panel* in [xcreategroup.py](file:///f:/2026/APRIL/AltruixX/Main/plugins/userbot/xcreategroup.py).
+  - Highlighting the currently active log destination with a visual checkmark (e.g. `✅`).
+  - Added a dedicated **`🔄 Refresh Logs`** button to refresh the dashboard text and button states dynamically.
+- **Added: Live Status & Log Destination Sync**:
+  - Dynamically fetches the current log destination from `CREATEGROUP_TASKS` memory state and lists it on the Task Control dashboard: `• Log Destination: Both (Log+Saved) / Log Group / PM Bot / Disabled`.
+  - Upgraded `creategroup_loop` to dynamically fetch and apply the updated log destination from memory at the start of each iteration and upon task completion, making settings changes fully live and reactive.
+- **Added: Persistent User Configurations & Robust Callback Handlers**:
+  - Configured custom interactive buttons to trigger callback handlers `log_toggle:{tid}:{mode}` and `log_refresh:{tid}`.
+  - Callback handlers automatically load, update, and persist settings in `xcreategroup_user_configs.json` using the robust `load_user_cg_config` and `save_user_cg_config` methods.
+  - Implemented comprehensive error handling with try-except safety, `@log_errors` protection, and authorized user access validation via `@iuser_check`.
+
+---
+
 ## [0.0.10.2463I] - 2026-05-24
 
 ### 🛠️ CreateGroup: Limit Adjustments & Validation Fixes
@@ -24,6 +208,12 @@ Latest updates are always added at the top (newest → oldest).
     - `ba_account_delay`
 - **Fixed: Missing UI unit labels**:
   - Added missing entries in `unit_map` for `batch_action` (`" act"`) and `ba_delay` (`"s"`), resolving empty labels in the respective adjustment sub-menus.
+- **Added: Granular Start/Setup Logs Control (Independent Settings)**:
+  - Deployed independent, dedicated config toggles for startup logs to eliminate noise:
+    - **`Start Log`** (`start_log_mode`): Controls the `Task Create Group Started/Resumed` log notification.
+    - **`Photo Log`** (`start_photo_log_mode`): Controls the profile photo download status log notification.
+  - Symmetrically placed both buttons on the interactive `.cgui` dashboard, each toggling through `Both` (default) → `Group Log` → `PM Bot` → `Off`.
+  - Implemented separate asynchronous routing helpers (`send_start_log` and `send_photo_log`) inside `creategroup_loop` to process each log path independently based on the user's custom preference.
 
 ---
 

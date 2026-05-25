@@ -129,6 +129,7 @@ async def ytdl_inline_menu(c: Client, obj: Union[InlineQuery, CallbackQuery], ta
     backup_status = "Yes" if state.get("auto_backup", True) else "No"
     b_mode = state.get("backup_mode", "userbot").capitalize()
     link_status = "Yes" if state.get("show_link", True) else "No"
+    desc_status = "Yes" if state.get("show_desc", False) else "No"
     wm_status = "ON" if state.get("watermark", False) else "OFF"
     
     
@@ -201,9 +202,10 @@ async def ytdl_inline_menu(c: Client, obj: Union[InlineQuery, CallbackQuery], ta
     ])
     buttons.append([
         InlineKeyboardButton(f"🔗 Link: {link_status}", callback_data=f"ytdl_toggle_link#{task_id}", style=user_style),
-        InlineKeyboardButton(f"💧 WM: {wm_status}", callback_data=f"ytdl_toggle_wm#{task_id}", style=user_style)
+        InlineKeyboardButton(f"📝 Desc: {desc_status}", callback_data=f"ytdl_toggle_desc#{task_id}", style=user_style)
     ])
     buttons.append([
+        InlineKeyboardButton(f"💧 WM: {wm_status}", callback_data=f"ytdl_toggle_wm#{task_id}", style=user_style),
         InlineKeyboardButton("🔄 Refresh", callback_data=f"ytdl_refresh#{task_id}", style=user_style),
     ])
     buttons.append([
@@ -694,6 +696,7 @@ async def ytdl_info_cb(c: Client, cb: CallbackQuery):
             f"• <b>Backup:</b> Jika ON, media akan dicadangkan ke Grup Log.\n"
             f"• <b>Via:</b> Memilih dikirim via Bot atau Userbot.\n"
             f"• <b>Link:</b> Menampilkan link YouTube di caption.\n"
+            f"• <b>Desc:</b> Menampilkan deskripsi video di caption.\n"
             f"</blockquote>"
         )
         nav_text = "Page 2 »"
@@ -854,6 +857,20 @@ async def ytdl_toggle_link_cb(c: Client, cb: CallbackQuery):
     state["show_link"] = not state.get("show_link", True) # Toggle state (default True)
     asyncio.create_task(sync_ytdl_task(task_id)) # ✅ Background Sync
     await cb.answer(f"Source Link: {'ON' if state['show_link'] else 'OFF'}")
+    
+    # Refresh dashboard
+    await ytdl_inline_menu(c, cb, task_id)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^ytdl_toggle_desc#([#\w\d_-]+)"))
+@iuser_check
+async def ytdl_toggle_desc_cb(c: Client, cb: CallbackQuery):
+    task_id = cb.matches[0].group(1)
+    state = Altruix.YTDL_STATE.get(task_id)
+    if not state: return await cb.answer("Sesi kedaluwarsa.", show_alert=True)
+    
+    state["show_desc"] = not state.get("show_desc", False) # Toggle state (default False)
+    asyncio.create_task(sync_ytdl_task(task_id)) # ✅ Background Sync
+    await cb.answer(f"Show Description: {'ON' if state['show_desc'] else 'OFF'}")
     
     # Refresh dashboard
     await ytdl_inline_menu(c, cb, task_id)

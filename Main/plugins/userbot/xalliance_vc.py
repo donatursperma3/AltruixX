@@ -207,7 +207,14 @@ def get_yt_audio(url):
         'quiet': True,
         'no_warnings': True,
         'outtmpl': 'downloads/%(id)s.%(ext)s',
+        'extractorargs': {'youtube': {'player_client': ['android', 'web', 'mweb', 'ios']}},
     }
+    # Auto-detect cookies for bot bypass
+    for path in ["cookies.txt", "Main/cookies.txt"]:
+        if os.path.exists(path):
+            ydl_opts['cookiefile'] = path
+            break
+
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
         return ydl.prepare_filename(info)
@@ -218,7 +225,14 @@ def get_yt_video(url):
         'quiet': True,
         'no_warnings': True,
         'outtmpl': 'downloads/%(id)s.%(ext)s',
+        'extractorargs': {'youtube': {'player_client': ['android', 'web', 'mweb', 'ios']}},
     }
+    # Auto-detect cookies for bot bypass
+    for path in ["cookies.txt", "Main/cookies.txt"]:
+        if os.path.exists(path):
+            ydl_opts['cookiefile'] = path
+            break
+
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
         return ydl.prepare_filename(info)

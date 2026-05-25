@@ -27,7 +27,7 @@ from Main.utils.file_helpers import get_user_button_style
 # Plugin Metadata
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = "xtaskmanager"
-PLUGIN_VERSION = "1.0.252"
+PLUGIN_VERSION = "1.0.253"
 
 logger = logging.getLogger("altruix.xtaskmanager")
 logger.setLevel(logging.INFO)
@@ -179,12 +179,12 @@ def scan_and_merge_caches():
             
             merged = 0
             for tid, tdata in tasks.items():
+                params = tdata.get("params", {})
+                total = int(params.get("count", 0))
+                current = tdata.get("current_index", 0)
+                last_step = tdata.get("current_step", tdata.get("last_action", "setup"))
+
                 if tid not in registry:
-                    params = tdata.get("params", {})
-                    total = int(params.get("count", 0))
-                    current = tdata.get("current_index", 0)
-                    last_step = tdata.get("last_action", "setup")
-                    
                     # Safe conversion for started_at
                     raw_start = tdata.get("start_time", 0)
                     if isinstance(raw_start, str):
@@ -218,6 +218,18 @@ def scan_and_merge_caches():
                         }
                     }
                     merged += 1
+                else:
+                    # Sync extra info for existing tasks (running or paused)
+                    if registry[tid].get("plugin") == "xcreategroup":
+                        if "extra" not in registry[tid] or not isinstance(registry[tid]["extra"], dict):
+                            registry[tid]["extra"] = {}
+                        
+                        registry[tid]["extra"].update({
+                            "current": current,
+                            "total": total,
+                            "attempt": tdata.get("attempt", 1),
+                            "last_step": last_step
+                        })
             
             logger.info(f"[TaskManager] Merged {merged} interrupted tasks into registry. Total registry: {len(registry)}")
         except Exception as e:
@@ -246,8 +258,31 @@ def generate_task_id(prefix="T"):
     short_hash = hashlib.md5(raw.encode()).hexdigest()[:4]
     return f"#{prefix}{short_hash}"
 
+def update_task_info(task_id: str, **kwargs):
+    """
+    Update specific fields of a task in the registry.
+    Usage: update_task_info("#T1a2b", details="Processing...", extra={"current": 5})
+    """
+    try:
+        registry = _ensure_registry()
+        if task_id in registry:
+            # If "extra" is in kwargs, merge it with existing extra instead of overwriting
+            if "extra" in kwargs and isinstance(kwargs["extra"], dict):
+                current_extra = registry[task_id].get("extra", {})
+                if not isinstance(current_extra, dict):
+                    current_extra = {}
+                current_extra.update(kwargs["extra"])
+                kwargs["extra"] = current_extra
+            
+            registry[task_id].update(kwargs)
+            return True
+    except Exception as e:
+        logger.error(f"Error in update_task_info: {e}")
+    return False
+
 def register_task(task_id: str, asyncio_task: asyncio.Task, name: str,
-    plugin: str, user_id: int = None, details: str = "", user_name: str = None):
+    plugin: str, user_id: int = None, details: str = "", user_name: str = None,
+    extra: dict = None):
     """
     Register a running asyncio.Task in the global registry.
     Called by any plugin that creates background tasks.
@@ -260,6 +295,7 @@ def register_task(task_id: str, asyncio_task: asyncio.Task, name: str,
         user_id: Owner user ID
         details: Extra details for display
         user_name: Owner's first name/username
+        extra: Optional dictionary for plugin-specific progress info
     """
     try:
         registry = _ensure_registry()
@@ -272,7 +308,8 @@ def register_task(task_id: str, asyncio_task: asyncio.Task, name: str,
             "user_name": user_name,
             "details": details,
             "paused": False,
-            "recurring": False
+            "recurring": False,
+            "extra": extra or {}
         }
         Altruix.log(f"[TaskManager] Registered task {task_id}: {name} ({plugin})", level=20)
     except Exception as e:
@@ -667,6 +704,9 @@ def gen_task_list_data(user_id: int, page: int = 1, page_size: int = 5, task_fil
 def gen_task_status_data(user_id: int, tid: str):
     """Generate text and keyboard for a specific task's status."""
     try:
+        # Refresh registry from caches to ensure 'Last Step' and progress are up-to-date
+        get_all_tasks()
+        
         actual_tid, entry = find_task_by_id(tid)
         user_style = get_user_button_style(user_id)
         

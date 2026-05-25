@@ -1,4 +1,4 @@
-PLUGIN_VERSION = "0.0.322"
+PLUGIN_VERSION = "0.0.325"
 
 """
 Purgeme Bot Plugin
@@ -17,6 +17,7 @@ from pyrogram.types import (
 )
 from Main.utils.file_helpers import get_user_button_style
 from Main.core.decorators import log_errors, iuser_check
+from Main.internals.settings_handlers.purgeme_handlers import load_user_purgeme_config, save_user_purgeme_config
 from Main import Altruix
 
 
@@ -121,7 +122,8 @@ def get_purgeme_text(state):
         f"<b>From:</b> <code>{sender_name}</code> | <b>Chat:</b> {display_name}\n"
         f"<b>Mode:</b> <code>{mode.capitalize()}</code> | <b>Type:</b> <code>{type_display}</code>\n"
         f"<b>Target:</b> <code>{count}</code> messages | <b>Offset:</b> <code>{offset}</code>\n"
-        f"<b>Batch:</b> <code>{batch_size}</code> | <b>DelayBc:</b> <code>{int(batch_delay/60)}m</code>"
+        f"<b>Batch:</b> <code>{batch_size}</code> | <b>DelayBc:</b> <code>{int(batch_delay/60)}m</code>\n"
+        f"<b>Forward:</b> <code>{state.get('forward_log', 'off').replace('_', ' ').title()}</code> | <b>FwdDly:</b> <code>{state.get('fwd_delay', 0.5)}s</code>"
     )
 
     if status == "collecting":
@@ -161,6 +163,7 @@ def get_purgeme_text(state):
             f"<b>Finished!</b>\n"
             f"━━━━━━━━━━━━━━━━━━\n"
             f"• <b>Deleted:</b> <code>{processed}</code> messages\n"
+            f"• <b>Forwarded:</b> <code>{state.get('forwarded', 0)}</code> messages\n"
             f"• <b>Failed/Skip:</b> <code>{failed}</code> messages\n"
             f"• <b>Time:</b> <code>{duration}s</code>\n"
             f"• <b>Chat:</b> {chat_display}\n"
@@ -171,6 +174,7 @@ def get_purgeme_text(state):
             f"• <b>Batch:</b> <code>{batch_size}</code>\n"
             f"• <b>Delay/Msg:</b> <code>{delay}s</code>\n"
             f"• <b>Delay/Batch:</b> <code>{int(batch_delay/60)}m</code>\n"
+            f"• <b>Delay/Forward:</b> <code>{state.get('fwd_delay', 0.5)}s</code>\n"
             f"━━━━━━━━━━━━━━━━━━"
         )
         return f"<blockquote expandable>{title}\n\n{fin_text}</blockquote>"
@@ -414,6 +418,40 @@ async def get_purgeme_keyboard(chat_id, user_id, unique_id):
                 InlineKeyboardButton("Back", callback_data=f"pg_back_{unique_id}", style=btn_style)
             ])
 
+        elif sub_menu == "forwardlog":
+            # Forward Log Sub-Menu
+            curr_fwd = state.get("forward_log", "off")
+            buttons.append([InlineKeyboardButton("━━ Forward Log To ━━", callback_data="noop", style=btn_style)])
+            
+            fwd_options = [
+                ("off", "Off"),
+                ("group_log", "Group Log"),
+                ("pm_bot", "PM Bot"),
+                ("saved", "Saved Messages")
+            ]
+            
+            for f_val, f_lbl in fwd_options:
+                active = "[x]" if curr_fwd == f_val else "[ ]"
+                buttons.append([InlineKeyboardButton(f"{active} {f_lbl}", callback_data=f"pg_set_fwd_{f_val}_{unique_id}", style=btn_style)])
+            
+            buttons.append([InlineKeyboardButton("Back", callback_data=f"pg_back_{unique_id}", style=btn_style)])
+
+        elif sub_menu == "fwddelay":
+            # Forward Delay Sub-Menu
+            fwd_delay = state.get("fwd_delay", 0.5)
+            buttons.append([InlineKeyboardButton(f"━━ Fwd Delay: {fwd_delay}s ━━", callback_data="noop", style=btn_style)])
+            adj_steps = [0.1, 0.25, 0.5, 1.0, 2.0, 5.0]
+            for s in adj_steps:
+                s_str = f"{s}" if s % 1 != 0 else f"{int(s)}"
+                buttons.append([
+                    InlineKeyboardButton(f"-{s_str}s", callback_data=f"pg_fdl_sub_{s_str}_{unique_id}", style=btn_style),
+                    InlineKeyboardButton(f"+{s_str}s", callback_data=f"pg_fdl_add_{s_str}_{unique_id}", style=btn_style)
+                ])
+            buttons.append([
+                InlineKeyboardButton("Reset (0.5s)", callback_data=f"pg_fdl_reset_{unique_id}", style=btn_style),
+                InlineKeyboardButton("Back", callback_data=f"pg_back_{unique_id}", style=btn_style)
+            ])
+
 
         elif sub_menu == "filter":
             # Message Type Filter Sub-Menu
@@ -580,9 +618,17 @@ async def get_purgeme_keyboard(chat_id, user_id, unique_id):
             buttons.append([
                 InlineKeyboardButton(f"From: {sender_name}", callback_data=f"pg_menu_sender_{unique_id}", style=btn_style),
             ])
-            # Row 7: Keep Recent
+            # Row 7: Keep Recent 
             buttons.append([
-                InlineKeyboardButton(f"Keep Recent: {state.get('keep_recent', 0)} msg(s)", callback_data=f"pg_menu_keeprecent_{unique_id}", style=btn_style),
+                InlineKeyboardButton(f"Keep Recent: {state.get('keep_recent', 0)} msg(s)", callback_data=f"pg_menu_keeprecent_{unique_id}", style=btn_style),  
+            ])
+            # Row 7.5: Forward Log
+            buttons.append([
+                InlineKeyboardButton(f"Forward (Backup) To: {state.get('forward_log', 'off').replace('_', ' ').title()}", callback_data=f"pg_menu_forwardlog_{unique_id}", style=btn_style),
+            ])
+            # Row 7.6: Forward Delay 
+            buttons.append([
+                InlineKeyboardButton(f"Forward Delay: {state.get('fwd_delay', 0.5)}s", callback_data=f"pg_menu_fwddelay_{unique_id}", style=btn_style),
             ])
             # Row 8: Notif
             buttons.append([
@@ -772,7 +818,22 @@ async def purgeme_callback_handler(client: Client, cb: CallbackQuery):
             state["delay"] = max(0, round(state["delay"] - val, 2))
             
         elif "dly_reset" in data:
+            # Reset message delay to 0
             state["delay"] = 0
+
+        elif "fdl_add" in data:
+            # Increase forward delay
+            val = float(parts[3])
+            state["fwd_delay"] = round(state.get("fwd_delay", 0.5) + val, 2)
+
+        elif "fdl_sub" in data:
+            # Decrease forward delay (minimum 0)
+            val = float(parts[3])
+            state["fwd_delay"] = max(0, round(state.get("fwd_delay", 0.5) - val, 2))
+            
+        elif "fdl_reset" in data:
+            # Reset forward delay to default 0.5s
+            state["fwd_delay"] = 0.5
 
         # ─── SUB-MENU NAVIGATION (must be checked BEFORE short prefixes!) ───
         # "mode_" substring exists in "menu_mode", so menu_* MUST come first
@@ -796,14 +857,26 @@ async def purgeme_callback_handler(client: Client, cb: CallbackQuery):
             state["sub_menu"] = "dates"
         elif "menu_maxscan" in data:
             state["sub_menu"] = "maxscan"
+        elif "menu_forwardlog" in data:
+            state["sub_menu"] = "forwardlog"
+        elif "menu_fwddelay" in data:
+            state["sub_menu"] = "fwddelay"
         elif "menu_filter" in data:
             state["sub_menu"] = "filter"
         elif "menu_sender" in data:
             state["sub_menu"] = "sender"
 
         elif "mode_" in data:
+            # Change purge order mode (oldest first or latest first)
             mode = parts[2]
             state["mode"] = mode
+
+        elif "set_fwd_" in data:
+            # Set the forward destination (Format: pg_set_fwd_{val}_{unique_id})
+            # Robust extraction to handle values with underscores like 'group_log'
+            f_val = data.replace("pg_set_fwd_", "", 1).replace(f"_{unique_id}", "", 1)
+            state["forward_log"] = f_val
+            await cb.answer(f"Forward Log: {f_val.replace('_', ' ').title()}")
 
         elif "set_sender_" in data:
             # Format: pg_set_sender_{sender_id}_{unique_id}
@@ -998,9 +1071,33 @@ async def purgeme_callback_handler(client: Client, cb: CallbackQuery):
             await cb.answer("Proses purgeme dihentikan!", show_alert=True)
             title = Altruix.get_string("purgeme_title") or "<b>Userbot Purgeme</b>"
             await Altruix.edit_cb(cb, f"{title}\n<b>Task Cancelled / Aborted</b>")
-            await asyncio.sleep(3)
-            await Altruix.delete_cb(cb)
-            return # Prevent further processing
+
+        # ─── AUTO-SAVE CONFIG ───
+        # Identify if this was a configuration change action
+        # Actions that modify settings: pg_cnt_, pg_dly_, pg_btc_, pg_dbc_, pg_mode_, pg_off_, pg_bnd_, pg_dat_, pg_scn_, pg_typ_, pg_notify, pg_set_fwd, pg_kr_, pg_fdl_
+        settings_prefixes = ["pg_cnt_", "pg_dly_", "pg_btc_", "pg_dbc_", "pg_mode_", "pg_off_", "pg_bnd_", "pg_dat_", "pg_scn_", "pg_typ_", "pg_notify", "pg_set_fwd", "pg_kr_", "pg_fdl_"]
+        if any(data.startswith(pref) for pref in settings_prefixes):
+            # Extract persistent fields
+            config_to_save = {
+                "count": state.get("count"),
+                "delay": state.get("delay"),
+                "batch_size": state.get("batch_size"),
+                "batch_delay": state.get("batch_delay"),
+                "mode": state.get("mode"),
+                "notify": state.get("notify"),
+                "forward_log": state.get("forward_log"),
+                "fwd_delay": state.get("fwd_delay", 0.5),
+                "keep_recent": state.get("keep_recent"),
+                "max_scan": state.get("max_scan"),
+                "offset": state.get("offset"),
+                "min_id": state.get("min_id"),
+                "max_id": state.get("max_id"),
+                "min_days": state.get("min_days"),
+                "max_days": state.get("max_days"),
+                "types": state.get("types")
+            }
+            save_user_purgeme_config(user_id, config_to_save)
+            # FIX: Do not sleep or delete; allow UI to update normally below
 
         elif "cancel" in data:
             state["status"] = "cancelled"

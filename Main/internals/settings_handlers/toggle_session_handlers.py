@@ -29,11 +29,13 @@ async def toggle_session_confirm_handler(c: Client, cb: CallbackQuery):
     action_emoji = "✅" if is_disabled else "🔴"
     
     text = (
+        f"<blockquote expandable>"
         f"<b>⚠️ Confirm Action</b>\n\n"
         f"Are you sure you want to <b>{action_emoji} {action_text}</b> this session?\n\n"
         f"<b>Session:</b> <a href='tg://user?id={me.id}'>{html.escape(me.first_name)}</a>\n"
         f"<b>ID:</b> <code>{me.id}</code>\n\n"
         f"<i>{'⚠️ This will prevent the userbot from responding to any commands (from owner, sudo, or itself).' if not is_disabled else '✅ This will re-enable command responses for this session.'}</i>"
+        f"</blockquote>"
     )
     
     from Main.utils.file_helpers import get_user_button_style
