@@ -174,3 +174,5 @@ test_changelog.py
 test_logic.py 
 creategroup*.zip
 test_*.py
+creategroup*.zip
+*xcreategroup.md

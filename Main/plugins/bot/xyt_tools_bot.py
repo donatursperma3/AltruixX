@@ -27,6 +27,37 @@ from Main.internals.ytdl_core import ytdl_engine, sync_ytdl_task, format_count, 
 
 LOGO_PATH = "Main/assets/images/logo.jpg"
 
+def _ytdl_fmt_time(seconds) -> str:
+    try:
+        sec = float(seconds or 0)
+    except Exception:
+        sec = 0.0
+    if sec < 0:
+        sec = 0.0
+    whole = int(sec)
+    frac = round(sec - whole, 2)
+    base = Essentials.get_readable_time(whole) or "0s"
+    if abs(frac) < 0.005:
+        return base
+    if "," in base:
+        left, right = base.split(", ", 1)
+        base = right
+        prefix = f"{left}, "
+    else:
+        prefix = ""
+    parts = base.split(":")
+    last = parts[-1]
+    if not last.endswith("s"):
+        return prefix + base
+    try:
+        last_num = int(last[:-1] or "0")
+    except Exception:
+        last_num = 0
+    new_val = last_num + frac
+    new_txt = f"{new_val:.2f}".rstrip("0").rstrip(".")
+    parts[-1] = f"{new_txt}s"
+    return prefix + ":".join(parts)
+
 async def get_logo_url():
     """Auto-uploads local logo asset to Telegraph and caches the URL."""
     if hasattr(Altruix, "_YTDL_LOGO_URL") and Altruix._YTDL_LOGO_URL:
@@ -102,6 +133,7 @@ async def ytdl_inline_menu(c: Client, obj: Union[InlineQuery, CallbackQuery], ta
         f"<b>• Audio Lang:</b> <code>{current_lang}</code>\n"
         f"<b>• Speed:</b> <code>{state.get('speed', '1.0x')}</code>\n"
         f"<b>• Volume:</b> <code>{state.get('volume', 'Original')}</code>\n"
+        f"<b>• Fade:</b> <code>IN {_ytdl_fmt_time(state.get('fade_in', 0))} | OUT {_ytdl_fmt_time(state.get('fade_out', 0))}</code>\n"
         f"{chapters_str}"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"<b>🔗 Source:</b> <code>{source_url}</code>\n"
@@ -134,7 +166,7 @@ async def ytdl_inline_menu(c: Client, obj: Union[InlineQuery, CallbackQuery], ta
     
     
     s, e = state.get("start", 0), state.get("end", state["duration"])
-    trim_text = f"✂️ Trimmer: {Essentials.get_readable_time(s)} - {Essentials.get_readable_time(e)}" if (not is_playlist and (s != 0 or e != state["duration"])) else "✂️ Precise Trimmer"
+    trim_text = f"✂️ Trimmer: {_ytdl_fmt_time(s)} - {_ytdl_fmt_time(e)}" if (not is_playlist and (s != 0 or e != state["duration"])) else "✂️ Precise Trimmer"
     
     # Audio formatting texts
     fmt_txt = "Title-Artist" if state.get("audio_name_fmt", "title_artist") == "title_artist" else "Artist-Title"
@@ -184,6 +216,9 @@ async def ytdl_inline_menu(c: Client, obj: Union[InlineQuery, CallbackQuery], ta
         InlineKeyboardButton(f"⚡️ Speed: {speed_val}", callback_data=f"ytdl_speed_menu#{task_id}", style=user_style),
         InlineKeyboardButton(f"🔊 Volume: {volume_val}", callback_data=f"ytdl_volume_menu#{task_id}", style=user_style)
     ])
+    fade_in_lbl = _ytdl_fmt_time(state.get("fade_in", 0))
+    fade_out_lbl = _ytdl_fmt_time(state.get("fade_out", 0))
+    buttons.append([InlineKeyboardButton(f"🎚 Fade In/Out: {fade_in_lbl} | {fade_out_lbl}", callback_data=f"ytdl_fade_menu#{task_id}", style=user_style)])
     buttons.append([InlineKeyboardButton(f"👤 Sender: {state.get('sender_name', 'Default')}", callback_data=f"ytdl_sel_sender#{task_id}", style=user_style)])
  
     # 🔊 AUDIO TRACK: Only show if video has multiple audio options
@@ -519,6 +554,16 @@ async def ytdl_confirm_cb(c: Client, cb: CallbackQuery):
     volume_val = state.get("volume", "Original")
     if volume_val != "Original":
         fmt_details += f" [Volume: {volume_val}]"
+    fade_in = state.get("fade_in", 0) or 0
+    fade_out = state.get("fade_out", 0) or 0
+    try:
+        fade_in_f = float(fade_in)
+        fade_out_f = float(fade_out)
+    except Exception:
+        fade_in_f = 0.0
+        fade_out_f = 0.0
+    if fade_in_f > 0 or fade_out_f > 0:
+        fmt_details += f" [Fade: IN {_ytdl_fmt_time(fade_in_f)} | OUT {_ytdl_fmt_time(fade_out_f)}]"
     split_chapters = state.get("split_chapters", False)
     if split_chapters:
         fmt_details += f" [Split Chapters: {len(state.get('chapters', []))} bab]"
@@ -531,7 +576,7 @@ async def ytdl_confirm_cb(c: Client, cb: CallbackQuery):
         f"<b>• Platform:</b> {state.get('extractor', 'YouTube').capitalize()}\n"
         f"<b>• Format:</b> {state['format'].upper()} ({fmt_details})\n"
         f"<b>• Trim:</b> {'✅ Yes' if is_trimmed else '❌ No'}\n"
-        f"  └─ <code>{Essentials.get_readable_time(start_s)}</code> - <code>{Essentials.get_readable_time(end_s)}</code>\n"
+        f"  └─ <code>{_ytdl_fmt_time(start_s)}</code> - <code>{_ytdl_fmt_time(end_s)}</code>\n"
         f"<b>• Akun Upload:</b> Session {c_idx} [<code>{acc_name}</code>]\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"<b>🛠 Task ID:</b> <code>{task_id}</code>\n"
@@ -585,17 +630,17 @@ async def ytdl_trim_menu_cb(c: Client, cb: CallbackQuery):
         f"<blockquote expandable>"
         f"<b>✂️ YouTube Video Trimmer</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"<b>⏱ Start:</b> <code>{Essentials.get_readable_time(s)}</code>\n"
-        f"<b>⌛️ End:</b> <code>{Essentials.get_readable_time(e)}</code>\n"
-        f"<b>📊 Total:</b> <code>{Essentials.get_readable_time(total)}</code>\n"
+        f"<b>⏱ Start:</b> <code>{_ytdl_fmt_time(s)}</code>\n"
+        f"<b>⌛️ End:</b> <code>{_ytdl_fmt_time(e)}</code>\n"
+        f"<b>📊 Total:</b> <code>{_ytdl_fmt_time(total)}</code>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"<i>Gunakan tombol di bawah untuk menyesuaikan range potongan.</i>"
         f"</blockquote>"
     )
     user_style = get_user_button_style(cb.from_user.id)
     
-    start_lbl = f"🟢 Edit START: {Essentials.get_readable_time(s)}" if target == "s" else f"⚪️ Edit START: {Essentials.get_readable_time(s)}"
-    end_lbl = f"🟢 Edit END: {Essentials.get_readable_time(e)}" if target == "e" else f"⚪️ Edit END: {Essentials.get_readable_time(e)}"
+    start_lbl = f"🟢 Edit START: {_ytdl_fmt_time(s)}" if target == "s" else f"⚪️ Edit START: {_ytdl_fmt_time(s)}"
+    end_lbl = f"🟢 Edit END: {_ytdl_fmt_time(e)}" if target == "e" else f"⚪️ Edit END: {_ytdl_fmt_time(e)}"
     
     buttons = [
         # --- TAB SWITCHER ---
@@ -610,6 +655,7 @@ async def ytdl_trim_menu_cb(c: Client, cb: CallbackQuery):
         [InlineKeyboardButton("⏪ -5m", callback_data=f"ytdl_trim_adj#{task_id}#{target}#-300", style=user_style), InlineKeyboardButton("◀️ -1m", callback_data=f"ytdl_trim_adj#{task_id}#{target}#-60", style=user_style), InlineKeyboardButton("+1m ▶️", callback_data=f"ytdl_trim_adj#{task_id}#{target}#60", style=user_style), InlineKeyboardButton("+5m ⏩", callback_data=f"ytdl_trim_adj#{task_id}#{target}#300", style=user_style)],
         [InlineKeyboardButton("⏪ -30s", callback_data=f"ytdl_trim_adj#{task_id}#{target}#-30", style=user_style), InlineKeyboardButton("◀️ -10s", callback_data=f"ytdl_trim_adj#{task_id}#{target}#-10", style=user_style), InlineKeyboardButton("+10s ▶️", callback_data=f"ytdl_trim_adj#{task_id}#{target}#10", style=user_style), InlineKeyboardButton("+30s ⏩", callback_data=f"ytdl_trim_adj#{task_id}#{target}#30", style=user_style)],
         [InlineKeyboardButton("⏪ -5s", callback_data=f"ytdl_trim_adj#{task_id}#{target}#-5", style=user_style), InlineKeyboardButton("◀️ -1s", callback_data=f"ytdl_trim_adj#{task_id}#{target}#-1", style=user_style), InlineKeyboardButton("+1s ▶️", callback_data=f"ytdl_trim_adj#{task_id}#{target}#1", style=user_style), InlineKeyboardButton("+5s ⏩", callback_data=f"ytdl_trim_adj#{task_id}#{target}#5", style=user_style)],
+        [InlineKeyboardButton("⏪ -0.5s", callback_data=f"ytdl_trim_adj#{task_id}#{target}#-0.5", style=user_style), InlineKeyboardButton("◀️ -0.25s", callback_data=f"ytdl_trim_adj#{task_id}#{target}#-0.25", style=user_style), InlineKeyboardButton("+0.25s ▶️", callback_data=f"ytdl_trim_adj#{task_id}#{target}#0.25", style=user_style), InlineKeyboardButton("+0.5s ⏩", callback_data=f"ytdl_trim_adj#{task_id}#{target}#0.5", style=user_style)],
         
         [InlineKeyboardButton("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", callback_data="none", style=user_style)],
         
@@ -634,15 +680,26 @@ async def ytdl_trim_tab_cb(c: Client, cb: CallbackQuery):
     cb.matches = [type('Match', (), {'group': lambda self, n: task_id})()]
     await ytdl_trim_menu_cb(c, cb)
 
-@Altruix.bot.on_callback_query(filters.regex(r"^ytdl_trim_adj#([#\w]+)#(\w+)#(-?\d+)"))
+@Altruix.bot.on_callback_query(filters.regex(r"^ytdl_trim_adj#([#\w]+)#(\w+)#(-?\d+(?:\.\d+)?)"))
 @iuser_check
 async def ytdl_trim_adj_cb(c: Client, cb: CallbackQuery):
     task_id, target, val = cb.matches[0].groups()
     state = Altruix.YTDL_STATE.get(task_id)
     if not state: return await cb.answer("Sesi kedaluwarsa.", show_alert=True)
-    val = int(val)
-    if target == "s": state["start"] = max(0, min(state["start"] + val, state["end"] - 1))
-    else: state["end"] = max(state["start"] + 1, min(state["end"] + val, state["duration"]))
+    try:
+        delta = float(val)
+    except Exception:
+        delta = 0.0
+    min_gap = 0.01
+    start_v = float(state.get("start", 0) or 0)
+    end_v = float(state.get("end", state.get("duration", 0)) or 0)
+    dur_v = float(state.get("duration", 0) or 0)
+    if target == "s":
+        start_v = max(0.0, min(start_v + delta, end_v - min_gap))
+        state["start"] = start_v
+    else:
+        end_v = max(start_v + min_gap, min(end_v + delta, dur_v))
+        state["end"] = end_v
     await sync_ytdl_task(task_id)
     await ytdl_trim_menu_cb(c, cb)
 
@@ -1189,6 +1246,16 @@ async def ytdl_pl_select_cb(c: Client, cb: CallbackQuery):
             "sender_name": state["sender_name"],
             "user_id": state["user_id"],
             "chat_id": state["chat_id"],
+            "speed": state.get("speed", "1.0x"),
+            "volume": state.get("volume", "Original"),
+            "fade_in": state.get("fade_in", 0) or 0,
+            "fade_out": state.get("fade_out", 0) or 0,
+            "watermark": state.get("watermark", False),
+            "video_bitrate": state.get("video_bitrate", "Original"),
+            "show_desc": state.get("show_desc", False),
+            "audio_lang": state.get("audio_lang", "Default"),
+            "audio_name_fmt": state.get("audio_name_fmt", "title_artist"),
+            "audio_artist_src": state.get("audio_artist_src", "channel"),
             "show_link": state.get("show_link", True),
             "auto_backup": state.get("auto_backup", True),
             "backup_mode": state.get("backup_mode", "bot"),
@@ -1684,3 +1751,208 @@ async def ytdl_set_volume_cb(c: Client, cb: CallbackQuery):
         Altruix.log(f"YTDL Set Volume Error: {ex}\n{traceback.format_exc()}")
         try: await cb.answer(f"Error: {ex}", show_alert=True)
         except: pass
+
+@Altruix.bot.on_callback_query(filters.regex(r"^ytdl_fade_menu#([#\w]+)"))
+@iuser_check
+async def ytdl_fade_menu_cb(c: Client, cb: CallbackQuery):
+    try:
+        await cb.answer()
+        task_id = cb.matches[0].group(1)
+        state = Altruix.YTDL_STATE.get(task_id)
+        if not state:
+            return await cb.answer("Sesi kedaluwarsa.", show_alert=True)
+        if "fade_target" not in state:
+            state["fade_target"] = "in"
+
+        try:
+            start_v = float(state.get("start", 0) or 0)
+            end_v = float(state.get("end", state.get("duration", 0)) or 0)
+            total_v = float(state.get("duration", 0) or 0)
+        except Exception:
+            start_v, end_v, total_v = 0.0, 0.0, 0.0
+
+        if end_v <= 0 and total_v > 0:
+            end_v = total_v
+        if start_v < 0:
+            start_v = 0.0
+        if end_v > total_v and total_v > 0:
+            end_v = total_v
+        if end_v < start_v:
+            end_v = start_v
+
+        base_dur = max(0.0, end_v - start_v)
+        speed_val = state.get("speed", "1.0x")
+        try:
+            speed_float = float(str(speed_val).replace("x", ""))
+            if speed_float <= 0:
+                speed_float = 1.0
+        except Exception:
+            speed_float = 1.0
+        out_dur = base_dur / speed_float if speed_float else base_dur
+
+        try:
+            fade_in = float(state.get("fade_in", 0) or 0)
+        except Exception:
+            fade_in = 0.0
+        try:
+            fade_out = float(state.get("fade_out", 0) or 0)
+        except Exception:
+            fade_out = 0.0
+        if fade_in < 0:
+            fade_in = 0.0
+        if fade_out < 0:
+            fade_out = 0.0
+
+        target = state.get("fade_target", "in")
+        in_lbl = f"🟢 Edit FADE IN: {_ytdl_fmt_time(fade_in)}" if target == "in" else f"⚪️ Edit FADE IN: {_ytdl_fmt_time(fade_in)}"
+        out_lbl = f"🟢 Edit FADE OUT: {_ytdl_fmt_time(fade_out)}" if target == "out" else f"⚪️ Edit FADE OUT: {_ytdl_fmt_time(fade_out)}"
+
+        text = (
+            f"<blockquote expandable>"
+            f"<b>🎚 Fade In / Fade Out (Volume)</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"<b>• Fade In:</b> <code>{_ytdl_fmt_time(fade_in)}</code>\n"
+            f"<b>• Fade Out:</b> <code>{_ytdl_fmt_time(fade_out)}</code>\n"
+            f"<b>• Est. Durasi Output:</b> <code>{_ytdl_fmt_time(out_dur)}</code>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"<i>Gunakan tombol +/- untuk mengatur durasi fade (detik).</i>"
+            f"</blockquote>"
+        )
+
+        user_style = get_user_button_style(cb.from_user.id)
+        buttons = [
+            [
+                InlineKeyboardButton(in_lbl, callback_data=f"ytdl_fade_tab#{task_id}#in", style=user_style),
+                InlineKeyboardButton(out_lbl, callback_data=f"ytdl_fade_tab#{task_id}#out", style=user_style),
+            ],
+            [InlineKeyboardButton("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", callback_data="none", style=user_style)],
+            [
+                InlineKeyboardButton("⏪ -30s", callback_data=f"ytdl_fade_adj#{task_id}#{target}#-30", style=user_style),
+                InlineKeyboardButton("◀️ -10s", callback_data=f"ytdl_fade_adj#{task_id}#{target}#-10", style=user_style),
+                InlineKeyboardButton("+10s ▶️", callback_data=f"ytdl_fade_adj#{task_id}#{target}#10", style=user_style),
+                InlineKeyboardButton("+30s ⏩", callback_data=f"ytdl_fade_adj#{task_id}#{target}#30", style=user_style),
+            ],
+            [
+                InlineKeyboardButton("⏪ -5s", callback_data=f"ytdl_fade_adj#{task_id}#{target}#-5", style=user_style),
+                InlineKeyboardButton("◀️ -1s", callback_data=f"ytdl_fade_adj#{task_id}#{target}#-1", style=user_style),
+                InlineKeyboardButton("+1s ▶️", callback_data=f"ytdl_fade_adj#{task_id}#{target}#1", style=user_style),
+                InlineKeyboardButton("+5s ⏩", callback_data=f"ytdl_fade_adj#{task_id}#{target}#5", style=user_style),
+            ],
+            [
+                InlineKeyboardButton("⏪ -0.5s", callback_data=f"ytdl_fade_adj#{task_id}#{target}#-0.5", style=user_style),
+                InlineKeyboardButton("◀️ -0.25s", callback_data=f"ytdl_fade_adj#{task_id}#{target}#-0.25", style=user_style),
+                InlineKeyboardButton("+0.25s ▶️", callback_data=f"ytdl_fade_adj#{task_id}#{target}#0.25", style=user_style),
+                InlineKeyboardButton("+0.5s ⏩", callback_data=f"ytdl_fade_adj#{task_id}#{target}#0.5", style=user_style),
+            ],
+            [InlineKeyboardButton("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", callback_data="none", style=user_style)],
+            [
+                InlineKeyboardButton("✅ Save Settings", callback_data=f"ytdl_back#{task_id}", style=user_style),
+                InlineKeyboardButton("🔃 Reset Fade", callback_data=f"ytdl_fade_reset#{task_id}", style=user_style),
+            ],
+            [InlineKeyboardButton("« Back to Menu »", callback_data=f"ytdl_back#{task_id}", style=user_style)],
+        ]
+
+        try:
+            await cb.edit_message_caption(caption=text, parse_mode=enums.ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
+        except Exception:
+            await cb.edit_message_text(text=text, parse_mode=enums.ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
+    except Exception as ex:
+        Altruix.log(f"YTDL Fade Menu Error: {ex}\n{traceback.format_exc()}")
+        try:
+            await cb.answer(f"Error: {ex}", show_alert=True)
+        except:
+            pass
+
+@Altruix.bot.on_callback_query(filters.regex(r"^ytdl_fade_tab#([#\w]+)#(in|out)$"))
+@iuser_check
+async def ytdl_fade_tab_cb(c: Client, cb: CallbackQuery):
+    try:
+        task_id, target = cb.matches[0].groups()
+        state = Altruix.YTDL_STATE.get(task_id)
+        if not state:
+            return await cb.answer("Sesi kedaluwarsa.", show_alert=True)
+        state["fade_target"] = target
+        await sync_ytdl_task(task_id)
+        cb.matches = [type("Match", (), {"group": lambda self, n: task_id})()]
+        await ytdl_fade_menu_cb(c, cb)
+    except Exception as ex:
+        Altruix.log(f"YTDL Fade Tab Error: {ex}\n{traceback.format_exc()}")
+        try:
+            await cb.answer(f"Error: {ex}", show_alert=True)
+        except:
+            pass
+
+@Altruix.bot.on_callback_query(filters.regex(r"^ytdl_fade_adj#([#\w]+)#(in|out)#(-?\d+(?:\.\d+)?)$"))
+@iuser_check
+async def ytdl_fade_adj_cb(c: Client, cb: CallbackQuery):
+    try:
+        task_id, target, val = cb.matches[0].groups()
+        state = Altruix.YTDL_STATE.get(task_id)
+        if not state:
+            return await cb.answer("Sesi kedaluwarsa.", show_alert=True)
+        try:
+            delta = float(val)
+        except Exception:
+            delta = 0.0
+
+        try:
+            start_v = float(state.get("start", 0) or 0)
+            end_v = float(state.get("end", state.get("duration", 0)) or 0)
+            total_v = float(state.get("duration", 0) or 0)
+        except Exception:
+            start_v, end_v, total_v = 0.0, 0.0, 0.0
+        if end_v <= 0 and total_v > 0:
+            end_v = total_v
+        if start_v < 0:
+            start_v = 0.0
+        if end_v > total_v and total_v > 0:
+            end_v = total_v
+        if end_v < start_v:
+            end_v = start_v
+        base_dur = max(0.0, end_v - start_v)
+        speed_val = state.get("speed", "1.0x")
+        try:
+            speed_float = float(str(speed_val).replace("x", ""))
+            if speed_float <= 0:
+                speed_float = 1.0
+        except Exception:
+            speed_float = 1.0
+        out_dur = base_dur / speed_float if speed_float else base_dur
+
+        key = "fade_in" if target == "in" else "fade_out"
+        try:
+            cur = float(state.get(key, 0) or 0)
+        except Exception:
+            cur = 0.0
+        cur = max(0.0, cur + delta)
+        if out_dur > 0:
+            cur = min(cur, out_dur)
+        state[key] = cur
+        await sync_ytdl_task(task_id)
+        await ytdl_fade_menu_cb(c, cb)
+    except Exception as ex:
+        Altruix.log(f"YTDL Fade Adj Error: {ex}\n{traceback.format_exc()}")
+        try:
+            await cb.answer(f"Error: {ex}", show_alert=True)
+        except:
+            pass
+
+@Altruix.bot.on_callback_query(filters.regex(r"^ytdl_fade_reset#([#\w]+)$"))
+@iuser_check
+async def ytdl_fade_reset_cb(c: Client, cb: CallbackQuery):
+    try:
+        task_id = cb.matches[0].group(1)
+        state = Altruix.YTDL_STATE.get(task_id)
+        if not state:
+            return await cb.answer("Sesi kedaluwarsa.", show_alert=True)
+        state["fade_in"] = 0.0
+        state["fade_out"] = 0.0
+        await sync_ytdl_task(task_id)
+        cb.matches = [type("Match", (), {"group": lambda self, n: task_id})()]
+        await ytdl_fade_menu_cb(c, cb)
+    except Exception as ex:
+        Altruix.log(f"YTDL Fade Reset Error: {ex}\n{traceback.format_exc()}")
+        try:
+            await cb.answer(f"Error: {ex}", show_alert=True)
+        except:
+            pass

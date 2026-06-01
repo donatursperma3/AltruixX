@@ -109,6 +109,31 @@ class CustomClientMethods:
         is_timeout = False
         is_update_sync = op_name.startswith("updates.") or "GetChannelDifference" in op_name
         is_non_critical = op_name in non_critical_ops
+
+        def _get_op_context() -> str:
+            parts = []
+            if hasattr(op, "chat_id"):
+                parts.append(f"chat_id={getattr(op, 'chat_id')}")
+            if hasattr(op, "channel_id"):
+                parts.append(f"channel_id={getattr(op, 'channel_id')}")
+            if hasattr(op, "message_id"):
+                parts.append(f"msg_id={getattr(op, 'message_id')}")
+            if hasattr(op, "reply_to_message_id"):
+                parts.append(f"reply_to_msg_id={getattr(op, 'reply_to_message_id')}")
+            if hasattr(op, "inline_message_id"):
+                parts.append(f"inline_msg_id={getattr(op, 'inline_message_id')}")
+            if hasattr(op, "query_id"):
+                parts.append(f"query_id={getattr(op, 'query_id')}")
+            if hasattr(op, "peer"):
+                peer = getattr(op, "peer")
+                if peer is not None:
+                    if hasattr(peer, "channel_id"):
+                        parts.append(f"peer_channel_id={getattr(peer, 'channel_id')}")
+                    elif hasattr(peer, "chat_id"):
+                        parts.append(f"peer_chat_id={getattr(peer, 'chat_id')}")
+                    elif hasattr(peer, "user_id"):
+                        parts.append(f"peer_user_id={getattr(peer, 'user_id')}")
+            return "; ".join(parts)
         
         # 5. SYNC SERIALIZATION (Anti-Thundering Herd)
         # We use a per-client lock for sync operations to ensure they don't drown the event loop
@@ -284,6 +309,9 @@ class CustomClientMethods:
                     if is_non_critical:
                         debug_mode = getattr(Altruix.config, "DEBUG", False)
                         msg_str = error_str if debug_mode else error_str[:150]
+                        op_context = _get_op_context()
+                        if op_context:
+                            msg_str = f"{msg_str} | {op_context}"
                         is_msg_not_modified = ("MessageNotModified" in error_type) or ("MESSAGE_NOT_MODIFIED" in msg_str)
                         if is_msg_not_modified:
                             if debug_mode:

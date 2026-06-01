@@ -105,6 +105,10 @@ class LocalCollection:
     async def find_one_and_update(
         self, query: Dict[str, Any], update: Dict[str, Any], upsert: bool = False
     ):
+        """
+        Finds a document and applies MongoDB-like updates ($set, $push, $addToSet, $pull).
+        Supports 'upsert' to create a document if it doesn't exist.
+        """
         item = await self.find_one(query)
         if not item:
             if upsert:
@@ -119,10 +123,11 @@ class LocalCollection:
             else:
                 return None
 
-        # Apply updates
+        # Apply updates ($set replaces values)
         if "$set" in update:
             item.update(update["$set"])
         
+        # Apply $push (adds to list, even if duplicates exist)
         if "$push" in update:
             for k, v in update["$push"].items():
                 if k not in item:
@@ -135,6 +140,7 @@ class LocalCollection:
                 else:
                     item[k].append(v)
 
+        # Apply $addToSet (adds to list only if value doesn't already exist)
         if "$addToSet" in update:
             for k, v in update["$addToSet"].items():
                 if k not in item:
@@ -144,13 +150,14 @@ class LocalCollection:
                 if v not in item[k]:
                     item[k].append(v)
 
+        # Apply $pull (removes all instances of value from list)
         if "$pull" in update:
             for k, v in update["$pull"].items():
                 if k in item and isinstance(item[k], list):
                     if v in item[k]:
                         item[k].remove(v)
 
-        # Save back to DB
+        # Save back to DB (triggers _dirty=True)
         self.db.update_collection(self.name, item["_id"], item)
         return item
 
@@ -184,17 +191,49 @@ class LocalDatabase:
         return self._lock
 
     def _load(self):
+        """Loads database from disk. Includes automatic backup recovery logic."""
         if not path.exists(self.path):
-            self.data = {}
-            self._sync_save()
-            return
+            # If main file is missing, try to restore from the last known good backup (.bak)
+            backup_path = f"{self.path}.bak"
+            if path.exists(backup_path):
+                try:
+                    import shutil
+                    shutil.copy(backup_path, self.path)
+                    print(f"[LocalDatabase] Main file missing. Restored from backup: {backup_path}")
+                except Exception as e:
+                    print(f"[LocalDatabase] Failed to restore from backup: {e}")
+            else:
+                # No file and no backup - initialize empty state
+                self.data = {}
+                self._sync_save()
+                return
+
         try:
+            # Attempt to load the main JSON file
             with open(self.path, "r", encoding="utf-8") as f:
                 self.data = json.load(f)
             self._dirty = False
-        except (ValueError, FileNotFoundError):
-            self.data = {}
-            self._sync_save()
+        except (ValueError, FileNotFoundError, json.JSONDecodeError) as e:
+            # If main file is corrupted (JSONDecodeError), try to recover from backup
+            print(f"[LocalDatabase] Load Error: {e}. Attempting backup recovery...")
+            backup_path = f"{self.path}.bak"
+            if path.exists(backup_path):
+                try:
+                    with open(backup_path, "r", encoding="utf-8") as f:
+                        self.data = json.load(f)
+                    # Mark as dirty so the recovered data is immediately saved back to the main file
+                    self._dirty = True 
+                    print(f"[LocalDatabase] Successfully recovered from backup!")
+                except Exception as be:
+                    print(f"[LocalDatabase] Backup recovery failed: {be}")
+                    self.data = {}
+            else:
+                self.data = {}
+            
+            # If both main and backup failed, start fresh to avoid blocking startup
+            if not self.data:
+                print("[LocalDatabase] FATAL: Could not load data or backup. Starting fresh.")
+                self._sync_save()
 
     async def reload(self):
         """Reload database from disk safely."""
@@ -217,30 +256,51 @@ class LocalDatabase:
             json.dump(self.data, _file, indent=4)
 
     async def save_now(self) -> None:
-        """Asynchronous save using aiofiles."""
+        """
+        Asynchronous save using aiofiles with atomic replacement.
+        
+        Logic:
+        1. Serializes current data to a JSON string.
+        2. Writes to a temporary file (.tmp).
+        3. Renames current file to backup (.bak) if it exists.
+        4. Renames temporary file to the main database file path.
+        This prevents data loss during power failure or unexpected crashes.
+        """
         if not self._dirty:
             return
 
         async with self._lock:
             try:
-                # Create a copy or dump string while holding param lock if needed?
-                # For simplicity, we assume dict operations are atomic enough for json dump in CPython
-                # But to be safe against concurrent modification during dump:
-                
                 # Use a custom default to handle non-serializable objects (like Pyrogram Clients)
+                # to prevent json.dumps from raising a TypeError.
                 def _json_serial(obj):
                     """JSON serializer for objects not serializable by default json code"""
                     return f"<{type(obj).__name__} non-serializable>"
                 
+                # Pre-serialize to string to minimize time spent holding file handles
                 data_to_save = json.dumps(self.data, indent=4, default=_json_serial)
                 
-                async with aiofiles.open(self.path, "w+", encoding="utf-8") as _file:
+                # Step 1: Write to temporary file
+                tmp_path = f"{self.path}.tmp"
+                async with aiofiles.open(tmp_path, "w", encoding="utf-8") as _file:
                     await _file.write(data_to_save)
+                
+                # Step 2: Atomic rename operations
+                # On Windows/Unix, renaming is the safest way to ensure file integrity.
+                import os
+                if os.path.exists(self.path):
+                    # Maintain one generation of backup (.bak)
+                    backup_path = f"{self.path}.bak"
+                    if os.path.exists(backup_path):
+                        os.remove(backup_path)
+                    os.rename(self.path, backup_path)
+                
+                # Finalize: Replace main file with the newly written temp file
+                os.rename(tmp_path, self.path)
                 
                 self._dirty = False
             except Exception as e:
-                # Log the error but don't crash. Now that we have a default handler, 
-                # this block should only be reached on disk/file system errors.
+                # Log the error but don't crash. This block handles disk/permission errors.
                 print(f"[LocalDatabase] Save Error: {e}")
 
     async def start_background_saver(self):

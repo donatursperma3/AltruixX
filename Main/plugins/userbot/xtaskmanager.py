@@ -14,7 +14,7 @@ import logging
 import re
 import traceback
 from pyrogram import Client, filters, enums
-from pyrogram.errors import QueryIdInvalid
+from pyrogram.errors import QueryIdInvalid, MessageNotModified
 from pyrogram.types import (
     InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery,
     InlineQuery, InlineQueryResultArticle, InputTextMessageContent
@@ -27,7 +27,7 @@ from Main.utils.file_helpers import get_user_button_style
 # Plugin Metadata
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = "xtaskmanager"
-PLUGIN_VERSION = "1.0.253"
+PLUGIN_VERSION = "1.0.255"
 
 logger = logging.getLogger("altruix.xtaskmanager")
 logger.setLevel(logging.INFO)
@@ -126,6 +126,98 @@ def _inject_status_notice(text: str, notice: str) -> str:
     if text.startswith(marker):
         return text.replace(marker, marker + banner, 1)
     return f"<blockquote expandable>{banner}{text}</blockquote>"
+
+def _format_duration(seconds: float) -> str:
+    """Format seconds into human readable format: bulan, hari, jam, menit, detik"""
+    if seconds < 1:
+        return f"{int(seconds * 1000)} milidetik"
+    
+    seconds = int(seconds)
+    minutes, seconds = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    days, hours = divmod(hours, 24)
+    months, days = divmod(days, 30) # Pendekatan 1 bulan = 30 hari
+    
+    parts = []
+    if months > 0:
+        parts.append(f"{months} bulan")
+    if days > 0:
+        parts.append(f"{days} hari")
+    if hours > 0:
+        parts.append(f"{hours} jam")
+    if minutes > 0:
+        parts.append(f"{minutes} menit")
+    if seconds > 0 or not parts:
+        parts.append(f"{seconds} detik")
+        
+    return " ".join(parts)
+
+def _try_parse_datetime(value):
+    from datetime import datetime
+    if value is None:
+        return None
+    if hasattr(value, "strftime") and hasattr(value, "timestamp"):
+        return value
+    if isinstance(value, (int, float)):
+        try:
+            return datetime.fromtimestamp(float(value))
+        except Exception:
+            return None
+    s = str(value).strip()
+    if not s or s == "-":
+        return None
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(s, fmt)
+        except Exception:
+            pass
+    try:
+        return datetime.fromisoformat(s)
+    except Exception:
+        return None
+
+def _resolve_finished_account_name(tdata: dict) -> str:
+    raw = str(tdata.get("account_name") or tdata.get("account") or "").strip()
+    if raw and raw.lower() not in {"unknown", "unknown account", "unknownaccount", "?"}:
+        return raw
+
+    try:
+        cid = tdata.get("client_id") or tdata.get("user_id") or tdata.get("account_id")
+        if cid:
+            cid = int(cid)
+    except Exception:
+        cid = None
+
+    if cid:
+        try:
+            for c in getattr(Altruix, "clients", []) or []:
+                me = getattr(c, "me", None)
+                if me and getattr(me, "id", None) == cid:
+                    name = f"{me.first_name or ''} {me.last_name or ''}".strip()
+                    return name or (me.username or "Unknown")
+        except Exception:
+            pass
+
+    return raw or "Unknown"
+
+def _resolve_finished_time_str(tdata: dict) -> str:
+    from datetime import timedelta
+
+    finish_raw = tdata.get("finish_time") or tdata.get("end_time") or tdata.get("finished_at")
+    finish_dt = _try_parse_datetime(finish_raw)
+    if not finish_dt:
+        start_dt = _try_parse_datetime(tdata.get("start_time"))
+        dur = tdata.get("total_duration")
+        try:
+            dur = float(dur)
+        except Exception:
+            dur = None
+        if start_dt and dur is not None:
+            finish_dt = start_dt + timedelta(seconds=max(0.0, dur))
+
+    if not finish_dt:
+        return "-"
+    return finish_dt.strftime("%Y-%m-%d %H:%M:%S")
 
 async def safe_cb_answer(cb: CallbackQuery, text: str = "", show_alert: bool = False, cache_time: int = 0) -> bool:
     """Answer callback queries safely without crashing on expired query IDs."""
@@ -237,6 +329,40 @@ def scan_and_merge_caches():
     else:
         logger.info("[TaskManager] No CG cache file found.")
     
+    # 2. Merge YTDL State (In-Memory)
+    try:
+        if hasattr(Altruix, "YTDL_STATE") and isinstance(Altruix.YTDL_STATE, dict):
+            for tid, tdata in Altruix.YTDL_STATE.items():
+                if tid not in registry:
+                    registry[tid] = {
+                        "task": None,
+                        "name": f"🎬 {tdata.get('title', 'YouTube Tool')}",
+                        "plugin": "xyt_tools",
+                        "started_at": time.time(), # Fallback
+                        "user_id": tdata.get("user_id"),
+                        "details": f"Processing: {tdata.get('url', '-')}",
+                        "is_interrupted": True
+                    }
+    except Exception as e:
+        logger.error(f"[TaskManager] Error merging YTDL state: {e}")
+
+    # 3. Merge YTCUT State (In-Memory)
+    try:
+        if hasattr(Altruix, "YTCUT_STATE") and isinstance(Altruix.YTCUT_STATE, dict):
+            for tid, tdata in Altruix.YTCUT_STATE.items():
+                if tid not in registry:
+                    registry[tid] = {
+                        "task": None,
+                        "name": f"✂️ {tdata.get('title', 'YT Multi-Cut')}",
+                        "plugin": "xytcut_tools",
+                        "started_at": time.time(), # Fallback
+                        "user_id": tdata.get("user_id"),
+                        "details": f"Mode: {tdata.get('mode', 'keep').upper()}",
+                        "is_interrupted": True
+                    }
+    except Exception as e:
+        logger.error(f"[TaskManager] Error merging YTCUT state: {e}")
+
     return registry
 
 def get_all_tasks():
@@ -340,7 +466,7 @@ def find_task_by_id(task_id: str) -> tuple:
     if not task_id:
         return None, None
         
-    registry = _ensure_registry()
+    registry = get_all_tasks()
     
     # 1. Try exact match
     if task_id in registry:
@@ -542,6 +668,8 @@ def gen_task_list_data(user_id: int, page: int = 1, page_size: int = 5, task_fil
         cleanup_stale_tasks()
         registry = get_all_tasks()
         user_style = get_user_button_style(user_id)
+        from datetime import datetime
+        last_update_str = datetime.now().strftime("%H:%M:%S")
         
         if task_filter is None:
             task_filter = get_task_filter()
@@ -551,7 +679,7 @@ def gen_task_list_data(user_id: int, page: int = 1, page_size: int = 5, task_fil
             "all": "All",
             "running": "Running",
             "interrupted": "Intrrupted",
-            "pause": "Pause"
+            "pause": "Paused"
         }
         
         # Apply filtering
@@ -569,6 +697,7 @@ def gen_task_list_data(user_id: int, page: int = 1, page_size: int = 5, task_fil
                 "<blockquote expandable>"
                 f"📋 <b>Active Tasks ({filter_labels.get(task_filter)})</b>\n\n"
                 "<i>No tasks found matching this filter.</i>"
+                f"\n\n• Last Update: <code>{last_update_str}</code>"
                 "</blockquote>"
             )
             # Still show filter buttons even if empty
@@ -611,9 +740,7 @@ def gen_task_list_data(user_id: int, page: int = 1, page_size: int = 5, task_fil
             is_interrupted = entry.get("is_interrupted", False)
             
             duration = int(now - started)
-            mins, secs = divmod(duration, 60)
-            hrs, mins = divmod(mins, 60)
-            dur_str = f"{hrs}h{mins}m{secs}s" if hrs > 0 else (f"{mins}m{secs}s" if mins > 0 else f"{secs}s")
+            dur_str = _format_duration(duration)
             
             # Determine status text and icon
             if is_interrupted:
@@ -673,6 +800,21 @@ def gen_task_list_data(user_id: int, page: int = 1, page_size: int = 5, task_fil
             nav_row.append(InlineKeyboardButton("Next »", callback_data="taskmgr_noop", style=user_style))
             
         buttons.append(nav_row)
+
+        jump_row = []
+        if page > 1:
+            jump_back = max(1, page - 5)
+            jump_row.append(InlineKeyboardButton("« 5 Prev ", callback_data=f"taskmgr_page_{jump_back}", style=user_style))
+        else:
+            jump_row.append(InlineKeyboardButton("« 5 Prev ", callback_data="taskmgr_noop", style=user_style))
+
+        if page < total_pages:
+            jump_next = min(total_pages, page + 5)
+            jump_row.append(InlineKeyboardButton("Next 5 »", callback_data=f"taskmgr_page_{jump_next}", style=user_style))
+        else:
+            jump_row.append(InlineKeyboardButton("Next 5 »", callback_data="taskmgr_noop", style=user_style))
+
+        buttons.append(jump_row)
         
         # First and Last navigation
         buttons.append([
@@ -693,7 +835,7 @@ def gen_task_list_data(user_id: int, page: int = 1, page_size: int = 5, task_fil
             
         header = f"📋 <b>Active Tasks ({filter_labels.get(task_filter, 'All')})</b> ({len(filtered_registry)} filtered / {len(registry)} total)\n" + "━" * 18 + "\n"
         body = "\n\n".join(lines)
-        footer = "\n" + "━" * 18 + "\n💡 Click buttons below to manage."
+        footer = "\n" + "━" * 18 + "\n💡 Click buttons below to manage.\n• Last Update: <code>" + last_update_str + "</code>"
         text = f"<blockquote expandable>{header}{body}{footer}</blockquote>"
         
         return text, InlineKeyboardMarkup(buttons)
@@ -725,11 +867,6 @@ def gen_task_status_data(user_id: int, tid: str):
         is_paused = entry.get("paused", False)
         is_recur = entry.get("recurring", False)
         
-        duration = int(time.time() - started)
-        mins, secs = divmod(duration, 60)
-        hrs, mins = divmod(mins, 60)
-        dur_str = f"{hrs}h{mins}m{secs}s" if hrs > 0 else (f"{mins}m{secs}s" if mins > 0 else f"{secs}s")
-        
         is_interrupted = entry.get("is_interrupted", False)
         if is_interrupted:
             status = "⚠️ Interrupted"
@@ -738,10 +875,9 @@ def gen_task_status_data(user_id: int, tid: str):
         else:
             status = "🟢 Running" if task_obj and not task_obj.done() else "⚫ Done"
         
-        # Uptime in minutes and seconds
+        # Uptime in human readable format
         uptime_total_sec = int(time.time() - started)
-        up_mins, up_secs = divmod(uptime_total_sec, 60)
-        uptime_str = f"{up_mins} menit {up_secs} detik"
+        uptime_str = _format_duration(uptime_total_sec)
         
         from datetime import datetime
         start_str = datetime.fromtimestamp(started).strftime("%Y-%m-%d %H:%M:%S")
@@ -1140,9 +1276,28 @@ def gen_finished_tasks_data(user_id: int, page: int = 1):
                             "status": tdata.get("status", "completed"),
                             "progress": f"{len(tdata.get('created_groups', []))}/{tdata.get('count', 0)}",
                             "time": tdata.get("start_time", "-"),
-                            "account": str(tdata.get("account_name") or "Unknown")
+                            "finish_time": _resolve_finished_time_str(tdata),
+                            "account": _resolve_finished_account_name(tdata)
                         })
             except: pass
+
+        # 2. Check in-memory COMPLETED_CREATEGROUP_TASKS
+        try:
+            from Main.plugins.userbot.xcreategroup import COMPLETED_CREATEGROUP_TASKS
+            for tid, tdata in COMPLETED_CREATEGROUP_TASKS.items():
+                if not any(f["tid"] == tid for f in all_finished):
+                    all_finished.append({
+                        "tid": tid,
+                        "name": str(tdata.get("name") or "CreateGroup Task"),
+                        "plugin": "xcreategroup",
+                        "status": tdata.get("status", "completed"),
+                        "progress": f"{len(tdata.get('created_groups', []))}/{tdata.get('count', 0)}",
+                        "time": tdata.get("start_time").strftime('%Y-%m-%d %H:%M:%S') if hasattr(tdata.get("start_time"), "strftime") else str(tdata.get("start_time") or "-"),
+                        "finish_time": _resolve_finished_time_str(tdata),
+                        "account": _resolve_finished_account_name(tdata)
+                    })
+        except Exception as e:
+            logger.debug(f"Failed to read in-memory COMPLETED_CREATEGROUP_TASKS: {e}")
 
         if not all_finished:
             return "<blockquote expandable>📭 <b>No finished tasks found.</b></blockquote>", \
@@ -1165,7 +1320,7 @@ def gen_finished_tasks_data(user_id: int, page: int = 1):
         buttons = []
         for t in current_page:
             status_icon = "✅" if t['status'] == "completed" else "❌"
-            text += f"{status_icon} <code>{t['tid']}</code> | {t['name']} ({t['progress']}) | Owner: <b>{html.escape(t['account'])}</b>\n"
+            text += f"{status_icon} <code>{t['tid']}</code> | {t['name']} ({t['progress']}) | Owner: <b>{html.escape(t['account'])}</b> | Selesai: <code>{html.escape(str(t.get('finish_time') or '-'))}</code>\n"
             # Since these are finished, we might not have specific management for them here,
             # but we could add a "Re-run" or "View Log" if supported.
             # For now, just listing.
@@ -1577,7 +1732,10 @@ async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
                 
                 # Regenerate list with page 1
                 text, kb = gen_task_list_data(user_id, page=1, task_filter=new_filter)
-                await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+                try:
+                    await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+                except MessageNotModified:
+                    pass
             except Exception as e:
                 logger.error(f"Error in filter callback: {e}\n{traceback.format_exc()}")
                 await safe_cb_answer(cb, f"❌ Error: {str(e)}", show_alert=True)
@@ -1599,8 +1757,9 @@ async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
             text, kb = gen_finished_tasks_data(user_id, page=page)
             try:
                 await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
-            except Exception:
-                pass
+            except Exception as e:
+                if "MESSAGE_NOT_MODIFIED" not in str(e):
+                    logger.error(f"Error displaying finished tasks callback: {e}\n{traceback.format_exc()}")
             return
 
         if action == "cachemgr":
@@ -1669,7 +1828,10 @@ async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
             target = "_".join(data[3:])
             await safe_cb_answer(cb, show_alert=False)
             text, kb = gen_confirmation_data(user_id, real_action, target)
-            await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+            try:
+                await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+            except MessageNotModified:
+                pass
             return
 
         if action == "confirm":
@@ -1806,7 +1968,10 @@ async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
                     # Redirect to cache manager
                     text, kb = gen_cache_manager_data(user_id)
                     text = _inject_status_notice(text, msg)
-                    await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+                    try:
+                        await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+                    except MessageNotModified:
+                        pass
                     return
                 else:
                     success, msg = False, "Unknown action."
@@ -1819,7 +1984,10 @@ async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
 
                 text, kb = gen_task_list_data(user_id, page=target_page)
                 text = _inject_status_notice(text, msg)
-                await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+                try:
+                    await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+                except MessageNotModified:
+                    pass
                 return
             except Exception as e:
                 logger.error(f"Error in confirm action: {e}\n{traceback.format_exc()}")
@@ -1849,21 +2017,30 @@ async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
             success, msg = pause_task_by_id(tid)
             await safe_cb_answer(cb, msg, show_alert=True)
             text, kb = gen_task_status_data(user_id, tid)
-            await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+            try:
+                await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+            except MessageNotModified:
+                pass
             return
 
         if action == "resume":
             success, msg = resume_task_by_id(tid)
             await safe_cb_answer(cb, msg, show_alert=True)
             text, kb = gen_task_status_data(user_id, tid)
-            await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+            try:
+                await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+            except MessageNotModified:
+                pass
             return
 
         if action == "recur":
             success, msg = toggle_recurring_by_id(tid)
             await safe_cb_answer(cb, msg, show_alert=True)
             text, kb = gen_task_status_data(user_id, tid)
-            await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+            try:
+                await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+            except MessageNotModified:
+                pass
             return
 
         if action == "status":
@@ -1905,6 +2082,8 @@ async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
             
         try:
             await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+        except MessageNotModified:
+            pass
         except Exception:
             pass
     except Exception as e:

@@ -403,7 +403,7 @@ async def pm_logger_bot_handler(c: Client, m: RawMessage):
             log_content += "\n\n"
 
         log_content += (
-            f"<blockquote expandable>• <b>From:</b> {sender_hyperlink}\n"
+            f"<blockquote expandable>• <b>From User/Bot:</b> {sender_hyperlink}\n"
             f"• <b>User ID:</b> <code>{sender_id}</code>\n"
             f"• <b>Username:</b> {sender_username}\n"
             f"• <b>To Bot:</b> {c.me.mention}\n"
@@ -414,20 +414,20 @@ async def pm_logger_bot_handler(c: Client, m: RawMessage):
         )
         
         # ─── BUTTONS ───
+        button_style = get_btn_style(c.me.id)
         reaction_btns = [
-            InlineKeyboardButton(emoji, callback_data=f"pmlb_react_{m.chat.id}_{m.id}_{c.me.id}_{emoji}")
+            InlineKeyboardButton(emoji, callback_data=f"pmlb_react_{m.chat.id}_{m.id}_{c.me.id}_{emoji}", style=button_style)
             for emoji in DEFAULT_REACTION_EMOJIS
         ]
         
         row1 = reaction_btns[:3]
         row2 = reaction_btns[3:6]
         
-        button_style = get_btn_style(c.me.id)
         keyboard = [
             row1,
             row2,
             [
-                InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, "➕ Others"), callback_data=f"pmlb_others_{m.chat.id}_{m.id}_{c.me.id}", style=button_style),
+                InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, "➕ Others React"), callback_data=f"pmlb_others_{m.chat.id}_{m.id}_{c.me.id}", style=button_style),
                 InlineKeyboardButton(await Essentials.get_user_button_style(c.me.id, "🗑️ Remove React"), callback_data=f"pmlb_unreact_{m.chat.id}_{m.id}_{c.me.id}", style=button_style)
             ],
             [

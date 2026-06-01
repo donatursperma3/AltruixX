@@ -3,6 +3,337 @@
 All notable changes to the **Altroid-X** project from version **0.0.10.0959H** to the latest.
 Latest updates are always added at the top (newest → oldest).
 
+## [1.0.267] - 2026-06-01
+
+### �️ 🛠️ CreateGroup: Debounce, Task ID Routing, and Pending Confirmation Cleanup
+- **Fixed: Double-trigger and jumping button values** in `Main/plugins/userbot/xcreategroup.py` and `Main/internals/settings_handlers/creategroup_handlers.py` by adding debounce guarding and ensuring task-specific `callback_data` routes.
+- **Improved: Pending confirmation lifecycle** by storing `created_at` timestamps and auto-cleaning stale `PENDING_CONFIRMATIONS` after 5 minutes.
+- **Improved: Stability and error safety** in CreateGroup persistence and callback handlers with explicit exception handling and better logging.
+
+### 🔀 YTcut: Fixed Missing Segments Issue
+- **Fixed: Auto-merge detection in `run_ytcut_download()`**:
+  - Discovered that `yt-dlp` with `--merge-output-format mp4` automatically merges all sections into a single output file instead of creating per-section files.
+  - Added detection logic: if fallback finds only 1 file for multiple sections, sets `skip_ffmpeg_concat` flag to use auto-merged output directly.
+  - Prevents downstream concat step when unnecessary and eliminates "missing segments" false errors.
+- **Improved: Fallback file detection**:
+  - Enhanced fallback with stdout parsing (looking for "Destination:" and "Merging formats into" lines) to capture yt-dlp's final output filename.
+  - Fallback now gracefully handles both multi-file and single auto-merged file scenarios.
+- **Improved: Heartbeat Update Interval**:
+  - Reduced from 10 seconds to 6 seconds for quicker progress feedback during download and concat phases.
+- **Improved: Process exception logging**:
+  - Added logging to previously silent exception handlers in `delete_ytcut_task()`, watchdog process.kill, and `init_ytcut_persistence()` for better debugging.
+- **Improved: FFmpeg concat error reporting**:
+  - Added explicit except block to capture and log FFmpeg error outputs (stdout/stderr) before re-raising.
+- **Updated: process_ytcut_task()**:
+  - Added check for `skip_ffmpeg_concat` flag to bypass FFmpeg concat when yt-dlp output is already final.
+
+---
+
+## [1.0.266] - 2026-06-01
+
+### 🔀 YTcut: Merge Semua Segmen Feature
+- **Added: Merge Semua Segmen Button**:
+  - Added a new dashboard button for YTcut sessions with 2+ segments to trigger merge confirmation.
+  - Displays a Yes/No merge confirmation dialog before starting the merge flow.
+- **Added: Merge flow and helper**:
+  - Implemented `merge_ytcut_segments()` in `Main/internals/ytcut_helpers.py` to concatenate all segment files into one output using FFmpeg concat.
+  - Added state tracking and persistence for `merge_in_progress`, `merge_completed`, and `merge_error`.
+- **Improved: YTcut dashboard merge status**:
+  - Dashboard now shows current merge progress status and merge failure details when present.
+- **Fixed: Segment file detection during merge**:
+  - Added robust fallback for `part_00x*` segment file discovery to avoid missing files when extension or naming varied.
+- **Improved: merge operation logging**:
+  - Added detailed merge entry, exit, and traceback logging for easier debugging and task tracing.
+
+---
+
+## [1.0.265] - 2026-05-31
+
+### 🎬 YTcut: Real-time Progress Tracking & Heartbeat
+- **Added: Interactive Progress Bar**:
+  - Implemented real-time progress parsing for `yt-dlp` download segments.
+  - The dashboard now displays a visual progress bar and percentage (`█▋░ 10.5%`) during the download phase.
+- **Improved: Heartbeat Mechanism**:
+  - Added a 10-second update interval for both download and concatenation phases to prevent the UI from appearing "stuck".
+  - During FFmpeg concatenation, the UI now shows an elapsed timer heartbeat (e.g., `Sedang memproses FFmpeg concat (20s)...`).
+- **Improved: Inline bot error tracing**:
+  - Extended `CustomClient.invoke` in `Main/core/types/client.py` to include `chat_id`, `channel_id`, `message_id`, and inline query context in non-critical `QueryIdInvalid` log entries.
+- **Improved: YTcut manual input in private chat**:
+  - Added support for multi-line timestamp input in PM, e.g. `01:07 - 01:33`, `01:58 - 02:39`.
+  - Added cancel support via button and by typing `cancel` / `batal`.
+- **Fixed: YTcut FFmpeg concat path handling**:
+  - Concat list now writes absolute `file` paths to prevent duplicated temp directory resolution on Windows.
+- **Improved: YTcut error reporting**:
+  - Assistant bot now sends a group log notification to `Altruix.log_chat` when YTcut processing fails.
+  - Notifikasi kini menyertakan stage proses dan cuplikan traceback penting.
+- **Improved: YTcut confirmation dialog**:
+  - Converted YTcut confirmation text to blockquote format for better readability.
+  - Applied per-session button styling to confirmation buttons using `get_user_button_style()`.
+- **Fixed: YTcut download hang detection**:
+  - Added a 5-minute yt-dlp inactivity watchdog in `run_ytcut_download()` to kill stalled downloads and report a clear timeout error.
+- **Fixed: YTcut inline dashboard query mapping**:
+  - Normalized internal `xytcut` task IDs by removing the leading `#` from `make_ytcut_task_id()` so inline query handlers and callback regexes match correctly.
+- **Optimization**: Switched to asynchronous line-by-line stdout parsing for `yt-dlp` to ensure responsive progress updates without blocking the main event loop.
+
+---
+
+## [1.0.264] - 2026-05-31
+
+### 🎬 YTcut & Task Manager: Final Integration & UI Polish
+- **Fixed: `register_task` TypeError**:
+  - Resolved `unexpected keyword argument 'task'` in `xytcut_bot.py` by updating the parameter name to `asyncio_task` to match the core registry definition.
+- **Fixed: unresponsive "Yes" Button & UI Freeze**:
+  - Implemented `MessageNotModified` handling in `xytcut_bot.py` (both in specific handlers and global `_safe_edit` helper) to prevent UI stalls when buttons are clicked multiple times.
+- **Improved: Instant Visual Feedback**:
+  - Added immediate UI update to "⏳ Memulai proses..." after clicking the **[Yes]** confirmation button, ensuring the user knows the task has been enqueued.
+- **Improved: Cross-Plugin Task Stability**:
+  - Ensured all background tasks for YouTube tools are correctly linked to the Universal Task Manager for full lifecycle visibility (Start → Active → Done).
+
+---
+
+## [1.0.263] - 2026-05-31
+
+### 📋 Task Manager: Stability & YouTube Tools Integration
+- **Fixed: `400 MESSAGE_NOT_MODIFIED` Error**:
+  - Implemented specific handling for `MessageNotModified` exception across `xtaskmanager.py` callback handlers.
+  - Prevents bot crashes and error logging when users rapidly click identical navigation or confirmation buttons.
+- **Improved: YouTube Tools Visibility in `.tasklist`**:
+  - **Standardized IDs**: Updated `xytcut` Task IDs to use the `#YTC...` prefix for better recognition.
+  - **Explicit Registration**: Added `register_task` calls in `ytcut_helpers.py` to ensure active processing is tracked in real-time.
+  - **Auto-State Detection**: Enhanced `xtaskmanager.py` to automatically detect and merge in-memory `YTDL_STATE` and `YTCUT_STATE` into the global registry.
+  - **Robust Lookup**: Improved `find_task_by_id` to perform a cache sync before reporting task-not-found, ensuring accurate task management.
+
+---
+
+## [1.0.262] - 2026-05-31
+
+### 🎬 YTcut: Custom Segment Reordering & Sorting Fix
+- **Added: "🔄 Ubah Susunan / Urutan" Menu**:
+  - New menu accessible from the dashboard (when ≥ 2 segments exist) to manually reorder segments.
+  - Implemented 🔼 **Up** and 🔽 **Down** buttons for each segment to move them within the list.
+  - Changes the order in which segments are concatenated in the final video/audio output.
+- **Added: "⏳ Reset (Urut Waktu)" Functionality**:
+  - Allows users to quickly reset the custom order back to chronological (Sort by Time).
+- **Fixed: YT-DLP Segment Sorting Bug**:
+  - Resolved an issue where segments were sorted lexicographically (e.g., `part_10` before `part_2`).
+  - Updated `run_ytcut_download` to use padded naming (`part_001`, `part_002`) and explicit numerical matching for 100% accurate concatenation order.
+- **Improved: Smart Auto-Sort**:
+  - The bot now respects the user's manual order (`_manual_order` flag) and stops auto-sorting by time when adding/editing segments if a custom order is active.
+  - Auto-sort remains the default for new sessions until the user manually reorders segments.
+
+---
+
+## [1.0.261] - 2026-05-31
+
+### 🎬 YTcut: Edit/Revise Segment Feature
+- **Added: "✏️ Edit" Functionality for Existing Segments**:
+  - Users can now edit or revise the duration of segments already in the cut list by clicking the "✏️ Edit" button next to each segment.
+  - Implemented `ytcut_edit_seg_cb` to enter "Edit Mode" which pre-fills the adjustment menu with the segment's current START/END values.
+  - The adjustment menu dynamically updates its title to `📝 Edit Potongan #[index]` and changes the confirmation button to `💾 Simpan Perubahan`.
+- **Improved: Unified Segment Application Logic**:
+  - Updated `ytcut_add_apply_cb` and `ytcut_reply_handler` (manual input) to handle both adding new segments and updating existing ones based on the `edit_index` state.
+  - Ensures robust state cleanup (clearing `edit_index`, `add_start`, `add_end`, etc.) when changes are saved or when the user navigates back to the main menu.
+- **Improved: Reset Behavior in Edit Mode**:
+  - The "🔃 Reset" button in the adjustment menu now resets values to the segment's original duration if in Edit Mode, instead of defaulting to 00:00.
+- **Logic Flow & Stability**:
+  - Maintained consistent overlap validation and duration clamping during the editing process.
+  - Ensured all state changes are synchronized to the persistent database (`sync_ytcut_task`) for session recovery.
+
+---
+
+## [1.0.260] - 2026-05-31
+
+### 🛠️ YTcut & Core: TypeError Fix + FloodWait Handling + UI Stability
+- **Improved: Revision Workflow & Dashboard Persistence**:
+  - Modified `process_ytcut_task` to keep the dashboard active and state persistent after completion.
+  - Implemented auto-restore to menu state, allowing users to "revise" their cuts without re-running the command.
+- **Fixed: YT-DLP Error on Multiple Segments**:
+  - Resolved `invalid --download-sections` error by sending segments as individual arguments instead of comma-separated strings.
+- **Fixed: Task Visibility in `.tasklist`**:
+  - Integrated YTcut with `xtaskmanager.py` for real-time task monitoring and cancellation support.
+  - Switched to non-blocking background processing using `asyncio.create_task` to keep the bot responsive.
+- **Fixed: TypeError on Inline Message Edits**:
+  - Resolved `TypeError: ... got an unexpected keyword argument 'inline_message_id'` across all modules.
+  - Implemented multi-layer fallback: `CallbackQuery` methods → `pyromod` specific methods (`edit_inline_text`) → Positional arguments.
+  - Impacted files: `xytcut_bot.py`, `ytcut_helpers.py`, `alliance_handlers.py`, and `xrap_manager.py`.
+- **Fixed: Missing Module Import**:
+  - Added missing `import time` in `xytcut_bot.py` which caused `NameError` during interaction.
+- **Improved: UI Stability & Accuracy in "➕ Tambah Potongan"**:
+  - Fixed "double-trigger" and jumping values by implementing a 500ms debounce/lock (`_busy_until`) on interaction handlers.
+  - Unified adjustment logic: ensured `START < END` with a consistent minimum gap of 0.25s across all menu and adjustment callbacks.
+- **Added: Robust FloodWait Handling**:
+  - Implemented `_safe_edit` wrapper with automatic retry for short Telegram throttling (≤ 3s) and user notifications for longer waits.
+  - Added throttling to background dashboard updates (300ms minimum interval) to prevent `FLOOD_WAIT` during rapid user interactions.
+- **Optimization**: Removed redundant `sync_ytcut_task` calls during interactive adjustment phases to reduce database overhead.
+
+---
+
+## [1.0.259] - 2026-05-30
+
+### 🎨 YTcut: Module Version + Per-Account Button Styles
+- Added `PLUGIN_VERSION`/`__version__` to `Main/internals/ytcut_helpers.py` so the module exposes its current version programmatically.
+- Dashboard buttons now respect per-session/account `ButtonStyle` via `get_user_button_style()`; buttons fall back to default styling if no preference is set.
+- Minor: Small robustness improvements to keyboard builder to avoid crashing when user-style resolution fails.
+
+---
+
+## [1.0.258] -2026-05-30
+
+### 🔧 YTcut: Handlers Moved to Bot Plugins & Modularization
+- Moved YTcut callback and inline handlers from `Main/plugins/userbot/ytcut_handlers.py` to `Main/plugins/bot/xytcut_bot.py` to follow the project's assistant bot plugin pattern (similar to `xyt_tools_bot.py`).
+- Added `Main/internals/ytcut_helpers.py` containing config persistence, state/queue registry, dashboard builders, download/concat helpers, and task processing helpers so the command logic is isolated and reusable.
+- Updated `Main/plugins/userbot/xytcut_tools.py` to be a minimal entry point that uses the new helper module and the bot inline-builder flow (`get_inline_bot_results`) where available.
+- Removed the duplicate handler file from `Main/plugins/userbot` to avoid conflicting registrations.
+- Notes: No changes were made to `Main/internals/ytdl_core.py` in this update — if your workspace reverted prior edits, the YTcut code now relies on the existing `ytdl_core` APIs available in the repo.
+
+---
+
+##  [1.0.257] - 2026-05-30
+
+### 🎬 YTcut: Plugin Version + Help Documentation + Persistent Settings
+- Added `PLUGIN_VERSION` to `Main/plugins/userbot/xytcut_tools.py` so plugin help displays the correct version.
+- Improved `.ytcut` help text with full interactive dashboard usage and timestamp examples.
+- Added persistent user preference saving for mode, quality, and extract settings.
+
+---
+
+## [1.0.256] -2026-05-30
+
+### 🎬 YTDL: Auto Return Dashboard + Sub-Second Trimmer + Fade In/Out
+- **Improved: Setelah download selesai, kembali ke dashboard sebelumnya**:
+  - Pesan progres YTDL otomatis menampilkan kembali menu/dashboard agar konfigurasi terakhir tetap terlihat.
+  - Menjaga state task sementara (auto-cleanup) agar dashboard bisa di-refresh setelah selesai.
+- **Added: Trimmer presisi sub-detik (0.5s & 0.25s)**:
+  - Menambahkan tombol penyesuaian `-0.5s/-0.25s/+0.25s/+0.5s` pada menu `✂️ YouTube Video Trimmer`.
+  - Mendukung value desimal pada handler trim agar lebih presisi.
+- **Added: Sub-menu Fade In / Fade Out (Volume) untuk Video & Audio (MP3)**:
+  - Menambahkan menu `🎚 Fade In/Out` dengan tombol +/- dalam satuan detik (termasuk 0.5s & 0.25s).
+  - Config fade tersimpan (state + persistence DB) dan diterapkan saat render ffmpeg (termasuk pada mode split chapters).
+
+---
+
+### [1.0.255] 📊 Task Manager: Finished Tasks Owner + Finish Time
+- **Fixed: Owner tampil "Unknown" di `✅ Finished Tasks History`**:
+  - Menambahkan fallback resolve owner dari `client_id/user_id` ke session aktif.
+  - CreateGroup: memastikan data completed menyimpan `account_name` agar owner konsisten.
+- **Added: Waktu selesai task**:
+  - Menampilkan `Selesai: YYYY-mm-dd HH:MM:SS` pada daftar history.
+  - Menggunakan `finish_time` bila tersedia, atau fallback hitung dari `start_time + total_duration`.
+
+---
+
+## [0.3.231] - 2026-05-29
+
+### 🏗️ CreateGroup Handlers: FIX SESSION EXPIRIED
+- CreateGroup UI: tambah indikator akun terpilih (n/total) pada log inisialisasi multi-session (Staggered Start / Batch Account Delay / Initializing task).
+- CreateGroup UI: perbaiki “Session expired” setelah restart dengan auto-rebuild state dashboard dari config persistent (xcreategroup_user_configs.json), termasuk fallback infer session index dari teks UI.
+
+---
+
+## [0.0.10.2482I] - 2026-05-29
+
+### 🏗️ CreateGroup & Handlers: Multi-Session Pagination Upgrades
+- **Added: "« 5 Prev" & "Next 5 »" Navigation Buttons**:
+  - Implemented smart navigation buttons on the `👥 Multi-Session Selection` page to instantly hop 5 pages back or 5 pages forward.
+  - Automatically bounds page limits to prevent out-of-range navigation while preserving full responsive state and styling.
+
+---
+
+## [0.0.10.2481I] - 2026-05-29
+
+### 🏗️ CreateGroup & Handlers: Interactive Settings Buttons Fixes & Fully-Featured Implementation
+- **Fixed: Interactive UI settings buttons "📋 Status Detail" & "📑 List Group"**:
+  - Fully resolved their routing and callbacks with robust Pyrogram handlers in `creategroup_handlers.py`.
+- **Implemented: "🔄 Recurring" and "✏️ Edit Last" interactive features**:
+  - Implemented the complete, beautiful confirmation and recurring launching flow for completed/stopped tasks on both the Telegram Bot and the Userbot.
+  - Linked the "🔄 Recurring" buttons directly to user confirmation menus with robust callback parsing.
+  - Implemented "✏️ Edit Last" feature to dynamically edit the name/title of the last created group of a task, complete with an interactive input state (`awaiting_edit_last_name`) and Log Group reply listener.
+- **Fixed: Completed task lookup & verification**:
+  - Fixed a task identifier lookup bug where `task_key` from completed tasks was not identified correctly because of a restrictive active task list check in `xcreategroup.py`.
+
+---
+
+## [0.0.10.2480I] - 2026-05-29
+
+### 🏗️ CreateGroup & Handler Audit: Robustness, Error Handling, and Logging
+- **Improved: Try-Except Audit & Traceback Logging**:
+  - Enhanced error handling inside `launch_tasks_bg` with complete exception logging, including `traceback.format_exc()`.
+  - Added user notifications via Telegram on session start failures so users are immediately alerted.
+  - Added `traceback` logging for critical errors during control message creation.
+- **Fixed: KeyError Risks in Config Access**:
+  - Substituted direct `[]` dictionary lookup with safe `.get()` defaults for config keys such as `bots`, `delay`, `count`, `batch_delay`, `batch_size`, `pattern`, and `username`.
+- **Fixed: Outer Handler NameError Risk**:
+  - Initialized `user_id = None` early in `creategroup_confirm_task_handler` to prevent potential `NameError` if an exception occurs before the variable is populated.
+- **Fixed: Session Lookup for Restored Tasks**:
+  - Updated `_find_task_by_session_idx` to correctly lookup tasks restored from cache that are currently running but lack a live `task_obj`.
+
+---
+
+## [0.0.10.2478I] - 2026-05-28
+
+### 🏗️ CreateGroup: Account Index and Preview Info in Logs
+- **Added: Account Index to Progress and Completion Logs**:
+  - Added `account_idx/total_accs` (e.g. `1/100`) to the header of the tracker progress start log (`📊 Memulai Tracker Progress {account_idx}/{total_accs}...`) and all 5 completion reports (e.g. `✅ Laporan Create Group Selesai 1/100`) in [xcreategroup.py](Main/plugins/userbot/xcreategroup.py).
+- **Added: Account Name Preview**:
+  - Added `• Account: <b>{account_name}</b>` line to the progress tracker start log in [xcreategroup.py](Main/plugins/userbot/xcreategroup.py).
+  - Modified the brief log notification and backup document caption to display the full user name (first + last name) instead of only the first name.
+
+---
+
+## [0.0.10.2477I] - 2026-05-26
+
+### 🏗️ CreateGroup: Add Task ID to Report Caption
+- **Added: Task ID to Laporan Create Group**:
+  - Added `• Task ID: <code>{task_id}</code>` to the report caption of CreateGroup completion documents in [xcreategroup.py](Main/plugins/userbot/xcreategroup.py).
+  - Also added the Task ID details to control status panel updates, fallback log messages, and brief log notifications to improve task tracking and traceability.
+
+---
+
+## [0.0.10.2476I] - 2026-05-26
+
+### 🏗️ CreateGroup: Run Task from Multi-Session Page
+- **Added: Run Task Button in Session Selection**:
+  - Added a new `🚀 Run Task (X Acc)` button on the Multi-Session Selection page in [creategroup_handlers.py](Main/internals/settings_handlers/creategroup_handlers.py).
+  - Users can now start tasks for all selected accounts directly from the session selection page.
+- **Improved: Task Start Flow & UX**:
+  - Modified the task confirmation handler to execute task launching in a background task (`launch_tasks_bg`) using `asyncio.create_task` to prevent blocking the UI.
+  - Preserved the user's selected sessions and state in `user_creategroup_state` instead of deleting them.
+  - Automatically redirected the user back to the main dashboard menu immediately after task confirmation with a popup alert notification, allowing them to easily remember and check which accounts were chosen to run the task.
+
+---
+
+## [0.0.10.2475I] - 2026-05-26
+
+### 🎬 YTDL & Voice Chat: Video Resolution Fix
+- **Fixed: Video Resolution Limited to 360p**:
+  - Resolved an issue where downloading YouTube videos or streaming them in voice chat was limited to 360p resolution.
+  - Replaced the restricted and deprecated `player_client` list (`android,web,mweb,ios`) with `default` in both [ytdl_core.py](Main/internals/ytdl_core.py) and [xalliance_vc.py](Main/plugins/userbot/xalliance_vc.py).
+  - This allows yt-dlp to use its own intelligent client selection algorithm, restoring access to all available resolutions (up to 2160p/4K) and high-quality audio streams.
+
+---
+
+## [0.0.10.2474I] - 2026-05-26
+
+### 📊 Task Manager: User-Friendly Uptime
+- **Improved: Uptime & Duration Formatting**:
+  - Implemented `_format_duration` in [xtaskmanager.py] to provide a more human-readable time format (bulan, hari, jam, menit, detik).
+  - Applied the new format to both the task list (`Duration`) and the task status menu (`Uptime`).
+  - Standardized time display across core plugins for better consistency.
+
+---
+
+## [0.0.10.2473I] - 2026-05-26
+
+### 🏗️ CreateGroup: Bug Fixes & Stability
+- **Fixed: NoneType AttributeError**:
+  - Resolved `AttributeError: 'NoneType' object has no attribute 'id'` in `send_completion_report` and progress logging. 
+  - Implementation changed from `message.edit_text` to `client.edit_message_text` with explicit `chat_id` fallback in [xcreategroup.py].
+  - Added robust `chat_id` detection using `getattr` to handle cases where Pyrogram's `Message` object has an empty `chat` attribute.
+- **Improved: Progress Tracker Reliability**:
+  - Applied the same safety fix to `update_group_log` and `creategroup_loop` panel updates to prevent task crashes during live execution.
+
+---
+
 ## [0.0.10.2472I] - 2026-05-26
 
 ### 📊 Task Manager: Real-time Status Updates

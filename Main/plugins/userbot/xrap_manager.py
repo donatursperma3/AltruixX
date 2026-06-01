@@ -1243,7 +1243,13 @@ async def rapmgr_cb_handler(c: Client, cb: CallbackQuery):
             if cb.message: 
                 await cb.message.delete()
             elif cb.inline_message_id:
-                await c.edit_message_text(inline_message_id=cb.inline_message_id, text="👋 Dashboard Closed.")
+                if hasattr(c, "edit_inline_text"):
+                    await c.edit_inline_text(inline_message_id=cb.inline_message_id, text="👋 Dashboard Closed.")
+                else:
+                    try:
+                        await c.edit_message_text(None, None, "👋 Dashboard Closed.", cb.inline_message_id)
+                    except:
+                        await c.edit_message_text(inline_message_id=cb.inline_message_id, text="👋 Dashboard Closed.")
         except:
             pass
         

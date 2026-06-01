@@ -19,6 +19,10 @@ from datetime import datetime
 # Plugin Metadata
 PLUGIN_VERSION = "1.0.0"
 
+# Logger for this module
+logger = logging.getLogger("altruix.backup.handlers")
+logger.setLevel(logging.INFO)
+
 async def get_backup_kb(user_style=None):
     """
     Generates the inline keyboard for the backup manager.

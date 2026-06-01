@@ -94,6 +94,8 @@ async def ytdl_cmd(c: Client, m: Message):
             "languages": info.get("languages", []),
             "audio_lang": "Default",
             "video_bitrate": "Original",
+            "fade_in": 0.0,
+            "fade_out": 0.0,
             "chapters": info.get("chapters", []),
             "split_chapters": False
         }

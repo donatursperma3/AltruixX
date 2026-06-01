@@ -207,7 +207,7 @@ def get_yt_audio(url):
         'quiet': True,
         'no_warnings': True,
         'outtmpl': 'downloads/%(id)s.%(ext)s',
-        'extractorargs': {'youtube': {'player_client': ['android', 'web', 'mweb', 'ios']}},
+        'extractorargs': {'youtube': {'player_client': ['default']}},
     }
     # Auto-detect cookies for bot bypass
     for path in ["cookies.txt", "Main/cookies.txt"]:
@@ -225,7 +225,7 @@ def get_yt_video(url):
         'quiet': True,
         'no_warnings': True,
         'outtmpl': 'downloads/%(id)s.%(ext)s',
-        'extractorargs': {'youtube': {'player_client': ['android', 'web', 'mweb', 'ios']}},
+        'extractorargs': {'youtube': {'player_client': ['default']}},
     }
     # Auto-detect cookies for bot bypass
     for path in ["cookies.txt", "Main/cookies.txt"]:

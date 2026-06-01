@@ -4,7 +4,8 @@ import html
 import asyncio
 import logging
 import traceback
-from typing import Optional
+import time
+from typing import Optional, Dict
 from pyrogram import Client, filters
 from pyrogram.errors import QueryIdInvalid
 from pyrogram.types import (
@@ -12,6 +13,7 @@ from pyrogram.types import (
     InlineQuery, InlineQueryResultArticle, InputTextMessageContent,
     ChosenInlineResult, LinkPreviewOptions
 )
+import re
 from Main.core.decorators import log_errors, iuser_check, send_log_message
 from Main.core.client import Altruix
 from pyrogram.enums import ParseMode
@@ -19,7 +21,7 @@ from pyrogram.enums import ParseMode
 
 from .states import user_creategroup_state
 
-HANDLER_VERSION = "0.3.230" # ✅ ADDED: Persistent Creation Reports, Log Exports, & Account Batching
+HANDLER_VERSION = "0.3.231" # ✅ ADDED: Persistent Creation Reports, Log Exports, & Account Batching
 logger = logging.getLogger("altruix.creategroup.handlers")
 logger.setLevel(logging.INFO)
 
@@ -43,7 +45,7 @@ DEFAULT_CREATEGROUP_CONFIG = {
     "batch_action": 30, "ba_delay": 30,
     "pattern": "🔰 X(tahun) B(bulan)-T(tanggal)", "username": None, "description": "Powered by @AlphaXProject",
     "bots": "@MissRose_bot @simixbot @Spillgame_bot @truthordaresbot @truthordares_bot @truthordarerp_bot @truthordarerln_bot @truthordares18_bot",
-    "invite_bots": True, "anon_mode": True, "copy_messages": True, "msg_img": True,
+    "invite_bots": True, "anon_mode": True, "copy_messages": True, "msg_img": True, "msg_vid": True,
     "photo_source": "source", "custom_photo_id": None,
     "log_destination": "both", "group_type": "a",
     "log_format": "zip", "pin_first_msg": True, "temp_pin": True, "quote_block": True,
@@ -57,6 +59,29 @@ DEFAULT_CREATEGROUP_CONFIG = {
 from Main.utils.file_helpers import get_db_path as _get_db_path
 import json as _json
 _USER_CG_CONFIG_FILE = _get_db_path("xcreategroup_user_configs.json")
+
+CALLBACK_BUSY: Dict[str, float] = {}
+
+async def _callback_debounce(cb: CallbackQuery, interval: float = 0.5) -> bool:
+    """Simple debounce guard for interactive CreateGroup callbacks."""
+    try:
+        if cb.message and getattr(cb.message, 'message_id', None):
+            key = f"cb:{cb.message.chat.id}:{cb.message.message_id}"
+        else:
+            key = f"user:{cb.from_user.id}"
+    except Exception:
+        try:
+            key = f"user:{cb.from_user.id}"
+        except Exception:
+            key = "global"
+
+    now = time.monotonic()
+    busy_until = CALLBACK_BUSY.get(key, 0)
+    if now < busy_until:
+        return False
+    CALLBACK_BUSY[key] = now + float(interval)
+    return True
+
 
 def save_user_cg_config(user_id: int, config: dict):
     """Save user's CreateGroup config to persistent JSON."""
@@ -88,6 +113,7 @@ def load_user_cg_config(user_id: int) -> dict:
         logger.error(f"Failed to load user CG config: {e}\n{traceback.format_exc()}")
     return DEFAULT_CREATEGROUP_CONFIG.copy()
 
+from datetime import datetime
 from Main.utils.file_helpers import get_user_button_style
 
 @Altruix.bot.on_callback_query(filters.regex(r"^creategroup_menu_(\d+)(?:_(\d+))?$"))
@@ -310,6 +336,7 @@ async def creategroup_resall_handler(c: Client, cb: CallbackQuery):
                 log_destination=params.get("log_destination", "both"), log_format=params.get("log_format", "zip"),
                 pin_first_msg=params.get("pin_first_msg", True), temp_pin=params.get("temp_pin", True),
                 quote_block=params.get("quote_block", True), msg_img=params.get("msg_img", True),
+                msg_vid=params.get("msg_vid", True),
                 rand_len=params.get("rand_len", 0), rand_lower=params.get("rand_lower", False),
                 rand_upper=params.get("rand_upper", False), rand_static=params.get("rand_static", False),
                 batch_action=params.get("batch_action", 30), ba_delay=params.get("ba_delay", 30),
@@ -498,12 +525,128 @@ async def creategroup_ui_handler(c: Client, cb: CallbackQuery):
     page = int(cb.matches[0].group(2))
     await show_creategroup_ui(c, cb, session_index, page)
 
+async def _find_task_by_session_idx(idx: int):
+    if not (1 <= idx <= len(Altruix.clients)):
+        return None
+    client = Altruix.clients[idx - 1]
+    try:
+        me_user = client.me or await client.get_me()
+        target_session_id = me_user.id
+    except Exception:
+        return None
+        
+    from Main.plugins.userbot.xcreategroup import CREATEGROUP_TASKS
+    for k, v in CREATEGROUP_TASKS.items():
+        if v.get("user_id") == target_session_id and v.get("running"):
+            t_obj = v.get("task_obj")
+            # ✅ FIX: Also match cache-restored tasks where task_obj is None
+            if t_obj is None or not t_obj.done():
+                return v
+    return None
+
+def _extract_primary_session_user_id_from_ui_text(text: Optional[str]) -> Optional[int]:
+    try:
+        if not text:
+            return None
+        m = re.search(r"tg://user\?id=(\d+)", text)
+        if not m:
+            return None
+        return int(m.group(1))
+    except Exception:
+        return None
+
+async def _find_session_index_by_user_id(target_user_id: int) -> Optional[int]:
+    try:
+        if not target_user_id:
+            return None
+        for i, client in enumerate(Altruix.clients or []):
+            me = getattr(client, "myself", None) or getattr(client, "me", None)
+            if me and getattr(me, "id", None) == target_user_id:
+                return i + 1
+    except Exception as e:
+        logger.warning(f"Failed to map user_id to session index: {e}")
+    return None
+
+async def _resolve_cg_session_index_from_cb(cb: CallbackQuery, fallback_idx: int = 1) -> int:
+    try:
+        user_id = cb.from_user.id if cb and cb.from_user else None
+        if user_id in user_creategroup_state:
+            idx = user_creategroup_state[user_id].get("session_index")
+            if isinstance(idx, int) and 1 <= idx <= len(Altruix.clients):
+                return idx
+
+        msg = getattr(cb, "message", None)
+        if msg:
+            msg_text = getattr(msg, "text", None) or getattr(msg, "caption", None) or ""
+            session_user_id = _extract_primary_session_user_id_from_ui_text(msg_text)
+            if session_user_id:
+                mapped = await _find_session_index_by_user_id(session_user_id)
+                if mapped:
+                    return mapped
+    except Exception as e:
+        logger.warning(f"Failed to resolve CG session index from callback: {e}\n{traceback.format_exc()}")
+
+    try:
+        if isinstance(fallback_idx, int) and 1 <= fallback_idx <= len(Altruix.clients):
+            return fallback_idx
+    except Exception:
+        pass
+    return 1
+
+async def _ensure_creategroup_ui_state(c: Client, cb: CallbackQuery, session_index: int, page: int, session_page: Optional[int] = None):
+    user_id = cb.from_user.id
+    try:
+        if user_id not in user_creategroup_state or not isinstance(user_creategroup_state.get(user_id), dict):
+            user_creategroup_state[user_id] = {}
+
+        state = user_creategroup_state[user_id]
+        state["step"] = "ui_config"
+        state["session_index"] = session_index
+        state["page"] = page
+        state["input_mode"] = None
+        state.setdefault("sub_menu", None)
+
+        if "config" not in state or not isinstance(state.get("config"), dict):
+            state["config"] = load_user_cg_config(user_id)
+
+        if "selected_sessions" not in state or not isinstance(state.get("selected_sessions"), list):
+            state["selected_sessions"] = [session_index]
+        if not state["selected_sessions"]:
+            state["selected_sessions"] = [session_index]
+
+        if session_page is not None:
+            state["session_page"] = session_page
+
+        if cb.message:
+            state["ui_msg_id"] = cb.message.id
+            state["ui_chat_id"] = cb.message.chat.id if cb.message.chat else None
+        else:
+            state.setdefault("ui_msg_id", None)
+            state.setdefault("ui_chat_id", None)
+
+        state.setdefault("prompt_msg_id", None)
+        return state
+    except Exception as e:
+        logger.error(f"Failed to ensure CreateGroup UI state: {e}\n{traceback.format_exc()}")
+        user_creategroup_state[user_id] = {
+            "step": "ui_config",
+            "session_index": session_index,
+            "page": page,
+            "config": load_user_cg_config(user_id),
+            "selected_sessions": [session_index],
+            "input_mode": None,
+            "ui_msg_id": cb.message.id if cb.message else None,
+            "ui_chat_id": cb.message.chat.id if cb.message and cb.message.chat else None,
+            "prompt_msg_id": None,
+            "sub_menu": None
+        }
+        return user_creategroup_state[user_id]
+
 async def show_creategroup_ui(c: Client, cb: CallbackQuery, session_index: int, page: int):
     user_id = cb.from_user.id
     
     # Check if task is already running
-    from Main.plugins.userbot.xcreategroup import CREATEGROUP_TASKS
-    task = CREATEGROUP_TASKS.get(f"creategroup_{user_id}")
+    task = await _find_task_by_session_idx(session_index)
     if task and task.get("running"):
         await render_creategroup_running_ui(cb, task, session_index, page)
         return
@@ -661,7 +804,8 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
         f"• <b>Invite Bots:</b> {'Yes' if config['invite_bots'] else 'No'}\n"
         f"• <b>Bot List:</b> {bot_list_text}\n"
         f"• <b>Pin First Msg:</b> {'Yes' if config.get('pin_first_msg', True) else 'No'} | <b>Temp Pin:</b> {'Yes' if config.get('temp_pin', True) else 'No'}\n"
-        f"• <b>Quote Block:</b> {'Yes' if config.get('quote_block', True) else 'No'}\n"
+        f"• <b>Quote Block:</b> {'Yes' if config.get('quote_block', True) else 'No'} | <b>Msg Img:</b> {'Yes' if config.get('msg_img', True) else 'No'}\n"
+        f"• <b>Msg Vid:</b> {'Yes' if config.get('msg_vid', True) else 'No'}\n"
         f"• <b>Log To:</b> {log_dest_lbl} | <b>Format:</b> {config.get('log_format', 'zip').upper()}\n"
         f"• <b>Start Log:</b> {start_log_lbl} | <b>Photo Log:</b> {photo_log_lbl}\n"
         f"• <b>Progress Log:</b> {prog_log_lbl} | <b>Panel Log:</b> {panel_log_lbl}"
@@ -926,6 +1070,18 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
         if end < total_sessions: nav.append(InlineKeyboardButton("Next »", callback_data=f"creategroup_spage_{s_page+1}_{pg}", style=user_style))
         if nav: buttons.append(nav)
 
+        # Back 5 / Next 5 Navigation
+        if total_pages > 1:
+            nav_5 = []
+            if s_page > 0:
+                back_5_page = max(0, s_page - 5)
+                nav_5.append(InlineKeyboardButton("« 5 Prev", callback_data=f"creategroup_spage_{back_5_page}_{pg}", style=user_style))
+            if s_page < total_pages - 1:
+                next_5_page = min(total_pages - 1, s_page + 5)
+                nav_5.append(InlineKeyboardButton("Next 5 »", callback_data=f"creategroup_spage_{next_5_page}_{pg}", style=user_style))
+            if nav_5:
+                buttons.append(nav_5)
+
         # First / Last Navigation
         if total_pages > 2:
             buttons.append([
@@ -933,6 +1089,7 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
                 InlineKeyboardButton("Last", callback_data=f"creategroup_spage_{total_pages-1}_{pg}", style=user_style)
             ])
         
+        buttons.append([InlineKeyboardButton(f"🚀 Run Task ({len(selected)} Acc)", callback_data=f"creategroup_run_{idx}_{pg}", style=user_style)])
         buttons.append([InlineKeyboardButton("🔙 Back to Dashboard", callback_data=f"creategroup_back_submenu_{idx}_{pg}", style=user_style)])
         return text, InlineKeyboardMarkup(buttons)
 
@@ -1030,7 +1187,10 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
         ],
         [
             InlineKeyboardButton(f"Quote Block: {'Yes' if config.get('quote_block', True) else 'No'}", callback_data=f"creategroup_toggle_{idx}_{pg}_quote_block", style=user_style),
-            InlineKeyboardButton(f"Msg Img: {'Yes' if config.get('msg_img', True) else 'No'}", callback_data=f"creategroup_toggle_{idx}_{pg}_msg_img", style=user_style)
+        ],
+        [
+            InlineKeyboardButton(f"Msg Img: {'Yes' if config.get('msg_img', True) else 'No'}", callback_data=f"creategroup_toggle_{idx}_{pg}_msg_img", style=user_style),
+            InlineKeyboardButton(f"Msg Vid: {'Yes' if config.get('msg_vid', True) else 'No'}", callback_data=f"creategroup_toggle_{idx}_{pg}_msg_vid", style=user_style)
         ],
         [
             InlineKeyboardButton("Log Configs", callback_data=f"creategroup_submenu_{idx}_{pg}_log_settings", style=user_style),
@@ -1083,13 +1243,16 @@ async def render_creategroup_ui(cb: Optional[CallbackQuery], state: dict, messag
 @iuser_check
 @log_errors
 async def creategroup_adjust_handler(c: Client, cb: CallbackQuery):
+    if not await _callback_debounce(cb):
+        await safe_cb_answer(cb, "Tunggu sebentar...", show_alert=False)
+        return
+
     match = cb.matches[0]
     idx, pg, key, action_raw = int(match.group(1)), int(match.group(2)), match.group(3), match.group(4)
     user_id = cb.from_user.id
     
     if user_id not in user_creategroup_state:
-         await cb.answer("Session expired", show_alert=True)
-         return
+        await _ensure_creategroup_ui_state(c, cb, idx, pg)
          
     conf = user_creategroup_state[user_id]["config"]
     steps = {"delay": 10, "count": 1, "batch_delay": 1, "batch_size": 1, "action_delay": 0.5, "account_delay": 0.5, "rand_len": 1, "batch_action": 5, "ba_delay": 10, "batch_account": 1, "ba_account_delay": 10}
@@ -1124,8 +1287,7 @@ async def creategroup_submenu_handler(c: Client, cb: CallbackQuery):
     idx, pg, field = int(cb.matches[0].group(1)), int(cb.matches[0].group(2)), cb.matches[0].group(3)
     user_id = cb.from_user.id
     if user_id not in user_creategroup_state:
-        await cb.answer("Session expired", show_alert=True)
-        return
+        await _ensure_creategroup_ui_state(c, cb, idx, pg)
     user_creategroup_state[user_id]["sub_menu"] = field
     await render_creategroup_ui(cb, user_creategroup_state[user_id])
     await cb.answer()
@@ -1137,8 +1299,7 @@ async def creategroup_back_submenu_handler(c: Client, cb: CallbackQuery):
     idx, pg = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
     user_id = cb.from_user.id
     if user_id not in user_creategroup_state:
-        await cb.answer("Session expired", show_alert=True)
-        return
+        await _ensure_creategroup_ui_state(c, cb, idx, pg)
     user_creategroup_state[user_id]["sub_menu"] = None
     await render_creategroup_ui(cb, user_creategroup_state[user_id])
     await cb.answer()
@@ -1149,7 +1310,9 @@ async def creategroup_back_submenu_handler(c: Client, cb: CallbackQuery):
 async def creategroup_session_toggle_handler(c: Client, cb: CallbackQuery):
     s_idx, pg = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
     user_id = cb.from_user.id
-    if user_id not in user_creategroup_state: return await cb.answer("Session expired", show_alert=True)
+    if user_id not in user_creategroup_state:
+        idx = await _resolve_cg_session_index_from_cb(cb, fallback_idx=s_idx)
+        await _ensure_creategroup_ui_state(c, cb, idx, pg)
     
     selected = user_creategroup_state[user_id].get("selected_sessions", [])
     if s_idx in selected:
@@ -1167,7 +1330,9 @@ async def creategroup_session_toggle_handler(c: Client, cb: CallbackQuery):
 async def creategroup_session_page_handler(c: Client, cb: CallbackQuery):
     s_page, pg = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
     user_id = cb.from_user.id
-    if user_id not in user_creategroup_state: return await cb.answer("Session expired", show_alert=True)
+    if user_id not in user_creategroup_state:
+        idx = await _resolve_cg_session_index_from_cb(cb, fallback_idx=1)
+        await _ensure_creategroup_ui_state(c, cb, idx, pg, session_page=s_page)
     user_creategroup_state[user_id]["session_page"] = s_page
     await render_creategroup_ui(cb, user_creategroup_state[user_id])
     await cb.answer()
@@ -1176,8 +1341,11 @@ async def creategroup_session_page_handler(c: Client, cb: CallbackQuery):
 @iuser_check
 @log_errors
 async def creategroup_session_select_all_handler(c: Client, cb: CallbackQuery):
+    s_page, pg = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
     user_id = cb.from_user.id
-    if user_id not in user_creategroup_state: return await cb.answer("Session expired", show_alert=True)
+    if user_id not in user_creategroup_state:
+        idx = await _resolve_cg_session_index_from_cb(cb, fallback_idx=1)
+        await _ensure_creategroup_ui_state(c, cb, idx, pg, session_page=s_page)
     user_creategroup_state[user_id]["selected_sessions"] = list(range(1, len(Altruix.clients) + 1))
     await render_creategroup_ui(cb, user_creategroup_state[user_id])
     await cb.answer("All sessions selected")
@@ -1190,7 +1358,8 @@ async def creategroup_session_select_page_handler(c: Client, cb: CallbackQuery):
         s_page, pg = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
         user_id = cb.from_user.id
         if user_id not in user_creategroup_state:
-            return await cb.answer("Session expired", show_alert=True)
+            idx = await _resolve_cg_session_index_from_cb(cb, fallback_idx=1)
+            await _ensure_creategroup_ui_state(c, cb, idx, pg, session_page=s_page)
 
         state = user_creategroup_state[user_id]
         state["session_page"] = s_page
@@ -1217,8 +1386,11 @@ async def creategroup_session_select_page_handler(c: Client, cb: CallbackQuery):
 @iuser_check
 @log_errors
 async def creategroup_session_deselect_all_handler(c: Client, cb: CallbackQuery):
+    s_page, pg = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
     user_id = cb.from_user.id
-    if user_id not in user_creategroup_state: return await cb.answer("Session expired", show_alert=True)
+    if user_id not in user_creategroup_state:
+        idx = await _resolve_cg_session_index_from_cb(cb, fallback_idx=1)
+        await _ensure_creategroup_ui_state(c, cb, idx, pg, session_page=s_page)
     user_creategroup_state[user_id]["selected_sessions"] = []
     await render_creategroup_ui(cb, user_creategroup_state[user_id])
     await cb.answer("All sessions deselected")
@@ -1231,7 +1403,8 @@ async def creategroup_session_deselect_page_handler(c: Client, cb: CallbackQuery
         s_page, pg = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
         user_id = cb.from_user.id
         if user_id not in user_creategroup_state:
-            return await cb.answer("Session expired", show_alert=True)
+            idx = await _resolve_cg_session_index_from_cb(cb, fallback_idx=1)
+            await _ensure_creategroup_ui_state(c, cb, idx, pg, session_page=s_page)
 
         state = user_creategroup_state[user_id]
         state["session_page"] = s_page
@@ -1255,11 +1428,14 @@ async def creategroup_session_deselect_page_handler(c: Client, cb: CallbackQuery
 @iuser_check
 @log_errors
 async def creategroup_set_val_handler(c: Client, cb: CallbackQuery):
+    if not await _callback_debounce(cb):
+        await safe_cb_answer(cb, "Tunggu sebentar...", show_alert=False)
+        return
+
     idx, pg, key, val_raw = int(cb.matches[0].group(1)), int(cb.matches[0].group(2)), cb.matches[0].group(3), cb.matches[0].group(4)
     user_id = cb.from_user.id
     if user_id not in user_creategroup_state:
-        await cb.answer("Session expired", show_alert=True)
-        return
+        await _ensure_creategroup_ui_state(c, cb, idx, pg)
     
     val = None if val_raw == "none" else val_raw
     if key == "bots" and val_raw == "default":
@@ -1274,10 +1450,15 @@ async def creategroup_set_val_handler(c: Client, cb: CallbackQuery):
 @iuser_check
 @log_errors
 async def creategroup_input_request(c: Client, cb: CallbackQuery):
+    if not await _callback_debounce(cb):
+        await safe_cb_answer(cb, "Tunggu sebentar...", show_alert=False)
+        return
+
     await cb.answer()
     idx, pg, field = int(cb.matches[0].group(1)), int(cb.matches[0].group(2)), cb.matches[0].group(3)
     user_id = cb.from_user.id
-    if user_id not in user_creategroup_state: return
+    if user_id not in user_creategroup_state:
+        await _ensure_creategroup_ui_state(c, cb, idx, pg)
     
     from Main.internals.settings_handlers.custom_alert_handlers import _get_session_user_id
     session_user_id = _get_session_user_id(idx)
@@ -1350,6 +1531,10 @@ async def creategroup_input_request(c: Client, cb: CallbackQuery):
 @iuser_check
 @log_errors
 async def creategroup_toggle_handler(c: Client, cb: CallbackQuery):
+    if not await _callback_debounce(cb):
+        await safe_cb_answer(cb, "Tunggu sebentar...", show_alert=False)
+        return
+
     idx, pg, key = int(cb.matches[0].group(1)), int(cb.matches[0].group(2)), cb.matches[0].group(3)
     user_id = cb.from_user.id
     if user_id in user_creategroup_state:
@@ -1391,8 +1576,9 @@ async def creategroup_toggle_handler(c: Client, cb: CallbackQuery):
             elif curr == "pm_bot": conf[key] = "off"
             else: conf[key] = "both"
         elif key == "log_format": conf["log_format"] = "zip" if conf.get("log_format", "txt") == "txt" else "txt"
-        elif key in conf: conf[key] = not conf[key]
         elif key == "msg_img": conf["msg_img"] = not conf.get("msg_img", True)
+        elif key == "msg_vid": conf["msg_vid"] = not conf.get("msg_vid", True)
+        elif key in conf: conf[key] = not conf[key]
         save_user_cg_config(user_id, conf)
         await render_creategroup_ui(cb, user_creategroup_state[user_id])
     await cb.answer()
@@ -1780,10 +1966,13 @@ async def creategroup_report_export_all_handler(c: Client, cb: CallbackQuery):
 @iuser_check
 @log_errors
 async def creategroup_upload_photo_handler(c: Client, cb: CallbackQuery):
+    if not await _callback_debounce(cb):
+        await safe_cb_answer(cb, "Tunggu sebentar...", show_alert=False)
+        return
+
     idx, pg, user_id = int(cb.matches[0].group(1)), int(cb.matches[0].group(2)), cb.from_user.id
     if user_id not in user_creategroup_state:
-        await cb.answer("State expired", show_alert=True)
-        return
+        await _ensure_creategroup_ui_state(c, cb, idx, pg)
         
     from Main.internals.settings_handlers.custom_alert_handlers import _get_session_user_id
     session_user_id = _get_session_user_id(idx)
@@ -1805,15 +1994,20 @@ async def creategroup_upload_photo_handler(c: Client, cb: CallbackQuery):
         user_creategroup_state[user_id]["prompt_msg_id"] = prompt_msg.id
     except Exception as e:
         logger.error(f"Failed to send photo prompt in creategroup: {e}")
+    finally:
+        await cb.answer()
 
 @Altruix.bot.on_callback_query(filters.regex(r"^creategroup_run_(\d+)_(\d+)$"))
 @iuser_check
 @log_errors
 async def creategroup_run_handler(c: Client, cb: CallbackQuery):
+    if not await _callback_debounce(cb):
+        await safe_cb_answer(cb, "Tunggu sebentar...", show_alert=False)
+        return
+
     idx, pg, user_id = int(cb.matches[0].group(1)), int(cb.matches[0].group(2)), cb.from_user.id
     if user_id not in user_creategroup_state or "config" not in user_creategroup_state[user_id]:
-        await cb.answer("Error: Invalid state", show_alert=True)
-        return
+        await _ensure_creategroup_ui_state(c, cb, idx, pg)
         
     from Main.internals.settings_handlers.custom_alert_handlers import _get_session_user_id
     session_user_id = _get_session_user_id(idx)
@@ -1850,125 +2044,184 @@ async def creategroup_run_handler(c: Client, cb: CallbackQuery):
         await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
     else:
         await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    await cb.answer()
 
 @Altruix.bot.on_callback_query(filters.regex(r"^creategroup_confirm_task_(\d+)$"))
 @iuser_check
 @log_errors
 async def creategroup_confirm_task_handler(c: Client, cb: CallbackQuery):
+    if not await _callback_debounce(cb):
+        await safe_cb_answer(cb, "Tunggu sebentar...", show_alert=False)
+        return
+
+    user_id = None  # ✅ FIX: Init before try to prevent NameError in outer except
     try:
         idx, user_id = int(cb.matches[0].group(1)), cb.from_user.id
         if user_id not in user_creategroup_state or "config" not in user_creategroup_state[user_id]:
-            await cb.answer("Error: Invalid state", show_alert=True)
+            await _ensure_creategroup_ui_state(c, cb, idx, user_creategroup_state.get(user_id, {}).get("page", 1))
+        state = user_creategroup_state[user_id]
+        if state.get("launching"):
+            await cb.answer("Sedang memproses... Silakan tunggu.", show_alert=True)
             return
-        conf = user_creategroup_state[user_id]["config"]
-        selected = user_creategroup_state[user_id].get("selected_sessions", [idx])
+        state["launching"] = True
+        
+        conf = state["config"]
+        selected = state.get("selected_sessions", [idx])
         if not selected: selected = [idx]
         
         # ✅ Ensure we only count valid sessions for the indicator accuracy
         selected = [s for s in selected if 1 <= s <= len(Altruix.clients)]
         if not selected: selected = [idx] # Fallback to current if all filtered out
         
-        del user_creategroup_state[user_id]
         from Main.plugins.userbot.xtaskmanager import generate_task_id
         from Main.plugins.userbot.xcreategroup import creategroup_loop
         
-        start_msg = f"🚀 Memulai CreateGroup Task pada <b>{len(selected)} akun</b>..."
-        if cb.message:
-            await cb.message.edit(start_msg, parse_mode=ParseMode.HTML)
-        else:
-            await cb.edit_message_text(start_msg, parse_mode=ParseMode.HTML)
-            
-        acc_delay = conf.get("account_delay", 0.5)
-        batch_account = conf.get("batch_account", 3)
-        ba_account_delay = conf.get("ba_account_delay", 60)
-        
-        for i, s_idx in enumerate(selected):
-            if s_idx < 1 or s_idx > len(Altruix.clients): continue
-            
-            is_batch_boundary = (i > 0 and i % batch_account == 0)
-            
-            # Stagger startup if not the first account
-            if i > 0:
-                if is_batch_boundary and ba_account_delay > 0:
-                    await asyncio.sleep(ba_account_delay)
-                elif acc_delay > 0:
-                    await asyncio.sleep(acc_delay)
-                
-            tid = generate_task_id("CG")
+        # We will launch the loops in a background task so we can return to the dashboard immediately
+        async def launch_tasks_bg(selected_sessions, conf_copy, uid, cb_msg):
             try:
-                control_msg = None
-                try:
-                    msg_text = f"🔄 Initializing task for Session {s_idx} [<code>{tid}</code>]..."
-                    if i > 0:
-                        if is_batch_boundary:
-                            msg_text = f"⏳ Batch Account Delay ({ba_account_delay}s)...\n{msg_text}"
-                        else:
-                            msg_text = f"⏳ Staggered Start ({acc_delay}s)...\n{msg_text}"
+                acc_delay = conf_copy.get("account_delay", 0.5)
+                batch_account = conf_copy.get("batch_account", 3)
+                ba_account_delay = conf_copy.get("ba_account_delay", 60)
+
+                selected_sessions = [s for s in (selected_sessions or []) if 1 <= s <= len(Altruix.clients)]
+                total_sessions = len(selected_sessions)
+                
+                for i, s_idx in enumerate(selected_sessions):
+                    acc_preview = f"{i + 1}/{total_sessions}" if total_sessions else f"{i + 1}/?"
+                    is_batch_boundary = (i > 0 and i % batch_account == 0)
                     
-                    if cb.message:
-                        control_msg = await cb.message.reply(f"<blockquote expandable>{msg_text}</blockquote>")
-                    else:
-                        control_msg = await c.send_message(cb.from_user.id, f"<blockquote expandable>{msg_text}</blockquote>")
-                except Exception as e:
-                    from pyrogram.errors import PeerIdInvalid, UserIsBlocked
-                    if isinstance(e, (PeerIdInvalid, UserIsBlocked)):
-                        # Fallback: Bot fails to send PM, allow task to continue (loop will create log entry)
-                        await cb.answer(f"⚠️ Session {s_idx}: Bot gagal kirim PM (silakan /start bot). Task dilanjutkan.", show_alert=True)
-                    else:
-                        logger.error(f"Critical error creating control message for session {s_idx}: {e}")
-                        await cb.answer(f"❌ Session {s_idx}: Error kritis. Melewati session ini.", show_alert=True)
-                        continue # Don't start task for this session if we hit a critical error
-                
-                executor = Altruix.clients[s_idx - 1] # ✅ Convert 1-based to 0-based
-                bots = conf["bots"].split() if conf["bots"] else []
-                asyncio.create_task(creategroup_loop(
-                    user_client=executor,
-                    bot_client=Altruix.bot,
-                    initial_message=cb.message,
-                    delay=conf["delay"],
-                    count=conf["count"],
-                    extra_delay_minutes=conf["batch_delay"],
-                    batch_size=conf["batch_size"],
-                    batch_action=conf.get("batch_action", 30),
-                    ba_delay=conf.get("ba_delay", 30),
-                    group_type=conf.get('group_type', 'a'),
-                    name_pattern=conf["pattern"],
-                    username_prefix=conf["username"],
-                    bot_identifiers=bots,
-                    control_message=control_msg,
-                    action_delay=conf.get("action_delay", 3.0),
-                    invite_bots=conf.get("invite_bots", False),
-                    anon_mode=conf.get("anon_mode", True),
-                    copy_messages=conf.get("copy_messages", True),
-                    description=conf.get("description", "Powered by @AlphaXProject"),
-                    photo_source=conf.get("photo_source", "source"),
-                    custom_photo_id=conf.get("custom_photo_id"),
-                    log_destination=conf.get("log_destination", "both"),
-                    log_format=conf.get("log_format", "zip"),
-                    pin_first_msg=conf.get("pin_first_msg", True),
-                    msg_img=conf.get("msg_img", True),
-                    rand_len=conf.get("rand_len", 3),
-                    rand_lower=conf.get("rand_lower", False),
-                    rand_upper=conf.get("rand_upper", True),
-                    rand_static=conf.get("rand_static", True),
-                    temp_pin=conf.get("temp_pin", True),
-                    quote_block=conf.get("quote_block", True),
-                    user_id=user_id,
-                    task_id=tid,
-                    account_idx=i+1,
-                    total_accs=len(selected),
-                    batch_account=conf.get("batch_account", 3),
-                    ba_account_delay=conf.get("ba_account_delay", 60),
-                    start_log_mode=conf.get("start_log_mode", "both"),
-                    start_photo_log_mode=conf.get("start_photo_log_mode", "both"),
-                    progress_log_mode=conf.get("progress_log_mode", "both"),
-                    panel_log_mode=conf.get("panel_log_mode", "log_group")
-                ))
+                    # Stagger startup if not the first account
+                    if i > 0:
+                        if is_batch_boundary and ba_account_delay > 0:
+                            await asyncio.sleep(ba_account_delay)
+                        elif acc_delay > 0:
+                            await asyncio.sleep(acc_delay)
+                        
+                    tid = generate_task_id("CG")
+                    try:
+                        control_msg = None
+                        try:
+                            msg_text = f"🔄 Initializing task for Session {s_idx} ({acc_preview}) [<code>{tid}</code>]..."
+                            if i > 0:
+                                if is_batch_boundary:
+                                    msg_text = f"⏳ Batch Account Delay ({ba_account_delay}s)... {acc_preview}\n{msg_text}"
+                                else:
+                                    msg_text = f"⏳ Staggered Start ({acc_delay}s)... {acc_preview}\n{msg_text}"
+                            
+                            if cb_msg:
+                                control_msg = await cb_msg.reply(f"<blockquote expandable>{msg_text}</blockquote>")
+                            else:
+                                control_msg = await Altruix.bot.send_message(uid, f"<blockquote expandable>{msg_text}</blockquote>")
+                        except Exception as e:
+                            from pyrogram.errors import PeerIdInvalid, UserIsBlocked
+                            if isinstance(e, (PeerIdInvalid, UserIsBlocked)):
+                                logger.warning(f"Bot failed to send control PM to user {uid} for session {s_idx}")
+                            else:
+                                logger.error(f"Critical error creating control message for session {s_idx}: {e}\n{traceback.format_exc()}")
+                                continue # Don't start task for this session if we hit a critical error
+                        
+                        executor = Altruix.clients[s_idx - 1] # ✅ Convert 1-based to 0-based
+                        bots = conf_copy.get("bots", "").split() if conf_copy.get("bots") else []
+                        asyncio.create_task(creategroup_loop(
+                            user_client=executor,
+                            bot_client=Altruix.bot,
+                            initial_message=cb_msg,
+                            delay=conf_copy.get("delay", 60),
+                            count=conf_copy.get("count", 1),
+                            extra_delay_minutes=conf_copy.get("batch_delay", 10),
+                            batch_size=conf_copy.get("batch_size", 5),
+                            batch_action=conf_copy.get("batch_action", 30),
+                            ba_delay=conf_copy.get("ba_delay", 30),
+                            group_type=conf_copy.get('group_type', 'a'),
+                            name_pattern=conf_copy.get("pattern", "Group (index)"),
+                            username_prefix=conf_copy.get("username", ""),
+                            bot_identifiers=bots,
+                            control_message=control_msg,
+                            action_delay=conf_copy.get("action_delay", 3.0),
+                            invite_bots=conf_copy.get("invite_bots", False),
+                            anon_mode=conf_copy.get("anon_mode", True),
+                            copy_messages=conf_copy.get("copy_messages", True),
+                            description=conf_copy.get("description", "Powered by @AlphaXProject"),
+                            photo_source=conf_copy.get("photo_source", "source"),
+                            custom_photo_id=conf_copy.get("custom_photo_id"),
+                            log_destination=conf_copy.get("log_destination", "both"),
+                            log_format=conf_copy.get("log_format", "zip"),
+                            pin_first_msg=conf_copy.get("pin_first_msg", True),
+                            msg_img=conf_copy.get("msg_img", True),
+                            msg_vid=conf_copy.get("msg_vid", True),
+                            rand_len=conf_copy.get("rand_len", 3),
+                            rand_lower=conf_copy.get("rand_lower", False),
+                            rand_upper=conf_copy.get("rand_upper", True),
+                            rand_static=conf_copy.get("rand_static", True),
+                            temp_pin=conf_copy.get("temp_pin", True),
+                            quote_block=conf_copy.get("quote_block", True),
+                            user_id=uid,
+                            task_id=tid,
+                            account_idx=i+1,
+                            total_accs=total_sessions,
+                            batch_account=conf_copy.get("batch_account", 3),
+                            ba_account_delay=conf_copy.get("ba_account_delay", 60),
+                            start_log_mode=conf_copy.get("start_log_mode", "both"),
+                            start_photo_log_mode=conf_copy.get("start_photo_log_mode", "both"),
+                            progress_log_mode=conf_copy.get("progress_log_mode", "both"),
+                            panel_log_mode=conf_copy.get("panel_log_mode", "log_group")
+                        ))
+                    except Exception as e:
+                        logger.error(f"Failed to start task for session {s_idx}: {e}\n{traceback.format_exc()}")
+                        # ✅ FIX: Notify user about the failed session via Telegram
+                        try:
+                            err_notify = (
+                                f"<blockquote expandable>"
+                                f"❌ <b>Gagal memulai task untuk Session {s_idx}</b>\n"
+                                f"• Task ID: <code>{tid}</code>\n"
+                                f"• Error: <code>{html.escape(str(e))}</code>"
+                                f"</blockquote>"
+                            )
+                            if cb_msg:
+                                await cb_msg.reply(err_notify)
+                            else:
+                                await Altruix.bot.send_message(uid, err_notify)
+                        except Exception:
+                            pass  # Best-effort notification
             except Exception as e:
-                logger.error(f"Failed to start task for session {s_idx}: {e}")
-                
-        await safe_cb_answer(cb, f"Successfully started {len(selected)} tasks!", show_alert=True)
+                logger.error(f"Unexpected error in launch_tasks_bg: {e}\n{traceback.format_exc()}")
+                # ✅ FIX: Notify user about the overall launch failure via Telegram
+                try:
+                    err_notify = (
+                        f"<blockquote expandable>"
+                        f"❌ <b>Launch sequence gagal total</b>\n"
+                        f"• Error: <code>{html.escape(str(e))}</code>\n"
+                        f"• Traceback: <pre>{html.escape(traceback.format_exc()[-500:])}</pre>"
+                        f"</blockquote>"
+                    )
+                    if cb_msg:
+                        await cb_msg.reply(err_notify)
+                    else:
+                        await Altruix.bot.send_message(uid, err_notify)
+                except Exception:
+                    pass  # Best-effort notification
+            finally:
+                if uid in user_creategroup_state:
+                    user_creategroup_state[uid]["launching"] = False
+        
+        # Copy the config to freeze it for launch
+        conf_copy = conf.copy()
+        
+        # Start the launch sequence in background
+        asyncio.create_task(launch_tasks_bg(selected, conf_copy, user_id, cb.message))
+        
+        # Update state to go back to main dashboard
+        state["sub_menu"] = None
+        
+        # Render the dashboard UI immediately
+        await render_creategroup_ui(cb, state)
+        
+        # Notify the user with popup alert
+        await safe_cb_answer(cb, f"🚀 Memulai CreateGroup Task pada {len(selected)} akun!", show_alert=True)
+        
     except Exception as e:
+        if user_id and user_id in user_creategroup_state:
+            user_creategroup_state[user_id]["launching"] = False
         logger.error(f"Error in creategroup_confirm_task_handler: {e}\n{traceback.format_exc()}")
         err_msg = f"❌ <b>Error starting tasks:</b>\n<code>{e}</code>\n\n#LOG_ERROR"
         await send_log_message(f"{err_msg}\n<pre>{html.escape(traceback.format_exc())}</pre>")
@@ -2018,8 +2271,8 @@ async def render_creategroup_running_ui(cb: CallbackQuery, task: dict, idx: int,
             InlineKeyboardButton("📑 List Group", callback_data=f"creategroup_list_group_{idx}_{pg}", style=user_style)
         ],
         [
-            InlineKeyboardButton("🔄 Recurring", callback_data="noop", style=user_style), # Placeholder
-            InlineKeyboardButton("✏️ Edit Last", callback_data="noop", style=user_style) # Placeholder
+            InlineKeyboardButton("🔄 Recurring", callback_data=f"creategroup_recurring_{idx}_{pg}", style=user_style),
+            InlineKeyboardButton("✏️ Edit Last", callback_data=f"creategroup_edit_last_{idx}_{pg}", style=user_style)
         ],
         [
             InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_menu_{idx}_{pg}", style=user_style)
@@ -2036,8 +2289,7 @@ async def render_creategroup_running_ui(cb: CallbackQuery, task: dict, idx: int,
 @log_errors
 async def creategroup_control_handler(c: Client, cb: CallbackQuery):
     action, idx, pg = cb.matches[0].group(1), int(cb.matches[0].group(2)), int(cb.matches[0].group(3))
-    from Main.plugins.userbot.xcreategroup import CREATEGROUP_TASKS
-    task = CREATEGROUP_TASKS.get(f"creategroup_{cb.from_user.id}")
+    task = await _find_task_by_session_idx(idx)
     
     # Redirect to main menu if task finished
     if not task or not task.get("running"):
@@ -2075,8 +2327,7 @@ async def creategroup_control_handler(c: Client, cb: CallbackQuery):
 @log_errors
 async def creategroup_status_detail_handler(c: Client, cb: CallbackQuery):
     idx, pg = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
-    from Main.plugins.userbot.xcreategroup import CREATEGROUP_TASKS
-    task = CREATEGROUP_TASKS.get(f"creategroup_{cb.from_user.id}")
+    task = await _find_task_by_session_idx(idx)
     
     if not task: return await cb.answer("No task running", show_alert=True)
     
@@ -2107,8 +2358,7 @@ async def creategroup_status_detail_handler(c: Client, cb: CallbackQuery):
 @log_errors
 async def creategroup_list_group_handler(c: Client, cb: CallbackQuery):
     idx, pg = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
-    from Main.plugins.userbot.xcreategroup import CREATEGROUP_TASKS
-    task = CREATEGROUP_TASKS.get(f"creategroup_{cb.from_user.id}")
+    task = await _find_task_by_session_idx(idx)
     
     if not task: return await cb.answer("No task running", show_alert=True)
     
@@ -2133,6 +2383,209 @@ async def creategroup_list_group_handler(c: Client, cb: CallbackQuery):
         await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
     else:
         await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+
+async def _find_completed_task_by_session_idx(idx: int):
+    if not (1 <= idx <= len(Altruix.clients)):
+        return None
+    client = Altruix.clients[idx - 1]
+    try:
+        me_user = client.me or await client.get_me()
+        target_session_id = me_user.id
+    except Exception:
+        return None
+        
+    from Main.plugins.userbot.xcreategroup import COMPLETED_CREATEGROUP_TASKS
+    matching_tasks = []
+    for k, v in COMPLETED_CREATEGROUP_TASKS.items():
+        if v.get("user_id") == target_session_id:
+            matching_tasks.append(v)
+            
+    if matching_tasks:
+        matching_tasks.sort(key=lambda x: x.get("start_time", datetime.min) if isinstance(x.get("start_time"), datetime) else datetime.min, reverse=True)
+        return matching_tasks[0]
+    return None
+
+@Altruix.bot.on_callback_query(filters.regex(r"^creategroup_recurring_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def creategroup_recurring_handler(c: Client, cb: CallbackQuery):
+    idx, pg = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
+    
+    # Check if a task is already running for this session
+    task = await _find_task_by_session_idx(idx)
+    if task and task.get("running"):
+        await cb.answer("⚠️ Task masih berjalan, hentikan dulu sebelum recurring.", show_alert=True)
+        return
+        
+    conf = await _find_completed_task_by_session_idx(idx)
+    if not conf:
+        await cb.answer("❌ Tidak ada task selesai untuk diulang.", show_alert=True)
+        return
+        
+    # Show confirmation UI
+    text = (
+        f"🔁 <b>Konfirmasi Recurring</b>\n\n"
+        f"Apakah Anda yakin ingin mengulang task ini?\n"
+        f"• Account: <b>Session {idx}</b>\n"
+        f"• Total: <code>{conf['count']}</code> grup\n"
+        f"• Tipe: <code>{conf['group_type']}</code>\n"
+        f"• Delay/Act: <code>{conf.get('action_delay', 3.0)}</code>s\n"
+        f"• Delay/GC: <code>{conf['delay']}</code>s\n"
+        f"• Batch: <code>{conf['batch_size']}</code> | <code>{conf['extra_delay_minutes']}</code>m\n"
+        f"• Pattern: <code>{html.escape(conf['name_pattern'][:25])}...</code>\n"
+        f"• Bots: <code>{'Yes' if conf.get('invite_bots', True) else 'No'}</code>\n\n"
+        f"<i>Task akan menggunakan konfigurasi yang sama.</i>"
+    )
+    
+    from Main.internals.settings_handlers.custom_alert_handlers import _get_session_user_id
+    session_user_id = _get_session_user_id(idx)
+    user_style = get_user_button_style(session_user_id)
+    
+    buttons = [
+        [
+            InlineKeyboardButton("✅ Ya, Ulangi", callback_data=f"creategroup_confirm_recur_{idx}_{pg}", style=user_style),
+            InlineKeyboardButton("❌ Tidak", callback_data=f"creategroup_ui_{idx}_{pg}", style=user_style)
+        ]
+    ]
+    
+    if cb.message:
+        await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    else:
+        await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^creategroup_confirm_recur_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def creategroup_confirm_recur_handler(c: Client, cb: CallbackQuery):
+    idx, pg = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
+    
+    task = await _find_task_by_session_idx(idx)
+    if task and task.get("running"):
+        await cb.answer("⚠️ Task masih berjalan, hentikan dulu sebelum recurring.", show_alert=True)
+        return
+        
+    conf = await _find_completed_task_by_session_idx(idx)
+    if not conf:
+        await cb.answer("❌ Tidak ada task selesai untuk diulang.", show_alert=True)
+        return
+        
+    await cb.answer("🔁 Mengulang task...")
+    
+    from Main.plugins.userbot.xcreategroup import creategroup_loop
+    from Main.plugins.userbot.xtaskmanager import generate_task_id
+    
+    tid = generate_task_id("CG")
+    executor = Altruix.clients[idx - 1]
+    
+    try:
+        control_msg = await Altruix.bot.send_message(cb.from_user.id, f"<blockquote expandable>🔄 Re-initializing recurring task for Session {idx} [<code>{tid}</code>]...</blockquote>")
+    except Exception:
+        control_msg = None
+        
+    asyncio.create_task(creategroup_loop(
+        user_client=executor,
+        bot_client=Altruix.bot,
+        initial_message=cb.message,
+        delay=conf["delay"],
+        count=conf["count"],
+        extra_delay_minutes=conf["extra_delay_minutes"],
+        batch_size=conf["batch_size"],
+        batch_action=conf.get("batch_action", 30),
+        ba_delay=conf.get("ba_delay", 30),
+        group_type=conf["group_type"],
+        name_pattern=conf["name_pattern"],
+        username_prefix=conf["username_prefix"],
+        bot_identifiers=conf["bot_identifiers"],
+        control_message=control_msg,
+        action_delay=conf.get("action_delay", 3.0),
+        invite_bots=conf.get("invite_bots", True),
+        anon_mode=conf.get("anon_mode", True),
+        copy_messages=conf.get("copy_messages", True),
+        description=conf.get("description", "Powered by @AlphaXproject"),
+        photo_source=conf.get("photo_source", "source"),
+        custom_photo_id=conf.get("custom_photo_id"),
+        log_destination=conf.get("log_destination", "both"),
+        log_format=conf.get("log_format", "zip"),
+        pin_first_msg=conf.get("pin_first_msg", True),
+        msg_img=conf.get("msg_img", True),
+        msg_vid=conf.get("msg_vid", True),
+        rand_len=conf.get("rand_len", 0),
+        rand_lower=conf.get("rand_lower", False),
+        rand_upper=conf.get("rand_upper", False),
+        rand_static=conf.get("rand_static", False),
+        temp_pin=conf.get("temp_pin", True),
+        user_id=cb.from_user.id,
+        task_id=tid,
+        account_idx=1,
+        total_accs=1
+    ))
+    
+    # Back to running dashboard or menu
+    await asyncio.sleep(1)
+    await show_creategroup_ui(c, cb, idx, pg)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^creategroup_edit_last_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def creategroup_edit_last_handler(c: Client, cb: CallbackQuery):
+    idx, pg = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
+    user_id = cb.from_user.id
+    
+    task = await _find_task_by_session_idx(idx) or await _find_completed_task_by_session_idx(idx)
+    if not task:
+        await cb.answer("❌ Tidak ada task aktif atau selesai untuk sesi ini.", show_alert=True)
+        return
+        
+    created_groups = task.get("created_groups", [])
+    if not created_groups:
+        await cb.answer("❌ Belum ada grup yang dibuat.", show_alert=True)
+        return
+        
+    last_group = created_groups[-1]
+    chat_id = last_group["id"]
+    old_name = last_group["name"]
+    
+    user_creategroup_state[user_id] = {
+        "step": "awaiting_edit_last_name",
+        "session_index": idx,
+        "page": pg,
+        "chat_id": chat_id,
+        "old_name": old_name,
+        "ui_msg_id": cb.message.id if cb.message else None,
+        "ui_chat_id": cb.message.chat.id if cb.message else user_id
+    }
+    
+    text = (
+        f"✏️ <b>Edit Last Group Name</b>\n\n"
+        f"• Group ID: <code>{chat_id}</code>\n"
+        f"• Current Name: <b>{html.escape(old_name)}</b>\n\n"
+        f"Silakan balas/kirimkan nama baru untuk grup tersebut.\n"
+        f"Ketik <code>/cancel</code> untuk membatalkan."
+    )
+    
+    from Main.internals.settings_handlers.custom_alert_handlers import _get_session_user_id
+    session_user_id = _get_session_user_id(idx)
+    user_style = get_user_button_style(session_user_id)
+    
+    buttons = [[InlineKeyboardButton("❌ Cancel", callback_data=f"creategroup_cancel_edit_last_{idx}_{pg}", style=user_style)]]
+    
+    if cb.message:
+        await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    else:
+        await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+
+@Altruix.bot.on_callback_query(filters.regex(r"^creategroup_cancel_edit_last_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def creategroup_cancel_edit_last_handler(c: Client, cb: CallbackQuery):
+    idx, pg = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
+    user_id = cb.from_user.id
+    
+    if user_id in user_creategroup_state:
+        user_creategroup_state[user_id]["step"] = "ui_config"
+        
+    await cb.answer("Edit last dibatalkan")
+    await show_creategroup_ui(c, cb, idx, pg)
 
 async def process_creategroup_input(c: Client, m: Message, text: str = None):
     user_id = m.from_user.id
@@ -2182,6 +2635,71 @@ async def process_creategroup_input(c: Client, m: Message, text: str = None):
                 await render_creategroup_ui(None, state, message=new_msg)
             return
         else: return
+    elif state["step"] == "awaiting_edit_last_name":
+        new_name = text or m.text
+        if not new_name:
+            return
+            
+        idx = state["session_index"]
+        pg = state["page"]
+        
+        if new_name.strip().lower() == "/cancel":
+            state["step"] = "ui_config"
+            await m.reply("✏️ Edit nama grup dibatalkan.")
+            task = await _find_task_by_session_idx(idx)
+            user_style = get_user_button_style(m.from_user.id)
+            if task:
+                await m.reply(
+                    "Kembali ke progress menu.",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📊 Lihat Progress", callback_data=f"creategroup_ui_{idx}_{pg}", style=user_style)]])
+                )
+            else:
+                await m.reply(
+                    "Kembali ke menu utama.",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Menu Utama", callback_data=f"creategroup_ui_{idx}_{pg}", style=user_style)]])
+                )
+            return
+
+        chat_id = state["chat_id"]
+        old_name = state["old_name"]
+        
+        try:
+            client = Altruix.clients[idx - 1]
+            await client.set_chat_title(int(chat_id), new_name)
+            
+            # Update memory in tasks
+            from Main.plugins.userbot.xcreategroup import CREATEGROUP_TASKS, COMPLETED_CREATEGROUP_TASKS
+            task_info = CREATEGROUP_TASKS.get(idx) or await _find_task_by_session_idx(idx) or await _find_completed_task_by_session_idx(idx)
+            if task_info:
+                for g in task_info.get("created_groups", []):
+                    if g["id"] == chat_id:
+                        g["name"] = new_name
+                        break
+            
+            await m.reply(
+                f"✅ <b>Nama Grup Berhasil Diubah!</b>\n\n"
+                f"• Sebelum: <code>{html.escape(old_name)}</code>\n"
+                f"• Sesudah: <code>{html.escape(new_name)}</code>",
+                parse_mode=ParseMode.HTML
+            )
+        except Exception as e:
+            logger.error(f"Error in process_creategroup_input awaiting_edit_last_name: {e}\n{traceback.format_exc()}")
+            await m.reply(f"❌ <b>Gagal mengubah nama grup:</b>\n<code>{html.escape(str(e))}</code>", parse_mode=ParseMode.HTML)
+            
+        state["step"] = "ui_config"
+        task = await _find_task_by_session_idx(idx)
+        user_style = get_user_button_style(m.from_user.id)
+        if task:
+            await m.reply(
+                "Grup telah diperbarui. Silakan muat ulang progress menu.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📊 Lihat Progress", callback_data=f"creategroup_ui_{idx}_{pg}", style=user_style)]])
+            )
+        else:
+            await m.reply(
+                "Grup telah diperbarui. Kembali ke menu utama.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Menu Utama", callback_data=f"creategroup_ui_{idx}_{pg}", style=user_style)]])
+            )
+        return
     elif state["step"] == "input_manual":
         # Process manual command-like input string
         try:

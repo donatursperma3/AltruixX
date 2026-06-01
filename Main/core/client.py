@@ -1354,12 +1354,11 @@ class AltruixClient:
             self.db = MongoDB(self.config.DB_URI)
             self.log("Initialized Mongo successfully!")
         else:
-            self.log("DB_URI not found. Using LocalDatabase.")
-            self.db = LocalDatabase()
+            self.log("DB_URI not found. Reusing existing LocalDatabase.")
+            self.db = self.local_db
             self.log("Initialized LocalDatabase successfully!")
-            # Start background saver for debounced writing
-            self.loop.create_task(self.db.start_background_saver())
-            self.log("Started LocalDatabase background saver.")
+            # Note: Background saver is already started in __init__
+            self.log("LocalDatabase background saver is active.")
             
         self.log("Pinging Database...")
         try:

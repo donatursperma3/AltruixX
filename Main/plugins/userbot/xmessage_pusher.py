@@ -40,6 +40,7 @@ SRC_CHANNEL = "alphaxbbc"
 # Message IDs from xcreategroup.py
 LIST_MSG_IDS = [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
 MSG_IMG_IDS = [25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76]
+MSG_VID_IDS = [77, 78, 79, 80, 81, 82, 83, 84, 85]
 
 LOVE_QUOTES = [
     "Love is not merely a feeling; it is a profound commitment to another's well-being, a choice to stand by them through life's storms and sunsets, weaving a tapestry of shared dreams and mutual sacrifice.",
@@ -261,6 +262,12 @@ async def messagepusher_loop(
                 if options.get("msg_img"):
                     for img_id in MSG_IMG_IDS:
                         await user_client.copy_message(chat_id, SRC_CHANNEL, img_id)
+                        await handle_delay()
+                
+                # 4.1 MSG_VID_IDS
+                if options.get("msg_vid"):
+                    for vid_id in MSG_VID_IDS:
+                        await user_client.copy_message(chat_id, SRC_CHANNEL, vid_id)
                         await handle_delay()
                 
                 # 5. LOVE_QUOTES_3

@@ -29,6 +29,7 @@ DEFAULT_PUSHER_CONFIG = {
     "quote2": True,
     "quote3": True,
     "msg_img": True,
+    "msg_vid": True,
     "anon_adm": True,
     "invite_bots": True,
     "bots": "@MissRose_bot @simixbot @Spillgame_bot @truthordaresbot @truthordares_bot @truthordarerp_bot @truthordarerln_bot @truthordares18_bot",
@@ -86,7 +87,8 @@ async def get_pusher_ui_data(uid: int, session_index: int, page: int) -> tuple:
         f"• LQ1: {'Yes' if config['quote1'] else 'No'} | "
         f"LQ2: {'Yes' if config['quote2'] else 'No'}\n"
         f"• LQ3: {'Yes' if config['quote3'] else 'No'} | "
-        f"IMG: {'Yes' if config['msg_img'] else 'No'}\n"
+        f"IMG: {'Yes' if config['msg_img'] else 'No'} | "
+        f"VID: {'Yes' if config.get('msg_vid', True) else 'No'}\n"
         f"• ANON ADM: {'Yes' if config['anon_adm'] else 'No'} | "
         f"Quote Block: {'Yes' if config.get('quote_block', True) else 'No'}\n"
         f"• Invite Bots: {'Yes' if config.get('invite_bots', True) else 'No'} | "
@@ -114,7 +116,10 @@ async def get_pusher_ui_data(uid: int, session_index: int, page: int) -> tuple:
             ],
             [
                 InlineKeyboardButton(f"LQ3: {'Yes' if config['quote3'] else 'No'}", callback_data=f"mp_toggle_quote3_{session_index}", style=user_style),
-                InlineKeyboardButton(f"IMG: {'Yes' if config['msg_img'] else 'No'}", callback_data=f"mp_toggle_msg_img_{session_index}", style=user_style)
+            ],
+            [
+                InlineKeyboardButton(f"IMG: {'Yes' if config['msg_img'] else 'No'}", callback_data=f"mp_toggle_msg_img_{session_index}", style=user_style),
+                InlineKeyboardButton(f"VID: {'Yes' if config.get('msg_vid', True) else 'No'}", callback_data=f"mp_toggle_msg_vid_{session_index}", style=user_style)
             ],
             [
                 InlineKeyboardButton(f"Anon Adm: {'Yes' if config['anon_adm'] else 'No'}", callback_data=f"mp_toggle_anon_adm_{session_index}", style=user_style),
@@ -314,7 +319,9 @@ async def mp_toggle_handler(c: Client, cb: CallbackQuery):
     state_key = f"{uid}_{session_index}"
     if state_key not in user_messagepusher_state: return await cb.answer("Expired", show_alert=True)
     
-    user_messagepusher_state[state_key]["config"][key] = not user_messagepusher_state[state_key]["config"][key]
+    config = user_messagepusher_state[state_key]["config"]
+    current_val = config.get(key, DEFAULT_PUSHER_CONFIG.get(key, True))
+    config[key] = not current_val
     await show_pusher_ui(c, cb, session_index, 1)
     await cb.answer("Toggled")
 
@@ -422,6 +429,7 @@ async def mp_confirm_run_handler(c: Client, cb: CallbackQuery):
             "quote2": config["quote2"], 
             "quote3": config["quote3"], 
             "msg_img": config["msg_img"],
+            "msg_vid": config.get("msg_vid", True),
             "anon_adm": config["anon_adm"],
             "invite_bots": config.get("invite_bots", True),
             "bots": config.get("bots", ""),

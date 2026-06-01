@@ -304,7 +304,7 @@ async def extract_yt_info(url: str):
 
     # We use -J (--dump-single-json) to ensure we get a single JSON object
     # even for playlists, which makes parsing much more reliable.
-    cmd = ["yt-dlp", "-J", "--flat-playlist", "--extractor-args", "youtube:player_client=android,web,mweb,ios"]
+    cmd = ["yt-dlp", "-J", "--flat-playlist", "--extractor-args", "youtube:player_client=default"]
     
     # ✅ Enable remote solvers to fix 'n' challenge with Deno/Node
     cmd.extend(["--remote-components", "ejs:github"])
@@ -393,7 +393,7 @@ async def extract_yt_info(url: str):
     if data.get("_type") != "playlist":
         target_url = data.get("webpage_url") or data.get("url") or url
         # Use -J and --no-playlist to ensure we get a single video object with formats
-        cmd_full = ["yt-dlp", "-J", "--no-playlist", "--extractor-args", "youtube:player_client=android,web,mweb,ios"]
+        cmd_full = ["yt-dlp", "-J", "--no-playlist", "--extractor-args", "youtube:player_client=default"]
         
         # ✅ Enable remote solvers to fix 'n' challenge with Deno/Node
         cmd_full.extend(["--remote-components", "ejs:github"])
@@ -507,6 +507,30 @@ async def ytdl_engine(msg, task_id):
             state.get("user_id"), f"🎬 {state['title'][:30]}..."
         )
     except: unregister_task = None
+    
+    async def _try_return_to_dashboard() -> bool:
+        try:
+            from Main.plugins.bot.xyt_tools_bot import ytdl_inline_menu
+        except Exception:
+            return False
+        try:
+            if not hasattr(msg, "from_user") or not getattr(msg, "from_user", None):
+                return False
+            client = getattr(msg, "client", None) or getattr(msg, "_client", None) or getattr(Altruix, "bot", None)
+            if not client:
+                return False
+            await ytdl_inline_menu(client, msg, task_id)
+            return True
+        except Exception:
+            return False
+    
+    def _schedule_done_cleanup(done_at: int) -> None:
+        async def _cleanup():
+            await asyncio.sleep(1800)
+            st = Altruix.YTDL_STATE.get(task_id)
+            if st and st.get("status") == "done" and st.get("done_at") == done_at:
+                Altruix.YTDL_STATE.pop(task_id, None)
+        asyncio.create_task(_cleanup())
 
     try:
         if state.get("auto_batch") and state.get("entries"):
@@ -567,8 +591,14 @@ async def ytdl_engine(msg, task_id):
             except Exception:
                 Altruix.log(f"YTDL DB Delete Error (Batch):\n{traceback.format_exc()}")
             
-            Altruix.YTDL_STATE.pop(task_id, None)
-            await edit_status(msg, f"<b>✅ Batch Selesai! {count} media telah diproses.</b>")
+            state = Altruix.YTDL_STATE.get(task_id)
+            if state:
+                state["status"] = "done"
+                done_at = int(time.time())
+                state["done_at"] = done_at
+                _schedule_done_cleanup(done_at)
+            if not await _try_return_to_dashboard():
+                await edit_status(msg, f"<b>✅ Batch Selesai! {count} media telah diproses.</b>")
         else:
             # Single Media Processing
             await _ytdl_single_unit(msg, task_id, state)
@@ -580,8 +610,14 @@ async def ytdl_engine(msg, task_id):
             except Exception:
                 Altruix.log(f"YTDL DB Delete Error (Unit):\n{traceback.format_exc()}")
             
-            Altruix.YTDL_STATE.pop(task_id, None)
-            await edit_status(msg, "<b>✅ Done! File sent.</b>")
+            state = Altruix.YTDL_STATE.get(task_id)
+            if state:
+                state["status"] = "done"
+                done_at = int(time.time())
+                state["done_at"] = done_at
+                _schedule_done_cleanup(done_at)
+            if not await _try_return_to_dashboard():
+                await edit_status(msg, "<b>✅ Done! File sent.</b>")
             
     except asyncio.CancelledError:
         await edit_status(msg, "<b>🛑 Task dibatalkan.</b>")
@@ -638,7 +674,7 @@ async def _ytdl_single_unit(status_msg, task_id, state):
                 format_spec = "bestaudio/best"
             
         raw_pattern = os.path.join(temp_path, "raw.%(ext)s")
-        dl_cmd = ["yt-dlp", "-f", format_spec, "-o", raw_pattern, "--no-playlist", "--merge-output-format", "mp4", "--extractor-args", "youtube:player_client=android,web,mweb,ios"]
+        dl_cmd = ["yt-dlp", "-f", format_spec, "-o", raw_pattern, "--no-playlist", "--merge-output-format", "mp4", "--extractor-args", "youtube:player_client=default"]
         
         # ✅ Enable remote solvers for download too
         dl_cmd.extend(["--remote-components", "ejs:github"])
@@ -714,9 +750,28 @@ async def _ytdl_single_unit(status_msg, task_id, state):
                 Altruix.log(f"Thumbnail Download/Process Error: {te}")
             
         # Trim & Watermark Execution
-        start_s, end_s = state.get("start", 0), state.get("end", state["duration"])
-        duration = end_s - start_s
-        is_trimmed = (start_s != 0 or end_s != state["duration"])
+        try:
+            start_s = float(state.get("start", 0) or 0)
+        except Exception:
+            start_s = 0.0
+        try:
+            end_s = float(state.get("end", state.get("duration", 0)) or 0)
+        except Exception:
+            end_s = 0.0
+        try:
+            total_s = float(state.get("duration", 0) or 0)
+        except Exception:
+            total_s = 0.0
+        if end_s <= 0 and total_s > 0:
+            end_s = total_s
+        if start_s < 0:
+            start_s = 0.0
+        if total_s > 0 and end_s > total_s:
+            end_s = total_s
+        if end_s < start_s:
+            end_s = start_s
+        duration = max(0.0, end_s - start_s)
+        is_trimmed = (start_s != 0 or (total_s > 0 and end_s != total_s))
         wm_enabled = state.get("watermark", False)
         
         v_bitrate = state.get("video_bitrate", "Original")
@@ -724,6 +779,21 @@ async def _ytdl_single_unit(status_msg, task_id, state):
         volume_val = state.get("volume", "Original")
         try: speed_float = float(speed_val.replace("x", ""))
         except: speed_float = 1.0
+        if speed_float <= 0:
+            speed_float = 1.0
+        try:
+            fade_in = float(state.get("fade_in", 0) or 0)
+        except Exception:
+            fade_in = 0.0
+        try:
+            fade_out = float(state.get("fade_out", 0) or 0)
+        except Exception:
+            fade_out = 0.0
+        if fade_in < 0:
+            fade_in = 0.0
+        if fade_out < 0:
+            fade_out = 0.0
+        has_fade = (fade_in > 0 or fade_out > 0)
         
         # Chapters Split Branch
         split_chapters = state.get("split_chapters", False)
@@ -796,6 +866,17 @@ async def _ytdl_single_unit(status_msg, task_id, state):
                     vol_arg = parse_volume_to_ffmpeg(volume_val)
                     if vol_arg:
                         a_filters.append(f"volume={vol_arg}")
+                    
+                    out_dur = chap_duration / speed_float if speed_float else chap_duration
+                    if out_dur < 0:
+                        out_dur = 0.0
+                    if fade_in > 0 and out_dur > 0:
+                        d_in = min(fade_in, out_dur)
+                        a_filters.append(f"afade=t=in:st=0:d={d_in:.3f}")
+                    if fade_out > 0 and out_dur > 0:
+                        d_out = min(fade_out, out_dur)
+                        st_out = max(0.0, out_dur - d_out)
+                        a_filters.append(f"afade=t=out:st={st_out:.3f}:d={d_out:.3f}")
                         
                     if a_filters:
                         trim_cmd.extend(["-af", ",".join(a_filters), "-c:a", "aac"])
@@ -821,6 +902,17 @@ async def _ytdl_single_unit(status_msg, task_id, state):
                     vol_arg = parse_volume_to_ffmpeg(volume_val)
                     if vol_arg:
                         a_filters.append(f"volume={vol_arg}")
+                    
+                    out_dur = chap_duration / speed_float if speed_float else chap_duration
+                    if out_dur < 0:
+                        out_dur = 0.0
+                    if fade_in > 0 and out_dur > 0:
+                        d_in = min(fade_in, out_dur)
+                        a_filters.append(f"afade=t=in:st=0:d={d_in:.3f}")
+                    if fade_out > 0 and out_dur > 0:
+                        d_out = min(fade_out, out_dur)
+                        st_out = max(0.0, out_dur - d_out)
+                        a_filters.append(f"afade=t=out:st={st_out:.3f}:d={d_out:.3f}")
                         
                     if a_filters:
                         trim_cmd.extend(["-af", ",".join(a_filters)])
@@ -867,6 +959,9 @@ async def _ytdl_single_unit(status_msg, task_id, state):
                 v_bit_str = f" ({v_bitrate})" if (is_video and v_bitrate != "Original") else ""
                 speed_str = f"\n<b>• Speed:</b> <code>{speed_val}</code>" if speed_val != "1.0x" else ""
                 volume_str_cap = f"\n<b>• Volume:</b> <code>{volume_val}</code>" if volume_val != "Original" else ""
+                fade_str_cap = ""
+                if has_fade:
+                    fade_str_cap = f"\n<b>• Fade:</b> <code>IN {fade_in:.2f}s | OUT {fade_out:.2f}s</code>".replace(".00s", "s").replace(".0s", "s")
                 
                 qual_suffix = "p" if is_video else "kbps"
                 
@@ -883,6 +978,7 @@ async def _ytdl_single_unit(status_msg, task_id, state):
                     f"<b>• Audio Lang:</b> {state.get('audio_lang', 'Default').upper()}"
                     f"{speed_str}"
                     f"{volume_str_cap}"
+                    f"{fade_str_cap}"
                 )
                 if state.get("show_link", True):
                     chap_caption += f"\n<b>• Source:</b> {state['url']}"
@@ -962,7 +1058,7 @@ async def _ytdl_single_unit(status_msg, task_id, state):
             # Since we completed all chapters, we return successfully!
             return
             
-        needs_ffmpeg = is_trimmed or (speed_float != 1.0) or (volume_val != "Original") or (is_video and (wm_enabled or v_bitrate != "Original"))
+        needs_ffmpeg = is_trimmed or (speed_float != 1.0) or (volume_val != "Original") or has_fade or (is_video and (wm_enabled or v_bitrate != "Original"))
         
         if needs_ffmpeg:
             if is_trimmed:
@@ -971,11 +1067,13 @@ async def _ytdl_single_unit(status_msg, task_id, state):
                 act_text = "Mengubah Kecepatan"
             elif volume_val != "Original":
                 act_text = "Menyesuaikan Volume"
+            elif has_fade:
+                act_text = "Menerapkan Fade"
             elif is_video and v_bitrate != "Original":
                 act_text = "Mengompresi Video"
             else:
                 act_text = "Merender Watermark"
-            await edit_status(status_msg, f"<b>✂️ {act_text} ({Essentials.get_readable_time(duration)})...</b>")
+            await edit_status(status_msg, f"<b>✂️ {act_text} ({Essentials.get_readable_time(int(duration))})...</b>")
             
             if is_video:
                  trim_cmd = ["ffmpeg"]
@@ -990,10 +1088,14 @@ async def _ytdl_single_unit(status_msg, task_id, state):
                  if wm_enabled:
                      v_filters.append("drawtext=text='Altroid-X':fontcolor=white:fontsize=h/20:box=1:boxcolor=black@0.5:x=w-tw-20:y=20")
                      
-                 if v_filters:
-                      trim_cmd.extend(["-vf", ",".join(v_filters), "-c:v", "libx264", "-preset", "veryfast"])
+                 need_v_encode = bool(v_filters) or is_trimmed or (v_bitrate != "Original")
+                 if need_v_encode:
+                      if v_filters:
+                           trim_cmd.extend(["-vf", ",".join(v_filters), "-c:v", "libx264", "-preset", "veryfast"])
+                      else:
+                           trim_cmd.extend(["-c:v", "libx264", "-preset", "veryfast"])
                  else:
-                      trim_cmd.extend(["-c:v", "libx264", "-preset", "veryfast"])
+                      trim_cmd.extend(["-c:v", "copy"])
                       
                  if v_bitrate != "Original":
                       v_bitrate_arg = None
@@ -1021,6 +1123,17 @@ async def _ytdl_single_unit(status_msg, task_id, state):
                  vol_arg = parse_volume_to_ffmpeg(volume_val)
                  if vol_arg:
                      a_filters.append(f"volume={vol_arg}")
+                 
+                 out_dur = duration / speed_float if speed_float else duration
+                 if out_dur < 0:
+                      out_dur = 0.0
+                 if fade_in > 0 and out_dur > 0:
+                      d_in = min(fade_in, out_dur)
+                      a_filters.append(f"afade=t=in:st=0:d={d_in:.3f}")
+                 if fade_out > 0 and out_dur > 0:
+                      d_out = min(fade_out, out_dur)
+                      st_out = max(0.0, out_dur - d_out)
+                      a_filters.append(f"afade=t=out:st={st_out:.3f}:d={d_out:.3f}")
                      
                  if a_filters:
                      trim_cmd.extend(["-af", ",".join(a_filters), "-c:a", "aac"])
@@ -1050,6 +1163,17 @@ async def _ytdl_single_unit(status_msg, task_id, state):
                  vol_arg = parse_volume_to_ffmpeg(volume_val)
                  if vol_arg:
                      a_filters.append(f"volume={vol_arg}")
+                 
+                 out_dur = duration / speed_float if speed_float else duration
+                 if out_dur < 0:
+                      out_dur = 0.0
+                 if fade_in > 0 and out_dur > 0:
+                      d_in = min(fade_in, out_dur)
+                      a_filters.append(f"afade=t=in:st=0:d={d_in:.3f}")
+                 if fade_out > 0 and out_dur > 0:
+                      d_out = min(fade_out, out_dur)
+                      st_out = max(0.0, out_dur - d_out)
+                      a_filters.append(f"afade=t=out:st={st_out:.3f}:d={d_out:.3f}")
                      
                  if a_filters:
                      trim_cmd.extend(["-af", ",".join(a_filters)])
@@ -1058,8 +1182,9 @@ async def _ytdl_single_unit(status_msg, task_id, state):
                  
             await run_subprocess(trim_cmd)
             
-        if speed_float != 1.0:
-            duration = int(duration / speed_float)
+        if speed_float != 1.0 and duration > 0:
+            duration = duration / speed_float
+        duration = int(duration)
         
         # Audio Metadata & Cover Embedding (Premium Feature)
         if not is_video:
@@ -1124,6 +1249,9 @@ async def _ytdl_single_unit(status_msg, task_id, state):
         speed_str = f"\n<b>• Speed:</b> <code>{speed_val}</code>" if speed_val != "1.0x" else ""
         volume_val = state.get("volume", "Original")
         volume_str = f"\n<b>• Volume:</b> <code>{volume_val}</code>" if volume_val != "Original" else ""
+        fade_str = ""
+        if has_fade:
+            fade_str = f"\n<b>• Fade:</b> <code>IN {fade_in:.2f}s | OUT {fade_out:.2f}s</code>".replace(".00s", "s").replace(".0s", "s")
         
         caption = (
             f"<blockquote expandable>"
@@ -1138,6 +1266,7 @@ async def _ytdl_single_unit(status_msg, task_id, state):
             f"<b>• Audio Lang:</b> {state.get('audio_lang', 'Default').upper()}"
             f"{speed_str}"
             f"{volume_str}"
+            f"{fade_str}"
         )
         if state.get("show_link", True):
              caption += f"\n<b>• Source:</b> {state['url']}"

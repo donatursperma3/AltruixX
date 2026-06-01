@@ -469,6 +469,10 @@ class Config(BaseConfig):
             await self.env_col.find_one_and_update(
                 {"_id": "SUDO_USERS_ID"}, update, upsert=upsert
             )
+            # ✅ REFRESH CACHE: Ensure local state matches DB after complex update
+            new_val = await self.get_env_from_db("SUDO_USERS_ID")
+            self._env_cache["SUDO_USERS_ID"] = new_val
+            setattr(self, "SUDO_USERS_ID", new_val)
         else:
             await self.env_col.find_one_and_update(
                 {"_id": env_name}, {"$set": {"env_value": update}}, upsert=upsert
@@ -493,6 +497,11 @@ class Config(BaseConfig):
             await self.env_col.find_one_and_update(
                 {"_id": env_name}, {"$addToSet": {"env_value": value}}, upsert=True
             )
+            # ✅ REFRESH CACHE
+            new_val = await self.get_env_from_db(env_name)
+            self._env_cache[env_name] = new_val
+            setattr(self, env_name, new_val)
+            
             # ✅ Force Save for LocalDB
             if hasattr(self.env_col, "db") and hasattr(self.env_col.db, "save_now"):
                 await self.env_col.db.save_now()
@@ -501,6 +510,11 @@ class Config(BaseConfig):
         await self.env_col.find_one_and_update(
             {"_id": env_name}, {"$pull": {"env_value": value}}
         )
+        # ✅ REFRESH CACHE
+        new_val = await self.get_env_from_db(env_name)
+        self._env_cache[env_name] = new_val
+        setattr(self, env_name, new_val)
+        
         # ✅ Force Save for LocalDB
         if hasattr(self.env_col, "db") and hasattr(self.env_col.db, "save_now"):
             await self.env_col.db.save_now()
@@ -522,6 +536,12 @@ class Config(BaseConfig):
                     {"$pull": {"env_value": env_value}},
                     upsert=upsert,
                 )
+        
+        # ✅ REFRESH CACHE
+        new_val = await self.get_env_from_db(env_name)
+        self._env_cache[env_name] = new_val
+        setattr(self, env_name, new_val)
+
         # ✅ Force Save for LocalDB
         if hasattr(self.env_col, "db") and hasattr(self.env_col.db, "save_now"):
             await self.env_col.db.save_now()
@@ -554,6 +574,7 @@ class Config(BaseConfig):
             res = await self.env_col.insert_one({"_id": env_name, "env_value": env_value})
         
         self._env_cache[env_name] = env_value
+        setattr(self, env_name, env_value)
         # ✅ Force Save for LocalDB
         if hasattr(self.env_col, "db") and hasattr(self.env_col.db, "save_now"):
             await self.env_col.db.save_now()

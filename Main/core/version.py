@@ -5,4 +5,4 @@
 # All other modules import from here.
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-__version__ = "0.0.10.2470I"
+__version__ = "0.0.10.2482I"

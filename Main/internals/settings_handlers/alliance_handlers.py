@@ -157,7 +157,7 @@ async def alliance_callback_handler(c: Client, cb: CallbackQuery):
         )
 
     elif data == "set_key":
-        WAITING[cb.from_user.id] = {"action": "set_key", "msg_id": cb.message.id}
+        WAITING[cb.from_user.id] = {"action": "set_key", "msg_id": cb.inline_message_id or (cb.message.id if cb.message else None)}
         await edit_cb(
             cb,
             "🔑 <b>Update AI API Key</b>\n\n"
@@ -167,7 +167,7 @@ async def alliance_callback_handler(c: Client, cb: CallbackQuery):
         )
 
     elif data == "set_delay":
-        WAITING[cb.from_user.id] = {"action": "set_delay", "msg_id": cb.message.id}
+        WAITING[cb.from_user.id] = {"action": "set_delay", "msg_id": cb.inline_message_id or (cb.message.id if cb.message else None)}
         await edit_cb(
             cb,
             "⏳ <b>Adjust AI Delay Range</b>\n\n"
@@ -177,7 +177,7 @@ async def alliance_callback_handler(c: Client, cb: CallbackQuery):
         )
 
     elif data == "join":
-        WAITING[cb.from_user.id] = {"action": "mass_join", "msg_id": cb.message.id}
+        WAITING[cb.from_user.id] = {"action": "mass_join", "msg_id": cb.inline_message_id or (cb.message.id if cb.message else None)}
         await edit_cb(
             cb,
             "🚀 <b>Smart Mass Join</b>\n\n"
@@ -222,7 +222,7 @@ async def alliance_callback_handler(c: Client, cb: CallbackQuery):
         )
 
     elif data == "vc_join":
-        WAITING[cb.from_user.id] = {"action": "vc_join", "msg_id": cb.message.id}
+        WAITING[cb.from_user.id] = {"action": "vc_join", "msg_id": cb.inline_message_id or (cb.message.id if cb.message else None)}
         await edit_cb(
             cb,
             "🎙️ <b>Mass Join Voice Chat</b>\n\n"
@@ -232,7 +232,7 @@ async def alliance_callback_handler(c: Client, cb: CallbackQuery):
         )
 
     elif data == "vc_leave":
-        WAITING[cb.from_user.id] = {"action": "vc_leave", "msg_id": cb.message.id}
+        WAITING[cb.from_user.id] = {"action": "vc_leave", "msg_id": cb.inline_message_id or (cb.message.id if cb.message else None)}
         await edit_cb(
             cb,
             "🎙️ <b>Mass Leave Voice Chat</b>\n\n"
@@ -258,7 +258,7 @@ async def alliance_callback_handler(c: Client, cb: CallbackQuery):
             await cb.answer(f"❌ Error: {e}", show_alert=True)
 
     elif data == "vc_stats":
-        WAITING[cb.from_user.id] = {"action": "vc_stats", "msg_id": cb.message.id}
+        WAITING[cb.from_user.id] = {"action": "vc_stats", "msg_id": cb.inline_message_id or (cb.message.id if cb.message else None)}
         await edit_cb(
             cb,
             "📊 <b>VC Real-time Stats</b>\n\n"
@@ -267,7 +267,7 @@ async def alliance_callback_handler(c: Client, cb: CallbackQuery):
         )
     
     elif data == "vc_raise":
-        WAITING[cb.from_user.id] = {"action": "vc_raise", "msg_id": cb.message.id}
+        WAITING[cb.from_user.id] = {"action": "vc_raise", "msg_id": cb.inline_message_id or (cb.message.id if cb.message else None)}
         await edit_cb(
             cb,
             "✋ <b>Mass Raise Hand</b>\n\n"
@@ -276,7 +276,7 @@ async def alliance_callback_handler(c: Client, cb: CallbackQuery):
         )
 
     elif data == "vc_list":
-        WAITING[cb.from_user.id] = {"action": "vc_list", "msg_id": cb.message.id}
+        WAITING[cb.from_user.id] = {"action": "vc_list", "msg_id": cb.inline_message_id or (cb.message.id if cb.message else None)}
         await edit_cb(
             cb,
             "👥 <b>Lihat Partisipan VC</b>\n\n"
@@ -285,7 +285,7 @@ async def alliance_callback_handler(c: Client, cb: CallbackQuery):
         )
 
     elif data == "vc_export":
-        WAITING[cb.from_user.id] = {"action": "vc_export", "msg_id": cb.message.id}
+        WAITING[cb.from_user.id] = {"action": "vc_export", "msg_id": cb.inline_message_id or (cb.message.id if cb.message else None)}
         await edit_cb(
             cb,
             "📂 <b>Ambil Daftar User (.txt)</b>\n\n"
@@ -294,7 +294,7 @@ async def alliance_callback_handler(c: Client, cb: CallbackQuery):
         )
 
     elif data == "vc_guard":
-        WAITING[cb.from_user.id] = {"action": "vc_guard", "msg_id": cb.message.id}
+        WAITING[cb.from_user.id] = {"action": "vc_guard", "msg_id": cb.inline_message_id or (cb.message.id if cb.message else None)}
         await edit_cb(
             cb,
             "🛡️ <b>Toggle Guard Mode</b>\n\n"
@@ -303,7 +303,7 @@ async def alliance_callback_handler(c: Client, cb: CallbackQuery):
         )
 
     elif data == "vc_log":
-        WAITING[cb.from_user.id] = {"action": "vc_log", "msg_id": cb.message.id}
+        WAITING[cb.from_user.id] = {"action": "vc_log", "msg_id": cb.inline_message_id or (cb.message.id if cb.message else None)}
         await edit_cb(
             cb,
             "📝 <b>Toggle VC Logs</b>\n\n"
@@ -362,11 +362,51 @@ async def alliance_input_handler(c: Client, m: Message):
         
     await m.delete()  # Cleanup user input
 
+    async def edit_msg(text, reply_markup=None):
+        try:
+            if isinstance(old_msg_id, str): # inline_message_id
+                if hasattr(c, "edit_inline_text"):
+                    await c.edit_inline_text(
+                        inline_message_id=old_msg_id,
+                        text=text,
+                        reply_markup=reply_markup,
+                        parse_mode=ParseMode.HTML
+                    )
+                else:
+                    try:
+                        await c.edit_message_text(
+                            None, None, text, old_msg_id,
+                            reply_markup=reply_markup,
+                            parse_mode=ParseMode.HTML
+                        )
+                    except:
+                        await c.edit_message_text(
+                            inline_message_id=old_msg_id,
+                            text=text,
+                            reply_markup=reply_markup,
+                            parse_mode=ParseMode.HTML
+                        )
+            elif old_msg_id:
+                await c.edit_message_text(
+                    chat_id=m.chat.id,
+                    message_id=old_msg_id,
+                    text=text,
+                    reply_markup=reply_markup,
+                    parse_mode=ParseMode.HTML
+                )
+            else:
+                await c.send_message(m.chat.id, text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+        except Exception as e:
+            logger.error(f"Failed to edit message {old_msg_id}: {e}", exc_info=True)
+            try:
+                await c.send_message(m.chat.id, text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+            except Exception as ex:
+                logger.error(f"Fallback send_message failed: {ex}")
+
     if action == "set_key":
         new_key = m.text.strip()
         await Altruix.config.set_env("AI_API_KEY", new_key)
-        await c.edit_message_text(
-            m.chat.id, old_msg_id,
+        await edit_msg(
             f"✅ <b>API Key Updated!</b>\n"
             f"Kunci baru telah disimpan ke database dan aktif seketika.",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Config", callback_data="all_dash_config", style=style)]])
@@ -374,15 +414,13 @@ async def alliance_input_handler(c: Client, m: Message):
 
     elif action == "set_delay":
         if "-" not in m.text:
-            return await c.edit_message_text(
-                m.chat.id, old_msg_id,
+            return await edit_msg(
                 "❌ Format salah. Gunakan <code>min-max</code>.",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Try Again", callback_data="all_dash_set_delay", style=style)]])
             )
         
         await Altruix.config.set_env("AI_DELAY_RANGE", m.text.strip())
-        await c.edit_message_text(
-            m.chat.id, old_msg_id,
+        await edit_msg(
             f"✅ <b>Delay Range Updated!</b>\n"
             f"Jeda baru <code>{m.text.strip()}s</code> telah diterapkan.",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Config", callback_data="all_dash_config", style=style)]])
@@ -393,8 +431,7 @@ async def alliance_input_handler(c: Client, m: Message):
             _, mass_join_core, _, _, _ = _get_alliance_module()
             from Main.plugins.userbot.xtaskmanager import register_task, unregister_task, generate_task_id
         except Exception as e:
-            return await c.edit_message_text(
-                m.chat.id, old_msg_id,
+            return await edit_msg(
                 f"⚠️ <b>Alliance plugin not loaded:</b> <code>{e}</code>",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="alliance_dashboard", style=style)]])
             )
@@ -403,20 +440,18 @@ async def alliance_input_handler(c: Client, m: Message):
         tid = generate_task_id("ALL")
         register_task(tid, asyncio.current_task(), "Bot Alliance Join", "alliance_handlers", m.from_user.id, f"Target: {link}")
         
-        await c.edit_message_text(m.chat.id, old_msg_id, f"⏳ <b>Orchestrating Mass Join [{tid}]:</b> <code>{link}</code>...")
+        await edit_msg(f"⏳ <b>Orchestrating Mass Join [{tid}]:</b> <code>{link}</code>...")
         
         try:
             results = await mass_join_core(link, tid=tid)
-            await c.edit_message_text(
-                m.chat.id, old_msg_id,
+            await edit_msg(
                 f"🚀 <b>Mass Join Complete [{tid}]</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 + "\n".join(results),
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Main Menu", callback_data="alliance_dashboard", style=style)]])
             )
         except asyncio.CancelledError:
-            await c.edit_message_text(
-                m.chat.id, old_msg_id,
+            await edit_msg(
                 f"🛑 <b>Mass Join Task {tid} Cancelled.</b>",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Main Menu", callback_data="alliance_dashboard", style=style)]])
             )
