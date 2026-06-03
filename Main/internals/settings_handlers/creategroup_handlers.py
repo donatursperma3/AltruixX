@@ -7,7 +7,7 @@ import traceback
 import time
 from typing import Optional, Dict
 from pyrogram import Client, filters
-from pyrogram.errors import QueryIdInvalid
+from pyrogram.errors import QueryIdInvalid, MessageNotModified
 from pyrogram.types import (
     CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton,
     InlineQuery, InlineQueryResultArticle, InputTextMessageContent,
@@ -36,6 +36,16 @@ async def safe_cb_answer(cb: CallbackQuery, text: str = None, show_alert: bool =
         logger.warning("Ignored invalid callback query while answering.")
     except Exception as e:
         logger.debug(f"Ignored callback answer failure: {e}")
+
+async def safe_edit_message_text(cb: CallbackQuery, text: str, reply_markup=None, parse_mode=ParseMode.HTML, **kwargs):
+    """Safely edit message text, ignoring MessageNotModified and QueryIdInvalid."""
+    try:
+        return await cb.edit_message_text(text=text, reply_markup=reply_markup, parse_mode=parse_mode, **kwargs)
+    except (MessageNotModified, QueryIdInvalid):
+        return True
+    except Exception as e:
+        logger.warning(f"Ignored safe_edit failure: {e}")
+        return False
 
 # Default Configuration
 DEFAULT_CREATEGROUP_CONFIG = {
@@ -87,6 +97,7 @@ def save_user_cg_config(user_id: int, config: dict):
     """Save user's CreateGroup config to persistent JSON."""
     try:
         data = {}
+        os.makedirs(os.path.dirname(_USER_CG_CONFIG_FILE), exist_ok=True)
         if os.path.exists(_USER_CG_CONFIG_FILE):
             with open(_USER_CG_CONFIG_FILE, "r", encoding="utf-8") as f:
                 data = _json.load(f)
@@ -144,10 +155,7 @@ async def creategroup_menu_handler(c: Client, cb: CallbackQuery):
         [InlineKeyboardButton("🔙 Back to Session", callback_data=f"session_info_{session_index}_{page}", style=user_style)]
     ]
     
-    if cb.message:
-        await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
-    else:
-        await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    await safe_edit_message_text(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
 
 @Altruix.bot.on_callback_query(filters.regex(r"^creategroup_cached_(\d+)_(\d+)(?:_(\d+))?$"))
 @iuser_check
@@ -177,7 +185,7 @@ async def creategroup_cached_handler(c: Client, cb: CallbackQuery):
     if not CREATEGROUP_TASKS:
         text = "<blockquote expandable><b>🔄 Restore Tasks (Cache) [0/0 | Total: 0]</b>\n\n<i>Tidak ada task yang terhenti atau tersimpan di cache saat ini.</i></blockquote>"
         buttons = [[InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_menu_{session_index}_{page}", style=user_style)]]
-        return await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+        return await safe_edit_message_text(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
         
     all_tasks = list(CREATEGROUP_TASKS.items())
     total_tasks = len(all_tasks)
@@ -262,7 +270,7 @@ async def creategroup_cached_handler(c: Client, cb: CallbackQuery):
     
     buttons.append([InlineKeyboardButton("🔙 Back to Menu", callback_data=f"creategroup_menu_{session_index}_{page}", style=user_style)])
     
-    await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    await safe_edit_message_text(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
 
 
 # ─── BULK CONTROL HANDLERS ───
@@ -453,9 +461,10 @@ async def creategroup_task_manage_handler(c: Client, cb: CallbackQuery):
     buttons.append(row_nav)
     
     try:
-        await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
-    except Exception:
-        await cb.answer()
+        await safe_edit_message_text(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
+    except Exception as e:
+        logger.warning(f"Failed to edit restore task message: {e}")
+        await safe_cb_answer(cb, "⚠️ Unable to update menu", show_alert=False)
 
 @Altruix.bot.on_callback_query(filters.regex(r"^creategroup_manual_(\d+)_(\d+)$"))
 @iuser_check
@@ -504,12 +513,7 @@ async def creategroup_manual_handler(c: Client, cb: CallbackQuery):
     )
 
     
-    if cb.message:
-        await cb.message.edit(text, parse_mode=ParseMode.HTML, 
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_menu_{session_index}_{page}", style=user_style)]]))
-    else:
-        await cb.edit_message_text(text, parse_mode=ParseMode.HTML, 
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_menu_{session_index}_{page}", style=user_style)]]))
+    await safe_edit_message_text(cb, text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_menu_{session_index}_{page}", style=user_style)]]))
 
 @Altruix.bot.on_callback_query(filters.regex(r"^creategroup_ui_(\d+)_(\d+)$"))
 @iuser_check
@@ -611,11 +615,12 @@ async def _ensure_creategroup_ui_state(c: Client, cb: CallbackQuery, session_ind
 
         if "selected_sessions" not in state or not isinstance(state.get("selected_sessions"), list):
             state["selected_sessions"] = [session_index]
-        if not state["selected_sessions"]:
-            state["selected_sessions"] = [session_index]
+        # Removed forced selection of current session when list is empty to allow deselection
 
         if session_page is not None:
             state["session_page"] = session_page
+        else:
+            state.setdefault("session_page", 0)
 
         if cb.message:
             state["ui_msg_id"] = cb.message.id
@@ -664,6 +669,7 @@ async def show_creategroup_ui(c: Client, cb: CallbackQuery, session_index: int, 
             "page": page,
             "config": load_user_cg_config(user_id),
             "selected_sessions": [session_index], # ✅ DEFAULT: Current session
+            "session_page": 0,
             "input_mode": None,
             "ui_msg_id": cb.message.id if cb.message else None,
             "ui_chat_id": cb.message.chat.id if cb.message else None,
@@ -705,14 +711,22 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
         state = user_creategroup_state[user_id]
         if state.get("session_index") != session_index:
              state["session_index"] = session_index
-             # Optionally reset selection to the new triggering session to avoid confusion
-             state["selected_sessions"] = [session_index]
+             # Only initialize if missing or invalid; allow empty lists
+             if "selected_sessions" not in state or not isinstance(state.get("selected_sessions"), list):
+                 state["selected_sessions"] = [session_index]
     
     state = user_creategroup_state[user_id]
+    state.setdefault("session_page", 0)
     config = state["config"]
     idx = state["session_index"]
     pg = state["page"]
     sub_menu = state.get("sub_menu")
+
+    per_page = 8
+    total_sessions = len(Altruix.clients)
+    total_pages = (total_sessions + per_page - 1) // per_page if total_sessions else 1
+    if state["session_page"] >= total_pages:
+        state["session_page"] = max(0, total_pages - 1)
     
     # Resolve user_style
     from Main.internals.settings_handlers.custom_alert_handlers import _get_session_user_id
@@ -730,7 +744,22 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
         except Exception: session_user = None
 
     # Display session and selection info
-    selected = state.get("selected_sessions", [idx])
+    # Ensure selected_sessions is a clean list of unique integers
+    raw_selected = state.get("selected_sessions", [idx])
+    if not isinstance(raw_selected, list):
+        raw_selected = [idx]
+    
+    selected = []
+    for x in raw_selected:
+        try:
+            val = int(x)
+            if 1 <= val <= len(Altruix.clients) and val not in selected:
+                selected.append(val)
+        except (ValueError, TypeError):
+            continue
+            
+    selected = sorted(selected)
+    state["selected_sessions"] = selected
     sel_count = len(selected)
     
     session_text = ""
@@ -1018,9 +1047,10 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
         selected = state.get("selected_sessions", [idx])
         # Pagination logic for sessions
         per_page = 8
-        s_page = state.get("session_page", 0)
         total_sessions = len(Altruix.clients)
-        total_pages = (total_sessions + per_page - 1) // per_page
+        total_pages = (total_sessions + per_page - 1) // per_page if total_sessions else 1
+        s_page = min(max(0, state.get("session_page", 0)), total_pages - 1)
+        state["session_page"] = s_page
         
         start = s_page * per_page
         end = start + per_page
@@ -1047,7 +1077,9 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
             try:
                 me = getattr(client, "me", None) or await client.get_me()
                 name = me.first_name
-            except: name = f"Session {actual_idx}"
+            except Exception as e:
+                logger.warning(f"Failed to resolve session name for idx={actual_idx}: {e}")
+                name = f"Session {actual_idx}"
             
             buttons.append([InlineKeyboardButton(f"{icon} {actual_idx}. {name}{current_tag}", callback_data=f"creategroup_tsel_{actual_idx}_{pg}", style=user_style)])
             
@@ -1160,8 +1192,8 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
             InlineKeyboardButton(f"Delay/{'GC' if not is_channel else 'CH'}: {config['delay']}s", callback_data=f"creategroup_submenu_{idx}_{pg}_delay", style=user_style)
         ],
         [
-            InlineKeyboardButton(f"B.Size: {config['batch_size']}{type_indicator}", callback_data=f"creategroup_submenu_{idx}_{pg}_batch_size", style=user_style),
-            InlineKeyboardButton(f"B.Delay: {config['batch_delay']}m", callback_data=f"creategroup_submenu_{idx}_{pg}_batch_delay", style=user_style)
+            InlineKeyboardButton(f"B.{'GC' if not is_channel else 'CH'}: {config['batch_size']}{type_indicator}", callback_data=f"creategroup_submenu_{idx}_{pg}_batch_size", style=user_style),
+            InlineKeyboardButton(f"B.{'GC' if not is_channel else 'CH'} Delay: {config['batch_delay']}m", callback_data=f"creategroup_submenu_{idx}_{pg}_batch_delay", style=user_style)
         ],
         [
             InlineKeyboardButton(f"B.Act: {config.get('batch_action', 30)} act", callback_data=f"creategroup_submenu_{idx}_{pg}_batch_action", style=user_style),
@@ -1222,21 +1254,24 @@ async def render_creategroup_ui(cb: Optional[CallbackQuery], state: dict, messag
     
     try:
         if cb:
-            if cb.message:
-                await cb.message.edit(full_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
-            else:
-                await cb.edit_message_text(full_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+            await safe_edit_message_text(cb, full_text, reply_markup=reply_markup)
         elif message:
-            await message.edit(full_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+            try:
+                await message.edit(full_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+            except (MessageNotModified, QueryIdInvalid):
+                pass
         elif state.get("ui_msg_id") and isinstance(state["ui_msg_id"], str):
             # Inline message edit via Altruix.bot
             from Main.core.client import Altruix
-            await Altruix.bot.edit_inline_message_text(
-                state["ui_msg_id"], 
-                full_text, 
-                reply_markup=reply_markup, 
-                parse_mode=ParseMode.HTML
-            )
+            try:
+                await Altruix.bot.edit_inline_message_text(
+                    state["ui_msg_id"], 
+                    full_text, 
+                    reply_markup=reply_markup, 
+                    parse_mode=ParseMode.HTML
+                )
+            except (MessageNotModified, QueryIdInvalid):
+                pass
     except Exception: pass
 
 @Altruix.bot.on_callback_query(filters.regex(r"^creategroup_adj_(\d+)_(\d+)_(\w+)_([\w.]+)$"))
@@ -1308,26 +1343,46 @@ async def creategroup_back_submenu_handler(c: Client, cb: CallbackQuery):
 @iuser_check
 @log_errors
 async def creategroup_session_toggle_handler(c: Client, cb: CallbackQuery):
+    if not await _callback_debounce(cb, interval=0.3):
+        await safe_cb_answer(cb, "Sabar...", show_alert=False)
+        return
+
     s_idx, pg = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
     user_id = cb.from_user.id
     if user_id not in user_creategroup_state:
         idx = await _resolve_cg_session_index_from_cb(cb, fallback_idx=s_idx)
         await _ensure_creategroup_ui_state(c, cb, idx, pg)
+
+    state = user_creategroup_state[user_id]
+    state.setdefault("session_page", 0)
     
-    selected = user_creategroup_state[user_id].get("selected_sessions", [])
-    if s_idx in selected:
-        selected.remove(s_idx)
+    # Use a set for efficient and clean toggling
+    current_selected = state.get("selected_sessions", [])
+    if not isinstance(current_selected, list):
+        current_selected = [state.get("session_index", s_idx)]
+        
+    selected_set = set()
+    for x in current_selected:
+        try: selected_set.add(int(x))
+        except: pass
+    
+    if s_idx in selected_set:
+        selected_set.remove(s_idx)
     else:
-        selected.append(s_idx)
-    
-    user_creategroup_state[user_id]["selected_sessions"] = selected
-    await render_creategroup_ui(cb, user_creategroup_state[user_id])
+        selected_set.add(s_idx)
+
+    state["selected_sessions"] = sorted(list(selected_set))
+    await render_creategroup_ui(cb, state)
     await cb.answer()
 
 @Altruix.bot.on_callback_query(filters.regex(r"^creategroup_spage_(\d+)_(\d+)$"))
 @iuser_check
 @log_errors
 async def creategroup_session_page_handler(c: Client, cb: CallbackQuery):
+    if not await _callback_debounce(cb, interval=0.3):
+        await cb.answer()
+        return
+        
     s_page, pg = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
     user_id = cb.from_user.id
     if user_id not in user_creategroup_state:
@@ -1341,13 +1396,19 @@ async def creategroup_session_page_handler(c: Client, cb: CallbackQuery):
 @iuser_check
 @log_errors
 async def creategroup_session_select_all_handler(c: Client, cb: CallbackQuery):
+    if not await _callback_debounce(cb, interval=0.5):
+        await cb.answer()
+        return
+        
     s_page, pg = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
     user_id = cb.from_user.id
     if user_id not in user_creategroup_state:
         idx = await _resolve_cg_session_index_from_cb(cb, fallback_idx=1)
         await _ensure_creategroup_ui_state(c, cb, idx, pg, session_page=s_page)
-    user_creategroup_state[user_id]["selected_sessions"] = list(range(1, len(Altruix.clients) + 1))
-    await render_creategroup_ui(cb, user_creategroup_state[user_id])
+    state = user_creategroup_state[user_id]
+    state.setdefault("session_page", s_page)
+    state["selected_sessions"] = list(range(1, len(Altruix.clients) + 1))
+    await render_creategroup_ui(cb, state)
     await cb.answer("All sessions selected")
 
 @Altruix.bot.on_callback_query(filters.regex(r"^creategroup_selp_(\d+)_(\d+)$"))
@@ -1370,7 +1431,7 @@ async def creategroup_session_select_page_handler(c: Client, cb: CallbackQuery):
         end = min(start + per_page, total_sessions)
 
         page_indices = list(range(start + 1, end + 1))
-        selected = state.get("selected_sessions", [])
+        selected = state.get("selected_sessions", []) or []
 
         merged = set(selected)
         merged.update(page_indices)
@@ -1386,13 +1447,19 @@ async def creategroup_session_select_page_handler(c: Client, cb: CallbackQuery):
 @iuser_check
 @log_errors
 async def creategroup_session_deselect_all_handler(c: Client, cb: CallbackQuery):
+    if not await _callback_debounce(cb, interval=0.5):
+        await cb.answer()
+        return
+        
     s_page, pg = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
     user_id = cb.from_user.id
     if user_id not in user_creategroup_state:
         idx = await _resolve_cg_session_index_from_cb(cb, fallback_idx=1)
         await _ensure_creategroup_ui_state(c, cb, idx, pg, session_page=s_page)
-    user_creategroup_state[user_id]["selected_sessions"] = []
-    await render_creategroup_ui(cb, user_creategroup_state[user_id])
+    state = user_creategroup_state[user_id]
+    state.setdefault("session_page", s_page)
+    state["selected_sessions"] = []
+    await render_creategroup_ui(cb, state)
     await cb.answer("All sessions deselected")
 
 @Altruix.bot.on_callback_query(filters.regex(r"^creategroup_dselp_(\d+)_(\d+)$"))
@@ -1415,7 +1482,7 @@ async def creategroup_session_deselect_page_handler(c: Client, cb: CallbackQuery
         end = min(start + per_page, total_sessions)
 
         page_indices = set(range(start + 1, end + 1))
-        selected = state.get("selected_sessions", [])
+        selected = state.get("selected_sessions", []) or []
         state["selected_sessions"] = [x for x in selected if x not in page_indices]
 
         await render_creategroup_ui(cb, state)
@@ -1478,12 +1545,8 @@ async def creategroup_input_request(c: Client, cb: CallbackQuery):
     text = f"<b>📝 Memproses Input: {field_name}...</b>\n\nSilakan lihat instruksi detail pada pesan baru di bawah ini."
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancel", callback_data=f"creategroup_ui_{idx}_{pg}", style=user_style)]])
     
-    if cb.message:
-        await cb.message.edit(text, reply_markup=kb)
-        chat_id = cb.message.chat.id
-    else:
-        await cb.edit_message_text(text, reply_markup=kb)
-        chat_id = cb.from_user.id
+    await safe_edit_message_text(cb, text, reply_markup=kb)
+    chat_id = cb.message.chat.id if cb.message else cb.from_user.id
         
     # Build detailed prompt instructions
     if field == "bots":
@@ -1629,7 +1692,7 @@ async def creategroup_reports_handler(c: Client, cb: CallbackQuery):
         if not report_data:
             text = "<blockquote expandable><b>📊 Creation Reports</b>\n\n<i>Belum ada data group/channel yang berhasil dibuat oleh akun mana pun.</i></blockquote>"
             buttons = [[InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_ui_{session_index}_{page}", style=user_style)]]
-            return await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+            return await safe_edit_message_text(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
             
         accounts_list = sorted(list(report_data.items()), key=lambda x: len(x[1].get("created_groups", [])), reverse=True)
         total_accounts = len(accounts_list)
@@ -1697,7 +1760,7 @@ async def creategroup_reports_handler(c: Client, cb: CallbackQuery):
             
         buttons.append([InlineKeyboardButton("🔙 Back to Dashboard", callback_data=f"creategroup_ui_{session_index}_{page}", style=user_style)])
         
-        await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+        await safe_edit_message_text(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
     except Exception as e:
         logger.error(f"Error in creategroup_reports_handler: {e}\n{traceback.format_exc()}")
         try:
@@ -1731,7 +1794,7 @@ async def creategroup_report_detail_handler(c: Client, cb: CallbackQuery):
         if not acc_info:
             text = "<blockquote expandable><b>❌ Error</b>\n\nData untuk akun ini tidak ditemukan.</blockquote>"
             buttons = [[InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_reports_{session_index}_{page}_1", style=user_style)]]
-            return await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+            return await safe_edit_message_text(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
             
         acc_name = acc_info.get("account_name", "Unknown Account")
         username = acc_info.get("username", "")
@@ -1799,7 +1862,7 @@ async def creategroup_report_detail_handler(c: Client, cb: CallbackQuery):
             
         buttons.append([InlineKeyboardButton("🔙 Back to Reports List", callback_data=f"creategroup_reports_{session_index}_{page}_1", style=user_style)])
         
-        await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+        await safe_edit_message_text(cb, text, reply_markup=InlineKeyboardMarkup(buttons), disable_web_page_preview=True)
     except Exception as e:
         logger.error(f"Error in creategroup_report_detail_handler: {e}\n{traceback.format_exc()}")
         try:
@@ -2013,7 +2076,14 @@ async def creategroup_run_handler(c: Client, cb: CallbackQuery):
     session_user_id = _get_session_user_id(idx)
     user_style = get_user_button_style(session_user_id)
     
-    selected = user_creategroup_state[user_id].get("selected_sessions", [idx])
+    state = user_creategroup_state[user_id]
+    selected = state.get("selected_sessions", [])
+    if not selected:
+        state["sub_menu"] = "select_sessions"
+        await render_creategroup_ui(cb, state)
+        await safe_cb_answer(cb, "⚠️ Pilih minimal 1 akun dulu.", show_alert=True)
+        return
+
     sel_count = len(selected)
     
     conf = user_creategroup_state[user_id]["config"]
@@ -2040,10 +2110,7 @@ async def creategroup_run_handler(c: Client, cb: CallbackQuery):
         f"</blockquote>"
     )
     buttons = [[InlineKeyboardButton("❌ Batal", callback_data=f"creategroup_ui_{idx}_{pg}", style=user_style), InlineKeyboardButton("✅ Ya, Jalankan", callback_data=f"creategroup_confirm_task_{idx}", style=user_style)]]
-    if cb.message:
-        await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
-    else:
-        await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    await safe_edit_message_text(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
     await cb.answer()
 
 @Altruix.bot.on_callback_query(filters.regex(r"^creategroup_confirm_task_(\d+)$"))
@@ -2066,12 +2133,14 @@ async def creategroup_confirm_task_handler(c: Client, cb: CallbackQuery):
         state["launching"] = True
         
         conf = state["config"]
-        selected = state.get("selected_sessions", [idx])
-        if not selected: selected = [idx]
-        
-        # ✅ Ensure we only count valid sessions for the indicator accuracy
-        selected = [s for s in selected if 1 <= s <= len(Altruix.clients)]
-        if not selected: selected = [idx] # Fallback to current if all filtered out
+        selected = state.get("selected_sessions", [])
+        selected = [s for s in (selected or []) if 1 <= s <= len(Altruix.clients)]
+        if not selected:
+            state["launching"] = False
+            state["sub_menu"] = "select_sessions"
+            await render_creategroup_ui(cb, state)
+            await safe_cb_answer(cb, "⚠️ Tidak ada akun yang dipilih. Pilih minimal 1 akun.", show_alert=True)
+            return
         
         from Main.plugins.userbot.xtaskmanager import generate_task_id
         from Main.plugins.userbot.xcreategroup import creategroup_loop
@@ -2101,7 +2170,15 @@ async def creategroup_confirm_task_handler(c: Client, cb: CallbackQuery):
                     try:
                         control_msg = None
                         try:
-                            msg_text = f"🔄 Initializing task for Session {s_idx} ({acc_preview}) [<code>{tid}</code>]..."
+                            # Get session name for better logging
+                            executor = Altruix.clients[s_idx - 1]
+                            try:
+                                me = executor.me or await executor.get_me()
+                                s_name = (me.first_name or "") + (f" {me.last_name}" if me.last_name else "")
+                            except Exception:
+                                s_name = "Unknown"
+                                
+                            msg_text = f"🔄 Initializing task for Session {s_idx} [<b>{html.escape(s_name)}</b>] ({acc_preview}) [<code>{tid}</code>]..."
                             if i > 0:
                                 if is_batch_boundary:
                                     msg_text = f"⏳ Batch Account Delay ({ba_account_delay}s)... {acc_preview}\n{msg_text}"
@@ -2120,7 +2197,6 @@ async def creategroup_confirm_task_handler(c: Client, cb: CallbackQuery):
                                 logger.error(f"Critical error creating control message for session {s_idx}: {e}\n{traceback.format_exc()}")
                                 continue # Don't start task for this session if we hit a critical error
                         
-                        executor = Altruix.clients[s_idx - 1] # ✅ Convert 1-based to 0-based
                         bots = conf_copy.get("bots", "").split() if conf_copy.get("bots") else []
                         asyncio.create_task(creategroup_loop(
                             user_client=executor,
@@ -2279,10 +2355,7 @@ async def render_creategroup_running_ui(cb: CallbackQuery, task: dict, idx: int,
         ]
     ]
     
-    if cb.message:
-        await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
-    else:
-        await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    await safe_edit_message_text(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
 
 @Altruix.bot.on_callback_query(filters.regex(r"^creategroup_control_(stop|pause|resume)_(\d+)_(\d+)$"))
 @iuser_check
@@ -2348,10 +2421,7 @@ async def creategroup_status_detail_handler(c: Client, cb: CallbackQuery):
     
     await cb.answer("Full details shown", show_alert=True)
     buttons = [[InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_ui_{idx}_{pg}", style=user_style)]]
-    if cb.message:
-        await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
-    else:
-        await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    await safe_edit_message_text(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
 
 @Altruix.bot.on_callback_query(filters.regex(r"^creategroup_list_group_(\d+)_(\d+)$"))
 @iuser_check
@@ -2379,10 +2449,7 @@ async def creategroup_list_group_handler(c: Client, cb: CallbackQuery):
     user_style = get_user_button_style(session_user_id)
     
     buttons = [[InlineKeyboardButton("🔙 Back", callback_data=f"creategroup_ui_{idx}_{pg}", style=user_style)]]
-    if cb.message:
-        await cb.message.edit(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
-    else:
-        await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    await safe_edit_message_text(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
 
 async def _find_completed_task_by_session_idx(idx: int):
     if not (1 <= idx <= len(Altruix.clients)):
@@ -2951,12 +3018,29 @@ async def creategroup_chosen_handler(c: Client, cir: ChosenInlineResult):
         chat_id = parts[2]
         
         user_id = cir.from_user.id
-        if user_id in user_creategroup_state:
+        if user_id not in user_creategroup_state:
+            user_creategroup_state[user_id] = {
+                "step": "ui_config",
+                "session_index": index,
+                "page": 1,
+                "config": load_user_cg_config(user_id),
+                "selected_sessions": [index],
+                "session_page": 0,
+                "input_mode": None,
+                "ui_msg_id": inline_msg_id,
+                "ui_chat_id": chat_id if chat_id != "N/A" else None,
+                "prompt_msg_id": None,
+                "sub_menu": None
+            }
+        else:
             user_creategroup_state[user_id].update({
                 "ui_msg_id": inline_msg_id,
                 "ui_chat_id": chat_id if chat_id != "N/A" else None,
                 "session_index": index
             })
+            user_creategroup_state[user_id].setdefault("selected_sessions", [index])
+            if not user_creategroup_state[user_id]["selected_sessions"]:
+                user_creategroup_state[user_id]["selected_sessions"] = [index]
     except Exception as e:
         import logging
         logging.getLogger(__name__).error(f"Error in creategroup_chosen_handler: {e}")

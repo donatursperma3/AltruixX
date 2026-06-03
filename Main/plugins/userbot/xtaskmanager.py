@@ -19,6 +19,7 @@ from pyrogram.types import (
     InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery,
     InlineQuery, InlineQueryResultArticle, InputTextMessageContent
 )
+from pyrogram.handlers import InlineQueryHandler, CallbackQueryHandler
 from Main import Altruix
 from Main.core.types.message import Message
 from Main.core.decorators import iuser_check, log_errors
@@ -36,6 +37,53 @@ CALLBACK_ANSWER_TEXT_LIMIT = 180
 TASK_LOG_MESSAGE_LIMIT = 3800
 TASK_LOG_CHUNK_SIZE = 2500
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
+TASKMGR_DEBUG = True
+_ACTIVE_BULK_USERS = set()
+
+def _tm_debug(message: str):
+    try:
+        prefix = time.strftime("%H:%M:%S")
+        msg = f"[{prefix}] {str(message)}"
+        print(msg)
+        logger.info(msg)
+    except Exception:
+        pass
+
+def _tm_error(where: str, err: Exception, **fields):
+    try:
+        prefix = time.strftime("%H:%M:%S")
+        parts = []
+        for k, v in (fields or {}).items():
+            if v is None:
+                continue
+            parts.append(f"{k}={v}")
+        meta = " ".join(parts)
+        msg = f"[{prefix}] [TaskMgr][ERR] where={where} {meta} err={type(err).__name__}: {err}"
+        print(msg)
+        logger.error(msg, exc_info=True)
+    except Exception:
+        try:
+            logger.error(f"[TaskMgr][ERR] where={where} err={err}", exc_info=True)
+        except Exception:
+            pass
+
+def _safe_float(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return float(default)
+
+def _summarize_task_entry(tid: str, entry: dict) -> str:
+    try:
+        plugin = entry.get("plugin", "?")
+        paused = entry.get("paused", False)
+        interrupted = entry.get("is_interrupted", False)
+        task_obj = entry.get("task")
+        done = task_obj.done() if task_obj else None
+        started_at = entry.get("started_at", 0)
+        return f"{tid}(plg={plugin}, paused={paused}, intr={interrupted}, has_task={bool(task_obj)}, done={done}, started={started_at})"
+    except Exception:
+        return f"{tid}(unavailable)"
 
 # ==================== GLOBAL TASK REGISTRY ====================
 # This registry is stored on the Altruix singleton so ALL plugins can access it.
@@ -325,7 +373,7 @@ def scan_and_merge_caches():
             
             logger.info(f"[TaskManager] Merged {merged} interrupted tasks into registry. Total registry: {len(registry)}")
         except Exception as e:
-            logger.error(f"[TaskManager] Error merging CG cache: {e}", exc_info=True)
+            _tm_error("scan_and_merge_caches.cg", e, cg_path=cg_path)
     else:
         logger.info("[TaskManager] No CG cache file found.")
     
@@ -344,7 +392,7 @@ def scan_and_merge_caches():
                         "is_interrupted": True
                     }
     except Exception as e:
-        logger.error(f"[TaskManager] Error merging YTDL state: {e}")
+        _tm_error("scan_and_merge_caches.ytdl", e)
 
     # 3. Merge YTCUT State (In-Memory)
     try:
@@ -361,7 +409,7 @@ def scan_and_merge_caches():
                         "is_interrupted": True
                     }
     except Exception as e:
-        logger.error(f"[TaskManager] Error merging YTCUT state: {e}")
+        _tm_error("scan_and_merge_caches.ytcut", e)
 
     return registry
 
@@ -403,7 +451,7 @@ def update_task_info(task_id: str, **kwargs):
             registry[task_id].update(kwargs)
             return True
     except Exception as e:
-        logger.error(f"Error in update_task_info: {e}")
+        _tm_error("update_task_info", e, task_id=task_id, keys=",".join(list(kwargs.keys())[:25]))
     return False
 
 def register_task(task_id: str, asyncio_task: asyncio.Task, name: str,
@@ -439,7 +487,7 @@ def register_task(task_id: str, asyncio_task: asyncio.Task, name: str,
         }
         Altruix.log(f"[TaskManager] Registered task {task_id}: {name} ({plugin})", level=20)
     except Exception as e:
-        logger.error(f"Error in register_task: {e}\n{traceback.format_exc()}")
+        _tm_error("register_task", e, task_id=task_id, plugin=plugin, name=name, user_id=user_id)
 
 def unregister_task(task_id: str):
     """
@@ -454,7 +502,7 @@ def unregister_task(task_id: str):
             registry.pop(task_id, None)
             Altruix.log(f"[TaskManager] Unregistered task {task_id}", level=20)
     except Exception as e:
-        logger.error(f"Error in unregister_task: {e}\n{traceback.format_exc()}")
+        _tm_error("unregister_task", e, task_id=task_id)
 
 
 def find_task_by_id(task_id: str) -> tuple:
@@ -506,6 +554,8 @@ def cancel_task_by_id(task_id: str) -> tuple:
         task_obj = entry.get("task")
         task_name = entry.get("name", "Unknown")
         plugin = entry.get("plugin", "Unknown")
+        if TASKMGR_DEBUG:
+            _tm_debug(f"[TaskMgr][CANCEL] tid={task_id} plugin={plugin} name={task_name} has_task={bool(task_obj)} done={(task_obj.done() if task_obj else None)}")
         
         # 1. Sync with plugin cache to remove it permanently if applicable
         if plugin == "xcreategroup":
@@ -531,7 +581,7 @@ def cancel_task_by_id(task_id: str) -> tuple:
         registry.pop(task_id, None)
         return True, f"<blockquote expandable>✅ Task <b>{task_id}</b> ({task_name}) from <b>{plugin}</b> has been ended/cleared.</blockquote>"
     except Exception as e:
-        logger.error(f"Error in cancel_task_by_id: {e}\n{traceback.format_exc()}")
+        _tm_error("cancel_task_by_id", e, task_id=task_id)
         return False, f"❌ Error cancelling task: {str(e)}"
 
 
@@ -551,6 +601,8 @@ def pause_task_by_id(task_id: str) -> tuple:
         registry[task_id]["paused"] = True
         task_name = registry[task_id].get("name", "Unknown")
         plugin = registry[task_id].get("plugin")
+        if TASKMGR_DEBUG:
+            _tm_debug(f"[TaskMgr][PAUSE] tid={task_id} plugin={plugin} name={task_name}")
         
         Altruix.log(f"[TaskManager] Pausing task {task_id}: {task_name} ({plugin})", level=20)
         
@@ -560,6 +612,12 @@ def pause_task_by_id(task_id: str) -> tuple:
                 from Main.plugins.userbot.xcreategroup import CREATEGROUP_TASKS, save_creategroup_cache
                 if task_id in CREATEGROUP_TASKS:
                     CREATEGROUP_TASKS[task_id]["paused"] = True
+                    pe = CREATEGROUP_TASKS[task_id].get("pause_event")
+                    if pe:
+                        try:
+                            pe.clear()
+                        except Exception:
+                            pass
                     asyncio.create_task(save_creategroup_cache())
                     Altruix.log(f"[TaskManager] CG Cache synced (Paused) for {task_id}", level=20)
             except Exception as e:
@@ -567,11 +625,11 @@ def pause_task_by_id(task_id: str) -> tuple:
 
         return True, f"<blockquote expandable>⏸ Task <b>{task_id}</b> ({task_name}) has been <b>Paused</b>.</blockquote>"
     except Exception as e:
-        logger.error(f"Error in pause_task_by_id: {e}\n{traceback.format_exc()}")
+        _tm_error("pause_task_by_id", e, task_id=task_id)
         return False, f"❌ Error pausing task: {str(e)}"
 
 
-def resume_task_by_id(task_id: str) -> tuple:
+async def resume_task_by_id(task_id: str) -> tuple:
     """
     Resume a task by its ID.
     Note: Interrupted tasks must be handled via the Restore menu first.
@@ -588,11 +646,14 @@ def resume_task_by_id(task_id: str) -> tuple:
         task_name = entry.get("name", "Unknown")
         plugin = entry.get("plugin")
         is_interrupted = entry.get("is_interrupted", False)
+        if TASKMGR_DEBUG:
+            _tm_debug(f"[TaskMgr][RESUME] tid={task_id} plugin={plugin} name={task_name} interrupted={is_interrupted}")
         
         # Check if the task is interrupted (no active process)
         if is_interrupted:
-            Altruix.log(f"[TaskManager] Cannot resume interrupted task {task_id} via simple resume. Use RESTORE menu.", level=30)
-            return False, f"⚠️ Task <b>{task_id}</b> is interrupted and needs to be <b>Restored</b> first."
+            Altruix.log(f"[TaskManager] Cannot resume interrupted task {task_id} via simple resume. Using RESTORE logic.", level=20)
+            s, restore_msg = await handle_restore_action(Altruix.bot, None, plugin, task_id, silent=True)
+            return s, restore_msg
 
         registry[task_id]["paused"] = False
         Altruix.log(f"[TaskManager] Resuming task {task_id}: {task_name} ({plugin})", level=20)
@@ -603,6 +664,12 @@ def resume_task_by_id(task_id: str) -> tuple:
                 from Main.plugins.userbot.xcreategroup import CREATEGROUP_TASKS, save_creategroup_cache
                 if task_id in CREATEGROUP_TASKS:
                     CREATEGROUP_TASKS[task_id]["paused"] = False
+                    pe = CREATEGROUP_TASKS[task_id].get("pause_event")
+                    if pe:
+                        try:
+                            pe.set()
+                        except Exception:
+                            pass
                     asyncio.create_task(save_creategroup_cache())
                     Altruix.log(f"[TaskManager] CG Cache synced (Resumed) for {task_id}", level=20)
             except Exception as e:
@@ -610,7 +677,7 @@ def resume_task_by_id(task_id: str) -> tuple:
 
         return True, f"<blockquote expandable>▶️ Task <b>{task_id}</b> ({task_name}) has been <b>Resumed</b>.</blockquote>"
     except Exception as e:
-        logger.error(f"Error in resume_task_by_id: {e}\n{traceback.format_exc()}")
+        _tm_error("resume_task_by_id", e, task_id=task_id)
         return False, f"❌ Error resuming task: {str(e)}"
 
 
@@ -619,8 +686,11 @@ async def send_task_log(client: Client, title: str, text: str):
     try:
         log_chat = Altruix.log_chat or Altruix.config.LOG_CHAT_ID
         if not log_chat:
-            try: log_chat = await Altruix.config.get_env("LOG_CHAT_ID")
-            except: pass
+            try:
+                log_chat = await Altruix.config.get_env("LOG_CHAT_ID")
+            except Exception as e:
+                logger.debug(f"Failed to get LOG_CHAT_ID from config: {e}")
+                pass
         
         if log_chat:
             # Use bot assistant or fallback to main bot
@@ -633,40 +703,41 @@ async def send_task_log(client: Client, title: str, text: str):
                 for payload in payloads:
                     await bot.send_message(chat_id, payload, parse_mode=enums.ParseMode.HTML)
     except Exception as e:
-        logger.error(f"Failed to send task log: {e}")
+        _tm_error("send_task_log", e, title=title)
 
 # ==================== MENU GENERATORS ====================
 
-def get_filtered_tasks(task_filter: str = None) -> dict:
-    """Get all tasks matching the specified filter."""
+def get_filtered_tasks(task_filter: str = None) -> list:
+    """Get all tasks matching the specified filter, returned as a sorted list of (tid, entry)."""
     registry = get_all_tasks()
     if task_filter is None:
         task_filter = get_task_filter()
         
-    if task_filter == "all":
-        return registry
-        
-    filtered = {}
+    filtered = []
     for tid, entry in registry.items():
         is_paused = entry.get("paused", False)
         is_interrupted = entry.get("is_interrupted", False)
         
-        if task_filter == "running":
+        if task_filter == "all":
+            filtered.append((tid, entry))
+        elif task_filter == "running":
             if not is_paused and not is_interrupted:
-                filtered[tid] = entry
+                filtered.append((tid, entry))
         elif task_filter == "interrupted":
             if is_interrupted:
-                filtered[tid] = entry
+                filtered.append((tid, entry))
         elif task_filter == "pause":
             if is_paused and not is_interrupted:
-                filtered[tid] = entry
+                filtered.append((tid, entry))
+    
+    # Sort by started_at descending (newest first) to ensure stable ordering
+    filtered.sort(key=lambda x: (_safe_float(x[1].get("started_at", 0.0), 0.0), str(x[0])), reverse=True)
     return filtered
 
 def gen_task_list_data(user_id: int, page: int = 1, page_size: int = 5, task_filter: str = None):
     """Generate text and keyboard for the task list."""
     try:
         cleanup_stale_tasks()
-        registry = get_all_tasks()
         user_style = get_user_button_style(user_id)
         from datetime import datetime
         last_update_str = datetime.now().strftime("%H:%M:%S")
@@ -682,8 +753,9 @@ def gen_task_list_data(user_id: int, page: int = 1, page_size: int = 5, task_fil
             "pause": "Paused"
         }
         
-        # Apply filtering
-        filtered_registry = get_filtered_tasks(task_filter)
+        # Apply filtering (returns a sorted list of tuples)
+        tasks_list = get_filtered_tasks(task_filter)
+        total_tasks_count = len(get_all_tasks())
 
         # Filter Buttons Row
         filter_buttons = []
@@ -692,7 +764,7 @@ def gen_task_list_data(user_id: int, page: int = 1, page_size: int = 5, task_fil
             display_label = f"[{f_label}]" if task_filter == f_key else f_label
             filter_buttons.append(InlineKeyboardButton(display_label, callback_data=f"taskmgr_filter_{f_key}", style=user_style))
         
-        if not filtered_registry:
+        if not tasks_list:
             text = (
                 "<blockquote expandable>"
                 f"📋 <b>Active Tasks ({filter_labels.get(task_filter)})</b>\n\n"
@@ -708,7 +780,6 @@ def gen_task_list_data(user_id: int, page: int = 1, page_size: int = 5, task_fil
                 [InlineKeyboardButton("Close", callback_data="taskmgr_close", style=user_style)]
             ])
 
-        tasks_list = list(filtered_registry.items())
         total_pages = (len(tasks_list) + page_size - 1) // page_size
         page = max(1, min(page, total_pages))
         
@@ -833,14 +904,14 @@ def gen_task_list_data(user_id: int, page: int = 1, page_size: int = 5, task_fil
             InlineKeyboardButton("Close", callback_data="taskmgr_close", style=user_style)
         ])
             
-        header = f"📋 <b>Active Tasks ({filter_labels.get(task_filter, 'All')})</b> ({len(filtered_registry)} filtered / {len(registry)} total)\n" + "━" * 18 + "\n"
+        header = f"📋 <b>Active Tasks ({filter_labels.get(task_filter, 'All')})</b> ({len(tasks_list)} filtered / {total_tasks_count} total)\n" + "━" * 18 + "\n"
         body = "\n\n".join(lines)
         footer = "\n" + "━" * 18 + "\n💡 Click buttons below to manage.\n• Last Update: <code>" + last_update_str + "</code>"
         text = f"<blockquote expandable>{header}{body}{footer}</blockquote>"
         
         return text, InlineKeyboardMarkup(buttons)
     except Exception as e:
-        logger.exception(f"Error in gen_task_list_data: {e}")
+        _tm_error("gen_task_list_data", e, user_id=user_id, page=page, page_size=page_size, task_filter=task_filter)
         return "❌ <b>Internal error generating task list.</b>", None
 
 def gen_task_status_data(user_id: int, tid: str):
@@ -853,7 +924,22 @@ def gen_task_status_data(user_id: int, tid: str):
         user_style = get_user_button_style(user_id)
         
         if not actual_tid:
-            return f"⚠️ Task <code>{tid}</code> not found.", None
+            text = (
+                f"<blockquote expandable>"
+                f"❌ <b>Task not found.</b>\n"
+                f"━━━━━━━━━━━━━━━\n"
+                f"Task: <code>{html.escape(str(tid))}</code>\n"
+                f"━━━━━━━━━━━━━━━\n"
+                f"<i>Task mungkin sudah selesai / terhapus dari registry. Coba Refresh list.</i>"
+                f"</blockquote>"
+            )
+            kb = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("📋 Back", callback_data="taskmgr_page_1", style=user_style),
+                    InlineKeyboardButton("🔄 Refresh", callback_data="taskmgr_page_1", style=user_style)
+                ]
+            ])
+            return text, kb
             
         task_obj = entry.get("task")
         name = str(entry.get("name") or "Unknown")
@@ -929,7 +1015,7 @@ def gen_task_status_data(user_id: int, tid: str):
         
         return f"<blockquote expandable>{text}</blockquote>", InlineKeyboardMarkup(buttons)
     except Exception as e:
-        logger.exception(f"Error in gen_task_status_data: {e}")
+        _tm_error("gen_task_status_data", e, user_id=user_id, tid=tid)
         return f"❌ <b>Internal error fetching status for {tid}.</b>", None
 
 
@@ -948,7 +1034,7 @@ def toggle_recurring_by_id(task_id: str) -> tuple:
         Altruix.log(f"[TaskManager] Recurring {state} for task {task_id}: {task_name}", level=20)
         return True, f"<blockquote expandable>🔁 Recurring <b>{state}</b> for task <b>{task_id}</b> ({task_name}).</blockquote>"
     except Exception as e:
-        logger.error(f"Error in toggle_recurring_by_id: {e}\n{traceback.format_exc()}")
+        _tm_error("toggle_recurring_by_id", e, task_id=task_id)
         return False, f"❌ Error toggling recurring: {str(e)}"
 
 
@@ -957,7 +1043,23 @@ def gen_task_info_data(user_id: int, tid: str, page: int = 1):
     try:
         registry = get_all_tasks()
         if tid not in registry:
-            return "❌ Task not found.", None
+            user_style = get_user_button_style(user_id)
+            text = (
+                f"<blockquote expandable>"
+                f"❌ <b>Task not found.</b>\n"
+                f"━━━━━━━━━━━━━━━\n"
+                f"Task: <code>{html.escape(str(tid))}</code>\n"
+                f"━━━━━━━━━━━━━━━\n"
+                f"<i>Task mungkin sudah selesai / terhapus dari registry.</i>"
+                f"</blockquote>"
+            )
+            kb = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("🔙 Back", callback_data=f"taskmgr_status_{tid}", style=user_style),
+                    InlineKeyboardButton("📋 Task List", callback_data="taskmgr_page_1", style=user_style)
+                ]
+            ])
+            return text, kb
 
         entry = registry[tid]
         name = str(entry.get("name") or "Unknown")
@@ -1015,7 +1117,7 @@ def gen_task_info_data(user_id: int, tid: str, page: int = 1):
         
         return text, InlineKeyboardMarkup(buttons)
     except Exception as e:
-        logger.error(f"Error in gen_task_info_data: {e}\n{traceback.format_exc()}")
+        _tm_error("gen_task_info_data", e, user_id=user_id, tid=tid, page=page)
         return f"❌ <b>Error fetching info for {tid}.</b>", None
 
 
@@ -1040,7 +1142,9 @@ def gen_restore_menu_data(user_id: int, page: int = 1):
                             "progress": f"{tdata.get('current_index', 0)}/{tdata.get('params', {}).get('count', 0)}",
                             "data": tdata
                         })
-            except: pass
+            except Exception as e:
+                logger.warning(f"Error parsing CG cache tasks: {e}")
+                pass
 
         registry = _ensure_registry()
         all_cached = [t for t in all_cached if t["tid"] not in registry]
@@ -1072,7 +1176,7 @@ def gen_restore_menu_data(user_id: int, page: int = 1):
         
         return text, InlineKeyboardMarkup(buttons)
     except Exception as e:
-        logger.error(f"Error in gen_restore_menu_data: {e}\n{traceback.format_exc()}")
+        _tm_error("gen_restore_menu_data", e, user_id=user_id, page=page)
         return f"❌ <b>Error scanning cache.</b>", None
 
 
@@ -1126,26 +1230,46 @@ def gen_confirmation_data(user_id: int, action: str, target: str):
         
         return text, kb
     except Exception as e:
-        logger.error(f"Error in gen_confirmation_data: {e}\n{traceback.format_exc()}")
+        _tm_error("gen_confirmation_data", e, user_id=user_id, action=action, target=target)
         return "❌ <b>Error generating confirmation screen.</b>", None
 
 
 async def _background_bulk_action(cb: CallbackQuery, targets: list, action_fn, action_name: str, user_id: int, target_page: int):
     """
     Jalankan bulk action (pause/end) di background agar callback query tidak nge-freeze/timeout.
-    
-    - targets: list task_id yang akan diproses.
-    - action_fn: fungsi sync yang mengembalikan (success: bool, message: str).
-    - Setelah selesai, dashboard di-refresh dan status banner disisipkan.
     """
+    if user_id in _ACTIVE_BULK_USERS:
+        if TASKMGR_DEBUG:
+            _tm_debug(f"[TaskMgr][BULK_ACTION_SKIP] User {user_id} already has a bulk action in progress.")
+        return
+    
+    _ACTIVE_BULK_USERS.add(user_id)
     count = 0
+    total = len(targets or [])
+    failures = []
+    if TASKMGR_DEBUG:
+        sample = ", ".join([str(x) for x in (targets or [])[:10]])
+        _tm_debug(f"[TaskMgr][BULK_START] {action_name} total={total} page={target_page} sample=[{sample}]")
     try:
         for tid in targets:
             try:
+                # Periksa apakah tid valid di registry sebelum eksekusi
+                _, entry = find_task_by_id(tid)
+                if not entry:
+                    if TASKMGR_DEBUG:
+                        failures.append(f"{tid}:not_found")
+                    continue
+                    
                 s, _ = action_fn(tid)
                 if s:
                     count += 1
-            except Exception:
+                else:
+                    if TASKMGR_DEBUG:
+                        failures.append(f"{tid}:false")
+            except Exception as e:
+                logger.debug(f"Bulk action failed for {tid}: {e}")
+                if TASKMGR_DEBUG:
+                    failures.append(f"{tid}:{type(e).__name__}")
                 continue
 
         try:
@@ -1156,7 +1280,12 @@ async def _background_bulk_action(cb: CallbackQuery, targets: list, action_fn, a
         except Exception:
             pass
     except Exception as e:
-        logger.error(f"Error in background bulk action ({action_name}): {e}\n{traceback.format_exc()}")
+        _tm_error("_background_bulk_action", e, action_name=action_name, user_id=user_id, target_page=target_page)
+    finally:
+        _ACTIVE_BULK_USERS.discard(user_id)
+        if TASKMGR_DEBUG:
+            fail_preview = ", ".join(failures[:10])
+            _tm_debug(f"[TaskMgr][BULK_DONE] {action_name} ok={count}/{total} fail_count={len(failures)} fail_sample=[{fail_preview}]")
 
 
 SETTINGS_FILE = get_db_path("taskmanager_settings.json")
@@ -1169,7 +1298,7 @@ def get_task_filter() -> str:
                 data = json.load(f)
                 return data.get("task_filter", "all")
     except Exception as e:
-        logger.error(f"Error reading taskmanager filter: {e}")
+        _tm_error("get_task_filter", e)
     return "all"
 
 def save_task_filter(task_filter: str):
@@ -1180,12 +1309,13 @@ def save_task_filter(task_filter: str):
             try:
                 with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
                     data = json.load(f)
-            except: pass
+            except Exception as e:
+                logger.debug(f"Could not load existing settings file, creating new: {e}")
         data["task_filter"] = task_filter
         with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4)
     except Exception as e:
-        logger.error(f"Error saving taskmanager filter: {e}\n{traceback.format_exc()}")
+        _tm_error("save_task_filter", e, task_filter=task_filter)
 
 def get_delay_per_resume() -> float:
     """Get the delay per resume value in seconds from settings cache."""
@@ -1195,7 +1325,7 @@ def get_delay_per_resume() -> float:
                 data = json.load(f)
                 return float(data.get("delay_per_resume", 3.0)) # Default to 3.0 seconds
     except Exception as e:
-        logger.error(f"Error reading taskmanager settings: {e}")
+        _tm_error("get_delay_per_resume", e)
     return 3.0 # Default fallback
 
 def save_delay_per_resume(delay: float):
@@ -1206,13 +1336,13 @@ def save_delay_per_resume(delay: float):
             try:
                 with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
                     data = json.load(f)
-            except:
-                pass
+            except Exception as e:
+                logger.debug(f"Could not load existing settings file, creating new: {e}")
         data["delay_per_resume"] = delay
         with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4)
     except Exception as e:
-        logger.error(f"Error saving taskmanager settings: {e}\n{traceback.format_exc()}")
+        _tm_error("save_delay_per_resume", e, delay=delay)
 
 def gen_delay_menu_data(user_id: int):
     """Generate text and keyboard for configuring delay per-resume settings."""
@@ -1251,7 +1381,7 @@ def gen_delay_menu_data(user_id: int):
         
         return text, InlineKeyboardMarkup(buttons)
     except Exception as e:
-        logger.error(f"Error in gen_delay_menu_data: {e}\n{traceback.format_exc()}")
+        _tm_error("gen_delay_menu_data", e, user_id=user_id)
         return "❌ <b>Error generating delay menu.</b>", None
 
 
@@ -1279,7 +1409,8 @@ def gen_finished_tasks_data(user_id: int, page: int = 1):
                             "finish_time": _resolve_finished_time_str(tdata),
                             "account": _resolve_finished_account_name(tdata)
                         })
-            except: pass
+            except Exception as e:
+                logger.warning(f"Error reading finished tasks from CG cache: {e}")
 
         # 2. Check in-memory COMPLETED_CREATEGROUP_TASKS
         try:
@@ -1344,7 +1475,7 @@ def gen_finished_tasks_data(user_id: int, page: int = 1):
         
         return text, InlineKeyboardMarkup(buttons)
     except Exception as e:
-        logger.error(f"Error in gen_finished_tasks_data: {e}\n{traceback.format_exc()}")
+        _tm_error("gen_finished_tasks_data", e, user_id=user_id, page=page)
         return f"❌ <b>Error scanning finished tasks.</b>", None
 
 def gen_cache_manager_data(user_id: int):
@@ -1385,7 +1516,7 @@ def gen_cache_manager_data(user_id: int):
         
         return f"<blockquote expandable>{cache_info}</blockquote>", InlineKeyboardMarkup(buttons)
     except Exception as e:
-        logger.error(f"Error in gen_cache_manager_data: {e}\n{traceback.format_exc()}")
+        _tm_error("gen_cache_manager_data", e, user_id=user_id)
         return "❌ <b>Error generating cache manager.</b>", None
 
 # ==================== CLEANUP STALE TASKS ====================
@@ -1399,7 +1530,7 @@ def cleanup_stale_tasks():
             registry.pop(tid, None)
         return len(stale)
     except Exception as e:
-        logger.error(f"Error in cleanup_stale_tasks: {e}\n{traceback.format_exc()}")
+        _tm_error("cleanup_stale_tasks", e)
         return 0
 
 
@@ -1506,7 +1637,7 @@ async def taskresume_cmd(client: Client, message: Message):
     if not actual_tid:
         return await message.reply_msg(f"⚠️ Task <code>{task_id}</code> not found.")
     
-    success, result_msg = resume_task_by_id(actual_tid)
+    success, result_msg = await resume_task_by_id(actual_tid)
     await (message.reply_msg(result_msg) if success else message.reply_msg(f"⚠️ {result_msg}"))
 
 
@@ -1625,7 +1756,7 @@ async def taskmgr_inline_handler(client: Client, iq: InlineQuery):
         
         await iq.answer(results, cache_time=0, is_personal=True)
     except Exception as e:
-        logger.exception(f"Error in taskmgr_inline_handler: {e}")
+        _tm_error("taskmgr_inline_handler", e, query=getattr(iq, "query", None))
         # Send a generic error result
         try:
             await iq.answer([
@@ -1635,15 +1766,26 @@ async def taskmgr_inline_handler(client: Client, iq: InlineQuery):
                     description="Check logs for traceback"
                 )
             ], cache_time=0)
-        except: pass
+        except Exception as err:
+            _tm_error("taskmgr_inline_handler.reply", err)
 
 
 async def handle_restore_action(client: Client, cb: CallbackQuery, plugin: str, tid: str, silent: bool = False) -> tuple:
     """Helper to route restore actions to the correct plugin handler."""
     try:
         if plugin == "xcreategroup":
-            from Main.plugins.userbot.xcreategroup import creategroup_control_handler, recover_creategroup_task
+            from Main.plugins.userbot.xcreategroup import (
+                creategroup_control_handler,
+                recover_creategroup_task,
+                load_creategroup_cache,
+                CREATEGROUP_TASKS,
+            )
             if silent:
+                if tid not in CREATEGROUP_TASKS:
+                    try:
+                        await load_creategroup_cache()
+                    except Exception as e:
+                        _tm_error("handle_restore_action.load_creategroup_cache", e, tid=tid)
                 return await recover_creategroup_task(tid)
                 
             # We temporarily modify cb.data to match what the handler expects
@@ -1655,27 +1797,53 @@ async def handle_restore_action(client: Client, cb: CallbackQuery, plugin: str, 
         else:
             return False, f"❌ Plugin {plugin} does not support global restore."
     except Exception as e:
-        logger.error(f"Error in handle_restore_action: {e}\n{traceback.format_exc()}")
+        _tm_error("handle_restore_action", e, plugin=plugin, tid=tid, silent=silent)
         return False, f"❌ Restore failed: {str(e)}"
 
 
 async def _background_bulk_resume(client, cb, targets, delay, action_name, user_id, target_page):
     """Background task to handle bulk resumes without blocking the main callback handler."""
+    if user_id in _ACTIVE_BULK_USERS:
+        if TASKMGR_DEBUG:
+            _tm_debug(f"[TaskMgr][BULK_RESUME_SKIP] User {user_id} already has a bulk action in progress.")
+        return
+    
+    _ACTIVE_BULK_USERS.add(user_id)
     count = 0
     total_targets = len(targets)
+    failures = []
+    if TASKMGR_DEBUG:
+        sample = ", ".join([str(t[0]) for t in (targets or [])[:10]])
+        _tm_debug(f"[TaskMgr][BULK_RESUME_START] {action_name} total={total_targets} delay={delay} page={target_page} sample=[{sample}]")
     try:
         for idx, (tid, entry) in enumerate(targets):
-            is_int = entry.get("is_interrupted", False)
-            plugin = entry.get("plugin", "xcreategroup")
-            if is_int:
-                s, _ = await handle_restore_action(client, cb, plugin, tid, silent=True)
-            else:
-                s, _ = resume_task_by_id(tid)
-            
-            if s:
-                count += 1
-                if delay > 0 and idx < total_targets - 1:
-                    await asyncio.sleep(delay)
+            try:
+                is_int = entry.get("is_interrupted", False)
+                plugin = entry.get("plugin", "xcreategroup")
+                if TASKMGR_DEBUG:
+                    _tm_debug(f"[TaskMgr][BULK_RESUME_ITEM] action={action_name} idx={idx+1}/{total_targets} tid={tid} plugin={plugin} intr={is_int} paused={entry.get('paused', False)}")
+                if is_int:
+                    s, restore_msg = await handle_restore_action(client, cb, plugin, tid, silent=True)
+                else:
+                    s, restore_msg = await resume_task_by_id(tid)
+                
+                if s:
+                    count += 1
+                    if TASKMGR_DEBUG:
+                        _tm_debug(f"[TaskMgr][BULK_RESUME_ITEM_OK] tid={tid}")
+                    if delay > 0 and idx < total_targets - 1:
+                        await asyncio.sleep(delay)
+                else:
+                    if TASKMGR_DEBUG:
+                        reason = _truncate_text(_normalize_plain_text(_strip_html(restore_msg or "false")), 120)
+                        _tm_debug(f"[TaskMgr][BULK_RESUME_ITEM_FAIL] tid={tid} reason={reason}")
+                        failures.append(f"{tid}:{reason}")
+            except Exception as e:
+                logger.debug(f"Bulk resume failed for {tid}: {e}")
+                if TASKMGR_DEBUG:
+                    _tm_debug(f"[TaskMgr][BULK_RESUME_ITEM_ERR] tid={tid} err={type(e).__name__} msg={e}")
+                    failures.append(f"{tid}:{type(e).__name__}")
+                continue
         
         # Final notification update in the dashboard if message still exists
         try:
@@ -1687,7 +1855,44 @@ async def _background_bulk_resume(client, cb, targets, delay, action_name, user_
             pass # Message might have been deleted or expired
             
     except Exception as e:
-        logger.error(f"Error in background bulk resume: {e}\n{traceback.format_exc()}")
+        _tm_error("_background_bulk_resume", e, action_name=action_name, user_id=user_id, target_page=target_page, delay=delay)
+    finally:
+        _ACTIVE_BULK_USERS.discard(user_id)
+        if TASKMGR_DEBUG:
+            fail_preview = ", ".join(failures[:10])
+            _tm_debug(f"[TaskMgr][BULK_RESUME_DONE] {action_name} ok={count}/{total_targets} fail_count={len(failures)} fail_sample=[{fail_preview}]")
+
+_registered_taskmgr_bots = set()
+
+def register_taskmgr_bot_handlers(bot_client: Client):
+    if not bot_client:
+        return
+    if bot_client is getattr(Altruix, "bot", None):
+        return
+    try:
+        if bot_client.me and bot_client.me.id in _registered_taskmgr_bots:
+            return
+        bot_client.add_handler(
+            InlineQueryHandler(
+                taskmgr_inline_handler,
+                filters.regex(r"^taskmgr_(?P<type>list|status)_(?P<uid>\d+)(?:_(?P<extra>.*))?")
+            ),
+            group=-1
+        )
+        bot_client.add_handler(
+            CallbackQueryHandler(
+                taskmgr_callback_handler,
+                filters.regex("^taskmgr_")
+            ),
+            group=-1
+        )
+        if bot_client.me:
+            _registered_taskmgr_bots.add(bot_client.me.id)
+        if TASKMGR_DEBUG:
+            _tm_debug(f"[TaskMgr][BOT_REGISTER] ok bot=@{bot_client.me.username if bot_client.me else 'Bot'}")
+    except Exception as e:
+        if TASKMGR_DEBUG:
+            _tm_debug(f"[TaskMgr][BOT_REGISTER] fail err={type(e).__name__} msg={e}")
 
 # ==================== CALLBACK HANDLER ====================
 @Altruix.bot.on_callback_query(filters.regex("^taskmgr_"))
@@ -1698,11 +1903,18 @@ async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
     try:
         data = cb.data.split("_")
         action = data[1]
+        logger.debug(f"Taskmgr callback received: {cb.data}")
         
         # We need user_id to resolve style. 
         # In this dashboard, we can try to get it from context or message.
         user_id = cb.from_user.id # Default to current user
         style = get_user_button_style(user_id)
+        if TASKMGR_DEBUG:
+            inline_id = getattr(cb, "inline_message_id", None)
+            has_msg = bool(getattr(cb, "message", None))
+            msg_id = getattr(getattr(cb, "message", None), "id", None)
+            chat_id = getattr(getattr(getattr(cb, "message", None), "chat", None), "id", None)
+            _tm_debug(f"[TaskMgr][CB] from={user_id} action={action} has_msg={has_msg} chat_id={chat_id} msg_id={msg_id} inline_id={inline_id} data={cb.data}")
         
         if action == "noop":
             return await safe_cb_answer(cb)
@@ -1826,6 +2038,8 @@ async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
                 return
             real_action = data[2]
             target = "_".join(data[3:])
+            if TASKMGR_DEBUG and real_action in {"resumeall", "endall", "pauseall", "resumepage", "endpage", "pausepage"}:
+                _tm_debug(f"[TaskMgr][ASK] from={user_id} action={real_action} target={target} raw={cb.data}")
             await safe_cb_answer(cb, show_alert=False)
             text, kb = gen_confirmation_data(user_id, real_action, target)
             try:
@@ -1843,6 +2057,8 @@ async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
                     return
                 real_action = data[2]
                 target = "_".join(data[3:])
+                if TASKMGR_DEBUG and real_action in {"resumeall", "endall", "pauseall", "resumepage", "endpage", "pausepage"}:
+                    _tm_debug(f"[TaskMgr][CONFIRM] from={user_id} action={real_action} target={target} raw={cb.data} filter={get_task_filter()}")
                 await safe_cb_answer(cb, "Processing request...", show_alert=False)
                 
                 if real_action == "stop":
@@ -1852,18 +2068,24 @@ async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
                     plugin = registry.get(target, {}).get("plugin", "xcreategroup")
                     success, msg = await handle_restore_action(client, cb, plugin, target)
                 elif real_action == "pauseall":
-                    registry = get_filtered_tasks()
-                    targets = list(registry.keys())
-                    asyncio.create_task(_background_bulk_action(cb, targets, pause_task_by_id, "Pause All", user_id, 1))
-                    success, msg = True, f"⏳ Memproses pause {len(targets)} task di background..."
-                elif real_action == "resumeall":
-                    registry = get_all_tasks()
-                    delay = get_delay_per_resume()
-                    active_tids = list(registry.keys())
+                    # For global actions, we generally act on 'all' unless specified otherwise.
+                    # But if the user clicks 'Pause All', they usually want to pause everything currently running.
+                    tasks_list = get_filtered_tasks("all")
+                    targets = [tid for tid, entry in tasks_list if not entry.get("paused", False) and not entry.get("is_interrupted", False)]
                     
+                    if not targets:
+                        success, msg = True, "ℹ️ Tidak ada task yang sedang berjalan untuk di-pause."
+                    else:
+                        if TASKMGR_DEBUG:
+                            _tm_debug(f"[TaskMgr][PAUSEALL] targets={len(targets)}")
+                        asyncio.create_task(_background_bulk_action(cb, targets, pause_task_by_id, "Pause All", user_id, 1))
+                        success, msg = True, f"⏳ Memproses pause {len(targets)} task di background..."
+                elif real_action == "resumeall":
+                    # Resume All should act on all paused/interrupted tasks regardless of current filter
+                    tasks_list = get_filtered_tasks("all")
+                    delay = get_delay_per_resume()
                     targets = []
-                    for tid in active_tids:
-                        entry = registry.get(tid, {})
+                    for tid, entry in tasks_list:
                         if entry.get("paused", False) or entry.get("is_interrupted", False):
                             targets.append((tid, entry))
                     
@@ -1871,21 +2093,30 @@ async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
                     if total_targets == 0:
                         success, msg = True, "ℹ️ Tidak ada task yang perlu di-resume."
                     else:
+                        if TASKMGR_DEBUG:
+                            _tm_debug(f"[TaskMgr][RESUMEALL] targets={total_targets} delay={delay}")
                         # Jalankan di background agar tidak timeout
                         asyncio.create_task(_background_bulk_resume(client, cb, targets, delay, "Resume All", user_id, 1))
                         success, msg = True, f"⏳ Memproses resume {total_targets} task di background (Delay: {delay}s)..."
                 elif real_action == "endall":
-                    registry = get_filtered_tasks()
-                    targets = list(registry.keys())
-                    asyncio.create_task(_background_bulk_action(cb, targets, cancel_task_by_id, "End All", user_id, 1))
-                    success, msg = True, f"⏳ Memproses end {len(targets)} task di background..."
+                    # End All should clear everything
+                    tasks_list = get_filtered_tasks("all")
+                    targets = [tid for tid, _ in tasks_list]
+                    
+                    if not targets:
+                        success, msg = True, "ℹ️ Tidak ada task untuk di-hentikan."
+                    else:
+                        if TASKMGR_DEBUG:
+                            _tm_debug(f"[TaskMgr][ENDALL] targets={len(targets)}")
+                        asyncio.create_task(_background_bulk_action(cb, targets, cancel_task_by_id, "End All", user_id, 1))
+                        success, msg = True, f"⏳ Memproses end {len(targets)} task di background..."
                 elif real_action == "resumepage":
                     try:
                         page_num = int(target)
                     except:
                         page_num = 1
-                    registry = get_filtered_tasks()
-                    tasks_list = list(registry.items())
+                    # Page actions MUST respect the current filter shown in UI
+                    tasks_list = get_filtered_tasks() 
                     page_size = 5
                     total_pages = (len(tasks_list) + page_size - 1) // page_size
                     page_num = max(1, min(page_num, total_pages))
@@ -1893,6 +2124,10 @@ async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
                     visible_tasks = tasks_list[start_idx:start_idx + page_size]
                     
                     delay = get_delay_per_resume()
+                    if TASKMGR_DEBUG:
+                        vf = get_task_filter()
+                        visible_summary = ", ".join([_summarize_task_entry(t, e) for t, e in visible_tasks])
+                        _tm_debug(f"[TaskMgr][RESUMEPAGE_VIEW] page={page_num}/{total_pages} filter={vf} visible_count={len(visible_tasks)} visible=[{visible_summary}]")
                     
                     targets = []
                     for tid, entry in visible_tasks:
@@ -1903,6 +2138,9 @@ async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
                     if total_targets == 0:
                         success, msg = True, f"ℹ️ Tidak ada task di halaman {page_num} yang perlu di-resume."
                     else:
+                        if TASKMGR_DEBUG:
+                            target_summary = ", ".join([_summarize_task_entry(t, e) for t, e in targets])
+                            _tm_debug(f"[TaskMgr][RESUMEPAGE] page={page_num} targets={total_targets} delay={delay} filter={get_task_filter()} targets=[{target_summary}]")
                         # Jalankan di background
                         asyncio.create_task(_background_bulk_resume(client, cb, targets, delay, f"Resume Page {page_num}", user_id, page_num))
                         success, msg = True, f"⏳ Memproses resume {total_targets} task (Hal {page_num}) di background..."
@@ -1911,24 +2149,28 @@ async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
                         page_num = int(target)
                     except:
                         page_num = 1
-                    registry = get_filtered_tasks()
-                    tasks_list = list(registry.items())
+                    tasks_list = get_filtered_tasks()
                     page_size = 5
                     total_pages = (len(tasks_list) + page_size - 1) // page_size
                     page_num = max(1, min(page_num, total_pages))
                     start_idx = (page_num - 1) * page_size
                     visible_tasks = tasks_list[start_idx:start_idx + page_size]
                     
-                    targets = [tid for tid, _ in visible_tasks]
-                    asyncio.create_task(_background_bulk_action(cb, targets, pause_task_by_id, f"Pause Page {page_num}", user_id, page_num))
-                    success, msg = True, f"⏳ Memproses pause {len(targets)} task (Hal {page_num}) di background..."
+                    targets = [tid for tid, entry in visible_tasks if not entry.get("paused", False) and not entry.get("is_interrupted", False)]
+                    
+                    if not targets:
+                        success, msg = True, f"ℹ️ Tidak ada task berjalan di halaman {page_num} untuk di-pause."
+                    else:
+                        if TASKMGR_DEBUG:
+                            _tm_debug(f"[TaskMgr][PAUSEPAGE] page={page_num} targets={len(targets)} filter={get_task_filter()}")
+                        asyncio.create_task(_background_bulk_action(cb, targets, pause_task_by_id, f"Pause Page {page_num}", user_id, page_num))
+                        success, msg = True, f"⏳ Memproses pause {len(targets)} task (Hal {page_num}) di background..."
                 elif real_action == "endpage":
                     try:
                         page_num = int(target)
                     except:
                         page_num = 1
-                    registry = get_filtered_tasks()
-                    tasks_list = list(registry.items())
+                    tasks_list = get_filtered_tasks()
                     page_size = 5
                     total_pages = (len(tasks_list) + page_size - 1) // page_size
                     page_num = max(1, min(page_num, total_pages))
@@ -1936,8 +2178,14 @@ async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
                     visible_tasks = tasks_list[start_idx:start_idx + page_size]
                     
                     targets = [tid for tid, _ in visible_tasks]
-                    asyncio.create_task(_background_bulk_action(cb, targets, cancel_task_by_id, f"End Page {page_num}", user_id, page_num))
-                    success, msg = True, f"⏳ Memproses end {len(targets)} task (Hal {page_num}) di background..."
+                    
+                    if not targets:
+                        success, msg = True, f"ℹ️ Tidak ada task di halaman {page_num}."
+                    else:
+                        if TASKMGR_DEBUG:
+                            _tm_debug(f"[TaskMgr][ENDPAGE] page={page_num} targets={len(targets)} filter={get_task_filter()}")
+                        asyncio.create_task(_background_bulk_action(cb, targets, cancel_task_by_id, f"End Page {page_num}", user_id, page_num))
+                        success, msg = True, f"⏳ Memproses end {len(targets)} task (Hal {page_num}) di background..."
                 elif real_action == "cache":
                     # Clear Cache Action
                     cg_cache_path = get_db_path("xcreategroup_cache.json")
@@ -2001,16 +2249,24 @@ async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
         if action == "status":
             await safe_cb_answer(cb, "Updating status...", show_alert=False)
             text, kb = gen_task_status_data(user_id, tid)
-            try: await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
-            except: pass
+            try:
+                await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+            except MessageNotModified:
+                pass
+            except Exception as e:
+                logger.error(f"Error updating status view: {e}", exc_info=True)
             return
 
         if action == "info":
             await safe_cb_answer(cb, "Refreshing info...", show_alert=False)
             page = int(data[3]) if len(data) > 3 else 1
             text, kb = gen_task_info_data(user_id, tid, page=page)
-            try: await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
-            except: pass
+            try:
+                await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+            except MessageNotModified:
+                pass
+            except Exception as e:
+                logger.error(f"Error updating info view: {e}", exc_info=True)
             return
 
         if action == "pause":
@@ -2021,16 +2277,20 @@ async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
                 await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
             except MessageNotModified:
                 pass
+            except Exception as e:
+                logger.error(f"Error refreshing status after pause: {e}", exc_info=True)
             return
 
         if action == "resume":
-            success, msg = resume_task_by_id(tid)
+            success, msg = await resume_task_by_id(tid)
             await safe_cb_answer(cb, msg, show_alert=True)
             text, kb = gen_task_status_data(user_id, tid)
             try:
                 await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
             except MessageNotModified:
                 pass
+            except Exception as e:
+                logger.error(f"Error refreshing status after resume: {e}", exc_info=True)
             return
 
         if action == "recur":
@@ -2041,14 +2301,8 @@ async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
                 await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
             except MessageNotModified:
                 pass
-            return
-
-        if action == "status":
-            text, kb = gen_task_status_data(user_id, tid)
-            try:
-                await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error(f"Error refreshing status after recur toggle: {e}", exc_info=True)
             return
 
         if action == "view":
@@ -2056,36 +2310,12 @@ async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
             text, kb = gen_task_info_data(user_id, tid)
             try:
                 await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+            except MessageNotModified:
+                pass
             except Exception as e:
+                logger.error(f"Error rendering info view: {e}", exc_info=True)
                 await safe_cb_answer(cb, f"❌ Error rendering info: {str(e)[:50]}", show_alert=True)
             return
-
-        if action == "pause":
-            success, msg = pause_task_by_id(tid)
-            await safe_cb_answer(cb, msg, show_alert=True)
-        elif action == "resume":
-            success, msg = resume_task_by_id(tid)
-            await safe_cb_answer(cb, msg, show_alert=True)
-        elif action == "stop":
-            success, msg = cancel_task_by_id(tid)
-            await safe_cb_answer(cb, msg, show_alert=True)
-        elif action == "recur":
-            success, msg = toggle_recurring_by_id(tid)
-            await safe_cb_answer(cb, msg, show_alert=True)
-
-        # Refresh current view
-        msg_text = cb.message.text if cb.message else ""
-        if "Task Details" in msg_text:
-            text, kb = gen_task_status_data(user_id, tid)
-        else:
-            text, kb = gen_task_list_data(user_id)
-            
-        try:
-            await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
-        except MessageNotModified:
-            pass
-        except Exception:
-            pass
     except Exception as e:
         err_trace = traceback.format_exc()
         logger.exception(f"Error in taskmgr_callback_handler: {e}")
@@ -2098,3 +2328,13 @@ async def taskmgr_callback_handler(client: Client, cb: CallbackQuery):
             f"<b>Traceback:</b>\n<pre>{html.escape(err_trace)}</pre>"
         )
         await safe_cb_answer(cb, f"❌ Callback Error: {str(e)}", show_alert=True)
+
+try:
+    bm = getattr(Altruix, "bot_manager", None)
+    bots = getattr(bm, "custom_bots", None) if bm else None
+    if isinstance(bots, dict):
+        for _bot in list(bots.values()):
+            register_taskmgr_bot_handlers(_bot)
+except Exception as erb:
+    _tm_error("register_taskmgr_bot_handlers.bootstrap", erb)
+    pass

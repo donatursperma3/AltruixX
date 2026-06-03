@@ -341,6 +341,9 @@ async def load_creategroup_cache():
                         task_data["start_time"] = datetime.now()
                 task_data["pause_event"] = asyncio.Event()
                 task_data["pause_event"].set()
+                # Ensure status flags are reset on startup/load
+                task_data["running"] = False
+                task_data["recovering"] = False
                 # ✅ FIX: Gunakan tid asli dari JSON sebagai key di memory agar unik per-akun
                 CREATEGROUP_TASKS[tid] = task_data
                 
@@ -1396,9 +1399,31 @@ async def creategroup_loop(
     panel_log_mode: str = "log_group"
 ):
     """Main loop untuk membuat grup"""
-    effective_user_id = user_id or (initial_message.from_user.id if initial_message.from_user else None)
+    effective_user_id = user_id or (initial_message.from_user.id if initial_message and initial_message.from_user else None)
+    
+    # Task Registration for .tasklist / .taskstatus
+    from Main.plugins.userbot.xtaskmanager import register_task, unregister_task, generate_task_id, update_task_info
+
+    # Determine tid/task_key early to clear recovering flag
+    if is_resume and task_id and task_id in CREATEGROUP_TASKS:
+        tid = CREATEGROUP_TASKS[task_id].get("tid") or task_id
+    else:
+        tid = task_id if (task_id and (task_id.startswith("CG-") or task_id.startswith("#CG"))) else generate_task_id("CG")
+    
+    if not task_id:
+        task_id = f'creategroup_{effective_user_id}'
+    
+    # Standardize on using tid as the main key in memory
+    if tid:
+        # Prevent "Dirty TID" pollution from message text extraction
+        tid = str(tid).split('\n')[0].replace('━', '').replace('⚙️ Manage Task:', '').strip()
+
+    task_key = task_id or tid
+    if task_key in CREATEGROUP_TASKS:
+        CREATEGROUP_TASKS[task_key]["recovering"] = False
+
     if not effective_user_id:
-        logger.error("Cannot determine user_id for creategroup task")
+        logger.error(f"Cannot determine user_id for creategroup task {tid}")
         return
 
     # 🚨 CRITICAL: Prevent duplicate task runs on the same Telegram session/account
@@ -1413,31 +1438,6 @@ async def creategroup_loop(
                     return
     except Exception as check_err:
         logger.error(f"[CreateGroup] Error checking duplicate tasks: {check_err}")
-
-    if not task_id:
-        task_id = f'creategroup_{effective_user_id}'
-
-    # Task Registration for .tasklist / .taskstatus
-    from Main.plugins.userbot.xtaskmanager import register_task, unregister_task, generate_task_id, update_task_info
-
-    # Get tid from state if resuming, else generate new
-    if is_resume and task_id and task_id in CREATEGROUP_TASKS:
-        tid = CREATEGROUP_TASKS[task_id].get("tid")
-        if not tid:
-            tid = task_id # Fallback if task_id was already the tid
-    else:
-        # Use explicit task_id if it's already a tid format, else generate
-        # Updated to recognize both #CG and CG- formats
-        tid = task_id if (task_id and (task_id.startswith("CG-") or task_id.startswith("#CG"))) else generate_task_id("CG")
-
-    # Standardize on using tid as the main key in memory
-    if tid:
-        # Prevent "Dirty TID" pollution from message text extraction
-        tid = str(tid).split('\n')[0].replace('━', '').replace('⚙️ Manage Task:', '').strip()
-    
-    # ✅ FIX: task_key HARUS menggunakan task_id (unik per-akun) bukan cuma tid pendek (#CG...)
-    # Jika task_id tidak ada, gunakan tid.
-    task_key = task_id or tid
 
     created_groups = []
     batch_groups = [] # Buffer for current batch
@@ -1565,9 +1565,6 @@ async def creategroup_loop(
          CREATEGROUP_TASKS[task_key]["pause_event"].set()
          state = CREATEGROUP_TASKS[task_key]
          asyncio.create_task(save_creategroup_cache())
-
-    if state:
-        state["recovering"] = False
 
     try:
         # Initialize task state
@@ -1991,7 +1988,9 @@ async def creategroup_loop(
             i = last_index + 1
             
         created_groups = state.get("created_groups", []) if state else []
+
         while i <= count:
+            action_count = 0
             pinned_chat_id = None
             # Check if task is running (from either local or global registry)
             _sync_pause_from_registry(task_key, tid)
@@ -2342,7 +2341,6 @@ async def creategroup_loop(
                         except Exception:
                             pass
 
-            action_count = 0
             async def handle_action_delay():
                 nonlocal action_count
                 
@@ -2357,6 +2355,7 @@ async def creategroup_loop(
 
                 await asyncio.sleep(action_delay)
                 action_count += 1
+                
                 if action_count >= batch_action:
                     action_count = 0
                     # Ambil log_msg terakhir untuk reply
@@ -3313,12 +3312,12 @@ async def send_completion_report(
             try:
                 final_buttons = InlineKeyboardMarkup([
                     [
-                        InlineKeyboardButton("📥 Download Log", callback_data=f"download_log_creategroup:{tid}"),
-                        InlineKeyboardButton("🔁 Recurring", callback_data=f"recurring_creategroup:{tid}")
+                        InlineKeyboardButton("📥 Download Log", callback_data=f"download_log_creategroup:{task_id or ''}"),
+                        InlineKeyboardButton("🔁 Recurring", callback_data=f"recurring_creategroup:{task_id or ''}")
                     ],
                     [
-                        InlineKeyboardButton(f"📋 List {type_label}", callback_data=f"list_groups_creategroup:{tid}"),
-                        InlineKeyboardButton("🗑️ Hapus Task", callback_data=f"delete_task_creategroup:{tid}")
+                        InlineKeyboardButton(f"📋 List {type_label}", callback_data=f"list_groups_creategroup:{task_id or ''}"),
+                        InlineKeyboardButton("🗑️ Hapus Task", callback_data=f"delete_task_creategroup:{task_id or ''}")
                     ]
                 ])
 
@@ -3632,15 +3631,27 @@ async def creategroup_ui_cmd_handler(c: Client, m: AltruixMessage):
     """
     chat = m.chat.id
     me = c.me
+    if not me:
+        try:
+            me = await c.get_me()
+        except Exception as e:
+            logger.error(f"Unable to resolve current session user for .cgui: {e}")
+            await m.reply("❌ Gagal mendapatkan informasi session saat ini.")
+            return
     
     # 1. Identifikasi index session
     index = None
     for i, client in enumerate(Altruix.clients):
-        if client.me.id == me.id:
-            index = i + 1 # Use 1-based index for UI consistency
-            break
-            
+        try:
+            client_me = client.me or await client.get_me()
+            if client_me and client_me.id == me.id:
+                index = i + 1 # Use 1-based index for UI consistency
+                break
+        except Exception as e:
+            logger.debug(f"Skipped client while resolving .cgui session index: {e}")
+    
     if index is None:
+        logger.warning(f"Current session id {me.id} not found in Altruix.clients")
         await m.reply("❌ Session tidak ditemukan dalam daftar clients.")
         return
         
@@ -4091,8 +4102,8 @@ async def creategroup_control_handler(client: Client, callback_query: CallbackQu
                 return
             
             task_data = CREATEGROUP_TASKS[tid]
-            if task_data.get("recovering"):
-                await callback_query.answer("Sedang memproses... Silakan tunggu.", show_alert=True)
+            if task_data.get("recovering") or (task_data.get("task_obj") and not task_data["task_obj"].done()):
+                await callback_query.answer(f"Task `{tid}` is already resuming or running.", show_alert=True)
                 return
             task_data["recovering"] = True
             

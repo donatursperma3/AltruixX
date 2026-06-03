@@ -3,6 +3,56 @@
 All notable changes to the **Altroid-X** project from version **0.0.10.0959H** to the latest.
 Latest updates are always added at the top (newest → oldest).
 
+## [1.0.271] - 2026-06-03
+
+### 👥 CreateGroup: Logic Refinement & Delay Consistency
+- **Improved: Batch Action Logic**:
+  - Reverted `action_count` to be per-group/channel as intended, ensuring the `ba_delay` (Batch Action Delay) triggers specifically within each creation lifecycle.
+  - Maintains separation between per-action delay, batch action delay, and batch group size delay for better control.
+- **Fixed: MessageNotModified Errors**:
+  - Implemented `safe_edit_message_text` helper in `creategroup_handlers.py` to gracefully handle Telegram's `400 MESSAGE_NOT_MODIFIED` errors.
+  - Applied the fix to all reporting and UI dashboard handlers to prevent UI freezes during rapid updates.
+- **Fixed: Inconsistent Session Speed Investigation**:
+  - Confirmed that speed variations are primarily due to server-side `FloodWait` or network conditions, as task initialization and delays are correctly synchronized.
+
+## [1.0.270] - 2026-06-03
+
+### 👥 CreateGroup: Enhanced Initialization Logs
+- **Improved: Session Startup Feedback**:
+  - Added session name display to the initialization log messages during staggered startup.
+  - Enhanced visibility of which account is being initialized in multi-session tasks.
+
+## [1.0.269] - 2026-06-03
+
+### 👥 CreateGroup: Code Integrity & Logic Restoration
+- **Fixed: Code Integrity in creategroup_loop**:
+  - Restored critical code blocks for duplicate task prevention and TID normalization that were accidentally removed during refactoring.
+  - Ensured variable buffers for batch processing and logging are correctly initialized.
+
+---
+
+## [1.0.268] - 2026-06-02
+
+### 👥 CreateGroup: Session Selection & Task Resume Fixes
+- **Fixed: Session Deselection Issue**:
+  - Removed forced selection of the current session in `Main/internals/settings_handlers/creategroup_handlers.py`.
+  - Users can now freely deselect the [Current] session in the **Multi-Session Selection** menu.
+- **Fixed: "Task is already resuming" Error**:
+    - Added a global `_ACTIVE_BULK_USERS` lock in `xtaskmanager.py` to prevent duplicate bulk actions from concurrent callback triggers.
+    - Improved `xcreategroup.py` cache loading to explicitly clear `running` and `recovering` flags on bot startup.
+    - Refactored `creategroup_loop` to reset the `recovering` flag at the earliest possible stage, ensuring the flag doesn't get stuck if the loop exits early.
+    - Improved `asyncio.Task` status validation in `Main/plugins/userbot/xcreategroup.py` to prevent race conditions during bulk resume.
+    - Updated `xtaskmanager.py` to automatically handle `interrupted` tasks via `Restore` logic when a simple `resume` is requested.
+- **Fixed: SyntaxError 'await outside async function'**:
+  - Converted `resume_task_by_id()` to an asynchronous function in `Main/plugins/userbot/xtaskmanager.py`.
+  - Updated all internal callers (Bulk Resume, Task Control, Command) to use `await` for task resumption.
+  - Resolved plugin loading failures for `xtaskmanager` and `xstories`.
+- **Improved: Logging & Error Handling**:
+  - Added `traceback.format_exc()` to critical CreateGroup task blocks for better diagnostic visibility.
+  - Ensured atomic configuration saving remains robust during multi-session updates.
+
+---
+
 ## [1.0.267] - 2026-06-01
 
 ### �️ 🛠️ CreateGroup: Debounce, Task ID Routing, and Pending Confirmation Cleanup
@@ -453,11 +503,11 @@ Latest updates are always added at the top (newest → oldest).
 
 ### 🎥 YouTube Tools: Resolution & Extractor Fixes
 - **Fixed: Limited Resolutions (360p Only)**:
-  - Fixed a logic bug in [ytdl_core.py](file:///f:/2026/APRIL/AltruixX/Main/internals/ytdl_core.py) where the `--flat-playlist` flag used for initial analysis was preventing full format extraction for single videos.
+  - Fixed a logic bug in [ytdl_core.py](/Main/internals/ytdl_core.py) where the `--flat-playlist` flag used for initial analysis was preventing full format extraction for single videos.
   - Implemented a two-stage extraction process: use `--flat-playlist` only to identify playlists, and perform a full fetch for single videos to ensure all resolutions (720p, 1080p, etc.) are available.
 - **Improved: High-Resolution Format Support**:
   - Expanded `player_client` list to `android,web,mweb,ios`. Adding `android` enables access to more high-quality DASH formats that were previously missing when using only `ios`.
-  - Applied these improvements to both [ytdl_core.py](file:///f:/2026/APRIL/AltruixX/Main/internals/ytdl_core.py) and [xalliance_vc.py](file:///f:/2026/APRIL/AltruixX/Main/plugins/userbot/xalliance_vc.py).
+  - Applied these improvements to both [ytdl_core.py](/Main/internals/ytdl_core.py) and [xalliance_vc.py](/Main/plugins/userbot/xalliance_vc.py).
 
 ---
 
@@ -576,6 +626,10 @@ Latest updates are always added at the top (newest → oldest).
   - Serialized cache writes with an async lock, switched to unique temp filenames, and added retry/backoff around `os.replace` to prevent concurrent-save collisions on Windows in [xcreategroup.py](file:///f:/2026/APRIL/AltruixX/Main/plugins/userbot/xcreategroup.py).
   - Added a safe fallback write path if atomic replace keeps failing (keeps bot running without losing state updates).
 
+---
+
+## [0.0.10.2461I] - 2026-05-24
+
 ### 🛡️ Core Transport: Reduce Harmless MessageNotModified Log Noise
 - **Improved: NonCritical permanent error logging**:
   - Suppressed spammy `[NonCritical-Permanent-Skipped] MessageNotModified` warnings (only visible in `DEBUG=True`) to keep logs clean during same-content message edits in [client.py](file:///f:/2026/APRIL/AltruixX/Main/core/types/client.py).
@@ -611,6 +665,8 @@ Latest updates are always added at the top (newest → oldest).
 - **Fixed: Logic Flow & State Synchronization**:
   - Synchronized state management between [xtaskmanager.py](file:///f:/2026/APRIL/AltruixX/Main/plugins/userbot/xtaskmanager.py) and plugin-specific caches to ensure `paused` and `interrupted` flags are correctly propagated across the entire ecosystem.
 
+---
+
 ## [0.0.10.2460I] - 2026-05-22
 
 ### 🤖 Bot Assistant: Paginated Startup Changelog Notification
@@ -632,6 +688,8 @@ Latest updates are always added at the top (newest → oldest).
     - **Decoupled Notification Flow**: Separated the changelog notification logic from the startup summary report to ensure it is not skipped if the summary message fails.
     - **Broadened Config Support**: Enhanced `CHANGELOG_NOTIF_ENABLED` to recognize multiple active states: `on`, `true`, `yes`, and `1`.
     - Resolved potential `TypeError` in button style resolution during early startup.
+
+---
 
 ## [0.0.10.2459I] - 2026-05-22
 
@@ -656,6 +714,8 @@ Latest updates are always added at the top (newest → oldest).
     - Resolved a broken "Back" button on the Forward Complete screen by ensuring `f_type` (user/bot/all/select) is correctly passed through the callback chain.
     - Updated `forward_specific_chat_recent_handler` regex and internal logic to support dynamic return routing.
 
+---
+
 ## [0.0.10.2458I] - 2026-05-22
 
 ### 📨 Recent Messages: Custom Delays & Specific Chat Selection
@@ -670,6 +730,8 @@ Latest updates are always added at the top (newest → oldest).
   - Enhanced UI progress feedback to display the active delay value during the forwarding process.
 - **Version Bumps**:
   - **Session Handlers**: `0.3.350` (added delays & chat picker)
+
+---
 
 ## [0.0.10.2457I] - 2026-05-21
 
@@ -686,6 +748,8 @@ Latest updates are always added at the top (newest → oldest).
 - **Added: Forward Activity Logging & Stats**:
   - Integrated automatic saving of the last forwarding results (`Success/Failed`) to the database (`LAST_FWD_STATS_{index}`) for audit trails.
 
+---
+
 ## [0.0.10.2456I] - 2026-05-21
 
 ### 🤖 Bot Assistant: Optimized Session Management & 2FA Flow
@@ -701,6 +765,10 @@ Latest updates are always added at the top (newest → oldest).
   - Ensured that temporary clients are strictly disconnected before finalizing the primary session addition to prevent database lock contention and ensure data integrity.
 - **Added: Enhanced User Info on /add Command**:
   - Integrated automatic display of the requester's Account Name and User ID in the initial `/add` confirmation prompt.
+
+---
+
+## [0.0.10.2456I] - 2026-05-21
 
 ### 📑 Task Manager Plugin: Persistent Task Filtering & Advanced Menu UX
 - **Added: Interactive Task Status Filtering**:
@@ -733,6 +801,10 @@ Latest updates are always added at the top (newest → oldest).
 - **Improved: Robust Cache Restoration & Sync**:
   - Hardened the `load_creategroup_cache` routine to safely handle corrupted JSON files with automatic backup (`.bak`) and fresh reset logic.
 
+---
+
+## [0.0.10.2456I] - 2026-05-21
+
 ### 📨 Message Sender Plugin: Enhanced Log Visibility & Private Chat Support
 - **Fixed: Missing "From/To msg_id" Buttons in Private Chats**:
   - Implemented a new manual link generation helper `get_message_link` that correctly constructs clickable Telegram links (`https://t.me/c/chat_id/msg_id`) for private groups and channels where Pyrogram's native `.link` property returns `None`.
@@ -757,6 +829,10 @@ Latest updates are always added at the top (newest → oldest).
   - Integrated a new **`• Platform: {Extractor}`** field to the main dashboard and final media captions, automatically detecting the source service (YouTube, TikTok, Instagram, etc.).
   - Added a clickable **`🔗 Source: {URL}`** field to the dashboard and media captions for easy access to the original content link.
   - Synchronized platform and source data across all state persistence (DB/JSON) and recovery pipelines.
+
+---
+
+## [0.0.10.2456I] - 2026-05-21
 
 ### 📤 Export Handlers: Optimized Flow & UI Hardening
 - **Fixed: Export Menu "Stuck" Issue**:
@@ -900,6 +976,8 @@ Latest updates are always added at the top (newest → oldest).
   - **CreateGroup Handlers**: `0.3.230`
   - **CreateGroup Plugin**: `0.2.413`
 
+---
+
 ## [0.0.10.2455I] - 2026-05-19
 
 ### 📊 CreateGroup: Persistent Creation Reports & Log Exports
@@ -919,6 +997,8 @@ Latest updates are always added at the top (newest → oldest).
   - **CreateGroup Plugin**: `0.2.405`
   - **CreateGroup Handlers**: `0.3.224`
 
+---
+
 ## [0.0.10.2454I] - 2026-05-18
 
 ### ⚙️ CreateGroup: Recovery Interrupted Log Destination Routing Config
@@ -936,6 +1016,8 @@ Latest updates are always added at the top (newest → oldest).
 - **Added: Total Task Count to Restore Tasks Submenu Header**:
   - Enhanced the `Restore Tasks` dashboard layout to dynamically append the total task count `Total: {total_tasks}` (e.g. `[1/4 | Total: 16]`) in the header for both empty and paginated states.
   - Improves task manager management and monitoring visibility.
+
+---
 
 ## [0.0.10.2452I] - 2026-05-18
 
@@ -958,6 +1040,8 @@ Latest updates are always added at the top (newest → oldest).
 - **Improved: Group and Supergroup Creation Failure Log Layout**:
   - Wrapped `Gagal membuat Grup Dasar` and `Gagal membuat Supergroup/Channel` error logs in expandable blockquote tags (`<blockquote expandable>`).
   - Ensures full aesthetic alignment with other key progress log items in the log group.
+
+---
 
 ## [0.0.10.2450I] - 2026-05-18
 
@@ -982,6 +1066,8 @@ Latest updates are always added at the top (newest → oldest).
   - Wrapped `Gagal mendapatkan bot` (bot resolving failure) notification log in expandable blockquote tags (`<blockquote expandable>`).
   - Ensures all main progress log details present a premium, unified layout.
 
+---
+
 ## [0.0.10.2447I] - 2026-05-18
 
 ### ⚙️ CreateGroup: Enhanced Bot Entity Resolving Logs
@@ -1004,6 +1090,8 @@ Latest updates are always added at the top (newest → oldest).
   - Silenced these standard Telegram API behaviors to log only as debug messages, preventing false-positive critical logs in the console.
   - Secured the error-response fallback `callback_query.answer` within a safe `try...except` scope to eliminate secondary unhandled exception propagation.
 
+---
+
 ## [0.0.10.2444I] - 2026-05-18
 
 ### 🧹 Purgeme Bot Plugin: Interactive UI Alignment & Grid Symmetry
@@ -1020,6 +1108,8 @@ Latest updates are always added at the top (newest → oldest).
   - Elevated token input message handler to `group=-100` and integrated mandatory `continue_propagation()` fallback logic to resolve input unresponsiveness and private message swallowing.
 - **Documentation: Code Readability & Developer Docstrings**:
   - Added comprehensive, professional docstrings and detailed step-by-step explanatory comments to every function and message handler inside `main_bot_manager.py`.
+
+---
 
 ## [0.0.10.2442I] - 2026-05-18
 
@@ -1039,6 +1129,8 @@ Latest updates are always added at the top (newest → oldest).
   - Standardized all default notification/log parameters to `"off"`/`False` for a smoother stealth startup experience.
 - **Hardened: 100% Exception Coverage & Tracebacks**:
   - Wrapped all newly introduced background systems and callback queries inside thorough `try-except` blocks with complete detailed `traceback` logging (`traceback.format_exc()`) to ensure effortless diagnostics.
+
+---
 
 ## [0.0.10.2441I] - 2026-05-17
 
@@ -1119,6 +1211,7 @@ Latest updates are always added at the top (newest → oldest).
   - **Assistant Bot Plugin**: `1.0.173`
   - **YTDL Core Engine**: `0.0.245`
 
+---
 ## [1.0.179] - 2026-05-17
 
 ### 🤖 Bulk Controls: Bulk Append Bot Tokens Exception Hardening
@@ -1140,6 +1233,8 @@ Latest updates are always added at the top (newest → oldest).
   - Added support for ZIP, TXT, and raw multi-line text input, featuring a smart parser that handles multi-format tokens (`bot_id:token_hash`, `session_index:bot_id:token_hash`, and `phone:bot_id:token_hash`), mapping them intelligently to available sessions and initiating them dynamically.
   - Updated Bulk Controls dashboard layout with sleek, symmetrical design integration for both session-level and bot-level export/append controls.
 
+---
+
 ### 🏓 Auto Ping All: Test + Online Mode
 - **Version: [0.0.10.2438I]**:
   - Added new `'Test + Online'` mode to Auto Ping All Manager.
@@ -1157,6 +1252,7 @@ Latest updates are always added at the top (newest → oldest).
   - Fixed `AttributeError: 'NoneType' object has no attribute 'edit'` crash on all 5 `cb.message.edit()` calls by migrating to `edit_cb()` which safely handles inline callbacks where `cb.message` is `None`.
   - Elevated token input handler priority from `group=-1` to `group=-100` to prevent other Group -1 handlers from intercepting token messages.
 
+---
 ### 🛠️ Custom Bot: UI Polish & Stability Fixes
 - **Version: [0.0.10.2435I]**:
   - Fixed "Double Icon" issue in Custom Bot Manager messages by removing redundant hardcoded emojis.
@@ -1175,7 +1271,9 @@ Latest updates are always added at the top (newest → oldest).
   - Hardened `BotManager` persistence logic with comprehensive error handling for `save_token` and `delete_token` operations.
   - Verified and optimized dual-database support (MongoDB & Local JSON) for custom bot token storage using atomic upserts.
   - Integrated `user_env_manager_state` into the global `/cancel` logic for easy input reset.
-  
+
+---
+
 ### 🗄️ Database & Persistence: Append/Restore Hardening
 - **Fixed: Data Loss during 'Append DB'**:
   - Resolved a race condition where unsaved memory changes (like new bot tokens) were lost when performing a database append.
@@ -1399,6 +1497,8 @@ Latest updates are always added at the top (newest → oldest).
 - **Hardening: Task Parameter Integrity**:
   - Refined the adjustment handler to maintain precision for float-based delays while strictly enforcing whole numbers for count-based execution settings.
 
+---
+
 ## [1.0.170] - 2026-05-15
 
 ### 🏗️ CreateGroup Plugin: Multi-Account & UI Scalability
@@ -1429,6 +1529,8 @@ Latest updates are always added at the top (newest → oldest).
 - **Fixed: UI Error Handling Parity**:
   - Restored fallback logic that warns the user if the Bot Assistant cannot send a PM (e.g., blocked), while ensuring the task still proceeds in the Log Group.
   - Implemented session-level `try-except` blocks to ensure one failing account doesn't prevent others from starting.
+
+---
 
 ## [1.0.169] - 2026-05-14
 
@@ -1478,6 +1580,8 @@ Latest updates are always added at the top (newest → oldest).
 
 ### 🏗️ CreateGroup Plugin: UX Refinement
 - **UI Improvement**: Added `.cgpanel` as an official alias for `.cgtid` and updated help documentation for better clarity on task recalling.
+
+---
 
 ## [0.0.10.2411H] - 2026-05-10
 
@@ -1586,8 +1690,6 @@ Latest updates are always added at the top (newest → oldest).
 
 ---
 
----
-
 ## [0.0.10.2410H] - 2026-05-10
 
 ### 🏗️ CreateGroup Plugin: Task Recovery & Logic Hardening
@@ -1640,6 +1742,8 @@ Latest updates are always added at the top (newest → oldest).
 - **Optimization: Resource Management**:
   - Removed the `system_watcher` background thread to eliminate noisy "System Health" logs and reduce background CPU/RAM overhead.
 
+---
+
 ## [0.0.10.2405H] - 2026-05-05 (Current)
 
 ### 🧹 Purgeme Tool: Sender Identity & UI Synchronization
@@ -1670,6 +1774,7 @@ Latest updates are always added at the top (newest → oldest).
   - **Bot Plugin**: `0.0.322`
   - **Userbot Plugin**: `0.0.444` (Stability & Features)
 
+---
 ## [0.0.10.2318H] - 2026-05-03
 
 ### 🎨 Premium Logging: Full-Boot Refinement
@@ -1703,6 +1808,8 @@ Latest updates are always added at the top (newest → oldest).
 - **UI/UX Polishing**:
   - Fixed redundant nested `<blockquote>` tags in confirmation menus for a cleaner look.
   - Corrected typo in the confirmation result ("mesage" -> "message").
+
+---
 
 ## [0.0.10.2315H] - 2026-05-02
 
@@ -1786,6 +1893,8 @@ Latest updates are always added at the top (newest → oldest).
   - **Plugin Version**: `1.0.166`
   - **YTDL Core Version**: `0.0.238`
 
+---
+
 ## [0.0.10.1805H] - 2026-04-30
 
 ### 📊 Performance Logging & Logic Refinement
@@ -1807,6 +1916,8 @@ Latest updates are always added at the top (newest → oldest).
   - Users can now choose between **Soft Restart (Optimized)**, **Hard Restart (Process Swap)**, and **Reload Plugins**.
 - **Synchronized Commands**:
   - The userbot `.restart` and `.reload` commands now offer the same "Soft vs Hard" options as the dashboard, ensuring a consistent management experience.
+
+---
 
 ## [0.0.10.1600H] - 2026-04-30
 
@@ -1857,10 +1968,6 @@ Latest updates are always added at the top (newest → oldest).
 - **UI/UX Enhancements**:
   - New `⚙️ Photo Source` submenu for granular control over session avatars.
   - New `🏷 Set Pin Keyword` feature using interactive `ForceReply` for easy configuration.
-
----
-
-## [0.0.10.1230H] - 2026-04-30
 
 ---
 
@@ -1928,6 +2035,8 @@ Latest updates are always added at the top (newest → oldest).
 - **Help Menu System**:
   - **Dynamic Headers**: Category progress (e.g., `(1/4)`) and total plugin counts are now displayed in the header for Design 2.
   - **Page Navigation**: Added support for jumping directly to specific help pages using `.help <page_number>` (e.g., `.help 3`).
+
+---
 
 ### 📡 Automated Reporting & Connectivity
 - **Auto-Ping System**:
