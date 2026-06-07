@@ -268,7 +268,7 @@ Solution: Added comprehensive error logging
 
 ## FILES MODIFIED
 
-- **f:\2026\APRIL\AltruixX\Main\plugins\userbot\xtaskmanager.py**
+- **\Main\plugins\userbot\xtaskmanager.py**
   - Lines 2001-2080: Removed duplicates, improved error handling
   - Lines 620, 1195, 1289, 1643: Fixed bare except statements
   - Line 1910: Improved error message

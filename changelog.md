@@ -3,6 +3,44 @@
 All notable changes to the **Altroid-X** project from version **0.0.10.0959H** to the latest.
 Latest updates are always added at the top (newest → oldest).
 
+## [1.0.279] - 2026-06-08
+
+### 📡 xforward_pro: Skip Delay When Message Missing
+- **Added: Skip per-message delay when message missing/empty**:
+  - New per-task toggle `skip_delay_on_empty` (default ON) and global default `default_skip_delay_on_empty` (default ON).
+  - When enabled, the batch processor and live listener will skip waiting the configured per-message delay if the message was empty or deleted, speeding up runs.
+  - UI toggles added: Task Advanced Options and Global Advanced Defaults (`SkipDelay: ON/OFF`).
+  - DB migrations included to persist the new fields.
+
+### Notes
+- Logic is safe by default and includes try/except fallbacks; no features or files removed.
+
+
+## [1.0.277] - 2026-06-07
+### 📡 xforward_pro: Album Forwarding & Defaults
+- **Added: Album (media-group) forwarding**:
+  - Detects media groups (`msg.media_group_id`) and attempts to send them as a single album via `send_media_group` when `forward_as_album` is enabled.
+  - Falls back to `forward_messages` when `send_media_group` is not permitted (e.g., restricted file_ids).
+- **Added: per-task and global toggles**:
+  - New task field `forward_as_album` and global setting `default_forward_as_album` (DB migration included).
+  - UI toggles added: Global main menu and Task Advanced Options (`Album: ON/OFF`).
+- **Added: Album cache and dedupe**:
+  - In-memory `FWD_ALBUM_CACHE` prevents duplicate album forwarding when multiple parts arrive rapidly.
+- **DB & Logging**:
+  - Schema migration ensures new fields persist; log messages added for album send fallbacks and errors.
+- **Notes**: No existing features removed. This improves media-group handling and keeps backward-compatible fallbacks.
+
+---
+
+## [1.0.278] - 2026-06-07
+
+### 📡 xforward_pro: Live Batch Log Timestamp
+- **Added: Time stamp to live batch logs**:
+  - Live `Batch Log` messages now include the processing time (HH:MM:SS) in the footer for easy correlation with runtime events and log entries.
+  - Provides better traceability when debugging large batch runs and when matching log lines in `LOGS/` or remote log channels.
+  - Safe fallback ensures a placeholder time (`--:--:--`) is shown if time formatting fails.
+
+
 ## [1.0.276] - 2026-06-07
 
 ### 📡 xforward_pro: Batch Range & Batch Msg Controls

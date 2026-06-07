@@ -22,6 +22,7 @@ from pyrogram.types import (
     InlineKeyboardButton, InlineKeyboardMarkup,
     CallbackQuery, Message as RawMessage,
 )
+from pyrogram.types import InputMediaPhoto, InputMediaVideo, InputMediaAudio, InputMediaDocument
 from pyrogram.errors import FloodWait, ChatWriteForbidden, ChannelInvalid, ChannelPrivate
 from Main import Altruix
 from Main.core.types.message import Message as AltruixMessage
@@ -31,7 +32,7 @@ from Main.utils.file_helpers import get_db_path, get_user_button_style
 # Plugin Metadata
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xforward_pro"
-PLUGIN_VERSION = "1.0.194"
+PLUGIN_VERSION = "1.0.279"
 
 logger = logging.getLogger("altruix.xforward_pro")
 logger.setLevel(logging.INFO)
@@ -45,6 +46,16 @@ FWD_LIVE_TASKS = {}
 
 # Batch control states: {task_id: "running"|"paused"|"stopped"}
 FWD_BATCH_CONTROL = {}
+
+# Media Group Cache: {media_group_id: timestamp}
+FWD_ALBUM_CACHE = {}
+
+def _cleanup_album_cache():
+    """Clear expired album cache entries."""
+    now = time.time()
+    to_del = [k for k, v in FWD_ALBUM_CACHE.items() if now - v > 600]
+    for k in to_del:
+        del FWD_ALBUM_CACHE[k]
 
 # ==================== INTERACTIVE STATE ====================
 FPRO_ADD_TASK_STATE = {} # {user_id: {"src": id, "tgt": id, "mode": str, "step": int}}
@@ -129,6 +140,8 @@ async def init_db():
                     await db.execute("ALTER TABLE fwd_tasks ADD COLUMN batch_msg INTEGER DEFAULT 30")
                 if "batch_msg_delay" not in columns:
                     await db.execute("ALTER TABLE fwd_tasks ADD COLUMN batch_msg_delay REAL DEFAULT 0.0")
+                if "skip_delay_on_empty" not in columns:
+                    await db.execute("ALTER TABLE fwd_tasks ADD COLUMN skip_delay_on_empty INTEGER DEFAULT 1")
                 if "clean_links" not in columns:
                     await db.execute("ALTER TABLE fwd_tasks ADD COLUMN clean_links INTEGER DEFAULT 0")
                 if "clean_usernames" not in columns:
@@ -141,6 +154,8 @@ async def init_db():
                     await db.execute("ALTER TABLE fwd_tasks ADD COLUMN custom_regex TEXT DEFAULT '[]'")
                 if "tr_lang" not in columns:
                     await db.execute("ALTER TABLE fwd_tasks ADD COLUMN tr_lang TEXT DEFAULT 'id'")
+                if "forward_as_album" not in columns:
+                    await db.execute("ALTER TABLE fwd_tasks ADD COLUMN forward_as_album INTEGER DEFAULT 1")
                 if "forward_as_copy" not in columns:
                     await db.execute("ALTER TABLE fwd_tasks ADD COLUMN forward_as_copy INTEGER DEFAULT 1")
 
@@ -176,6 +191,8 @@ async def init_db():
                     await db.execute("ALTER TABLE fwd_global_settings ADD COLUMN default_tr_lang TEXT DEFAULT 'id'")
                 if "default_forward_as_copy" not in g_columns:
                     await db.execute("ALTER TABLE fwd_global_settings ADD COLUMN default_forward_as_copy INTEGER DEFAULT 1")
+                if "default_forward_as_album" not in g_columns:
+                    await db.execute("ALTER TABLE fwd_global_settings ADD COLUMN default_forward_as_album INTEGER DEFAULT 1")
                 if "log_channel" not in g_columns:
                     await db.execute("ALTER TABLE fwd_global_settings ADD COLUMN log_channel INTEGER DEFAULT 0")
                 if "default_batch_msg" not in g_columns:
@@ -206,6 +223,10 @@ async def init_db():
                     await db.execute("ALTER TABLE fwd_global_settings ADD COLUMN default_use_regex_pro INTEGER DEFAULT 0")
                 if "default_custom_regex" not in g_columns:
                     await db.execute("ALTER TABLE fwd_global_settings ADD COLUMN default_custom_regex TEXT DEFAULT '[]'")
+                if "default_forward_as_album" not in g_columns:
+                    await db.execute("ALTER TABLE fwd_global_settings ADD COLUMN default_forward_as_album INTEGER DEFAULT 1")
+                if "default_skip_delay_on_empty" not in g_columns:
+                    await db.execute("ALTER TABLE fwd_global_settings ADD COLUMN default_skip_delay_on_empty INTEGER DEFAULT 1")
                 
                 await db.commit()
             _db_initialized = True
@@ -344,6 +365,8 @@ async def get_global_settings(user_id: int) -> dict:
         "default_batch_order": "oldest",
         "default_use_regex_pro": 0,
         "default_custom_regex": "[]",
+        "default_forward_as_album": 1,
+        "default_skip_delay_on_empty": 1,
         "default_batch_msg": 30,
         "default_batch_msg_delay": 0.0
     }
@@ -618,42 +641,115 @@ async def _handle_fwd(client: Client, msg: RawMessage, target_id: int, bypass: b
     
     # 4. Handle Bypass or Standard Forward
     as_copy = bool(task_cfg.get("forward_as_copy", 1)) if task_cfg else True
+    as_album = bool(task_cfg.get("forward_as_album", 1)) if task_cfg else True
     
     try:
+        # ── ALBUM HANDLING ──
+        if as_album and msg.media_group_id:
+            _cleanup_album_cache()
+            mg_id = msg.media_group_id
+            # Prevent sending the same album multiple times (once per part)
+            if mg_id in FWD_ALBUM_CACHE:
+                # Cleanup old entries occasionally
+                if time.time() - FWD_ALBUM_CACHE[mg_id] > 300:
+                    del FWD_ALBUM_CACHE[mg_id]
+                else:
+                    return True, "Album part (Skipped redundant)"
+
+            FWD_ALBUM_CACHE[mg_id] = time.time()
+
+            # Get all parts of the album
+            album_msgs = await client.get_media_group(msg.chat.id, msg.id)
+            album_ids = [m.id for m in album_msgs]
+
+            # Ensure we have the correct caption (clean the one from the first part that has it)
+            album_caption = caption
+            if not album_caption:
+                for m in album_msgs:
+                    if m.caption:
+                        album_caption = _clean_caption(
+                            m.caption,
+                            ad_keywords if is_ads_f else None,
+                            clean_links=clean_l,
+                            clean_usernames=clean_u,
+                            use_regex_pro=use_regex_pro,
+                            custom_regex=custom_regex
+                        )
+                        if is_translate and album_caption:
+                            dest_lang = task_cfg.get("tr_lang", "id") if task_cfg else "id"
+                            album_caption = await _translate_text(album_caption, dest=dest_lang)
+                        break
+
+            if as_copy or is_watermark or (msg.has_protected_content and bypass):
+                media_group = []
+                for i, m in enumerate(album_msgs):
+                    cur_cap = album_caption if i == 0 else None
+                    if m.photo:
+                        media_group.append(InputMediaPhoto(m.photo.file_id, caption=cur_cap))
+                    elif m.video:
+                        media_group.append(InputMediaVideo(m.video.file_id, caption=cur_cap))
+                    elif m.audio:
+                        media_group.append(InputMediaAudio(m.audio.file_id, caption=cur_cap))
+                    elif m.document:
+                        media_group.append(InputMediaDocument(m.document.file_id, caption=cur_cap))
+                    elif m.animation:
+                        media_group.append(InputMediaVideo(m.animation.file_id, caption=cur_cap))
+
+                if media_group:
+                    try:
+                        await client.send_media_group(target_id, media_group)
+                        if tid: await update_task_stats(tid, success=True)
+                        return True, f"Album ☑️ ({len(media_group)} items)"
+                    except Exception as e:
+                        # If send_media_group fails (e.g. file_id restricted), fall back to forward
+                        if not bypass: raise e
+                        logger.warning(f"[ForwardPro] Album send_media_group failed, trying forward: {e}")
+                else:
+                    return False, "Album failed: No compatible media found"
+
+            # Standard forward fallback
+            try:
+                await client.forward_messages(target_id, msg.chat.id, album_ids)
+                if tid: await update_task_stats(tid, success=True)
+                return True, f"Album Forward ☑️ ({len(album_ids)} items)"
+            except Exception as e:
+                if tid: await update_task_stats(tid, success=False)
+                return False, f"Album Forward ❌: {e}"
+
         # Priority 1: Watermark (always re-upload)
         if is_watermark:
             await _copy_protected_message(client, msg, target_id, clean_caption=caption, watermark=watermark_text)
             if tid: await update_task_stats(tid, success=True)
-            return True, "Watermark/Re-upload Success"
+            return True, "Watermark/Re-upload ☑️"
 
         # Priority 2: Bypass ONLY for actually protected content
         if msg.has_protected_content:
             if bypass:
                 await _copy_protected_message(client, msg, target_id, clean_caption=caption)
                 if tid: await update_task_stats(tid, success=True)
-                return True, "Bypass Protected Success"
+                return True, "Bypass Protected ☑️"
             else:
                 if tid: await update_task_stats(tid, success=False)
-                return False, "Restricted content (Bypass OFF)"
+                return False, "Restricted ❌ (Bypass OFF)"
 
         # Priority 3: Forward as Copy (CPY)
         if as_copy:
             result = await msg.copy(target_id, caption=caption if caption is not None else msg.caption)
             if result:
                 if tid: await update_task_stats(tid, success=True)
-                return True, "Copy Success (Hidden Sender)"
+                return True, "Copy ☑️ (Hidden Sender)"
             else:
                 if tid: await update_task_stats(tid, success=False)
-                return False, "Copy returned empty result"
+                return False, "Copy ❌ empty result"
 
         # Priority 4: Standard Forward
         result = await msg.forward(target_id)
         if result:
             if tid: await update_task_stats(tid, success=True)
-            return True, "Forward Success"
+            return True, "Forward ☑️ (Visible Sender)"
         else:
             if tid: await update_task_stats(tid, success=False)
-            return False, "Forward returned empty result"
+            return False, "Forward ❌ empty result"
 
     except (ChatWriteForbidden, ChannelInvalid, ChannelPrivate) as e:
         if tid: await update_task_stats(tid, success=False)
@@ -666,9 +762,9 @@ async def _handle_fwd(client: Client, msg: RawMessage, target_id: int, bypass: b
             try:
                 await _copy_protected_message(client, msg, target_id, clean_caption=caption)
                 if tid: await update_task_stats(tid, success=True)
-                return True, "Bypass Fallback Success"
+                return True, "Bypass Fallback ☑️"
             except Exception as e2:
-                return False, f"Bypass fallback failed: {e2}"
+                return False, f"Bypass fallback ❌: {e2}"
         return False, str(e)
 
 
@@ -705,6 +801,7 @@ def build_main_menu_kb(user_id: int, gsettings: dict = None) -> InlineKeyboardMa
     tr_label = "TR: ON" if gs.get("default_is_translate") else "TR: OFF"
     wm_label = "WM: ON" if gs.get("default_is_watermark") else "WM: OFF"
     cpy_label = "COPY: ON" if gs.get("default_forward_as_copy", 1) else "COPY: OFF"
+    alb_label = "ALB: ON" if gs.get("default_forward_as_album", 1) else "ALB: OFF"
     lnk_label = "LINK: ON" if gs.get("default_clean_links") else "LINK: OFF"
     usr_label = "Username: ON" if gs.get("default_clean_usernames") else "Username: OFF"
     ads_label = "ADS: ON" if gs.get("default_is_ads_filter") else "ADS: OFF"
@@ -732,7 +829,8 @@ def build_main_menu_kb(user_id: int, gsettings: dict = None) -> InlineKeyboardMa
             InlineKeyboardButton(wm_label, callback_data=f"fwd_gtoggle_default_is_watermark_{uid}", style=btn_style)
         ],
         [
-            InlineKeyboardButton(cpy_label, callback_data=f"fwd_gtoggle_default_forward_as_copy_{uid}", style=btn_style)
+            InlineKeyboardButton(cpy_label, callback_data=f"fwd_gtoggle_default_forward_as_copy_{uid}", style=btn_style),
+            InlineKeyboardButton(alb_label, callback_data=f"fwd_gtoggle_default_forward_as_album_{uid}", style=btn_style)
         ],
         [
             InlineKeyboardButton(lnk_label, callback_data=f"fwd_gtoggle_default_clean_links_{uid}", style=btn_style),
@@ -838,8 +936,8 @@ async def build_task_list_text(user_id: int, client=None) -> str:
         
         text += (
             f"\n{status} <b>Task #{t['id']}</b> {mode_icon} {bypass}\n"
-            f"  📥 Source: <code>{src_title}</code>\n"
-            f"  📤 Target: <code>{tgt_title}</code>\n"
+            f" • Source: <code>{src_title}</code>\n"
+            f" • Target: <code>{tgt_title}</code>\n"
         )
     
     text += f"\n{'━' * 18}</blockquote>"
@@ -875,11 +973,11 @@ def build_task_list_kb(user_id: int, tasks: list) -> InlineKeyboardMarkup:
 
 async def build_task_detail_text(task: dict, client=None) -> str:
     """Build the task detail view text."""
-    status = "🟢 Active" if task["is_active"] else "🔴 Inactive"
+    status = "Active" if task["is_active"] else "Inactive"
     mode = "📡 Live" if task["mode"] == "live" else "📦 Batch"
-    bypass = "✅ ON" if task.get("bypass_protected") else "❌ OFF"
-    watermark = f"✅ ON (<i>{html.escape(task.get('watermark_text') or 'Altruix')}</i>)" if task.get("is_watermark") else "❌ OFF"
-    translate = "✅ ON" if task.get("is_translate") else "❌ OFF"
+    bypass = "ON" if task.get("bypass_protected") else "OFF"
+    watermark = f"ON (<i>{html.escape(task.get('watermark_text') or 'Altruix')}</i>)" if task.get("is_watermark") else "OFF"
+    translate = "ON" if task.get("is_translate") else "OFF"
     
     # Parse filters
     try:
@@ -908,16 +1006,16 @@ async def build_task_detail_text(task: dict, client=None) -> str:
         f"<blockquote expandable>"
         f"🔧 <b>Task #{task['id']} Detail</b>\n"
         f"{'━' * 18}\n"
-        f"📥 <b>Source:</b> {html.escape(src_title)} (<code>{task['source_id']}</code>)\n"
-        f"📤 <b>Target:</b> {html.escape(tgt_title)} (<code>{task['target_id']}</code>)\n"
+        f" •  <b>Source:</b> {html.escape(src_title)} (<code>{task['source_id']}</code>)\n"
+        f" •  <b>Target:</b> {html.escape(tgt_title)} (<code>{task['target_id']}</code>)\n"
         f"{'━' * 18}\n"
-        f"📊 <b>Status:</b> {status}\n"
-        f"🔀 <b>Mode:</b> {mode}\n"
-        f"🛡 <b>Bypass:</b> {bypass}\n"
-        f"🖼 <b>Watermark:</b> {watermark}\n"
-        f"🌍 <b>Translate:</b> {translate}\n"
-        f"🔍 <b>Filters:</b> {filter_text}\n"
-        f"📅 <b>Created:</b> {task.get('created_at', '?')}\n"
+        f" •  <b>Status:</b> {status}\n"
+        f" •  <b>Mode:</b> {mode}\n"
+        f" •  <b>Bypass:</b> {bypass}\n"
+        f" •  <b>Watermark:</b> {watermark}\n"
+        f" •  <b>Translate:</b> {translate}\n"
+        f" •  <b>Filters:</b> {filter_text}\n"
+        f" •  <b>Created:</b> {task.get('created_at', '?')}\n"
         f"{'━' * 18}"
         f"</blockquote>"
     )
@@ -977,6 +1075,8 @@ def build_advanced_options_kb(task: dict, user_id: int) -> InlineKeyboardMarkup:
     ads_f = "Ads: ON" if task.get("is_ads_filter") else "Ads: OFF"
     rex_p = "Regex Pro: ON" if task.get("use_regex_pro") else "Regex Pro: OFF"
     cpy_f = "Copy: ON" if task.get("forward_as_copy", 1) else "Copy: OFF"
+    alb_f = "Album: ON" if task.get("forward_as_album", 1) else "Album: OFF"
+    skip_f = "Empty SkipDelay: ON" if task.get("skip_delay_on_empty", 1) else "Empty SkipDelay: OFF"
     bps_f = "Bypass: ON" if task.get("bypass_protected") else "Bypass: OFF"
     
     order_label = "Order: Oldest First" if task.get("batch_order") == "oldest" else "Order: Newest First"
@@ -993,12 +1093,18 @@ def build_advanced_options_kb(task: dict, user_id: int) -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(rex_p, callback_data=f"fwd_atoggle_{tid}_use_regex_pro_{user_id}", style=btn_style),
-            InlineKeyboardButton(cpy_f, callback_data=f"fwd_atoggle_{tid}_forward_as_copy_{user_id}", style=btn_style),
             InlineKeyboardButton(bps_f, callback_data=f"fwd_atoggle_{tid}_bypass_protected_{user_id}", style=btn_style)
+        ],
+        [
+            InlineKeyboardButton(skip_f, callback_data=f"fwd_atoggle_{tid}_skip_delay_on_empty_{user_id}", style=btn_style)
         ],
         [
             InlineKeyboardButton("Config Regex", callback_data=f"fwd_rexset_{tid}_{user_id}", style=btn_style),
             InlineKeyboardButton(tr_text, callback_data=f"fwd_trlang_{tid}_{user_id}", style=btn_style)
+        ],
+        [
+            InlineKeyboardButton(cpy_f, callback_data=f"fwd_atoggle_{tid}_forward_as_copy_{user_id}", style=btn_style),
+            InlineKeyboardButton(alb_f, callback_data=f"fwd_atoggle_{tid}_forward_as_album_{user_id}", style=btn_style)
         ],
         [
             InlineKeyboardButton(f"Batch Msg: {batch_msg}", callback_data=f"fwd_abmsg_menu_{tid}_{user_id}", style=btn_style),
@@ -1025,6 +1131,8 @@ async def build_advanced_options_text(task: dict) -> str:
     ads_filter = "ON" if task.get("is_ads_filter") else "OFF"
     regex_pro = "ON" if task.get("use_regex_pro") else "OFF"
     as_copy = "ON" if task.get("forward_as_copy", 1) else "OFF"
+    as_album = "ON" if task.get("forward_as_album", 1) else "OFF"
+    skip_delay = "ON" if task.get("skip_delay_on_empty", 1) else "OFF"
     bypass = "ON" if task.get("bypass_protected") else "OFF"
     order = "Oldest ➔ Newest" if task.get("batch_order") == "oldest" else "Newest ➔ Oldest"
     
@@ -1043,6 +1151,8 @@ async def build_advanced_options_text(task: dict) -> str:
         f"  • Batch Msg Delay: <b>{task.get('batch_msg_delay', 0.0)}s</b>\n"
         f"  • Process Order: <b>{order}</b>\n"
         f"  • Forward as Copy: <b>{as_copy}</b>\n"
+        f"  • Forward as Album: <b>{as_album}</b>\n"
+        f"  • Skip Delay If Empty: <b>{skip_delay}</b>\n"
         f"  • Bypass Protected: <b>{bypass}</b>\n\n"
         f"Glossary:\n"
         f"  • <b>LINK</b>: Remove web links from caption.\n"
@@ -1102,6 +1212,7 @@ def build_global_adv_opts_kb(gs: dict, user_id: int) -> InlineKeyboardMarkup:
     
     batch_msg = int(gs.get("default_batch_msg", 30) or 30)
     batch_msg_delay = _normalize_delay(gs.get("default_batch_msg_delay", 0.0), 0.0)
+    skip_label = "SkipDelay: ON" if gs.get("default_skip_delay_on_empty", 1) else "SkipDelay: OFF"
 
     return InlineKeyboardMarkup([
         [
@@ -1111,6 +1222,9 @@ def build_global_adv_opts_kb(gs: dict, user_id: int) -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(f"Batch Msg: {batch_msg}", callback_data=f"fwd_gbmsg_menu_{user_id}", style=btn_style),
             InlineKeyboardButton(f"B.Msg Delay: {batch_msg_delay}s", callback_data=f"fwd_gbmsgdelay_menu_{user_id}", style=btn_style)
+        ],
+        [
+            InlineKeyboardButton(skip_label, callback_data=f"fwd_gtoggle_default_skip_delay_on_empty_{user_id}", style=btn_style)
         ],
         [
             InlineKeyboardButton("-0.5s", callback_data=f"fwd_gdel_dec_{user_id}", style=btn_style),
@@ -1209,11 +1323,13 @@ async def fwd_command_handler(c: Client, m: AltruixMessage):
                 src_title = await resolve_chat_title(c, source_id)
                 tgt_title = await resolve_chat_title(c, target_id)
                 await m.reply(
+                    f"<blockquote expandable>"
                     f"✅ <b>Task #{task_id} Created</b>\n"
-                    f"📥 Source: {html.escape(src_title)} (<code>{source_id}</code>)\n"
-                    f"📤 Target: {html.escape(tgt_title)} (<code>{target_id}</code>)\n"
-                    f"🔀 Mode: <b>{mode}</b>\n\n"
+                    f"• Source: {html.escape(src_title)} (<code>{source_id}</code>)\n"
+                    f"• Target: {html.escape(tgt_title)} (<code>{target_id}</code>)\n"
+                    f"• Mode: <b>{mode}</b>\n\n"
                     f"Use <code>.fwd</code> to manage."
+                    f"</blockquote>"
                 )
             else:
                 await m.reply("❌ <b>Failed to create task.</b> Check logs.")
@@ -1804,7 +1920,7 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
             "default_is_translate", "default_is_watermark", 
             "default_clean_links", "default_clean_usernames",
             "default_is_ads_filter", "default_bypass_protected",
-            "default_use_regex_pro", "default_forward_as_copy"
+            "default_use_regex_pro", "default_forward_as_copy", "default_forward_as_album", "default_skip_delay_on_empty"
         )
         
         if field in valid_fields:
@@ -1859,9 +1975,9 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
             "<blockquote expandable>"
             "📊 <b>Detailed Forward Statistics</b>\n"
             f"{'━' * 18}\n"
-            f"✅ Total Success: <b>{total_success}</b>\n"
-            f"❌ Total Failed: <b>{total_failed}</b>\n"
-            f"📝 Total Tasks: <b>{len(tasks)}</b>\n"
+            f"•  Total Success: <b>{total_success}</b>\n"
+            f"•  Total Failed: <b>{total_failed}</b>\n"
+            f"•  Total Tasks: <b>{len(tasks)}</b>\n"
             f"{'━' * 18}\n"
             "<i>Stats are accumulated across all active and inactive tasks.</i>\n"
             f"{'━' * 18}"
@@ -2448,8 +2564,8 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
             f"📦 <b>Batch Range — Task #{tid}</b>\n"
             f"{'━' * 18}\n"
             f"Atur rentang pesan ID yang akan diteruskan.\n\n"
-            f"🔢 <b>Start ID:</b> <code>{cur_start}</code>\n"
-            f"🔢 <b>End ID:</b> <code>{cur_end}</code>\n"
+            f" •  <b>Start ID:</b> <code>{cur_start}</code>\n"
+            f" •  <b>End ID:</b> <code>{cur_end}</code>\n"
             f"{'━' * 18}\n"
             f"<i>Tips: Klik tombol di bawah untuk menambah/mengurangi nilai.</i>"
             f"</blockquote>"
@@ -2799,7 +2915,7 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
         field = "_".join(parts[3:-1])
         task = await get_task(tid)
         
-        valid_fields = ("clean_links", "clean_usernames", "is_ads_filter", "use_regex_pro", "forward_as_copy", "bypass_protected")
+        valid_fields = ("clean_links", "clean_usernames", "is_ads_filter", "use_regex_pro", "forward_as_copy", "forward_as_album", "skip_delay_on_empty", "bypass_protected")
         if not task or task["user_id"] != uid or field not in valid_fields:
             return await safe_cb_answer(cb, "❌ Invalid action.", show_alert=True)
         
@@ -3082,15 +3198,22 @@ async def start_batch_fwd(client: Client, user_id: int, task_id: int, start_id: 
         _src_title = await resolve_chat_title(client, source_id)
         _tgt_title = await resolve_chat_title(client, target_id)
 
+        # Compute total messages in the range for display (safe fallback)
+        try:
+            total_msgs = abs(int(end_id) - int(start_id)) + 1
+        except Exception:
+            total_msgs = "?"
+
         await send_log(
             f"<blockquote expandable>"
             f"📦 <b>Batch Started — Task #{task_id}</b>\n"
             f"{'━' * 18}\n"
-            f"📥 Source: <code>{source_id}</code>\n"
-            f"    ├ Chat: <b>{_src_title}</b>\n"
-            f"📤 Target: <code>{target_id}</code>\n"
-            f"    ├ Chat: <b>{_tgt_title}</b>\n"
-            f"📊 Range: <a href='{start_msg_link}'>{start_id}</a> to <a href='{end_msg_link}'>{end_id}</a>\n"
+            f"• Source: <code>{source_id}</code>\n"
+            f"   ├ Chat: <b>{_src_title}</b>\n"
+            f"• Target: <code>{target_id}</code>\n"
+            f"   ├ Chat: <b>{_tgt_title}</b>\n"
+            f"• Range: <a href='{start_msg_link}'>{start_id}</a> to <a href='{end_msg_link}'>{end_id}</a>\n"
+            f"• Total: {total_msgs}\n"
             f"{'━' * 18}"
             f"</blockquote>",
             client=client,
@@ -3128,10 +3251,16 @@ async def start_batch_fwd(client: Client, user_id: int, task_id: int, start_id: 
                 lines += f"{icon} <a href='{_link}'>{eid}</a> │ {etype or '?'} │ <code>{short_reason}</code>\n"
             
             status_line = "🔄 <i>Processing...</i>" if ctrl_active else "🏁 <i>Completed</i>"
-            footer = f"{'━' * 18}\n{status_line}</blockquote>"
+            # Append current time for better traceability in logs
+            try:
+                now = datetime.now().strftime("%H:%M:%S")
+            except Exception:
+                now = "--:--:--"
+            footer = f"{'━' * 18}\n{status_line} | <b>• Time:</b> {now}</blockquote>"
             
             return header + lines + footer
 
+        last_was_empty = False
         for mid in msg_ids:
             # Check control state
             while FWD_BATCH_CONTROL.get(task_id) == "paused":
@@ -3153,10 +3282,12 @@ async def start_batch_fwd(client: Client, user_id: int, task_id: int, start_id: 
                 if not msg or msg.empty:
                     stats["skipped"] += 1
                     log_entries.append(("⏭", mid, "empty", "Deleted/Empty"))
+                    last_was_empty = True
                 else:
                     m_type = _get_message_type(msg)
                     # Execute the forward logic
                     success, reason = await _handle_fwd(client, msg, target_id, bypass, filters, task_cfg=task)
+                    last_was_empty = False
                     
                     if success:
                         stats["success"] += 1
@@ -3198,16 +3329,19 @@ async def start_batch_fwd(client: Client, user_id: int, task_id: int, start_id: 
                     if success: 
                         stats["success"] += 1
                         log_entries.append(("✅", mid, m_type or "?", reason or "Retry OK"))
+                        last_was_empty = False
                     else: 
                         stats["failed"] += 1
                         log_entries.append(("❌", mid, m_type or "?", reason or "Retry Fail"))
                 except Exception as retry_err:
                     stats["failed"] += 1
                     log_entries.append(("❌", mid, "?", f"Retry: {str(retry_err)[:20]}"))
+                    last_was_empty = False
             except Exception as e:
                 logger.error(f"[ForwardPro] Batch task #{task_id} msg {mid} err: {e}")
                 stats["failed"] += 1
                 log_entries.append(("❌", mid, "?", str(e)[:25]))
+                last_was_empty = False
 
             # ── Update Live Log ──
             processed += 1
@@ -3233,8 +3367,14 @@ async def start_batch_fwd(client: Client, user_id: int, task_id: int, start_id: 
                 else:
                     live_log_msg = await send_log(log_text, client=client, reply_markup=ctrl_kb, user_id=user_id)
 
-            # Batch Delay: user-configured delay + small jitter to avoid flood
-            await asyncio.sleep(base_delay + random.uniform(0.5, 1.5))
+            # Decide whether to sleep: skip delay if message was empty and task/global asks so
+            try:
+                skip_if_empty = bool(task.get("skip_delay_on_empty", 1)) if task else bool(gs.get("default_skip_delay_on_empty", 1))
+            except Exception:
+                skip_if_empty = True
+
+            if not (skip_if_empty and last_was_empty):
+                await asyncio.sleep(base_delay + random.uniform(0.5, 1.5))
 
         # ── Final update of live log ──
         if log_entries and live_log_msg:
@@ -3273,17 +3413,17 @@ async def start_batch_fwd(client: Client, user_id: int, task_id: int, start_id: 
         f"<blockquote expandable>"
         f"{status_icon} <b>Batch {'Completed' if status_icon == '🏁' else 'Stopped'} — Task #{task_id}</b>\n"
         f"{'━' * 18}\n"
-        f"📥 Source: <code>{source_id}</code>\n"
+        f"• Source: <code>{source_id}</code>\n"
         f"    ├ Chat: <b>{source_title}</b>\n"
-        f"📤 Target: <code>{target_id}</code>\n"
+        f"• Target: <code>{target_id}</code>\n"
         f"    ├ Chat: <b>{target_title}</b>\n"
-        f"📊 Range: <a href='{_start_link}'>{start_id}</a> to <a href='{_end_link}'>{end_id}</a>\n"
-        f"🏷 msg: <code>{media_str}</code>\n"
-        f"⏱ delay permsg: <b>{base_delay}s</b>\n"
-        f"✅ Success: <b>{stats['success']}</b>\n"
-        f"❌ Failed: <b>{stats['failed']}</b>\n"
-        f"⏭️ Skipped: <b>{stats['skipped']}</b>\n"
-        f"📊 Total: <b>{stats['total']}</b>\n"
+        f"• Range: <a href='{_start_link}'>{start_id}</a> to <a href='{_end_link}'>{end_id}</a>\n"
+        f"• Msg: <code>{media_str}</code>\n"
+        f"• Delay per-msg: <b>{base_delay}s</b>\n"
+        f"• Success: <b>{stats['success']}</b>\n"
+        f"• Failed: <b>{stats['failed']}</b>\n"
+        f"• Skipped: <b>{stats['skipped']}</b>\n"
+        f"• Total: <b>{stats['total']}</b>\n"
         f"{'━' * 18}"
         f"</blockquote>"
     )
@@ -3316,8 +3456,9 @@ async def _register_live_listener(client: Client, task: dict, user_id: int, reg_
         # Apply delay (Custom task delay or Global default)
         gs = await get_global_settings(user_id)
         delay = current_task.get("batch_delay") if current_task.get("batch_delay") is not None else gs.get("default_delay", 1.5)
-        
-        if delay > 0:
+        # Determine skip flag for empty message delays
+        skip_if_empty_live = bool(current_task.get("skip_delay_on_empty", 1)) if current_task else bool(gs.get("default_skip_delay_on_empty", 1))
+        if delay > 0 and not (skip_if_empty_live and (getattr(msg, "id", None) is None or getattr(msg, "empty", False))):
             await asyncio.sleep(delay)
             
         # Tracker for protection notifications to avoid spam

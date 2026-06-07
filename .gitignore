@@ -176,3 +176,9 @@ creategroup*.zip
 test_*.py
 creategroup*.zip
 *xcreategroup.md
+migrate_forward_pro_db.py
+DEVELOPER_CHECKLIST_xcreategroup.md
+AUDIT_REPORT_xcreategroup.md
+TECHNICAL_FIXES_xcreategroup.md
+XTASKMANAGER_FIXES_REPORT.md
+altruix_test.log
