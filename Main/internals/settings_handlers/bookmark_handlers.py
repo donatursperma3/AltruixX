@@ -257,6 +257,13 @@ async def bookmark_cb_handler(bot: Client, cb: CallbackQuery):
         elif action == "noop":
             await cb.answer()
             
+    except MessageNotModified:
+        pass
+    except RPCError as e:
+        if "MESSAGE_NOT_MODIFIED" in str(e):
+            pass
+        else:
+            raise
     except Exception as e:
         Altruix.log(f"Bookmark Handler Error: {e}", level=logging.ERROR)
         await cb.answer(f"❌ Dash Error: {str(e)}", show_alert=True)

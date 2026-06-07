@@ -31,7 +31,7 @@ from pyrogram.errors import (
 )
 from pyrogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton,
-    ChatPhoto, ForceReply
+    ChatPhoto, ForceReply, InputMediaPhoto, InputMediaVideo
 )
 from pyrogram.enums import ChatType, ChatMemberStatus, ParseMode, ChatAction
 
@@ -1378,6 +1378,8 @@ async def creategroup_loop(
     pin_first_msg: bool = True,
     msg_img: bool = True,
     msg_vid: bool = True,
+    msg_img_album: bool = False,
+    msg_vid_album: bool = False,
     rand_len: int = 0,
     rand_lower: bool = False,
     rand_upper: bool = False,
@@ -1550,7 +1552,8 @@ async def creategroup_loop(
                  "batch_size": batch_size, "group_type": group_type, "name_pattern": name_pattern,
                  "username_prefix": username_prefix, "bot_identifiers": bot_identifiers,
                  "action_delay": action_delay, "invite_bots": invite_bots, "anon_mode": anon_mode,
-                 "copy_messages": copy_messages, "msg_img": msg_img, "msg_vid": msg_vid, "description": description,
+                 "copy_messages": copy_messages, "msg_img": msg_img, "msg_vid": msg_vid,
+                 "msg_img_album": msg_img_album, "msg_vid_album": msg_vid_album, "description": description,
                  "photo_source": photo_source, "custom_photo_id": custom_photo_id,
                  "log_format": log_format, "pin_first_msg": pin_first_msg, "temp_pin": temp_pin,
                  "quote_block": quote_block, "rand_len": rand_len, "rand_lower": rand_lower,
@@ -1568,15 +1571,17 @@ async def creategroup_loop(
 
     try:
         # Initialize task state
-        if state and is_resume:
+        if is_resume:
             # Keep existing state but ensure it's marked as running
             state["running"] = True
             state["task_obj"] = asyncio.current_task()
             
-            # Ensure account indicator is updated/synced on resume
+            # 🔥 Ensure account indicator and batch settings are updated/synced on resume
             if "params" in state:
                 state["params"]["account_idx"] = account_idx
                 state["params"]["total_accs"] = total_accs
+                state["params"]["batch_account"] = batch_account
+                state["params"]["ba_account_delay"] = ba_account_delay
                 
             if "pause_event" not in state:
                 state["pause_event"] = asyncio.Event()
@@ -1616,6 +1621,8 @@ async def creategroup_loop(
                     "copy_messages": copy_messages,
                     "msg_img": msg_img,
                     "msg_vid": msg_vid,
+                    "msg_img_album": msg_img_album,
+                    "msg_vid_album": msg_vid_album,
                     "description": description,
                     "photo_source": photo_source,
                     "custom_photo_id": custom_photo_id,
@@ -2759,36 +2766,149 @@ async def creategroup_loop(
                 if current_step == "msg_img":
                     if msg_img:
                         if isinstance(msg_img, bool):
-                            # Jika msg_img adalah boolean True, gunakan daftar global MSG_IMG_IDS
-                            for idx in range(s_idx, len(MSG_IMG_IDS)):
-                                msg_id = MSG_IMG_IDS[idx]
-                                try:
-                                    await user_client.copy_message(created_chat_id, from_chat_id=SRC_CHANNEL, message_id=msg_id)
-                                    s_idx = idx + 1
-                                    state["step_index"] = s_idx
-                                    if s_idx % 5 == 0: 
-                                        sync_to_registry()
-                                        await save_creategroup_cache()
-                                    await handle_action_delay()
-                                except Exception:
-                                    pass
-                            await update_group_log(f"✅ Image Messages berhasil dikirim total: <code>{len(MSG_IMG_IDS)}</code> msg")
+                            source_ids = MSG_IMG_IDS
+                            if msg_img_album:
+                                while s_idx < len(source_ids):
+                                    chunk_ids = source_ids[s_idx:s_idx + 10]
+                                    try:
+                                        msgs = await user_client.get_messages(SRC_CHANNEL, chunk_ids)
+                                        if not isinstance(msgs, list):
+                                            msgs = [msgs]
+                                        by_id = {}
+                                        for mm in msgs:
+                                            if not mm or getattr(mm, "empty", False):
+                                                continue
+                                            try:
+                                                by_id[int(mm.id)] = mm
+                                            except Exception:
+                                                continue
+
+                                        media_group = []
+                                        for mid in chunk_ids:
+                                            mpart = by_id.get(int(mid))
+                                            if not mpart:
+                                                logger.warning(f"[CreateGroup] MSG_IMG missing source msg_id={mid} in {SRC_CHANNEL}")
+                                                continue
+                                            cap = mpart.caption or None
+                                            ents = getattr(mpart, "caption_entities", None)
+                                            if getattr(mpart, "photo", None):
+                                                media_group.append(InputMediaPhoto(mpart.photo.file_id, caption=cap, caption_entities=ents))
+                                            elif getattr(mpart, "document", None) and getattr(mpart.document, "mime_type", "").startswith("image/"):
+                                                media_group.append(InputMediaPhoto(mpart.document.file_id, caption=cap, caption_entities=ents))
+                                            else:
+                                                logger.warning(f"[CreateGroup] MSG_IMG incompatible media msg_id={mid} in {SRC_CHANNEL}")
+
+                                        if media_group:
+                                            await user_client.send_media_group(created_chat_id, media_group)
+
+                                        s_idx += len(chunk_ids)
+                                        state["step_index"] = s_idx
+                                        if s_idx % 5 == 0:
+                                            sync_to_registry()
+                                            await save_creategroup_cache()
+                                        await handle_action_delay()
+                                    except FloodWait as fw:
+                                        await asyncio.sleep(fw.value + 10)
+                                        continue
+                                    except Exception as e:
+                                        logger.error(f"[CreateGroup] Failed send_media_group (img) chunk={chunk_ids}: {e}\n{traceback.format_exc()}")
+                                        for mid in chunk_ids:
+                                            try:
+                                                await user_client.copy_message(created_chat_id, from_chat_id=SRC_CHANNEL, message_id=mid)
+                                            except FloodWait as fw:
+                                                await asyncio.sleep(fw.value + 10)
+                                            except Exception as e2:
+                                                logger.error(f"[CreateGroup] Fallback copy img msg_id={mid} failed: {e2}\n{traceback.format_exc()}")
+                                            await handle_action_delay()
+                                        s_idx += len(chunk_ids)
+                                        state["step_index"] = s_idx
+                                        if s_idx % 5 == 0:
+                                            sync_to_registry()
+                                            await save_creategroup_cache()
+                                await update_group_log(f"✅ Image Messages berhasil dikirim total: <code>{len(source_ids)}</code> msg")
+                            else:
+                                for idx in range(s_idx, len(source_ids)):
+                                    msg_id = source_ids[idx]
+                                    try:
+                                        await user_client.copy_message(created_chat_id, from_chat_id=SRC_CHANNEL, message_id=msg_id)
+                                        s_idx = idx + 1
+                                        state["step_index"] = s_idx
+                                        if s_idx % 5 == 0:
+                                            sync_to_registry()
+                                            await save_creategroup_cache()
+                                        await handle_action_delay()
+                                    except FloodWait as fw:
+                                        await asyncio.sleep(fw.value + 10)
+                                        continue
+                                    except Exception as e:
+                                        logger.error(f"[CreateGroup] Failed to copy image msg {msg_id}: {e}\n{traceback.format_exc()}")
+                                await update_group_log(f"✅ Image Messages berhasil dikirim total: <code>{len(source_ids)}</code> msg")
 
                         elif isinstance(msg_img, list):
-                            # Jika msg_img adalah list, gunakan list tersebut
-                            for idx in range(s_idx, len(msg_img)):
-                                img_url = msg_img[idx]
-                                try:
-                                    await user_client.send_photo(created_chat_id, img_url)
-                                    s_idx = idx + 1
-                                    state["step_index"] = s_idx
-                                    if s_idx % 5 == 0: 
-                                        sync_to_registry()
-                                        await save_creategroup_cache()
-                                    await handle_action_delay()
-                                except Exception:
-                                    pass
-                            await update_group_log(f"✅ Image Messages berhasil dikirim total: <code>{len(msg_img)}</code> msg")
+                            if msg_img_album:
+                                while s_idx < len(msg_img):
+                                    chunk_items = msg_img[s_idx:s_idx + 10]
+                                    try:
+                                        media_group = []
+                                        for it in chunk_items:
+                                            if isinstance(it, int):
+                                                try:
+                                                    mpart = await user_client.get_messages(SRC_CHANNEL, it)
+                                                    if mpart and not getattr(mpart, "empty", False) and getattr(mpart, "photo", None):
+                                                        cap = mpart.caption or None
+                                                        ents = getattr(mpart, "caption_entities", None)
+                                                        media_group.append(InputMediaPhoto(mpart.photo.file_id, caption=cap, caption_entities=ents))
+                                                except Exception as ee:
+                                                    logger.error(f"[CreateGroup] Build img album from msg_id={it} failed: {ee}\n{traceback.format_exc()}")
+                                            else:
+                                                media_group.append(InputMediaPhoto(str(it)))
+                                        if media_group:
+                                            await user_client.send_media_group(created_chat_id, media_group)
+                                        s_idx += len(chunk_items)
+                                        state["step_index"] = s_idx
+                                        if s_idx % 5 == 0:
+                                            sync_to_registry()
+                                            await save_creategroup_cache()
+                                        await handle_action_delay()
+                                    except FloodWait as fw:
+                                        await asyncio.sleep(fw.value + 10)
+                                        continue
+                                    except Exception as e:
+                                        logger.error(f"[CreateGroup] Failed send_media_group (img list) chunk={chunk_items}: {e}\n{traceback.format_exc()}")
+                                        for it in chunk_items:
+                                            try:
+                                                if isinstance(it, int):
+                                                    await user_client.copy_message(created_chat_id, from_chat_id=SRC_CHANNEL, message_id=it)
+                                                else:
+                                                    await user_client.send_photo(created_chat_id, it)
+                                            except FloodWait as fw:
+                                                await asyncio.sleep(fw.value + 10)
+                                            except Exception as e2:
+                                                logger.error(f"[CreateGroup] Fallback img item={it} failed: {e2}\n{traceback.format_exc()}")
+                                            await handle_action_delay()
+                                        s_idx += len(chunk_items)
+                                        state["step_index"] = s_idx
+                                        if s_idx % 5 == 0:
+                                            sync_to_registry()
+                                            await save_creategroup_cache()
+                                await update_group_log(f"✅ Image Messages berhasil dikirim total: <code>{len(msg_img)}</code> msg")
+                            else:
+                                for idx in range(s_idx, len(msg_img)):
+                                    img_url = msg_img[idx]
+                                    try:
+                                        await user_client.send_photo(created_chat_id, img_url)
+                                        s_idx = idx + 1
+                                        state["step_index"] = s_idx
+                                        if s_idx % 5 == 0:
+                                            sync_to_registry()
+                                            await save_creategroup_cache()
+                                        await handle_action_delay()
+                                    except FloodWait as fw:
+                                        await asyncio.sleep(fw.value + 10)
+                                        continue
+                                    except Exception as e:
+                                        logger.error(f"[CreateGroup] Failed to send photo {img_url}: {e}\n{traceback.format_exc()}")
+                                await update_group_log(f"✅ Image Messages berhasil dikirim total: <code>{len(msg_img)}</code> msg")
                     state["current_step"] = "msg_vid"
                     current_step = "msg_vid"
                     state["step_index"] = 0
@@ -2799,38 +2919,158 @@ async def creategroup_loop(
                 if current_step == "msg_vid":
                     if msg_vid:
                         if isinstance(msg_vid, bool):
-                            # Jika msg_vid adalah boolean True, gunakan daftar global MSG_VID_IDS
-                            for idx in range(s_idx, len(MSG_VID_IDS)):
-                                msg_id = MSG_VID_IDS[idx]
-                                try:
-                                    await user_client.copy_message(created_chat_id, from_chat_id=SRC_CHANNEL, message_id=msg_id)
-                                    s_idx = idx + 1
-                                    state["step_index"] = s_idx
-                                    if s_idx % 5 == 0: 
-                                        sync_to_registry()
-                                        await save_creategroup_cache()
-                                    await handle_action_delay()
-                                except Exception as e:
-                                    logger.error(f"[CreateGroup] Failed to copy video msg {msg_id}: {e}\n{traceback.format_exc()}")
-                            await update_group_log(f"✅ Video Messages berhasil dikirim total: <code>{len(MSG_VID_IDS)}</code> msg")
+                            source_ids = MSG_VID_IDS
+                            if msg_vid_album:
+                                while s_idx < len(source_ids):
+                                    chunk_ids = source_ids[s_idx:s_idx + 10]
+                                    try:
+                                        msgs = await user_client.get_messages(SRC_CHANNEL, chunk_ids)
+                                        if not isinstance(msgs, list):
+                                            msgs = [msgs]
+                                        by_id = {}
+                                        for mm in msgs:
+                                            if not mm or getattr(mm, "empty", False):
+                                                continue
+                                            try:
+                                                by_id[int(mm.id)] = mm
+                                            except Exception:
+                                                continue
+
+                                        media_group = []
+                                        for mid in chunk_ids:
+                                            mpart = by_id.get(int(mid))
+                                            if not mpart:
+                                                logger.warning(f"[CreateGroup] MSG_VID missing source msg_id={mid} in {SRC_CHANNEL}")
+                                                continue
+                                            cap = mpart.caption or None
+                                            ents = getattr(mpart, "caption_entities", None)
+                                            if getattr(mpart, "video", None):
+                                                media_group.append(InputMediaVideo(mpart.video.file_id, caption=cap, caption_entities=ents))
+                                            elif getattr(mpart, "animation", None):
+                                                media_group.append(InputMediaVideo(mpart.animation.file_id, caption=cap, caption_entities=ents))
+                                            elif getattr(mpart, "document", None) and getattr(mpart.document, "mime_type", "").startswith("video/"):
+                                                media_group.append(InputMediaVideo(mpart.document.file_id, caption=cap, caption_entities=ents))
+                                            else:
+                                                logger.warning(f"[CreateGroup] MSG_VID incompatible media msg_id={mid} in {SRC_CHANNEL}")
+
+                                        if media_group:
+                                            await user_client.send_media_group(created_chat_id, media_group)
+
+                                        s_idx += len(chunk_ids)
+                                        state["step_index"] = s_idx
+                                        if s_idx % 5 == 0:
+                                            sync_to_registry()
+                                            await save_creategroup_cache()
+                                        await handle_action_delay()
+                                    except FloodWait as fw:
+                                        await asyncio.sleep(fw.value + 10)
+                                        continue
+                                    except Exception as e:
+                                        logger.error(f"[CreateGroup] Failed send_media_group (vid) chunk={chunk_ids}: {e}\n{traceback.format_exc()}")
+                                        for mid in chunk_ids:
+                                            try:
+                                                await user_client.copy_message(created_chat_id, from_chat_id=SRC_CHANNEL, message_id=mid)
+                                            except FloodWait as fw:
+                                                await asyncio.sleep(fw.value + 10)
+                                            except Exception as e2:
+                                                logger.error(f"[CreateGroup] Fallback copy vid msg_id={mid} failed: {e2}\n{traceback.format_exc()}")
+                                            await handle_action_delay()
+                                        s_idx += len(chunk_ids)
+                                        state["step_index"] = s_idx
+                                        if s_idx % 5 == 0:
+                                            sync_to_registry()
+                                            await save_creategroup_cache()
+                                await update_group_log(f"✅ Video Messages berhasil dikirim total: <code>{len(source_ids)}</code> msg")
+                            else:
+                                for idx in range(s_idx, len(source_ids)):
+                                    msg_id = source_ids[idx]
+                                    try:
+                                        await user_client.copy_message(created_chat_id, from_chat_id=SRC_CHANNEL, message_id=msg_id)
+                                        s_idx = idx + 1
+                                        state["step_index"] = s_idx
+                                        if s_idx % 5 == 0:
+                                            sync_to_registry()
+                                            await save_creategroup_cache()
+                                        await handle_action_delay()
+                                    except FloodWait as fw:
+                                        await asyncio.sleep(fw.value + 10)
+                                        continue
+                                    except Exception as e:
+                                        logger.error(f"[CreateGroup] Failed to copy video msg {msg_id}: {e}\n{traceback.format_exc()}")
+                                await update_group_log(f"✅ Video Messages berhasil dikirim total: <code>{len(source_ids)}</code> msg")
                         elif isinstance(msg_vid, list):
-                            # Jika msg_vid adalah list, gunakan list tersebut
-                            for idx in range(s_idx, len(msg_vid)):
-                                vid_val = msg_vid[idx]
-                                try:
-                                    if isinstance(vid_val, int):
-                                        await user_client.copy_message(created_chat_id, from_chat_id=SRC_CHANNEL, message_id=vid_val)
-                                    else:
-                                        await user_client.send_video(created_chat_id, vid_val)
-                                    s_idx = idx + 1
-                                    state["step_index"] = s_idx
-                                    if s_idx % 5 == 0: 
-                                        sync_to_registry()
-                                        await save_creategroup_cache()
-                                    await handle_action_delay()
-                                except Exception as e:
-                                    logger.error(f"[CreateGroup] Failed to send video {vid_val}: {e}\n{traceback.format_exc()}")
-                            await update_group_log(f"✅ Video Messages berhasil dikirim total: <code>{len(msg_vid)}</code> msg")
+                            if msg_vid_album:
+                                while s_idx < len(msg_vid):
+                                    chunk_items = msg_vid[s_idx:s_idx + 10]
+                                    try:
+                                        media_group = []
+                                        for it in chunk_items:
+                                            if isinstance(it, int):
+                                                try:
+                                                    mpart = await user_client.get_messages(SRC_CHANNEL, it)
+                                                    if mpart and not getattr(mpart, "empty", False):
+                                                        cap = mpart.caption or None
+                                                        ents = getattr(mpart, "caption_entities", None)
+                                                        if getattr(mpart, "video", None):
+                                                            media_group.append(InputMediaVideo(mpart.video.file_id, caption=cap, caption_entities=ents))
+                                                        elif getattr(mpart, "animation", None):
+                                                            media_group.append(InputMediaVideo(mpart.animation.file_id, caption=cap, caption_entities=ents))
+                                                        elif getattr(mpart, "document", None) and getattr(mpart.document, "mime_type", "").startswith("video/"):
+                                                            media_group.append(InputMediaVideo(mpart.document.file_id, caption=cap, caption_entities=ents))
+                                                except Exception as ee:
+                                                    logger.error(f"[CreateGroup] Build vid album from msg_id={it} failed: {ee}\n{traceback.format_exc()}")
+                                            else:
+                                                media_group.append(InputMediaVideo(str(it)))
+                                        if media_group:
+                                            await user_client.send_media_group(created_chat_id, media_group)
+                                        s_idx += len(chunk_items)
+                                        state["step_index"] = s_idx
+                                        if s_idx % 5 == 0:
+                                            sync_to_registry()
+                                            await save_creategroup_cache()
+                                        await handle_action_delay()
+                                    except FloodWait as fw:
+                                        await asyncio.sleep(fw.value + 10)
+                                        continue
+                                    except Exception as e:
+                                        logger.error(f"[CreateGroup] Failed send_media_group (vid list) chunk={chunk_items}: {e}\n{traceback.format_exc()}")
+                                        for it in chunk_items:
+                                            try:
+                                                if isinstance(it, int):
+                                                    await user_client.copy_message(created_chat_id, from_chat_id=SRC_CHANNEL, message_id=it)
+                                                else:
+                                                    await user_client.send_video(created_chat_id, it)
+                                            except FloodWait as fw:
+                                                await asyncio.sleep(fw.value + 10)
+                                            except Exception as e2:
+                                                logger.error(f"[CreateGroup] Fallback vid item={it} failed: {e2}\n{traceback.format_exc()}")
+                                            await handle_action_delay()
+                                        s_idx += len(chunk_items)
+                                        state["step_index"] = s_idx
+                                        if s_idx % 5 == 0:
+                                            sync_to_registry()
+                                            await save_creategroup_cache()
+                                await update_group_log(f"✅ Video Messages berhasil dikirim total: <code>{len(msg_vid)}</code> msg")
+                            else:
+                                for idx in range(s_idx, len(msg_vid)):
+                                    vid_val = msg_vid[idx]
+                                    try:
+                                        if isinstance(vid_val, int):
+                                            await user_client.copy_message(created_chat_id, from_chat_id=SRC_CHANNEL, message_id=vid_val)
+                                        else:
+                                            await user_client.send_video(created_chat_id, vid_val)
+                                        s_idx = idx + 1
+                                        state["step_index"] = s_idx
+                                        if s_idx % 5 == 0:
+                                            sync_to_registry()
+                                            await save_creategroup_cache()
+                                        await handle_action_delay()
+                                    except FloodWait as fw:
+                                        await asyncio.sleep(fw.value + 10)
+                                        continue
+                                    except Exception as e:
+                                        logger.error(f"[CreateGroup] Failed to send video {vid_val}: {e}\n{traceback.format_exc()}")
+                                await update_group_log(f"✅ Video Messages berhasil dikirim total: <code>{len(msg_vid)}</code> msg")
                     state["current_step"] = "quotes_3"
                     current_step = "quotes_3"
                     state["step_index"] = 0
@@ -3564,6 +3804,9 @@ async def creategroup_command_handler(client: Client, message: AltruixMessage):
                 "anon_mode": config.get("anon_mode", True),
                 "copy_messages": config.get("copy_messages", True),
                 "msg_img": config.get("msg_img", True),
+                "msg_vid": config.get("msg_vid", True),
+                "msg_img_album": config.get("msg_img_album", False),
+                "msg_vid_album": config.get("msg_vid_album", False),
                 "photo_source": config.get("photo_source", "source"),
                 "custom_photo_id": config.get("custom_photo_id"),
                 "log_destination": config.get("log_destination", "both"),
@@ -3743,6 +3986,8 @@ async def recover_creategroup_task(tid: str) -> tuple:
                 quote_block=params.get("quote_block", True),
                 msg_img=params.get("msg_img", True),
                 msg_vid=params.get("msg_vid", True),
+                msg_img_album=params.get("msg_img_album", False),
+                msg_vid_album=params.get("msg_vid_album", False),
                 rand_len=params.get("rand_len", 0),
                 rand_lower=params.get("rand_lower", False),
                 rand_upper=params.get("rand_upper", False),
@@ -3882,6 +4127,8 @@ async def confirm_creategroup_handler(client: Client, callback_query: CallbackQu
                 copy_messages=config.get("copy_messages", True),
                 msg_img=config.get("msg_img", True),
                 msg_vid=config.get("msg_vid", True),
+                msg_img_album=config.get("msg_img_album", False),
+                msg_vid_album=config.get("msg_vid_album", False),
                 photo_source=config.get("photo_source", "source"),
                 custom_photo_id=config.get("custom_photo_id"),
                 log_destination=config.get("log_destination", "both"),
@@ -4161,6 +4408,8 @@ async def creategroup_control_handler(client: Client, callback_query: CallbackQu
                     quote_block=params.get("quote_block", True),
                     msg_img=params.get("msg_img", True),
                     msg_vid=params.get("msg_vid", True),
+                    msg_img_album=params.get("msg_img_album", False),
+                    msg_vid_album=params.get("msg_vid_album", False),
                     rand_len=params.get("rand_len", 0),
                     rand_lower=params.get("rand_lower", False),
                     rand_upper=params.get("rand_upper", False),
@@ -4394,6 +4643,8 @@ async def creategroup_control_handler(client: Client, callback_query: CallbackQu
                         pin_first_msg=conf.get("pin_first_msg", True), temp_pin=conf.get("temp_pin", True),
                         quote_block=conf.get("quote_block", True), msg_img=conf.get("msg_img", True),
                         msg_vid=conf.get("msg_vid", True),
+                        msg_img_album=conf.get("msg_img_album", False),
+                        msg_vid_album=conf.get("msg_vid_album", False),
                         rand_len=conf.get("rand_len", 0), rand_lower=conf.get("rand_lower", False),
                         rand_upper=conf.get("rand_upper", False), rand_static=conf.get("rand_static", False),
                         batch_action=conf.get("batch_action", 30), ba_delay=conf.get("ba_delay", 30), user_id=conf.get("user_id")

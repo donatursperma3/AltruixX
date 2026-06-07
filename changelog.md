@@ -3,6 +3,127 @@
 All notable changes to the **Altroid-X** project from version **0.0.10.0959H** to the latest.
 Latest updates are always added at the top (newest → oldest).
 
+## [1.0.276] - 2026-06-07
+
+### 📡 xforward_pro: Batch Range & Batch Msg Controls
+- **Added: CONFIG BATCH RANGE submenu**:
+  - Interactive menu to configure `Start ID` and `End ID` with step buttons (+/- 1,5,10,50,100,...).
+  - `🚀 EXECUTE BATCH` button to run batch directly from UI (no manual `.fwd run` required).
+- **Added: Batch Msg & B.Msg Delay controls (Task & Global)**:
+  - Per-task (`batch_msg`, `batch_msg_delay`) and global defaults (`default_batch_msg`, `default_batch_msg_delay`) persisted in DB.
+  - Added UI buttons in Advanced Options for quick adjustments and inc/dec shortcuts.
+- **DB Migration & Persistence**:
+  - Schema migration added for `start_id`, `end_id`, `batch_msg`, `batch_msg_delay`, and global defaults.
+  - Values are saved atomically and safely via the existing DB layer.
+- **Helpers & Robust UI edits**:
+  - Added `safe_edit_cb_text()`, `safe_cb_ack()` and `_normalize_delay()` helpers to safely edit inline/callback messages and normalize delays.
+  - UI updates now use safe editing to handle inline messages and prevent `MessageNotModified` errors.
+- **UX / Labels**:
+  - Task Detail now shows `📦 CONFIG BATCH RANGE` button and Advanced Options display `Batch Msg` / `B.Msg Delay` state.
+- **Notes**: No files or existing features were removed; this change enhances batch configuration UX and persistence.
+
+---
+
+## [1.0.276] - 2026-06-07
+
+### 📡 xforward_pro: JSON Database & Robust Restoration
+- **Database: JSON Migration**:
+  - Migrated primary storage from SQLite (`forward_pro.db`) to JSON (`forward_pro_db.json`) for consistency with other plugins.
+  - Implemented automatic data migration from SQLite to JSON on first run without data loss.
+  - Optimized database operations using an in-memory cache (`_FWD_DATA`) with an asynchronous saving mechanism and file locking to prevent race conditions.
+- **Improved: Predictable Task IDs**:
+  - Switched from random hashes to predictable IDs (`#FPL{id}` for Live, `#FPB{id}` for Batch) to ensure reliable task synchronization between the plugin and `xtaskmanager`.
+- **Improved: Robust Startup Restoration**:
+  - Enhanced `_restore_active_tasks` with a client-readiness wait mechanism (up to 30 seconds) to ensure sessions are fully established before restoring live listeners.
+  - Added robust error handling and automated reporting for restoration failures.
+- **Improved: Task Manager Integration**:
+  - Updated `xtaskmanager` to support dual-database scanning (JSON & SQLite) for Forward Pro tasks.
+  - Integrated Forward Pro into the global `handle_restore_action`, allowing manual restoration via the "♻️ Restore" button in the Task Manager dashboard.
+
+### 🐞 xforward_pro: Compatibility, Robust Save, and Debug Improvements
+- **Fixed: Inline button compatibility**:
+  - Added a compatibility wrapper for `InlineKeyboardButton(..., style=...)` to support multiple Pyrogram versions and prevent import-time TypeError that made buttons unresponsive.
+- **Improved: Atomic JSON save & corrupted DB handling**:
+  - Implemented atomic JSON saves via a temporary file + `os.replace` (fallback `os.rename`) to avoid partial writes.
+  - Added automatic backup of corrupted `forward_pro_db.json` to `forward_pro_db.json.corrupt.<ts>.bak` and safe recovery path.
+- **Improved: Debugging & Tracebacks**:
+  - Added debug logging to DB load/save and CRUD operations (`add_task`, `get_tasks`, `get_task`, `update_task`, `delete_task`).
+  - Added debug traces on inline queries and callback receipts to assist tracing button interactions and payloads.
+- **Fixed: Watermark video processing**:
+  - Fixed `add_watermark_video()` flow (proper try/except/finally, cleanup of overlay/temp files, robust error logging).
+- **Fixed: Log channel key consistency**:
+  - Ensured `.fwd glog` stores `log_channel` key consistently with `get_global_settings` and `send_log` usage.
+- **Notes**: No existing features or files were removed; these are stability, compatibility and observability improvements to make debugging and restores reliable.
+
+
+### 👥 CreateGroup: Album Grouping untuk Msg Img & Msg Vid
+- **Added: Album Mode Toggles (Per Type)**:
+  - Added separate dashboard toggles: `Album Img` dan `Album Vid` untuk mengirim media sebagai album (grouping) sesuai jenis pesan.
+  - Persisted ke config user (JSON) dengan key baru: `msg_img_album` dan `msg_vid_album` (default: Off).
+- **Added: send_media_group Flow + Fallback**:
+  - Mengirim media dalam chunk maksimal 10 item per album sesuai batas Telegram, dengan caption/entities mengikuti item pertama yang tersedia.
+  - Jika `send_media_group` gagal, otomatis fallback ke metode lama (copy/send satu-per-satu) dengan logging + traceback agar task tetap lanjut.
+
+---
+
+## [1.0.275] - 2026-06-06
+
+### 📡 xforward_pro: Advanced Forwarding Enhancements
+- **Added: Batch Control UI**:
+  - Integrated `Batch Msg` and `Batch Msg Delay` configuration buttons into Global and Task-specific Advanced Options.
+  - Integrated visual batch cooldown notifications in the log group during processing.
+- **Added: Album Forwarding Support**:
+  - Implemented `Forward as Album` toggle in Advanced Options.
+  - Automatically detects media groups (albums) and forwards them as a single entity using `send_media_group` for Copy/Bypass modes.
+  - Optimized album detection to apply cleaned captions and translations correctly to the entire media group.
+  - Added internal caching to prevent redundant album forwarding during live or batch processes.
+- **Added: Visual Batch Range Configuration**:
+  - Introduced a new submenu for configuring `Start ID` and `End ID` using interactive step buttons (+/- 1, 10, 100, 1000).
+  - Added `🚀 EXECUTE BATCH` button directly in the UI, eliminating the need for manual command entry.
+- **Improved: Startup Task Restoration**:
+  - Refactored `_restore_active_tasks` to properly register Live Forwarding tasks as permanent listeners in `xtaskmanager` (preventing auto-cleanup).
+  - Added detection and logging for interrupted Batch tasks after a bot restart.
+- **Improved: Error Resilience & Debugging**:
+  - Wrapped startup restoration and live forwarding logic in robust `try-except` blocks.
+  - Integrated automated error reporting: critical failures now send detailed logs and full tracebacks to the `LOG_CHAT_ID` group.
+- **Fixed: IndexError in Batch Range UI**:
+  - Resolved `list index out of range` error in `fwd_callback_handler` when rendering Batch Range buttons with an odd number of step values.
+- **UI: Reorganized Batch Range Layout**:
+  - Reordered adjustment buttons to group negative values (-) on the left and positive values (+) on the right for improved readability and user experience.
+- **Database**: Migrated schema to include `batch_msg`, `batch_msg_delay`, `start_id`, and `end_id` persistence.
+
+---
+
+## [1.0.274] - 2026-06-06
+
+### 👥 CreateGroup: Staggered Resume & Config Persistence
+- **Improved: Staggered Resume Logging**:
+  - Added logic to sync and update `batch_account` and `ba_account_delay` parameters when a task is resumed after a restart.
+  - Ensures the initialization logs accurately reflect the current batching state during staggered startup.
+- **Fixed: selected_sessions Reset Issue**:
+  - Improved `launch_tasks_bg` initialization in `creategroup_confirm_task_handler` to properly handle session indices.
+  - Added state cleanup for the `launching` flag across multiple entry points to prevent UI locks.
+  - Verified JSON persistence logic for user configurations to ensure settings are correctly saved and reloaded after bot restarts.
+
+---
+
+## [1.0.273] - 2026-06-06
+
+### 👥 CreateGroup: Report Export Stability
+- **Fixed: AttributeError 'NoneType' object has no attribute 'chat'**:
+  - Added null-safety check for `cb.message` in `creategroup_report_export_acc_handler` and `creategroup_report_export_all_handler`.
+  - System now falls back to `cb.from_user.id` if `cb.message` is unavailable, preventing crashes during master report export.
+
+## [1.0.272] - 2026-06-03
+
+### 👥 CreateGroup: UI Enhancements & Session Metrics
+- **Added: Creation Count on Session Buttons**:
+  - Integrated creation report metrics into the **Multi-Session Selection** menu.
+  - Each session button now displays the number of groups/channels created by that account, e.g., `account xyz (11)`.
+  - Improved visibility for session selection based on historical performance.
+  
+---
+
 ## [1.0.271] - 2026-06-03
 
 ### 👥 CreateGroup: Logic Refinement & Delay Consistency

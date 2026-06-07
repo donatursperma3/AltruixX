@@ -565,7 +565,19 @@ async def run_broadcast(c: Client, cb: CallbackQuery, b_id: str):
         f"💠 <b>Status:</b> Operasi Selesai"
     )
     user_style = get_user_button_style(c.me.id)
-    await cb.edit_message_text(result_text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Kembali ke Utama", callback_data="bkm_main", style=user_style)]]), parse_mode=enums.ParseMode.HTML)
+    try:
+        await cb.edit_message_text(
+            result_text,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Kembali ke Utama", callback_data="bkm_main", style=user_style)]]),
+            parse_mode=enums.ParseMode.HTML
+        )
+    except MessageNotModified:
+        pass
+    except RPCError as e:
+        if "MESSAGE_NOT_MODIFIED" in str(e):
+            pass
+        else:
+            raise
 
 async def show_client_selection(c: Client, cb: CallbackQuery, b_id: str):
     """Lists all active alliance accounts for targeted message transmission."""

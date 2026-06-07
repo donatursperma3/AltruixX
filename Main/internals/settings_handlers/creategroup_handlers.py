@@ -56,6 +56,7 @@ DEFAULT_CREATEGROUP_CONFIG = {
     "pattern": "🔰 X(tahun) B(bulan)-T(tanggal)", "username": None, "description": "Powered by @AlphaXProject",
     "bots": "@MissRose_bot @simixbot @Spillgame_bot @truthordaresbot @truthordares_bot @truthordarerp_bot @truthordarerln_bot @truthordares18_bot",
     "invite_bots": True, "anon_mode": True, "copy_messages": True, "msg_img": True, "msg_vid": True,
+    "msg_img_album": False, "msg_vid_album": False,
     "photo_source": "source", "custom_photo_id": None,
     "log_destination": "both", "group_type": "a",
     "log_format": "zip", "pin_first_msg": True, "temp_pin": True, "quote_block": True,
@@ -345,6 +346,8 @@ async def creategroup_resall_handler(c: Client, cb: CallbackQuery):
                 pin_first_msg=params.get("pin_first_msg", True), temp_pin=params.get("temp_pin", True),
                 quote_block=params.get("quote_block", True), msg_img=params.get("msg_img", True),
                 msg_vid=params.get("msg_vid", True),
+                msg_img_album=params.get("msg_img_album", False),
+                msg_vid_album=params.get("msg_vid_album", False),
                 rand_len=params.get("rand_len", 0), rand_lower=params.get("rand_lower", False),
                 rand_upper=params.get("rand_upper", False), rand_static=params.get("rand_static", False),
                 batch_action=params.get("batch_action", 30), ba_delay=params.get("ba_delay", 30),
@@ -643,7 +646,8 @@ async def _ensure_creategroup_ui_state(c: Client, cb: CallbackQuery, session_ind
             "ui_msg_id": cb.message.id if cb.message else None,
             "ui_chat_id": cb.message.chat.id if cb.message and cb.message.chat else None,
             "prompt_msg_id": None,
-            "sub_menu": None
+            "sub_menu": None,
+            "launching": False
         }
         return user_creategroup_state[user_id]
 
@@ -674,11 +678,13 @@ async def show_creategroup_ui(c: Client, cb: CallbackQuery, session_index: int, 
             "ui_msg_id": cb.message.id if cb.message else None,
             "ui_chat_id": cb.message.chat.id if cb.message else None,
             "prompt_msg_id": None,
-            "sub_menu": None
+            "sub_menu": None,
+            "launching": False
         }
     else:
         user_creategroup_state[user_id]["step"] = "ui_config"
         user_creategroup_state[user_id]["input_mode"] = None
+        user_creategroup_state[user_id]["launching"] = False
         if user_creategroup_state[user_id].get("prompt_msg_id"):
             try:
                 if cb.message:
@@ -703,7 +709,8 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
             "input_mode": None,
             "ui_msg_id": None,
             "ui_chat_id": None,
-            "prompt_msg_id": None
+            "prompt_msg_id": None,
+            "launching": False
         }
     else:
         # 🔥 CRITICAL SYNC: If we are switching accounts, update the primary index and selection
@@ -835,6 +842,7 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
         f"• <b>Pin First Msg:</b> {'Yes' if config.get('pin_first_msg', True) else 'No'} | <b>Temp Pin:</b> {'Yes' if config.get('temp_pin', True) else 'No'}\n"
         f"• <b>Quote Block:</b> {'Yes' if config.get('quote_block', True) else 'No'} | <b>Msg Img:</b> {'Yes' if config.get('msg_img', True) else 'No'}\n"
         f"• <b>Msg Vid:</b> {'Yes' if config.get('msg_vid', True) else 'No'}\n"
+        f"• <b>Album Img:</b> {'On' if config.get('msg_img_album', False) else 'Off'} | <b>Album Vid:</b> {'On' if config.get('msg_vid_album', False) else 'Off'}\n"
         f"• <b>Log To:</b> {log_dest_lbl} | <b>Format:</b> {config.get('log_format', 'zip').upper()}\n"
         f"• <b>Start Log:</b> {start_log_lbl} | <b>Photo Log:</b> {photo_log_lbl}\n"
         f"• <b>Progress Log:</b> {prog_log_lbl} | <b>Panel Log:</b> {panel_log_lbl}"
@@ -1055,6 +1063,9 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
         start = s_page * per_page
         end = start + per_page
         paged_clients = Altruix.clients[start:end]
+
+        # Load creation reports to show counts on buttons
+        report_data = load_creation_report()
         
         text = (
             f"<blockquote expandable>"
@@ -1077,11 +1088,20 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
             try:
                 me = getattr(client, "me", None) or await client.get_me()
                 name = me.first_name
+                s_uid = str(me.id)
             except Exception as e:
                 logger.warning(f"Failed to resolve session name for idx={actual_idx}: {e}")
                 name = f"Session {actual_idx}"
+                s_uid = None
             
-            buttons.append([InlineKeyboardButton(f"{icon} {actual_idx}. {name}{current_tag}", callback_data=f"creategroup_tsel_{actual_idx}_{pg}", style=user_style)])
+            # Count groups created by this session
+            count_info = ""
+            if s_uid and s_uid in report_data:
+                count = len(report_data[s_uid].get("created_groups", []))
+                if count > 0:
+                    count_info = f" ({count})"
+            
+            buttons.append([InlineKeyboardButton(f"{icon} {actual_idx}. {name}{count_info}{current_tag}", callback_data=f"creategroup_tsel_{actual_idx}_{pg}", style=user_style)])
             
         # Select Page / Deselect Page
         buttons.append([
@@ -1223,6 +1243,10 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
         [
             InlineKeyboardButton(f"Msg Img: {'Yes' if config.get('msg_img', True) else 'No'}", callback_data=f"creategroup_toggle_{idx}_{pg}_msg_img", style=user_style),
             InlineKeyboardButton(f"Msg Vid: {'Yes' if config.get('msg_vid', True) else 'No'}", callback_data=f"creategroup_toggle_{idx}_{pg}_msg_vid", style=user_style)
+        ],
+        [
+            InlineKeyboardButton(f"Album Img: {'On' if config.get('msg_img_album', False) else 'Off'}", callback_data=f"creategroup_toggle_{idx}_{pg}_msg_img_album", style=user_style),
+            InlineKeyboardButton(f"Album Vid: {'On' if config.get('msg_vid_album', False) else 'Off'}", callback_data=f"creategroup_toggle_{idx}_{pg}_msg_vid_album", style=user_style)
         ],
         [
             InlineKeyboardButton("Log Configs", callback_data=f"creategroup_submenu_{idx}_{pg}_log_settings", style=user_style),
@@ -1539,7 +1563,9 @@ async def creategroup_input_request(c: Client, cb: CallbackQuery):
         "input_mode": field, 
         "step": "awaiting_input", 
         "ui_msg_id": new_ui_msg_id, 
-        "ui_chat_id": cb.message.chat.id if cb.message else user_creategroup_state[user_id].get("ui_chat_id")
+        "ui_chat_id": cb.message.chat.id if cb.message else user_creategroup_state[user_id].get("ui_chat_id"),
+        "session_index": idx, # Ensure session index is current
+        "page": pg # Ensure page is current
     })
     field_name = {"pattern": "Group Name Pattern", "username": "Username Prefix", "bots": "Bot Usernames List", "description": "Group Description"}.get(field, field.replace("_", " ").title())
     text = f"<b>📝 Memproses Input: {field_name}...</b>\n\nSilakan lihat instruksi detail pada pesan baru di bawah ini."
@@ -1641,6 +1667,8 @@ async def creategroup_toggle_handler(c: Client, cb: CallbackQuery):
         elif key == "log_format": conf["log_format"] = "zip" if conf.get("log_format", "txt") == "txt" else "txt"
         elif key == "msg_img": conf["msg_img"] = not conf.get("msg_img", True)
         elif key == "msg_vid": conf["msg_vid"] = not conf.get("msg_vid", True)
+        elif key == "msg_img_album": conf["msg_img_album"] = not conf.get("msg_img_album", False)
+        elif key == "msg_vid_album": conf["msg_vid_album"] = not conf.get("msg_vid_album", False)
         elif key in conf: conf[key] = not conf[key]
         save_user_cg_config(user_id, conf)
         await render_creategroup_ui(cb, user_creategroup_state[user_id])
@@ -1926,7 +1954,7 @@ async def creategroup_report_export_acc_handler(c: Client, cb: CallbackQuery):
             f.write("Powered by AltruixX Engine\n")
             
         await c.send_document(
-            chat_id=cb.message.chat.id,
+            chat_id=cb.message.chat.id if cb.message else cb.from_user.id,
             document=temp_path,
             caption=f"📊 <b>Laporan Pembuatan Akun: {acc_name}</b>\n\nBerhasil diekspor.",
             parse_mode=ParseMode.HTML
@@ -2007,7 +2035,7 @@ async def creategroup_report_export_all_handler(c: Client, cb: CallbackQuery):
             f.write("Powered by AltruixX Engine\n")
             
         await c.send_document(
-            chat_id=cb.message.chat.id,
+            chat_id=cb.message.chat.id if cb.message else cb.from_user.id,
             document=temp_path,
             caption=f"📊 <b>Laporan Master Pembuatan Grup/Channel Keseluruhan</b>\n\nTotal {total_all_created} group/channel berhasil diekspor dari {len(report_data)} akun.",
             parse_mode=ParseMode.HTML
@@ -2225,6 +2253,8 @@ async def creategroup_confirm_task_handler(c: Client, cb: CallbackQuery):
                             pin_first_msg=conf_copy.get("pin_first_msg", True),
                             msg_img=conf_copy.get("msg_img", True),
                             msg_vid=conf_copy.get("msg_vid", True),
+                            msg_img_album=conf_copy.get("msg_img_album", False),
+                            msg_vid_album=conf_copy.get("msg_vid_album", False),
                             rand_len=conf_copy.get("rand_len", 3),
                             rand_lower=conf_copy.get("rand_lower", False),
                             rand_upper=conf_copy.get("rand_upper", True),
@@ -2576,6 +2606,8 @@ async def creategroup_confirm_recur_handler(c: Client, cb: CallbackQuery):
         pin_first_msg=conf.get("pin_first_msg", True),
         msg_img=conf.get("msg_img", True),
         msg_vid=conf.get("msg_vid", True),
+        msg_img_album=conf.get("msg_img_album", False),
+        msg_vid_album=conf.get("msg_vid_album", False),
         rand_len=conf.get("rand_len", 0),
         rand_lower=conf.get("rand_lower", False),
         rand_upper=conf.get("rand_upper", False),
@@ -3030,13 +3062,15 @@ async def creategroup_chosen_handler(c: Client, cir: ChosenInlineResult):
                 "ui_msg_id": inline_msg_id,
                 "ui_chat_id": chat_id if chat_id != "N/A" else None,
                 "prompt_msg_id": None,
-                "sub_menu": None
+                "sub_menu": None,
+                "launching": False
             }
         else:
             user_creategroup_state[user_id].update({
                 "ui_msg_id": inline_msg_id,
                 "ui_chat_id": chat_id if chat_id != "N/A" else None,
-                "session_index": index
+                "session_index": index,
+                "launching": False
             })
             user_creategroup_state[user_id].setdefault("selected_sessions", [index])
             if not user_creategroup_state[user_id]["selected_sessions"]:

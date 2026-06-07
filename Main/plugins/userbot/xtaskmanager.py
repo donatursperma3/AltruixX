@@ -13,6 +13,8 @@ import time
 import logging
 import re
 import traceback
+import hashlib
+import sqlite3
 from pyrogram import Client, filters, enums
 from pyrogram.errors import QueryIdInvalid, MessageNotModified
 from pyrogram.types import (
@@ -410,6 +412,71 @@ def scan_and_merge_caches():
                     }
     except Exception as e:
         _tm_error("scan_and_merge_caches.ytcut", e)
+
+    # 4. Merge Forward Pro Tasks (JSON & SQLite)
+    # Prefer JSON for consistency with other plugins
+    fwd_json = get_db_path("forward_pro_db.json")
+    fwd_db = get_db_path("forward_pro.db")
+    
+    merged_fwd = 0
+    
+    # 4a. Check JSON first
+    if os.path.exists(fwd_json):
+        try:
+            with open(fwd_json, "r", encoding="utf-8") as f:
+                fwd_data = json.load(f)
+                tasks = fwd_data.get("tasks", [])
+                for task in tasks:
+                    if task.get("is_active") == 1:
+                        mode = str(task.get("mode") or "live").lower()
+                        prefix = "FPL" if mode == "live" else "FPB"
+                        tid = f"#{prefix}{task['id']}"
+                        
+                        if tid not in registry:
+                            registry[tid] = {
+                                "task": None,
+                                "name": "Forward Pro Live" if mode == "live" else "Forward Pro Batch",
+                                "plugin": "xforward_pro",
+                                "started_at": time.time(),
+                                "user_id": task["user_id"],
+                                "details": f"Task #{task['id']}: {task['source_id']} -> {task['target_id']}",
+                                "is_interrupted": True
+                            }
+                            merged_fwd += 1
+        except Exception as e:
+            _tm_error("scan_and_merge_caches.fwd_json", e, path=fwd_json)
+
+    # 4b. Fallback to SQLite if no tasks merged from JSON
+    if merged_fwd == 0 and os.path.exists(fwd_db):
+        try:
+            conn = sqlite3.connect(fwd_db)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM fwd_tasks WHERE is_active = 1")
+            active_fwd = cursor.fetchall()
+            
+            for row in active_fwd:
+                mode = str(row["mode"] or "live").lower()
+                prefix = "FPL" if mode == "live" else "FPB"
+                tid = f"#{prefix}{row['id']}"
+                
+                if tid not in registry:
+                    registry[tid] = {
+                        "task": None,
+                        "name": "Forward Pro Live" if mode == "live" else "Forward Pro Batch",
+                        "plugin": "xforward_pro",
+                        "started_at": time.time(),
+                        "user_id": row["user_id"],
+                        "details": f"Task #{row['id']}: {row['source_id']} -> {row['target_id']}",
+                        "is_interrupted": True
+                    }
+                    merged_fwd += 1
+            conn.close()
+        except Exception as e:
+            _tm_error("scan_and_merge_caches.fwd_sqlite", e, path=fwd_db)
+
+    if merged_fwd > 0:
+        logger.info(f"[TaskManager] Merged {merged_fwd} interrupted Forward Pro tasks.")
 
     return registry
 
@@ -1794,6 +1861,11 @@ async def handle_restore_action(client: Client, cb: CallbackQuery, plugin: str, 
             await creategroup_control_handler(client, cb)
             cb.data = original_data # restore original data
             return True, f"♻️ Restore request sent for {tid}."
+        elif plugin == "xforward_pro":
+            from Main.plugins.userbot.xforward_pro import _restore_active_tasks
+            # Restore all active tasks from DB (it will skip those already running)
+            asyncio.create_task(_restore_active_tasks())
+            return True, f"♻️ Forward Pro restoration started for {tid}."
         else:
             return False, f"❌ Plugin {plugin} does not support global restore."
     except Exception as e:

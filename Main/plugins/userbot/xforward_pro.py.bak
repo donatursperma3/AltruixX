@@ -14,6 +14,7 @@ import html
 import time
 import re
 import random
+import traceback
 # import aiosqlite  <-- Moved to functions for lazy loading
 from pathlib import Path
 from datetime import datetime
@@ -21,7 +22,9 @@ from pyrogram import Client, filters, enums
 from pyrogram.types import (
     InlineKeyboardButton, InlineKeyboardMarkup,
     CallbackQuery, Message as RawMessage,
+    InputMediaPhoto, InputMediaVideo, InputMediaAudio, InputMediaDocument
 )
+import inspect
 from pyrogram.errors import FloodWait, ChatWriteForbidden, ChannelInvalid, ChannelPrivate
 from Main import Altruix
 from Main.core.types.message import Message as AltruixMessage
@@ -34,28 +37,196 @@ __plugin_name__ = plugin_name if plugin_name else "xforward_pro"
 PLUGIN_VERSION = "1.0.194"
 
 logger = logging.getLogger("altruix.xforward_pro")
-logger.setLevel(logging.INFO)
+# Enable verbose debug only when explicitly requested via env var
+FWDPRO_DEBUG = os.getenv("FWDPRO_DEBUG", "0").lower() in ("1", "true", "yes")
+if FWDPRO_DEBUG:
+    logger.setLevel(logging.DEBUG)
+    logger.debug("[ForwardPro] Debug logging enabled for xforward_pro (FWDPRO_DEBUG=1)")
 
 LOG_CHAT_ID = int(os.getenv("LOG_CHAT_ID", 0))
+
+# Compatibility wrapper: some code uses `InlineKeyboardButton(..., style=...)`.
+# Newer/older pyrogram versions accept different kw names; wrap construction
+# so existing usages don't crash at import time and buttons keep working.
+_OriginalInlineKeyboardButton = InlineKeyboardButton
+def InlineKeyboardButton(*args, **kwargs):
+    style = kwargs.pop("style", None)
+    if style is not None:
+        # Try common parameter names used across pyrogram versions
+        for alt in ("style", "button_style", "btn_style"):
+            try:
+                kwargs[alt] = style
+                return _OriginalInlineKeyboardButton(*args, **kwargs)
+            except TypeError:
+                # Remove alt and try next
+                kwargs.pop(alt, None)
+                continue
+        # Fallback: call without style
+        try:
+            return _OriginalInlineKeyboardButton(*args, **kwargs)
+        except Exception:
+            # Last resort: re-raise so caller sees the original error
+            raise
+    else:
+        return _OriginalInlineKeyboardButton(*args, **kwargs)
+
 
 # ==================== ACTIVE TASK TRACKING ====================
 
 # In-memory live forwarder handlers: {task_id: handler_info}
-FWD_LIVE_TASKS = {}
 
 # Batch control states: {task_id: "running"|"paused"|"stopped"}
 FWD_BATCH_CONTROL = {}
+
+# Media Group Cache: {media_group_id: timestamp}
+FWD_ALBUM_CACHE = {}
+
+def _cleanup_album_cache():
+    """Clear expired album cache entries."""
+    now = time.time()
+    to_del = [k for k, v in FWD_ALBUM_CACHE.items() if now - v > 600]
+    for k in to_del:
+        del FWD_ALBUM_CACHE[k]
+
+
+def _serialize_button(btn):
+    try:
+        return {
+            "repr": repr(btn),
+            "text": getattr(btn, "text", None),
+            "callback_data": getattr(btn, "callback_data", None),
+            "url": getattr(btn, "url", None),
+            "switch_inline_query": getattr(btn, "switch_inline_query", None),
+            "switch_inline_query_current_chat": getattr(btn, "switch_inline_query_current_chat", None),
+            "login_url": getattr(btn, "login_url", None),
+        }
+    except Exception:
+        return {"error": "failed to serialize button", "repr": repr(btn)}
+
+
+def _log_keyboard_buttons(kb):
+    try:
+        if kb is None:
+            logger.debug("[ForwardPro] Keyboard is None")
+            return
+        rows = getattr(kb, "inline_keyboard", None)
+        if rows is None:
+            logger.debug("[ForwardPro] Keyboard has no inline_keyboard attribute")
+            return
+        for r_idx, row in enumerate(rows):
+            for c_idx, btn in enumerate(row):
+                try:
+                    info = _serialize_button(btn)
+                    logger.debug(f"[ForwardPro] Keyboard button r{r_idx}c{c_idx}: {info}")
+                except Exception:
+                    logger.debug(f"[ForwardPro] Keyboard button r{r_idx}c{c_idx}: repr={repr(btn)}")
+    except Exception:
+        logger.error(f"[ForwardPro] _log_keyboard_buttons failed:\n{traceback.format_exc()}")
+
+
+def _log_registered_handlers(bot):
+    try:
+        if not hasattr(bot, "dispatcher"):
+            logger.debug(f"[ForwardPro] Bot {getattr(bot, 'username', None)} has no dispatcher")
+            return
+        groups = getattr(bot.dispatcher, "groups", {})
+        handler_list = []
+        for grp, handlers in groups.items():
+            for h in handlers:
+                try:
+                    cb = getattr(h, "callback", None)
+                    cb_name = getattr(cb, "__name__", repr(cb))
+                    h_filters = getattr(h, "filters", None)
+                    handler_list.append({
+                        "group": grp,
+                        "callback": cb_name,
+                        "filters": repr(h_filters)
+                    })
+                except Exception:
+                    handler_list.append({"group": grp, "callback": "<unserializable>"})
+        logger.debug(f"[ForwardPro] Registered handlers for bot {getattr(bot, 'username', None)}: {handler_list}")
+    except Exception:
+        logger.error(f"[ForwardPro] _log_registered_handlers failed:\n{traceback.format_exc()}")
 
 # ==================== INTERACTIVE STATE ====================
 FPRO_ADD_TASK_STATE = {} # {user_id: {"src": id, "tgt": id, "mode": str, "step": int}}
 FPRO_WAITING_INPUT = {}  # {user_id: {"action": str, "task_id": int, "mid": int}}
 
 
-# ==================== DATABASE LAYER (aiosqlite) ====================
+# ==================== DATABASE LAYER (JSON & SQLite) ====================
 
 DB_PATH = get_db_path("forward_pro.db")
+JSON_DB_PATH = get_db_path("forward_pro_db.json")
 _db_lock = asyncio.Lock()
 _db_initialized = False
+
+# Global memory cache
+_FWD_DATA = {
+    "tasks": [],            # List of dicts
+    "global_settings": {},  # {user_id_str: settings_dict}
+    "last_id": 0
+}
+
+async def _load_db():
+    """Load database from JSON file."""
+    global _FWD_DATA
+    if os.path.exists(JSON_DB_PATH):
+        try:
+            with open(JSON_DB_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                try:
+                    logger.debug(f"[ForwardPro] Raw JSON loaded: type={type(data).__name__} tasks={len(data.get('tasks', [])) if isinstance(data, dict) else 'N/A'}")
+                except Exception:
+                    logger.debug(f"[ForwardPro] Raw JSON loaded: type={type(data).__name__}")
+                try:
+                    if isinstance(data, dict):
+                        keys = list(data.keys())
+                        sample_tasks = [t.get('id') for t in data.get('tasks', [])[:5]]
+                        gs_users = list(data.get('global_settings', {}).keys())[:5]
+                        logger.debug(f"[ForwardPro] JSON keys={keys} sample_task_ids={sample_tasks} sample_global_users={gs_users}")
+                except Exception:
+                    logger.debug("[ForwardPro] Additional JSON debug logging failed")
+            if isinstance(data, dict):
+                # Ensure basic structure exists
+                if "tasks" not in data: data["tasks"] = []
+                if "global_settings" not in data: data["global_settings"] = {}
+                if "last_id" not in data:
+                    try:
+                        data["last_id"] = max([t["id"] for t in data["tasks"]] + [0])
+                    except Exception:
+                        data["last_id"] = 0
+                _FWD_DATA.update(data)
+            else:
+                logger.warning(f"[ForwardPro] JSON DB at {JSON_DB_PATH} is not a dict, ignoring")
+        except json.JSONDecodeError as jde:
+            # Backup corrupted JSON and start fresh
+            try:
+                ts = int(time.time())
+                corrupt_name = JSON_DB_PATH + f".corrupt.{ts}.bak"
+                os.replace(JSON_DB_PATH, corrupt_name)
+                logger.error(f"[ForwardPro] JSON DB corrupted, moved to {corrupt_name}: {jde}")
+            except Exception as be:
+                logger.error(f"[ForwardPro] Failed to backup corrupted JSON DB: {be}\n{traceback.format_exc()}")
+        except Exception as e:
+            logger.error(f"[ForwardPro] Load JSON failed: {e}\n{traceback.format_exc()}")
+
+async def _save_db():
+    """Save database to JSON file."""
+    try:
+        async with _db_lock:
+            logger.debug(f"[ForwardPro] Saving DB to {JSON_DB_PATH} (tasks={len(_FWD_DATA.get('tasks',[]))})")
+            tmp_path = JSON_DB_PATH + ".tmp"
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(_FWD_DATA, f, ensure_ascii=False, indent=2)
+            # Atomic replace
+            try:
+                os.replace(tmp_path, JSON_DB_PATH)
+            except Exception:
+                # On some platforms os.replace may fail across filesystems; fallback to rename
+                os.rename(tmp_path, JSON_DB_PATH)
+            logger.debug(f"[ForwardPro] DB saved successfully to {JSON_DB_PATH}")
+    except Exception as e:
+        logger.error(f"[ForwardPro] Save JSON failed: {e}\n{traceback.format_exc()}")
 
 
 async def _safe_json_loads(data, default=None):
@@ -70,7 +241,7 @@ async def _safe_json_loads(data, default=None):
 
 
 async def init_db():
-    """Initialize the SQLite database and create tables if needed."""
+    """Initialize the database, supporting both JSON and SQLite with auto-migration."""
     global _db_initialized
     if _db_initialized:
         return
@@ -78,259 +249,165 @@ async def init_db():
         if _db_initialized:
             return
         try:
-            Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
-            import aiosqlite
-            async with aiosqlite.connect(DB_PATH) as db:
-                await db.execute("""
-                    CREATE TABLE IF NOT EXISTS fwd_tasks (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        user_id INTEGER NOT NULL,
-                        source_id INTEGER NOT NULL,
-                        target_id INTEGER NOT NULL,
-                        is_active INTEGER DEFAULT 0,
-                        mode TEXT DEFAULT 'live',
-                        filters TEXT DEFAULT '{}',
-                        bypass_protected INTEGER DEFAULT 0,
-                        watermark_text TEXT,
-                        is_watermark INTEGER DEFAULT 0,
-                        is_translate INTEGER DEFAULT 0,
-                        ad_keywords TEXT DEFAULT '[]',
-                        count_success INTEGER DEFAULT 0,
-                        count_failed INTEGER DEFAULT 0,
-                        created_at TEXT DEFAULT (datetime('now','localtime')),
-                        updated_at TEXT DEFAULT (datetime('now','localtime'))
-                    )
-                """)
-                
-                # Schema Migration for Phase 3
-                cursor = await db.execute("PRAGMA table_info(fwd_tasks)")
-                columns = [row[1] for row in await cursor.fetchall()]
-                if "watermark_text" not in columns:
-                    await db.execute("ALTER TABLE fwd_tasks ADD COLUMN watermark_text TEXT")
-                if "is_watermark" not in columns:
-                    await db.execute("ALTER TABLE fwd_tasks ADD COLUMN is_watermark INTEGER DEFAULT 0")
-                if "is_translate" not in columns:
-                    await db.execute("ALTER TABLE fwd_tasks ADD COLUMN is_translate INTEGER DEFAULT 0")
-                if "ad_keywords" not in columns:
-                    await db.execute("ALTER TABLE fwd_tasks ADD COLUMN ad_keywords TEXT DEFAULT '[]'")
-                if "count_success" not in columns:
-                    await db.execute("ALTER TABLE fwd_tasks ADD COLUMN count_success INTEGER DEFAULT 0")
-                if "count_failed" not in columns:
-                    await db.execute("ALTER TABLE fwd_tasks ADD COLUMN count_failed INTEGER DEFAULT 0")
-                if "batch_delay" not in columns:
-                    await db.execute("ALTER TABLE fwd_tasks ADD COLUMN batch_delay REAL DEFAULT 1.5")
-                if "batch_order" not in columns:
-                    await db.execute("ALTER TABLE fwd_tasks ADD COLUMN batch_order TEXT DEFAULT 'oldest'")
-                if "start_id" not in columns:
-                    await db.execute("ALTER TABLE fwd_tasks ADD COLUMN start_id INTEGER DEFAULT 1")
-                if "end_id" not in columns:
-                    await db.execute("ALTER TABLE fwd_tasks ADD COLUMN end_id INTEGER DEFAULT 1")
-                if "batch_msg" not in columns:
-                    await db.execute("ALTER TABLE fwd_tasks ADD COLUMN batch_msg INTEGER DEFAULT 30")
-                if "batch_msg_delay" not in columns:
-                    await db.execute("ALTER TABLE fwd_tasks ADD COLUMN batch_msg_delay REAL DEFAULT 0.0")
-                if "clean_links" not in columns:
-                    await db.execute("ALTER TABLE fwd_tasks ADD COLUMN clean_links INTEGER DEFAULT 0")
-                if "clean_usernames" not in columns:
-                    await db.execute("ALTER TABLE fwd_tasks ADD COLUMN clean_usernames INTEGER DEFAULT 0")
-                if "is_ads_filter" not in columns:
-                    await db.execute("ALTER TABLE fwd_tasks ADD COLUMN is_ads_filter INTEGER DEFAULT 0")
-                if "use_regex_pro" not in columns:
-                    await db.execute("ALTER TABLE fwd_tasks ADD COLUMN use_regex_pro INTEGER DEFAULT 0")
-                if "custom_regex" not in columns:
-                    await db.execute("ALTER TABLE fwd_tasks ADD COLUMN custom_regex TEXT DEFAULT '[]'")
-                if "tr_lang" not in columns:
-                    await db.execute("ALTER TABLE fwd_tasks ADD COLUMN tr_lang TEXT DEFAULT 'id'")
-                if "forward_as_copy" not in columns:
-                    await db.execute("ALTER TABLE fwd_tasks ADD COLUMN forward_as_copy INTEGER DEFAULT 1")
-
-                await db.execute("""
-                    CREATE TABLE IF NOT EXISTS fwd_global_settings (
-                        user_id INTEGER PRIMARY KEY,
-                        default_delay REAL DEFAULT 1.5,
-                        log_channel INTEGER DEFAULT 0,
-                        default_is_translate INTEGER DEFAULT 0,
-                        default_is_watermark INTEGER DEFAULT 0,
-                        default_clean_links INTEGER DEFAULT 0,
-                        default_clean_usernames INTEGER DEFAULT 0,
-                        default_is_ads_filter INTEGER DEFAULT 0,
-                        default_bypass_protected INTEGER DEFAULT 0,
-                        default_ad_keywords TEXT DEFAULT '[]',
-                        default_watermark_text TEXT DEFAULT 'Altruix',
-                        default_filters TEXT DEFAULT '{}',
-                        default_batch_order TEXT DEFAULT 'oldest',
-                        default_use_regex_pro INTEGER DEFAULT 0,
-                        default_custom_regex TEXT DEFAULT '[]',
-                        default_tr_lang TEXT DEFAULT 'id',
-                        default_forward_as_copy INTEGER DEFAULT 1,
-                        updated_at TEXT DEFAULT (datetime('now','localtime'))
-                    )
-                """)
-                
-                # Check for new columns in global settings
-                cursor = await db.execute("PRAGMA table_info(fwd_global_settings)")
-                g_columns = [row[1] for row in await cursor.fetchall()]
-
-                # Migration checks for all global settings columns to ensure backward compatibility
-                if "default_tr_lang" not in g_columns:
-                    await db.execute("ALTER TABLE fwd_global_settings ADD COLUMN default_tr_lang TEXT DEFAULT 'id'")
-                if "default_forward_as_copy" not in g_columns:
-                    await db.execute("ALTER TABLE fwd_global_settings ADD COLUMN default_forward_as_copy INTEGER DEFAULT 1")
-                if "log_channel" not in g_columns:
-                    await db.execute("ALTER TABLE fwd_global_settings ADD COLUMN log_channel INTEGER DEFAULT 0")
-                if "default_batch_msg" not in g_columns:
-                    await db.execute("ALTER TABLE fwd_global_settings ADD COLUMN default_batch_msg INTEGER DEFAULT 30")
-                if "default_batch_msg_delay" not in g_columns:
-                    await db.execute("ALTER TABLE fwd_global_settings ADD COLUMN default_batch_msg_delay REAL DEFAULT 0.0")
-                if "default_is_translate" not in g_columns:
-                    await db.execute("ALTER TABLE fwd_global_settings ADD COLUMN default_is_translate INTEGER DEFAULT 0")
-                if "default_is_watermark" not in g_columns:
-                    await db.execute("ALTER TABLE fwd_global_settings ADD COLUMN default_is_watermark INTEGER DEFAULT 0")
-                if "default_clean_links" not in g_columns:
-                    await db.execute("ALTER TABLE fwd_global_settings ADD COLUMN default_clean_links INTEGER DEFAULT 0")
-                if "default_clean_usernames" not in g_columns:
-                    await db.execute("ALTER TABLE fwd_global_settings ADD COLUMN default_clean_usernames INTEGER DEFAULT 0")
-                if "default_is_ads_filter" not in g_columns:
-                    await db.execute("ALTER TABLE fwd_global_settings ADD COLUMN default_is_ads_filter INTEGER DEFAULT 0")
-                if "default_bypass_protected" not in g_columns:
-                    await db.execute("ALTER TABLE fwd_global_settings ADD COLUMN default_bypass_protected INTEGER DEFAULT 0")
-                if "default_ad_keywords" not in g_columns:
-                    await db.execute("ALTER TABLE fwd_global_settings ADD COLUMN default_ad_keywords TEXT DEFAULT '[]'")
-                if "default_watermark_text" not in g_columns:
-                    await db.execute("ALTER TABLE fwd_global_settings ADD COLUMN default_watermark_text TEXT DEFAULT 'Altruix'")
-                if "default_filters" not in g_columns:
-                    await db.execute("ALTER TABLE fwd_global_settings ADD COLUMN default_filters TEXT DEFAULT '{}'")
-                if "default_batch_order" not in g_columns:
-                    await db.execute("ALTER TABLE fwd_global_settings ADD COLUMN default_batch_order TEXT DEFAULT 'oldest'")
-                if "default_use_regex_pro" not in g_columns:
-                    await db.execute("ALTER TABLE fwd_global_settings ADD COLUMN default_use_regex_pro INTEGER DEFAULT 0")
-                if "default_custom_regex" not in g_columns:
-                    await db.execute("ALTER TABLE fwd_global_settings ADD COLUMN default_custom_regex TEXT DEFAULT '[]'")
-                
-                await db.commit()
+            logger.debug("[ForwardPro] init_db starting")
+            # 1. Load existing JSON if available
+            await _load_db()
+            
+            # 2. Migrate from SQLite if JSON is empty but SQLite exists
+            if not _FWD_DATA["tasks"] and os.path.exists(DB_PATH):
+                logger.info("[ForwardPro] Migrating from SQLite to JSON...")
+                try:
+                    import aiosqlite
+                    async with aiosqlite.connect(DB_PATH) as db:
+                        db.row_factory = aiosqlite.Row
+                        
+                        # Migrate tasks
+                        cursor = await db.execute("SELECT * FROM fwd_tasks")
+                        rows = await cursor.fetchall()
+                        for r in rows:
+                            task = dict(r)
+                            # Ensure columns match JSON expectations (if any differences)
+                            _FWD_DATA["tasks"].append(task)
+                        
+                        if _FWD_DATA["tasks"]:
+                            _FWD_DATA["last_id"] = max(t["id"] for t in _FWD_DATA["tasks"])
+                        
+                        # Migrate global settings
+                        cursor = await db.execute("SELECT * FROM fwd_global_settings")
+                        rows = await cursor.fetchall()
+                        for r in rows:
+                            gs = dict(r)
+                            _FWD_DATA["global_settings"][str(gs["user_id"])] = gs
+                    
+                    await _save_db()
+                    logger.info(f"[ForwardPro] Migration successful. {len(_FWD_DATA['tasks'])} tasks moved.")
+                except Exception as me:
+                    logger.error(f"[ForwardPro] Migration error: {me}")
+            
             _db_initialized = True
-            logger.debug("[ForwardPro] Database initialized successfully")
+            logger.debug("[ForwardPro] Database (JSON) initialized successfully")
         except Exception as e:
-            logger.error(f"[ForwardPro] Database init failed: {e}")
+            logger.error(f"[ForwardPro] Database init failed: {e}\n{traceback.format_exc()}")
 
 
 async def add_task(user_id: int, source_id: int, target_id: int, mode: str = "live") -> int:
     """Add a new forward task inheriting global defaults."""
     await init_db()
-    import aiosqlite
     gs = await get_global_settings(user_id)
     
     try:
-        async with aiosqlite.connect(DB_PATH) as db:
-            cursor = await db.execute(
-                """
-                INSERT INTO fwd_tasks (
-                    user_id, source_id, target_id, mode, is_active,
-                    is_translate, is_watermark, clean_links, clean_usernames,
-                    is_ads_filter, bypass_protected, batch_delay, ad_keywords,
-                    filters, batch_order, use_regex_pro, custom_regex
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    user_id, source_id, target_id, mode, 0,
-                    gs.get("default_is_translate", 0),
-                    gs.get("default_is_watermark", 0),
-                    gs.get("default_clean_links", 0),
-                    gs.get("default_clean_usernames", 0),
-                    gs.get("default_is_ads_filter", 0),
-                    gs.get("default_bypass_protected", 0),
-                    gs.get("default_delay", 1.5),
-                    gs.get("default_ad_keywords", "[]"),
-                    gs.get("default_filters", "{}"),
-                    gs.get("default_batch_order", "oldest"),
-                    gs.get("default_use_regex_pro", 0),
-                    gs.get("default_custom_regex", "[]")
-                )
-            )
-            await db.commit()
-            return cursor.lastrowid
+        logger.debug(f"[ForwardPro] Adding task for user={user_id} src={source_id} tgt={target_id} mode={mode}")
+        _FWD_DATA["last_id"] += 1
+        new_id = _FWD_DATA["last_id"]
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        task = {
+            "id": new_id,
+            "user_id": user_id,
+            "source_id": source_id,
+            "target_id": target_id,
+            "mode": mode,
+            "is_active": 0,
+            "is_translate": gs.get("default_is_translate", 0),
+            "is_watermark": gs.get("default_is_watermark", 0),
+            "clean_links": gs.get("default_clean_links", 0),
+            "clean_usernames": gs.get("default_clean_usernames", 0),
+            "is_ads_filter": gs.get("default_is_ads_filter", 0),
+            "bypass_protected": gs.get("default_bypass_protected", 0),
+            "batch_delay": gs.get("default_delay", 1.5),
+            "ad_keywords": gs.get("default_ad_keywords", "[]"),
+            "filters": gs.get("default_filters", "{}"),
+            "batch_order": gs.get("default_batch_order", "oldest"),
+            "use_regex_pro": gs.get("default_use_regex_pro", 0),
+            "custom_regex": gs.get("default_custom_regex", "[]"),
+            "batch_msg": gs.get("default_batch_msg", 30),
+            "batch_msg_delay": gs.get("default_batch_msg_delay", 0.0),
+            "start_id": 1,
+            "end_id": 1,
+            "forward_as_album": gs.get("default_forward_as_album", 1),
+            "count_success": 0,
+            "count_failed": 0,
+            "created_at": now,
+            "updated_at": now
+        }
+        
+        _FWD_DATA["tasks"].append(task)
+        await _save_db()
+        return new_id
     except Exception as e:
-        logger.error(f"[ForwardPro] add_task failed: {e}")
+        logger.error(f"[ForwardPro] add_task failed: {e}\n{traceback.format_exc()}")
         return -1
 
 
 async def get_tasks(user_id: int) -> list:
     """Get all tasks for a user."""
     await init_db()
-    import aiosqlite
     try:
-        async with aiosqlite.connect(DB_PATH) as db:
-            db.row_factory = aiosqlite.Row
-            cursor = await db.execute(
-                "SELECT * FROM fwd_tasks WHERE user_id = ? ORDER BY id ASC", (user_id,)
-            )
-            rows = await cursor.fetchall()
-            return [dict(r) for r in rows]
+        res = [t for t in _FWD_DATA["tasks"] if t["user_id"] == user_id]
+        logger.debug(f"[ForwardPro] get_tasks user={user_id} -> {len(res)} tasks")
+        return res
     except Exception as e:
-        logger.error(f"[ForwardPro] get_tasks failed: {e}")
+        logger.error(f"[ForwardPro] get_tasks failed: {e}\n{traceback.format_exc()}")
         return []
 
 
 async def get_task(task_id: int) -> dict:
     """Get a single task by ID."""
     await init_db()
-    import aiosqlite
     try:
-        async with aiosqlite.connect(DB_PATH) as db:
-            db.row_factory = aiosqlite.Row
-            cursor = await db.execute("SELECT * FROM fwd_tasks WHERE id = ?", (task_id,))
-            row = await cursor.fetchone()
-            return dict(row) if row else None
+        for t in _FWD_DATA["tasks"]:
+            if t["id"] == task_id:
+                logger.debug(f"[ForwardPro] get_task found id={task_id}")
+                return t
+        return None
     except Exception as e:
-        logger.error(f"[ForwardPro] get_task failed: {e}")
+        logger.error(f"[ForwardPro] get_task failed: {e}\n{traceback.format_exc()}")
         return None
 
 
 async def update_task(task_id: int, **kwargs) -> bool:
     """Update specific fields of a task."""
     await init_db()
-    import aiosqlite
     if not kwargs:
         return False
     try:
-        set_parts = []
-        values = []
-        for k, v in kwargs.items():
-            set_parts.append(f"{k} = ?")
-            values.append(v)
-        set_parts.append("updated_at = datetime('now','localtime')")
-        values.append(task_id)
-        query = f"UPDATE fwd_tasks SET {', '.join(set_parts)} WHERE id = ?"
-        async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute(query, values)
-            await db.commit()
-        return True
+        for t in _FWD_DATA["tasks"]:
+            if t["id"] == task_id:
+                t.update(kwargs)
+                t["updated_at"] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                await _save_db()
+                logger.debug(f"[ForwardPro] update_task id={task_id} updated={list(kwargs.keys())}")
+                return True
+        return False
     except Exception as e:
-        logger.error(f"[ForwardPro] update_task failed: {e}")
+        logger.error(f"[ForwardPro] update_task failed: {e}\n{traceback.format_exc()}")
         return False
 
 
 async def delete_task(task_id: int) -> bool:
     """Delete a task by ID."""
     await init_db()
-    import aiosqlite
     try:
-        async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute("DELETE FROM fwd_tasks WHERE id = ?", (task_id,))
-            await db.commit()
-        return True
+        initial_len = len(_FWD_DATA["tasks"])
+        _FWD_DATA["tasks"] = [t for t in _FWD_DATA["tasks"] if t["id"] != task_id]
+        if len(_FWD_DATA["tasks"]) < initial_len:
+            await _save_db()
+            logger.debug(f"[ForwardPro] delete_task id={task_id} removed")
+            return True
+        return False
     except Exception as e:
-        logger.error(f"[ForwardPro] delete_task failed: {e}")
+        logger.error(f"[ForwardPro] delete_task failed: {e}\n{traceback.format_exc()}")
         return False
 
 
 async def get_global_settings(user_id: int) -> dict:
     """Get global settings for a user."""
     await init_db()
-    import aiosqlite
     defaults = {
         "user_id": user_id, 
         "default_delay": 1.5, 
+        "default_batch_msg": 30,
+        "default_batch_msg_delay": 0.0,
         "log_channel": 0,
         "default_is_translate": 0,
         "default_is_watermark": 0,
@@ -344,24 +421,17 @@ async def get_global_settings(user_id: int) -> dict:
         "default_batch_order": "oldest",
         "default_use_regex_pro": 0,
         "default_custom_regex": "[]",
-        "default_batch_msg": 30,
-        "default_batch_msg_delay": 0.0
+        "default_tr_lang": "id",
+        "default_forward_as_copy": 1,
+        "default_forward_as_album": 1
     }
     try:
-        async with aiosqlite.connect(DB_PATH) as db:
-            db.row_factory = aiosqlite.Row
-            cursor = await db.execute(
-                "SELECT * FROM fwd_global_settings WHERE user_id = ?", (user_id,)
-            )
-            row = await cursor.fetchone()
-            if row:
-                return dict(row)
-            # Insert defaults
-            await db.execute(
-                "INSERT INTO fwd_global_settings (user_id) VALUES (?)", (user_id,)
-            )
-            await db.commit()
-            return defaults
+        uid_str = str(user_id)
+        if uid_str in _FWD_DATA["global_settings"]:
+            res = defaults.copy()
+            res.update(_FWD_DATA["global_settings"][uid_str])
+            return res
+        return defaults
     except Exception as e:
         logger.error(f"[ForwardPro] get_global_settings failed: {e}")
         return defaults
@@ -370,23 +440,16 @@ async def get_global_settings(user_id: int) -> dict:
 async def update_global_settings(user_id: int, **kwargs) -> bool:
     """Update global settings for a user."""
     await init_db()
-    import aiosqlite
     if not kwargs:
         return False
     try:
-        # Ensure row exists
-        await get_global_settings(user_id)
-        set_parts = []
-        values = []
-        for k, v in kwargs.items():
-            set_parts.append(f"{k} = ?")
-            values.append(v)
-        set_parts.append("updated_at = datetime('now','localtime')")
-        values.append(user_id)
-        query = f"UPDATE fwd_global_settings SET {', '.join(set_parts)} WHERE user_id = ?"
-        async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute(query, values)
-            await db.commit()
+        uid_str = str(user_id)
+        if uid_str not in _FWD_DATA["global_settings"]:
+            _FWD_DATA["global_settings"][uid_str] = {"user_id": user_id}
+        
+        _FWD_DATA["global_settings"][uid_str].update(kwargs)
+        _FWD_DATA["global_settings"][uid_str]["updated_at"] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        await _save_db()
         return True
     except Exception as e:
         logger.error(f"[ForwardPro] update_global_settings failed: {e}")
@@ -444,20 +507,6 @@ async def edit_log(log_msg, text: str, client=None, reply_markup=None):
     return None
 
 
-async def safe_edit_cb_text(cb, text: str, reply_markup=None, parse_mode=None):
-    """Safely edit a callback message or inline message. Returns True on success."""
-    try:
-        is_inline = bool(getattr(cb, 'inline_message_id', None))
-        if is_inline:
-            await Altruix.bot.edit_inline_text(inline_message_id=cb.inline_message_id, text=text, reply_markup=reply_markup, parse_mode=parse_mode)
-        else:
-            await cb.edit_message_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
-        return True
-    except Exception as e:
-        logger.debug(f"[ForwardPro] safe_edit_cb_text failed: {e}")
-        return False
-
-
 async def safe_cb_answer(cb: CallbackQuery, text: str, show_alert: bool = True):
     """Answer callback query safely."""
     try:
@@ -467,23 +516,65 @@ async def safe_cb_answer(cb: CallbackQuery, text: str, show_alert: bool = True):
 
 
 async def safe_cb_ack(cb: CallbackQuery):
-    """Acknowledge callback quietly."""
     try:
         await cb.answer()
     except Exception:
         pass
 
 
+async def safe_edit_cb_text(
+    cb: CallbackQuery,
+    text: str,
+    reply_markup=None,
+    parse_mode=enums.ParseMode.HTML,
+) -> bool:
+    try:
+        bot_client = getattr(cb, "_client", None) or getattr(cb, "client", None) or getattr(Altruix, "bot", None)
+        if cb.inline_message_id:
+            if bot_client:
+                await bot_client.edit_inline_text(
+                    inline_message_id=cb.inline_message_id,
+                    text=text,
+                    reply_markup=reply_markup,
+                    parse_mode=parse_mode,
+                )
+            else:
+                raise RuntimeError("No bot client available for inline edit")
+        else:
+            await cb.edit_message_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
+        return True
+    except Exception as e:
+        logger.error(f"[ForwardPro] safe_edit_cb_text failed: {e}\n{traceback.format_exc()}")
+        return False
+
+
 def _normalize_delay(value, default: float = 1.5) -> float:
-    """Normalize various delay inputs to float with fallback."""
     try:
         if value is None:
             return float(default)
-        if isinstance(value, str) and value.strip() == "":
-            return float(default)
         return float(value)
     except Exception:
-        return float(default)
+        try:
+            return float(default)
+        except Exception:
+            return 1.5
+
+
+async def _sleep_with_batch_control(task_id: int, seconds: float) -> bool:
+    remaining = _normalize_delay(seconds, 0.0)
+    if remaining <= 0:
+        return True
+    while remaining > 0:
+        state = FWD_BATCH_CONTROL.get(task_id)
+        if state == "stopped":
+            return False
+        if state == "paused":
+            await asyncio.sleep(0.5)
+            continue
+        step = 0.5 if remaining > 0.5 else remaining
+        await asyncio.sleep(step)
+        remaining -= step
+    return True
 
 
 async def resolve_chat_title(client, chat_id: int) -> str:
@@ -618,8 +709,87 @@ async def _handle_fwd(client: Client, msg: RawMessage, target_id: int, bypass: b
     
     # 4. Handle Bypass or Standard Forward
     as_copy = bool(task_cfg.get("forward_as_copy", 1)) if task_cfg else True
+    as_album = bool(task_cfg.get("forward_as_album", 1)) if task_cfg else True
     
     try:
+        # ── ALBUM HANDLING ──
+        if as_album and msg.media_group_id:
+            _cleanup_album_cache()
+            mg_id = msg.media_group_id
+            # Prevent sending the same album multiple times (once per part)
+            if mg_id in FWD_ALBUM_CACHE:
+                # Cleanup old entries occasionally
+                if time.time() - FWD_ALBUM_CACHE[mg_id] > 300:
+                    del FWD_ALBUM_CACHE[mg_id]
+                else:
+                    return True, "Album part (Skipped redundant)"
+            
+            FWD_ALBUM_CACHE[mg_id] = time.time()
+            
+            # Get all parts of the album
+            album_msgs = await client.get_media_group(msg.chat.id, msg.id)
+            album_ids = [m.id for m in album_msgs]
+            
+            # Ensure we have the correct caption (clean the one from the first part that has it)
+            album_caption = caption
+            if not album_caption:
+                for m in album_msgs:
+                    if m.caption:
+                        album_caption = _clean_caption(
+                            m.caption, 
+                            ad_keywords if is_ads_f else None, 
+                            clean_links=clean_l, 
+                            clean_usernames=clean_u,
+                            use_regex_pro=use_regex_pro,
+                            custom_regex=custom_regex
+                        )
+                        if is_translate and album_caption:
+                            dest_lang = task_cfg.get("tr_lang", "id") if task_cfg else "id"
+                            album_caption = await _translate_text(album_caption, dest=dest_lang)
+                        break
+
+            if as_copy or is_watermark or (msg.has_protected_content and bypass):
+                media_group = []
+                for i, m in enumerate(album_msgs):
+                    cur_cap = album_caption if i == 0 else None
+                    
+                    # If watermark is ON, we need to download and re-upload (at least for photos/videos)
+                    # For now, let's use file_id as it's faster. 
+                    # If it's protected, file_id copying via send_media_group 
+                    # works in many cases unless the bot is restricted.
+                    
+                    if m.photo:
+                        media_group.append(InputMediaPhoto(m.photo.file_id, caption=cur_cap))
+                    elif m.video:
+                        media_group.append(InputMediaVideo(m.video.file_id, caption=cur_cap))
+                    elif m.audio:
+                        media_group.append(InputMediaAudio(m.audio.file_id, caption=cur_cap))
+                    elif m.document:
+                        media_group.append(InputMediaDocument(m.document.file_id, caption=cur_cap))
+                    elif m.animation:
+                        media_group.append(InputMediaVideo(m.animation.file_id, caption=cur_cap))
+
+                if media_group:
+                    try:
+                        await client.send_media_group(target_id, media_group)
+                        if tid: await update_task_stats(tid, success=True)
+                        return True, f"Album Success ({len(media_group)} items)"
+                    except Exception as e:
+                        # If send_media_group fails (e.g. file_id restricted), fall back to forward
+                        if not bypass: raise e
+                        logger.warning(f"[ForwardPro] Album send_media_group failed, trying forward: {e}")
+                else:
+                    return False, "Album failed: No compatible media found"
+            
+            # Standard forward fallback
+            try:
+                await client.forward_messages(target_id, msg.chat.id, album_ids)
+                if tid: await update_task_stats(tid, success=True)
+                return True, f"Album Forward Success ({len(album_ids)} items)"
+            except Exception as e:
+                if tid: await update_task_stats(tid, success=False)
+                return False, f"Album Forward Failed: {e}"
+
         # Priority 1: Watermark (always re-upload)
         if is_watermark:
             await _copy_protected_message(client, msg, target_id, clean_caption=caption, watermark=watermark_text)
@@ -675,11 +845,12 @@ async def _handle_fwd(client: Client, msg: RawMessage, target_id: int, bypass: b
 async def update_task_stats(task_id: int, success: bool = True):
     """Update task success/failed counts."""
     field = "count_success" if success else "count_failed"
-    import aiosqlite
     try:
-        async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute(f"UPDATE fwd_tasks SET {field} = {field} + 1 WHERE id = ?", (task_id,))
-            await db.commit()
+        for t in _FWD_DATA["tasks"]:
+            if t["id"] == task_id:
+                t[field] = t.get(field, 0) + 1
+                await _save_db()
+                return
     except Exception as e:
         logger.error(f"[ForwardPro] update_task_stats failed: {e}")
 
@@ -705,12 +876,13 @@ def build_main_menu_kb(user_id: int, gsettings: dict = None) -> InlineKeyboardMa
     tr_label = "TR: ON" if gs.get("default_is_translate") else "TR: OFF"
     wm_label = "WM: ON" if gs.get("default_is_watermark") else "WM: OFF"
     cpy_label = "COPY: ON" if gs.get("default_forward_as_copy", 1) else "COPY: OFF"
+    alb_label = "ALBUM: ON" if gs.get("default_forward_as_album", 1) else "ALBUM: OFF"
     lnk_label = "LINK: ON" if gs.get("default_clean_links") else "LINK: OFF"
     usr_label = "Username: ON" if gs.get("default_clean_usernames") else "Username: OFF"
     ads_label = "ADS: ON" if gs.get("default_is_ads_filter") else "ADS: OFF"
     bps_label = "Bypass: ON" if gs.get("default_bypass_protected") else "Bypass: OFF"
     
-    return InlineKeyboardMarkup([
+    kb = InlineKeyboardMarkup([
         [
             InlineKeyboardButton("List Tasks", callback_data=f"fwd_list_{uid}", style=btn_style),
             InlineKeyboardButton("General Stats", callback_data=f"fwd_stats_{uid}", style=btn_style)
@@ -732,7 +904,8 @@ def build_main_menu_kb(user_id: int, gsettings: dict = None) -> InlineKeyboardMa
             InlineKeyboardButton(wm_label, callback_data=f"fwd_gtoggle_default_is_watermark_{uid}", style=btn_style)
         ],
         [
-            InlineKeyboardButton(cpy_label, callback_data=f"fwd_gtoggle_default_forward_as_copy_{uid}", style=btn_style)
+            InlineKeyboardButton(cpy_label, callback_data=f"fwd_gtoggle_default_forward_as_copy_{uid}", style=btn_style),
+            InlineKeyboardButton(alb_label, callback_data=f"fwd_gtoggle_default_forward_as_album_{uid}", style=btn_style)
         ],
         [
             InlineKeyboardButton(lnk_label, callback_data=f"fwd_gtoggle_default_clean_links_{uid}", style=btn_style),
@@ -744,9 +917,25 @@ def build_main_menu_kb(user_id: int, gsettings: dict = None) -> InlineKeyboardMa
         ],
         [
             InlineKeyboardButton("Log Channel", callback_data=f"fwd_glog_{uid}", style=btn_style),
-            InlineKeyboardButton("Close Dashboard", callback_data=f"fwd_close_{uid}", style=btn_style)
+            InlineKeyboardButton("Close", callback_data=f"fwd_close_{uid}", style=btn_style)
         ]
     ])
+
+    # Debug: log callback_data layout for troubleshooting unresponsive buttons
+    try:
+        rows = []
+        for row in kb.inline_keyboard:
+            rows.append([btn.callback_data for btn in row if getattr(btn, 'callback_data', None)])
+        logger.debug(f"[ForwardPro] build_main_menu_kb user={user_id} callbacks={rows}")
+    except Exception:
+        logger.debug("[ForwardPro] build_main_menu_kb: failed to enumerate callbacks")
+    # Also log full button objects for deeper inspection
+    try:
+        _log_keyboard_buttons(kb)
+    except Exception:
+        logger.debug("[ForwardPro] build_main_menu_kb: failed to log full buttons")
+
+    return kb
 
 
 async def build_main_menu_text(user_id: int, client=None) -> str:
@@ -786,6 +975,8 @@ async def build_main_menu_text(user_id: int, client=None) -> str:
         f"  • Delay: <b>{gsettings.get('default_delay', 1.5)}s</b>\n"
         f"  • Translate: <b>{'ON' if gsettings.get('default_is_translate') else 'OFF'}</b> | "
         f"WM: <b>{'ON' if gsettings.get('default_is_watermark') else 'OFF'}</b>\n"
+        f"  • Copy: <b>{'ON' if gsettings.get('default_forward_as_copy', 1) else 'OFF'}</b> | "
+        f"Album: <b>{'ON' if gsettings.get('default_forward_as_album', 1) else 'OFF'}</b>\n"
         f"  • Clean Links: <b>{'ON' if gsettings.get('default_clean_links') else 'OFF'}</b> | "
         f"Usernames: <b>{'ON' if gsettings.get('default_clean_usernames') else 'OFF'}</b>\n"
         f"  • Ads Filter: <b>{'ON' if gsettings.get('default_is_ads_filter') else 'OFF'}</b> | "
@@ -838,8 +1029,8 @@ async def build_task_list_text(user_id: int, client=None) -> str:
         
         text += (
             f"\n{status} <b>Task #{t['id']}</b> {mode_icon} {bypass}\n"
-            f"  📥 Source: <code>{src_title}</code>\n"
-            f"  📤 Target: <code>{tgt_title}</code>\n"
+            f"  • Source: <code>{src_title}</code>\n"
+            f"  • Target: <code>{tgt_title}</code>\n"
         )
     
     text += f"\n{'━' * 18}</blockquote>"
@@ -876,10 +1067,19 @@ def build_task_list_kb(user_id: int, tasks: list) -> InlineKeyboardMarkup:
 async def build_task_detail_text(task: dict, client=None) -> str:
     """Build the task detail view text."""
     status = "🟢 Active" if task["is_active"] else "🔴 Inactive"
-    mode = "📡 Live" if task["mode"] == "live" else "📦 Batch"
-    bypass = "✅ ON" if task.get("bypass_protected") else "❌ OFF"
-    watermark = f"✅ ON (<i>{html.escape(task.get('watermark_text') or 'Altruix')}</i>)" if task.get("is_watermark") else "❌ OFF"
-    translate = "✅ ON" if task.get("is_translate") else "❌ OFF"
+    mode = "Live" if task["mode"] == "live" else "Batch"
+    bypass = "ON" if task.get("bypass_protected") else "OFF"
+    watermark = f"ON (<i>{html.escape(task.get('watermark_text') or 'Altruix')}</i>)" if task.get("is_watermark") else "OFF"
+    translate = "ON" if task.get("is_translate") else "OFF"
+    
+    start_id = task.get("start_id", 1)
+    end_id = task.get("end_id", 1)
+    total_msgs = max(0, end_id - start_id + 1)
+    
+    # Batch Msg/Delay info
+    batch_delay = _normalize_delay(task.get("batch_delay", 1.5), 1.5)
+    batch_msg = int(task.get("batch_msg", 30) or 30)
+    batch_msg_delay = _normalize_delay(task.get("batch_msg_delay", 0.0), 0.0)
     
     # Parse filters
     try:
@@ -908,16 +1108,20 @@ async def build_task_detail_text(task: dict, client=None) -> str:
         f"<blockquote expandable>"
         f"🔧 <b>Task #{task['id']} Detail</b>\n"
         f"{'━' * 18}\n"
-        f"📥 <b>Source:</b> {html.escape(src_title)} (<code>{task['source_id']}</code>)\n"
-        f"📤 <b>Target:</b> {html.escape(tgt_title)} (<code>{task['target_id']}</code>)\n"
+        f"• <b>Source:</b> {html.escape(src_title)} (<code>{task['source_id']}</code>)\n"
+        f"• <b>Target:</b> {html.escape(tgt_title)} (<code>{task['target_id']}</code>)\n"
         f"{'━' * 18}\n"
-        f"📊 <b>Status:</b> {status}\n"
-        f"🔀 <b>Mode:</b> {mode}\n"
-        f"🛡 <b>Bypass:</b> {bypass}\n"
-        f"🖼 <b>Watermark:</b> {watermark}\n"
-        f"🌍 <b>Translate:</b> {translate}\n"
-        f"🔍 <b>Filters:</b> {filter_text}\n"
-        f"📅 <b>Created:</b> {task.get('created_at', '?')}\n"
+        f"• <b>Status:</b> {status}\n"
+        f"• <b>Mode:</b> {mode}\n"
+        f"• <b>Bypass:</b> {bypass}\n"
+        f"• <b>Watermark:</b> {watermark}\n"
+        f"• <b>Translate:</b> {translate}\n"
+        f"• <b>Filters:</b> {filter_text}\n"
+        f"• <b>Delay/Msg:</b> <code>{batch_delay}s</code>\n"
+        f"• <b>Batch Msg:</b> <code>{batch_msg}</code>\n"
+        f"• <b>Batch Delay:</b> <code>{batch_msg_delay}s</code>\n"
+        f"• <b>Batch Range:</b> <code>{start_id}</code> - <code>{end_id}</code> (Total: <code>{total_msgs}</code>)\n"
+        f"• <b>Created:</b> {task.get('created_at', '?')}\n"
         f"{'━' * 18}"
         f"</blockquote>"
     )
@@ -977,13 +1181,15 @@ def build_advanced_options_kb(task: dict, user_id: int) -> InlineKeyboardMarkup:
     ads_f = "Ads: ON" if task.get("is_ads_filter") else "Ads: OFF"
     rex_p = "Regex Pro: ON" if task.get("use_regex_pro") else "Regex Pro: OFF"
     cpy_f = "Copy: ON" if task.get("forward_as_copy", 1) else "Copy: OFF"
+    alb_f = "Album: ON" if task.get("forward_as_album", 1) else "Album: OFF"
     bps_f = "Bypass: ON" if task.get("bypass_protected") else "Bypass: OFF"
     
     order_label = "Order: Oldest First" if task.get("batch_order") == "oldest" else "Order: Newest First"
     
-    tr_text = "Set Language"
     batch_msg = int(task.get("batch_msg", 30) or 30)
     batch_msg_delay = _normalize_delay(task.get("batch_msg_delay", 0.0), 0.0)
+    
+    tr_text = "Set Language"
     
     return InlineKeyboardMarkup([
         [
@@ -993,21 +1199,24 @@ def build_advanced_options_kb(task: dict, user_id: int) -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(rex_p, callback_data=f"fwd_atoggle_{tid}_use_regex_pro_{user_id}", style=btn_style),
-            InlineKeyboardButton(cpy_f, callback_data=f"fwd_atoggle_{tid}_forward_as_copy_{user_id}", style=btn_style),
             InlineKeyboardButton(bps_f, callback_data=f"fwd_atoggle_{tid}_bypass_protected_{user_id}", style=btn_style)
+        ],
+        [
+            InlineKeyboardButton(cpy_f, callback_data=f"fwd_atoggle_{tid}_forward_as_copy_{user_id}", style=btn_style),
+            InlineKeyboardButton(alb_f, callback_data=f"fwd_atoggle_{tid}_forward_as_album_{user_id}", style=btn_style)
         ],
         [
             InlineKeyboardButton("Config Regex", callback_data=f"fwd_rexset_{tid}_{user_id}", style=btn_style),
             InlineKeyboardButton(tr_text, callback_data=f"fwd_trlang_{tid}_{user_id}", style=btn_style)
         ],
         [
-            InlineKeyboardButton(f"Batch Msg: {batch_msg}", callback_data=f"fwd_abmsg_menu_{tid}_{user_id}", style=btn_style),
-            InlineKeyboardButton(f"B.Msg Delay: {batch_msg_delay}s", callback_data=f"fwd_abmsgdelay_menu_{tid}_{user_id}", style=btn_style)
-        ],
-        [
             InlineKeyboardButton("Delay -", callback_data=f"fwd_bdel_{tid}_dec_{user_id}", style=btn_style),
             InlineKeyboardButton(f"Delay: {task.get('batch_delay', 1.5)}s", callback_data="noop", style=btn_style),
             InlineKeyboardButton("Delay +", callback_data=f"fwd_bdel_{tid}_inc_{user_id}", style=btn_style)
+        ],
+        [
+            InlineKeyboardButton(f"Batch Msg: {batch_msg}", callback_data=f"fwd_abmsg_menu_{tid}_{user_id}", style=btn_style),
+            InlineKeyboardButton(f"B.Msg Delay: {batch_msg_delay}s", callback_data=f"fwd_abmsgdelay_menu_{tid}_{user_id}", style=btn_style)
         ],
         [
             InlineKeyboardButton(order_label, callback_data=f"fwd_border_{tid}_{user_id}", style=btn_style)
@@ -1025,31 +1234,37 @@ async def build_advanced_options_text(task: dict) -> str:
     ads_filter = "ON" if task.get("is_ads_filter") else "OFF"
     regex_pro = "ON" if task.get("use_regex_pro") else "OFF"
     as_copy = "ON" if task.get("forward_as_copy", 1) else "OFF"
+    as_album = "ON" if task.get("forward_as_album", 1) else "OFF"
     bypass = "ON" if task.get("bypass_protected") else "OFF"
     order = "Oldest ➔ Newest" if task.get("batch_order") == "oldest" else "Newest ➔ Oldest"
     
+    batch_msg = task.get("batch_msg", 30)
+    batch_delay = task.get("batch_msg_delay", 0.0)
+    
     text = (
         f"<blockquote expandable>"
-        f"Advanced Options — Task #{task['id']}\n"
+        f"🛡 <b>Advanced Options — Task #{task['id']}</b>\n"
         f"{'━' * 18}\n"
-        f"Caption Cleaning:\n"
+        f"<b>Caption Cleaning:</b>\n"
         f"  • Remove Links: <b>{clean_links}</b>\n"
         f"  • Remove Usernames: <b>{clean_users}</b>\n"
         f"  • Ads Word Filter: <b>{ads_filter}</b>\n"
         f"  • Regex Pro: <b>{regex_pro}</b>\n\n"
-        f"Batch Controls:\n"
+        f"<b>Batch Controls:</b>\n"
         f"  • Custom Delay: <b>{task.get('batch_delay', 1.5)}s</b>\n"
-        f"  • Batch Msg: <b>{task.get('batch_msg', 30)}</b>\n"
-        f"  • Batch Msg Delay: <b>{task.get('batch_msg_delay', 0.0)}s</b>\n"
+        f"  • Batch Msg: <b>{batch_msg}</b>\n"
+        f"  • Batch Delay: <b>{batch_delay}s</b>\n"
         f"  • Process Order: <b>{order}</b>\n"
         f"  • Forward as Copy: <b>{as_copy}</b>\n"
+        f"  • Forward as Album: <b>{as_album}</b>\n"
         f"  • Bypass Protected: <b>{bypass}</b>\n\n"
-        f"Glossary:\n"
+        f"<b>Glossary:</b>\n"
         f"  • <b>LINK</b>: Remove web links from caption.\n"
         f"  • <b>USER</b>: Remove @usernames from caption.\n"
         f"  • <b>ADS</b>: Filter out defined advertisement keywords.\n"
         f"  • <b>BYPASS</b>: Bypass restricted content (re-upload logic).\n"
         f"  • <b>COPY</b>: Forward as Copy (Hide Sender Name).\n"
+        f"  • <b>ALBUM</b>: Forward media group as a single album.\n"
         f"  • <b>TR</b>: Automatic translation to target language.\n"
         f"{'━' * 18}"
         f"</blockquote>"
@@ -1093,24 +1308,59 @@ def build_filter_kb(task: dict, user_id: int, is_global: bool = False) -> Inline
     return InlineKeyboardMarkup(rows)
 
 
+def _get_assistant_for_user(user_id: int):
+    """Return (bot_obj, bot_username) for the assistant bot to use for a given user_id.
+    Prefers a custom assistant bot from bot_manager, falls back to main `Altruix.bot`.
+    """
+    try:
+        if hasattr(Altruix, 'bot_manager'):
+            try:
+                username = Altruix.bot_manager.get_bot_username(user_id)
+            except Exception:
+                username = None
+            try:
+                bot = Altruix.bot_manager.get_bot(user_id)
+            except Exception:
+                bot = None
+            if bot or username:
+                # Ensure we return both when possible
+                if not username and getattr(bot, 'me', None):
+                    username = getattr(bot.me, 'username', None)
+                return bot, username
+    except Exception:
+        logger.debug('[ForwardPro] _get_assistant_for_user failed to query bot_manager')
+
+    # Fallback to main assistant
+    bot = getattr(Altruix, 'bot', None)
+    username = None
+    try:
+        if bot and getattr(bot, 'me', None):
+            username = getattr(bot.me, 'username', None)
+    except Exception:
+        username = getattr(bot, 'username', None) if bot else None
+    return bot, username
+
+
 def build_global_adv_opts_kb(gs: dict, user_id: int) -> InlineKeyboardMarkup:
     """Build keyboard for global advanced defaults."""
     btn_style = get_user_button_style(user_id)
     
     order_label = "Order: Oldest First" if gs.get("default_batch_order") == "oldest" else "Order: Newest First"
     rex_p = "Regex Pro: ON" if gs.get("default_use_regex_pro") else "Regex Pro: OFF"
+    cpy_f = "Copy: ON" if gs.get("default_forward_as_copy", 1) else "Copy: OFF"
+    alb_f = "Album: ON" if gs.get("default_forward_as_album", 1) else "Album: OFF"
     
     batch_msg = int(gs.get("default_batch_msg", 30) or 30)
     batch_msg_delay = _normalize_delay(gs.get("default_batch_msg_delay", 0.0), 0.0)
-
+    
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton(rex_p, callback_data=f"fwd_gtoggle_default_use_regex_pro_{user_id}", style=btn_style),
             InlineKeyboardButton("Config Global Regex", callback_data=f"fwd_grexset_{user_id}", style=btn_style)
         ],
         [
-            InlineKeyboardButton(f"Batch Msg: {batch_msg}", callback_data=f"fwd_gbmsg_menu_{user_id}", style=btn_style),
-            InlineKeyboardButton(f"B.Msg Delay: {batch_msg_delay}s", callback_data=f"fwd_gbmsgdelay_menu_{user_id}", style=btn_style)
+            InlineKeyboardButton(cpy_f, callback_data=f"fwd_gtoggle_default_forward_as_copy_{user_id}", style=btn_style),
+            InlineKeyboardButton(alb_f, callback_data=f"fwd_gtoggle_default_forward_as_album_{user_id}", style=btn_style)
         ],
         [
             InlineKeyboardButton("-0.5s", callback_data=f"fwd_gdel_dec_{user_id}", style=btn_style),
@@ -1120,6 +1370,10 @@ def build_global_adv_opts_kb(gs: dict, user_id: int) -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton("-3.0s", callback_data=f"fwd_gdel_dec3_{user_id}", style=btn_style),
             InlineKeyboardButton("+3.0s", callback_data=f"fwd_gdel_inc3_{user_id}", style=btn_style)
+        ],
+        [
+            InlineKeyboardButton(f"Batch Msg: {batch_msg}", callback_data=f"fwd_gbmsg_menu_{user_id}", style=btn_style),
+            InlineKeyboardButton(f"B.Msg Delay: {batch_msg_delay}s", callback_data=f"fwd_gbmsgdelay_menu_{user_id}", style=btn_style)
         ],
         [
             InlineKeyboardButton(order_label, callback_data=f"fwd_gborder_{user_id}", style=btn_style)
@@ -1210,9 +1464,9 @@ async def fwd_command_handler(c: Client, m: AltruixMessage):
                 tgt_title = await resolve_chat_title(c, target_id)
                 await m.reply(
                     f"✅ <b>Task #{task_id} Created</b>\n"
-                    f"📥 Source: {html.escape(src_title)} (<code>{source_id}</code>)\n"
-                    f"📤 Target: {html.escape(tgt_title)} (<code>{target_id}</code>)\n"
-                    f"🔀 Mode: <b>{mode}</b>\n\n"
+                    f"• Source: {html.escape(src_title)} (<code>{source_id}</code>)\n"
+                    f"• Target: {html.escape(tgt_title)} (<code>{target_id}</code>)\n"
+                    f"• Mode: <b>{mode}</b>\n\n"
                     f"Use <code>.fwd</code> to manage."
                 )
             else:
@@ -1232,9 +1486,12 @@ async def fwd_command_handler(c: Client, m: AltruixMessage):
             if not task or task["user_id"] != user_id:
                 return await m.reply("❌ <b>Task not found or access denied.</b>")
             
+            # Update task range in DB for visibility in UI
+            await update_task(tid, start_id=start_id, end_id=end_id)
+            
             # Start batch background task
-            from Main.plugins.userbot.xtaskmanager import generate_task_id
-            reg_tid = generate_task_id("FPB")
+            # Use predictable ID: #FPB{tid}
+            reg_tid = f"#FPB{tid}"
             asyncio.create_task(start_batch_fwd(c, user_id, tid, start_id, end_id, reg_tid=reg_tid))
             await m.reply(f"🚀 <b>Batch Forward Task #{tid} Started!</b>\nRange: <code>{start_id}</code> - <code>{end_id}</code>\nMonitoring progress in Log Group...")
             return
@@ -1332,7 +1589,8 @@ async def fwd_command_handler(c: Client, m: AltruixMessage):
             if m.chat.type == enums.ChatType.PRIVATE:
                 return await m.reply("❌ <b>Command ini hanya bisa digunakan di dalam Group atau Channel untuk dijadikan tempat penerima Log.</b>")
                 
-            await update_global_settings(user_id, log_channel_id=chat_id)
+            # store as `log_channel` to match get_global_settings usage
+            await update_global_settings(user_id, log_channel=chat_id)
             await m.reply(
                 f"✅ <b>Log Channel Berhasil Diperbarui!</b>\n"
                 f"Semua notifikasi Forward Pro sekarang akan dikirimkan ke chat ini (<code>{chat_id}</code>)."
@@ -1340,14 +1598,13 @@ async def fwd_command_handler(c: Client, m: AltruixMessage):
             return
     
     # Default: Show dashboard via Inline Mode (tag @botasisten)
-    bot_username = None
-    if hasattr(Altruix, 'bot_manager'):
-        bot_username = Altruix.bot_manager.get_bot_username(user_id)
-    
+    bot, bot_username = _get_assistant_for_user(user_id)
     if bot_username:
         try:
             # Inline trigger for dashboard
+            logger.debug(f"[ForwardPro] Attempting inline dashboard via bot_username={bot_username} for user={user_id}")
             results = await c.get_inline_bot_results(bot_username, f"fwd_menu_uid_{user_id}")
+            logger.debug(f"[ForwardPro] Inline results count={len(results.results) if getattr(results, 'results', None) is not None else 'N/A'}")
             if results.results:
                 sent = await c.send_inline_bot_result(
                     m.chat.id,
@@ -1355,30 +1612,38 @@ async def fwd_command_handler(c: Client, m: AltruixMessage):
                     results.results[0].id,
                     reply_to_message_id=m.id
                 )
+                logger.debug(f"[ForwardPro] send_inline_bot_result returned={sent}")
                 if sent:
                     await m.delete_if_self()
                     return
         except Exception as e:
-            logger.warning(f"[ForwardPro] Inline dashboard failed: {e}, falling back to direct")
+            logger.warning(f"[ForwardPro] Inline dashboard failed via {bot_username}: {e}, falling back to direct")
 
     # Fallback to direct bot message
     dashboard_text = await build_main_menu_text(user_id, client=c)
     gsettings = await get_global_settings(user_id)
     kb = build_main_menu_kb(user_id, gsettings=gsettings)
     
-    # Send via bot for inline buttons
-    bot = None
-    if hasattr(Altruix, 'bot_manager'):
-        bot = Altruix.bot_manager.get_bot(user_id)
+    # Send via bot for inline buttons - use helper result if available
     if not bot:
-        bot = Altruix.bot
+        bot = getattr(Altruix, 'bot', None)
     
     if bot:
-        await bot.send_message(
-            m.chat.id, dashboard_text, reply_markup=kb,
-            parse_mode=enums.ParseMode.HTML, reply_to_message_id=m.id
-        )
-        await m.delete_if_self()
+        try:
+            # Debug: list callback_data in kb
+            try:
+                cb_rows = [[btn.callback_data for btn in row] for row in kb.inline_keyboard]
+            except Exception:
+                cb_rows = None
+            logger.debug(f"[ForwardPro] Sending dashboard via bot user_id={user_id} bot={getattr(bot, 'username', None)} callbacks={cb_rows}")
+            sent_msg = await bot.send_message(
+                m.chat.id, dashboard_text, reply_markup=kb,
+                parse_mode=enums.ParseMode.HTML, reply_to_message_id=m.id
+            )
+            logger.debug(f"[ForwardPro] bot.send_message returned id={getattr(sent_msg, 'id', None)} chat={getattr(sent_msg, 'chat', None)}")
+            await m.delete_if_self()
+        except Exception as e:
+            logger.error(f"[ForwardPro] Failed to send dashboard via bot: {e}\n{traceback.format_exc()}")
     else:
         await m.reply(dashboard_text, reply_markup=kb)
 
@@ -1481,6 +1746,7 @@ async def fwd_inline_handler(client: Client, query: InlineQuery):
     """Handle inline query for Forward Pro dashboard."""
     try:
         user_id = int(query.matches[0].group("uid"))
+        logger.debug(f"[ForwardPro] Inline query for uid={user_id} from {query.from_user.id if query.from_user else 'unknown'} data={query.query}")
         
         # Get userbot client for resolution (optional here but good for consistency)
         ub_client = None
@@ -1492,9 +1758,34 @@ async def fwd_inline_handler(client: Client, query: InlineQuery):
                         break
                 except: continue
 
-        text = await build_main_menu_text(user_id, client=ub_client)
-        gs = await get_global_settings(user_id)
-        kb = build_main_menu_kb(user_id, gsettings=gs)
+        account_name = str(user_id)
+        if ub_client and ub_client.me:
+            first = ub_client.me.first_name or ""
+            last = ub_client.me.last_name or ""
+            account_name = f"{first} {last}".strip() or str(user_id)
+        
+        text = (
+            f"<blockquote expandable>"
+            f"📡 <b>Forward Pro Dashboard</b>\n"
+            f"{'━' * 18}\n"
+            f"<b> • Account:</b> {html.escape(account_name)}\n"
+            f"<b> • User ID:</b> <code>{user_id}</code>\n"
+            f"{'━' * 18}\n"
+            f"Tekan <b>Open Dashboard</b> untuk memuat menu lengkap.\n"
+            f"{'━' * 18}\n"
+            f"🔌 <b>Plugin:</b> <code>v{PLUGIN_VERSION}</code>\n"
+            f"{'━' * 18}"
+            f"</blockquote>"
+        )
+        
+        btn_style = get_user_button_style(user_id)
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📡 Open Dashboard", callback_data=f"fwd_back_{user_id}", style=btn_style)],
+            [
+                InlineKeyboardButton("Help", callback_data=f"fwd_help_0_{user_id}", style=btn_style),
+                InlineKeyboardButton("Close", callback_data=f"fwd_close_{user_id}", style=btn_style)
+            ]
+        ])
         
         await query.answer(
             results=[
@@ -1509,10 +1800,16 @@ async def fwd_inline_handler(client: Client, query: InlineQuery):
                     reply_markup=kb
                 )
             ],
-            cache_time=0
+            cache_time=0,
+            is_personal=True
         )
     except Exception as e:
-        logger.error(f"ForwardPro Inline Handler Error: {e}")
+        logger.error(f"ForwardPro Inline Handler Error: {e}\n{traceback.format_exc()}")
+        # Dump registered handlers for debugging
+        try:
+            _log_registered_handlers(client)
+        except Exception:
+            logger.debug("[ForwardPro] Failed to dump handlers from inline handler exception")
 
 
 # ==================== INTERACTIVE INPUT HANDLER ====================
@@ -1577,12 +1874,19 @@ async def fwd_input_handler(client: Client, message: RawMessage):
         
         async def _update_ui(new_text, new_kb):
             try:
+                bot = None
+                if hasattr(Altruix, "bot_manager"):
+                    bot = Altruix.bot_manager.get_bot(user_id)
+                if not bot:
+                    bot = getattr(Altruix, "bot", None)
                 if inl_id:
-                    await Altruix.bot.edit_inline_text(inline_message_id=inl_id, text=new_text, reply_markup=new_kb, parse_mode=enums.ParseMode.HTML)
+                    if bot:
+                        await bot.edit_inline_text(inline_message_id=inl_id, text=new_text, reply_markup=new_kb, parse_mode=enums.ParseMode.HTML)
                 elif mid:
-                    await client.edit_message_text(chat_id=user_id, message_id=mid, text=new_text, reply_markup=new_kb, parse_mode=enums.ParseMode.HTML)
+                    if bot:
+                        await bot.edit_message_text(chat_id=user_id, message_id=mid, text=new_text, reply_markup=new_kb, parse_mode=enums.ParseMode.HTML)
             except Exception as e:
-                logger.error(f"[ForwardPro] update UI error: {e}")
+                logger.error(f"[ForwardPro] update UI error: {e}\n{traceback.format_exc()}")
 
         if action == "wm_set_text":
             tid = state.get("task_id") or state.get("tid")
@@ -1642,6 +1946,8 @@ async def fwd_input_handler(client: Client, message: RawMessage):
                     "• <b>Regex Pro</b>: Gunakan pola regex kustom.\n"
                     "• <b>Batch Order</b>: Urutan proses pesan dalam mode batch.\n"
                     "• <b>Default Delay</b>: Jeda antar pesan.\n"
+                    "• <b>Batch Msg</b>: Jumlah pesan per batch (cooldown).\n"
+                    "• <b>Batch Msg Delay</b>: Jeda antar batch.\n"
                     f"{'━' * 18}"
                     "</blockquote>"
                 )
@@ -1732,7 +2038,26 @@ async def fwd_input_handler(client: Client, message: RawMessage):
 @log_errors
 async def fwd_callback_handler(client: Client, cb: CallbackQuery):
     """Handle all Forward Pro callback queries."""
-    data = cb.data
+    try:
+        data = cb.data
+        # Identify which client received this callback (useful in multi-bot setups)
+        recv_client = getattr(cb, '_client', None) or getattr(cb, 'client', None) or client
+        recv_name = getattr(recv_client, 'username', None) or getattr(getattr(recv_client, 'me', None), 'username', None) or getattr(recv_client, 'session_name', None) or str(getattr(recv_client, 'bot_token', None))
+        logger.debug(f"[ForwardPro] Callback received: {data} from user={getattr(cb.from_user, 'id', None)} inline={bool(cb.inline_message_id)} recv_client={recv_name}")
+
+        # Dump registered handlers for diagnostics only when verbose debug enabled
+        if FWDPRO_DEBUG:
+            try:
+                _log_registered_handlers(recv_client)
+            except Exception:
+                logger.debug("[ForwardPro] Failed to log handlers for receiving client")
+            try:
+                _log_registered_handlers(getattr(Altruix, 'bot', None))
+            except Exception:
+                logger.debug("[ForwardPro] Failed to log handlers for Altruix.bot")
+    except Exception as _e:
+        logger.error(f"[ForwardPro] fwd_callback_handler pre-log failed: {_e}\n{traceback.format_exc()}")
+        # Continue execution even if logging fails
     parts = data.split("_")
     
     # fwd_action_...
@@ -1769,13 +2094,14 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
     
     # ── CLOSE ──
     if action == "close":
-        try:
-            await cb.message.delete()
-        except Exception:
+        await safe_cb_ack(cb)
+        if cb.inline_message_id:
+            await safe_edit_cb_text(cb, "🚪 <b>Menu Closed.</b>", reply_markup=None, parse_mode=enums.ParseMode.HTML)
+        else:
             try:
-                await cb.edit_message_text("🚪 <b>Menu Closed.</b>", parse_mode=enums.ParseMode.HTML)
-            except:
-                pass
+                await cb.message.delete()
+            except Exception:
+                await safe_edit_cb_text(cb, "🚪 <b>Menu Closed.</b>", reply_markup=None, parse_mode=enums.ParseMode.HTML)
         return
         
     # ── NOOP ──
@@ -1784,13 +2110,11 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
     
     # ── BACK (Main Menu) ──
     if action == "back":
+        await safe_cb_ack(cb)
         text = await build_main_menu_text(uid, client=ub_client)
         gs = await get_global_settings(uid)
         kb = build_main_menu_kb(uid, gsettings=gs)
-        try:
-            await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
-        except Exception:
-            pass
+        await safe_edit_cb_text(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
         return
     
     # ── GLOBAL TOGGLES ──
@@ -1804,7 +2128,8 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
             "default_is_translate", "default_is_watermark", 
             "default_clean_links", "default_clean_usernames",
             "default_is_ads_filter", "default_bypass_protected",
-            "default_use_regex_pro", "default_forward_as_copy"
+            "default_use_regex_pro", "default_forward_as_copy",
+            "default_forward_as_album"
         )
         
         if field in valid_fields:
@@ -1815,7 +2140,7 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
             await safe_cb_answer(cb, f"🔘 {field.replace('default_', '').replace('_', ' ').title()}: {'ON' if new_val else 'OFF'}", show_alert=False)
             
             # Hot reload based on menu context
-            if field == "default_use_regex_pro":
+            if field in ("default_use_regex_pro", "default_forward_as_copy", "default_forward_as_album"):
                 text = (
                     "<blockquote expandable>"
                     "🛡 <b>Global Advanced Options</b>\n"
@@ -1824,6 +2149,8 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
                     "• <b>Regex Pro</b>: Gunakan pola regex kustom.\n"
                     "• <b>Batch Order</b>: Urutan proses pesan dalam mode batch.\n"
                     "• <b>Default Delay</b>: Jeda antar pesan.\n"
+                    "• <b>Batch Msg</b>: Jumlah pesan per batch (cooldown).\n"
+                    "• <b>Batch Msg Delay</b>: Jeda antar batch.\n"
                     f"{'━' * 18}"
                     "</blockquote>"
                 )
@@ -1832,25 +2159,21 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
                 text = await build_main_menu_text(uid, client=ub_client)
                 kb = build_main_menu_kb(uid, gsettings=gs)
             
-            try:
-                await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
-            except Exception:
-                pass
+            await safe_edit_cb_text(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
         return
 
     # ── LIST TASKS ──
     if action == "list":
+        await safe_cb_ack(cb)
         tasks = await get_tasks(uid)
         text = await build_task_list_text(uid, client=ub_client)
         kb = build_task_list_kb(uid, tasks)
-        try:
-            await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
-        except Exception:
-            pass
+        await safe_edit_cb_text(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
         return
 
     # ── GLOBAL STATS ──
     if action == "stats":
+        await safe_cb_ack(cb)
         tasks = await get_tasks(uid)
         total_success = sum(t.get("count_success", 0) for t in tasks)
         total_failed = sum(t.get("count_failed", 0) for t in tasks)
@@ -1869,10 +2192,7 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
         )
         btn_style = get_user_button_style(uid)
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data=f"fwd_back_{uid}", style=btn_style)]])
-        try:
-            await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
-        except Exception:
-            pass
+        await safe_edit_cb_text(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
         return
 
     # ── GLOBAL ADS SET ──
@@ -1892,13 +2212,7 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
         )
         btn_style = get_user_button_style(uid)
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancel", callback_data=f"fwd_back_{uid}", style=btn_style)]])
-        try:
-            if is_inline:
-                await Altruix.bot.edit_inline_text(inline_message_id=inl_id, text=text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
-            else:
-                await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
-        except Exception:
-            pass
+        await safe_edit_cb_text(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
         return
 
     # ── GLOBAL WM SET ──
@@ -1918,13 +2232,7 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
         )
         btn_style = get_user_button_style(uid)
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancel", callback_data=f"fwd_back_{uid}", style=btn_style)]])
-        try:
-            if is_inline:
-                await Altruix.bot.edit_inline_text(inline_message_id=inl_id, text=text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
-            else:
-                await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
-        except Exception:
-            pass
+        await safe_edit_cb_text(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
         return
     
     # ── ADD TASK (STEP-BY-STEP) ──
@@ -1932,13 +2240,15 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
         subaction = parts[2] if len(parts) > 2 else ""
         if subaction == "start":
             FPRO_ADD_TASK_STATE[uid] = {"step": 1}
-            await cb.edit_message_text(
+            await safe_edit_cb_text(
+                cb,
                 "<blockquote expandable>➕ <b>Interactive Add Task</b>\n"
                 f"{'━' * 18}\n"
                 "Sistem akan memandu Anda secara bertahap.\n\n"
                 "👤 <b>Langkah 1:</b> Silakan kirim <b>Source Chat ID</b>\n"
                 "(Contoh: <code>-100123456789</code> atau forward pesan ke sini lalu ketik <code>.id</code>)</blockquote>",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data=f"fwd_add_cancel_{uid}")]])
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data=f"fwd_add_cancel_{uid}")]]),
+                parse_mode=enums.ParseMode.HTML,
             )
             return
         
@@ -1948,7 +2258,7 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
             text = await build_main_menu_text(uid, client=ub_client)
             gs = await get_global_settings(uid)
             kb = build_main_menu_kb(uid, gsettings=gs)
-            await cb.edit_message_text(text, reply_markup=kb)
+            await safe_edit_cb_text(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
             return
 
         if subaction == "done":
@@ -1963,9 +2273,14 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
                 task = await get_task(tid)
                 text = await build_task_detail_text(task, client=ub_client)
                 kb = build_task_detail_kb(task, uid)
-                await cb.edit_message_text(text, reply_markup=kb)
+                await safe_edit_cb_text(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
             else:
-                await cb.edit_message_text("❌ Failed to create task.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data=f"fwd_back_{uid}")]]))
+                await safe_edit_cb_text(
+                    cb,
+                    "❌ Failed to create task.",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data=f"fwd_back_{uid}")]]),
+                    parse_mode=enums.ParseMode.HTML,
+                )
             return
 
     # ── ADD INFO ──
@@ -1992,14 +2307,12 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("🔙 Back", callback_data=f"fwd_back_{uid}", style=btn_style)]
         ])
-        try:
-            await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
-        except Exception:
-            pass
+        await safe_edit_cb_text(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
         return
     
     # ── GLOBAL FILTER MENU ──
     if action == "gfilter":
+        await safe_cb_ack(cb)
         gs = await get_global_settings(uid)
         text = (
             "<blockquote expandable>"
@@ -2012,14 +2325,12 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
             "</blockquote>"
         )
         kb = build_filter_kb(gs, uid, is_global=True)
-        try:
-            await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
-        except Exception:
-            pass
+        await safe_edit_cb_text(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
         return
 
     # ── GLOBAL ADV OPTS MENU ──
     if action == "gadvopts":
+        await safe_cb_ack(cb)
         gs = await get_global_settings(uid)
         text = (
             "<blockquote expandable>"
@@ -2029,6 +2340,8 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
             "• <b>Regex Pro</b>: Gunakan pola regex kustom.\n"
             "• <b>Batch Order</b>: Urutan proses pesan dalam mode batch.\n"
             "• <b>Default Delay</b>: Jeda antar pesan.\n"
+            "• <b>Batch Msg</b>: Jumlah pesan per batch (cooldown).\n"
+            "• <b>Batch Msg Delay</b>: Jeda antar batch.\n"
             f"{'━' * 18}"
             "</blockquote>"
         )
@@ -2037,10 +2350,7 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
         # Add TR Language button to global
         kb.inline_keyboard.insert(-2, [InlineKeyboardButton("🌐 Set Global TR Lang", callback_data=f"fwd_gtrlang_{uid}", style=get_user_button_style(uid))])
         
-        try:
-            await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
-        except Exception:
-            pass
+        await safe_edit_cb_text(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
         return
 
     # ── GLOBAL FILTER TOGGLE ──
@@ -2071,10 +2381,7 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
             "</blockquote>"
         )
         kb = build_filter_kb(gs, uid, is_global=True)
-        try:
-            await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
-        except:
-            pass
+        await safe_edit_cb_text(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
         return
 
     # ── GLOBAL BATCH ORDER TOGGLE ──
@@ -2096,11 +2403,13 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
             "• <b>Regex Pro</b>: Gunakan pola regex kustom.\n"
             "• <b>Batch Order</b>: Urutan proses pesan dalam mode batch.\n"
             "• <b>Default Delay</b>: Jeda antar pesan.\n"
+            "• <b>Batch Msg</b>: Jumlah pesan per batch (cooldown).\n"
+            "• <b>Batch Msg Delay</b>: Jeda antar batch.\n"
             f"{'━' * 18}"
             "</blockquote>"
         )
         kb = build_global_adv_opts_kb(gs, uid)
-        await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+        await safe_edit_cb_text(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
         return
 
     # ── REGEX SET (TASK / GLOBAL) ──
@@ -2131,18 +2440,12 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
             "</blockquote>"
         )
         
-        try:
-            btn_style = get_user_button_style(uid)
-            back_cbd = f"fwd_back_{uid}" if is_global else f"fwd_advopts_{tid}_{uid}"
-            kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancel", callback_data=back_cbd, style=btn_style)]])
-            
-            if is_inline:
-                await Altruix.bot.edit_inline_text(inline_message_id=inl_id, text=text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
-            else:
-                await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
-        except Exception as e:
-            logger.error(f"[Regex Config UI Error]: {e}")
-            await safe_cb_answer(cb, f"Error displaying prompt: {str(e)[:30]}", show_alert=True)
+        btn_style = get_user_button_style(uid)
+        back_cbd = f"fwd_back_{uid}" if is_global else f"fwd_advopts_{tid}_{uid}"
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancel", callback_data=back_cbd, style=btn_style)]])
+        ok = await safe_edit_cb_text(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+        if not ok:
+            await safe_cb_answer(cb, "❌ Gagal menampilkan prompt Regex.", show_alert=True)
         return
     
     # ── GLOBAL DELAY INC/DEC ──
@@ -2171,33 +2474,27 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
             "• <b>Regex Pro</b>: Gunakan pola regex kustom.\n"
             "• <b>Batch Order</b>: Urutan proses pesan dalam mode batch.\n"
             "• <b>Default Delay</b>: Jeda antar pesan.\n"
+            "• <b>Batch Msg</b>: Jumlah pesan per batch (cooldown).\n"
+            "• <b>Batch Msg Delay</b>: Jeda antar batch.\n"
             f"{'━' * 18}"
             "</blockquote>"
         )
         kb = build_global_adv_opts_kb(gs, uid)
-        try:
-            await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
-        except Exception:
-            pass
+        await safe_edit_cb_text(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
         await safe_cb_answer(cb, f"⏱ Global Delay: {delay}s", show_alert=False)
         return
-    
-    # ── BATCH MSG / BATCH MSG DELAY (Global & Task) ──
+
     if action in ("gbmsg", "gbmsgdelay", "abmsg", "abmsgdelay"):
         is_inline = bool(cb.inline_message_id)
         inl_id = cb.inline_message_id if is_inline else None
 
         sub = parts[2] if len(parts) > 2 else "menu"
         is_task = action.startswith("a")
-
+        
         if is_task:
-            try:
-                tid = int(parts[-2])
-            except Exception:
-                return await safe_cb_answer(cb, "❌ Task not found.", show_alert=True)
+            tid = int(parts[-2]) # fwd_abmsg_menu_{tid}_{uid}
             task = await get_task(tid)
-            if not task:
-                return await safe_cb_answer(cb, "❌ Task not found.", show_alert=True)
+            if not task: return await safe_cb_answer(cb, "❌ Task not found.", show_alert=True)
             cur_msg = int(task.get("batch_msg", 30) or 30)
             cur_delay = _normalize_delay(task.get("batch_msg_delay", 0.0), 0.0)
             scope = f"Task #{tid}"
@@ -2209,13 +2506,12 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
             scope = "Global"
             back_cbd = f"fwd_gadvopts_{uid}"
 
-        # Message count menu
         if action in ("gbmsg", "abmsg"):
             steps = [1, 5, 10, 30, 50, 100]
             if sub in ("inc", "dec"):
                 try:
                     step = int(parts[3])
-                except Exception:
+                except:
                     step = 0
                 if step > 0:
                     cur_msg = min(1000, cur_msg + step) if sub == "inc" else max(1, cur_msg - step)
@@ -2225,26 +2521,27 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
                         await update_global_settings(uid, default_batch_msg=cur_msg)
                     await safe_cb_answer(cb, f"✅ {scope} Batch Msg: {cur_msg}", show_alert=False)
 
-            header = f"🧮 <b>{scope} Batch Msg</b>\n{'━' * 18}\nAtur jumlah pesan per batch (cooldown) untuk mode batch.\n\nCurrent: <b>{cur_msg}</b>\n{'━' * 18}"
+            header = f"🧮 <b>{scope} Batch Msg</b>\n{('━' * 18)}\nAtur jumlah pesan per batch (cooldown) untuk mode batch.\n\nCurrent: <b>{cur_msg}</b>\n{('━' * 18)}"
             text = f"<blockquote expandable>{header}</blockquote>"
 
             btn_style = get_user_button_style(uid)
             rows = [[InlineKeyboardButton(f"━━ Batch Msg: {cur_msg} ━━", callback_data="noop", style=btn_style)]]
             for s in steps:
+                cb_prefix = f"fwd_{action}_{sub}_{s}_{tid}_{uid}" if is_task else f"fwd_{action}_{sub}_{s}_{uid}"
+                # Fix: Use correct parts for cb data
                 rows.append([
-                    InlineKeyboardButton(f"-{s}", callback_data=(f"fwd_{action}_dec_{s}_{tid}_{uid}" if is_task else f"fwd_{action}_dec_{s}_{uid}"), style=btn_style),
-                    InlineKeyboardButton(f"+{s}", callback_data=(f"fwd_{action}_inc_{s}_{tid}_{uid}" if is_task else f"fwd_{action}_inc_{s}_{uid}"), style=btn_style),
+                    InlineKeyboardButton(f"-{s}", callback_data=f"fwd_{action}_dec_{s}_{tid}_{uid}" if is_task else f"fwd_{action}_dec_{s}_{uid}", style=btn_style),
+                    InlineKeyboardButton(f"+{s}", callback_data=f"fwd_{action}_inc_{s}_{tid}_{uid}" if is_task else f"fwd_{action}_inc_{s}_{uid}", style=btn_style),
                 ])
             rows.append([InlineKeyboardButton("🔙 Back", callback_data=back_cbd, style=btn_style)])
             kb = InlineKeyboardMarkup(rows)
 
-        else:
-            # Delay menu
+        else: # gbmsgdelay or abmsgdelay
             steps = [1, 5, 10, 30, 60, 300]
             if sub in ("inc", "dec"):
                 try:
                     step = float(parts[3])
-                except Exception:
+                except:
                     step = 0.0
                 if step > 0:
                     cur_delay = min(3600.0, cur_delay + step) if sub == "inc" else max(0.0, cur_delay - step)
@@ -2254,15 +2551,15 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
                         await update_global_settings(uid, default_batch_msg_delay=cur_delay)
                     await safe_cb_answer(cb, f"✅ {scope} Batch Msg Delay: {cur_delay}s", show_alert=False)
 
-            header = f"⏱ <b>{scope} Batch Msg Delay</b>\n{'━' * 18}\nAtur jeda antar batch (cooldown) untuk mode batch.\n\nCurrent: <b>{cur_delay}s</b>\n{'━' * 18}"
+            header = f"⏱ <b>{scope} Batch Msg Delay</b>\n{('━' * 18)}\nAtur jeda antar batch (cooldown) untuk mode batch.\n\nCurrent: <b>{cur_delay}s</b>\n{('━' * 18)}"
             text = f"<blockquote expandable>{header}</blockquote>"
 
             btn_style = get_user_button_style(uid)
             rows = [[InlineKeyboardButton(f"━━ Batch Msg Delay: {cur_delay}s ━━", callback_data="noop", style=btn_style)]]
             for s in steps:
                 rows.append([
-                    InlineKeyboardButton(f"-{int(s)}s", callback_data=(f"fwd_{action}_dec_{int(s)}_{tid}_{uid}" if is_task else f"fwd_{action}_dec_{int(s)}_{uid}"), style=btn_style),
-                    InlineKeyboardButton(f"+{int(s)}s", callback_data=(f"fwd_{action}_inc_{int(s)}_{tid}_{uid}" if is_task else f"fwd_{action}_inc_{int(s)}_{uid}"), style=btn_style),
+                    InlineKeyboardButton(f"-{int(s)}s", callback_data=f"fwd_{action}_dec_{int(s)}_{tid}_{uid}" if is_task else f"fwd_{action}_dec_{int(s)}_{uid}", style=btn_style),
+                    InlineKeyboardButton(f"+{int(s)}s", callback_data=f"fwd_{action}_inc_{int(s)}_{tid}_{uid}" if is_task else f"fwd_{action}_inc_{int(s)}_{uid}", style=btn_style),
                 ])
             rows.append([InlineKeyboardButton("🔙 Back", callback_data=back_cbd, style=btn_style)])
             kb = InlineKeyboardMarkup(rows)
@@ -2290,14 +2587,7 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
         )
         btn_style = get_user_button_style(uid)
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancel", callback_data=f"fwd_back_{uid}", style=btn_style)]])
-        
-        try:
-            if is_inline:
-                await Altruix.bot.edit_inline_text(inline_message_id=inl_id, text=text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
-            else:
-                await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
-        except:
-            pass
+        await safe_edit_cb_text(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
         return
     
     # ── TASK DETAIL ──
@@ -2307,12 +2597,11 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
         if not task or task["user_id"] != uid:
             return await safe_cb_answer(cb, "❌ Task not found.", show_alert=True)
         
+        await safe_cb_ack(cb)
+        
         text = await build_task_detail_text(task, client=ub_client)
         kb = build_task_detail_kb(task, uid)
-        try:
-            await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
-        except Exception:
-            pass
+        await safe_edit_cb_text(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
         return
     
     # ── START TASK ──
@@ -2327,18 +2616,15 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
         
         # If live mode, register the listener
         if task["mode"] == "live" and ub_client:
-            from Main.plugins.userbot.xtaskmanager import generate_task_id
-            reg_tid = generate_task_id("FPL")
+            # Use predictable ID: #FPL{tid}
+            reg_tid = f"#FPL{tid}"
             asyncio.create_task(_register_live_listener(ub_client, task, uid, reg_tid=reg_tid))
         
         await safe_cb_answer(cb, f"▶️ Task #{tid} started!", show_alert=True)
         
         text = await build_task_detail_text(task, client=ub_client)
         kb = build_task_detail_kb(task, uid)
-        try:
-            await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
-        except Exception:
-            pass
+        await safe_edit_cb_text(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
         return
     
     # ── STOP TASK ──
@@ -2358,10 +2644,7 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
         
         text = await build_task_detail_text(task, client=ub_client)
         kb = build_task_detail_kb(task, uid)
-        try:
-            await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
-        except Exception:
-            pass
+        await safe_edit_cb_text(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
         return
 
     # ── BATCH RANGE MENU ──
@@ -2369,31 +2652,22 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
         is_inline = bool(cb.inline_message_id)
         inl_id = cb.inline_message_id if is_inline else None
         is_adjustment = (action == "br")
-
+        
         if is_adjustment:
             # fwd_br_{start|end|run}_{inc|dec|tid}_{val|uid}_{tid}_{uid}
-            sub = parts[2] if len(parts) > 2 else ""
+            sub = parts[2] # start, end, or run
             if sub == "run":
-                try:
-                    tid = int(parts[3])
-                    uid = int(parts[4])
-                except Exception:
-                    return await safe_cb_answer(cb, "❌ Invalid callback format.", show_alert=True)
+                tid = int(parts[3])
+                uid = int(parts[4])
                 op = "run"
             else:
-                op = parts[3] if len(parts) > 3 else ""
-                try:
-                    tid = int(parts[5])
-                except Exception:
-                    return await safe_cb_answer(cb, "❌ Invalid callback format.", show_alert=True)
+                op = parts[3] # inc or dec
+                tid = int(parts[5])
         else:
             # fwd_btchrange_{tid}_{uid}
             sub = "menu"
             op = "menu"
-            try:
-                tid = int(parts[2])
-            except Exception:
-                return await safe_cb_answer(cb, "❌ Task not found.", show_alert=True)
+            tid = int(parts[2])
 
         task = await get_task(tid)
         if not task:
@@ -2404,18 +2678,18 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
 
         # ── EXECUTE BATCH RUN ──
         if sub == "run":
-            start_id = int(task.get("start_id", 1))
-            end_id = int(task.get("end_id", 1))
-
+            start_id = task.get("start_id", 1)
+            end_id = task.get("end_id", 1)
+            
             if start_id > end_id:
                 return await safe_cb_answer(cb, "❌ Start ID cannot be greater than End ID.", show_alert=True)
-
+                
             await safe_cb_answer(cb, f"🚀 Executing Batch Task #{tid} ({start_id} - {end_id})...", show_alert=True)
-
+            
             # Use predictable ID: #FPB{tid}
             reg_tid = f"#FPB{tid}"
             asyncio.create_task(start_batch_fwd(ub_client, uid, tid, start_id, end_id, reg_tid=reg_tid))
-
+            
             # Refresh detail view
             text = await build_task_detail_text(task, client=ub_client)
             kb = build_task_detail_kb(task, uid)
@@ -2423,10 +2697,10 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
             if not ok:
                 logger.error(f"Batch Range Run UI Error: failed to edit UI for Task #{tid}")
             return
-
-        cur_start = int(task.get("start_id", 1))
-        cur_end = int(task.get("end_id", 1))
-
+            
+        cur_start = task.get("start_id", 1)
+        cur_end = task.get("end_id", 1)
+        
         if is_adjustment and op in ("inc", "dec"):
             try:
                 val = int(parts[4])
@@ -2441,7 +2715,7 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
                 logger.error(f"Batch Range Adjust Error: {e}")
 
         btn_style = get_user_button_style(uid)
-
+        
         # Build UI
         header = (
             f"<blockquote expandable>"
@@ -2454,10 +2728,10 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
             f"<i>Tips: Klik tombol di bawah untuk menambah/mengurangi nilai.</i>"
             f"</blockquote>"
         )
-
+        
         steps = [1, 5, 10, 50, 100, 500, 1000, 5000]
         rows = []
-
+        
         # Start ID row
         rows.append([InlineKeyboardButton(f"━━ START ID: {cur_start} ━━", callback_data="noop", style=btn_style)])
         for i in range(0, len(steps), 2):
@@ -2468,7 +2742,7 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
                 InlineKeyboardButton(f"+{s1}", callback_data=f"fwd_br_start_inc_{s1}_{tid}_{uid}", style=btn_style),
                 InlineKeyboardButton(f"+{s2}", callback_data=f"fwd_br_start_inc_{s2}_{tid}_{uid}", style=btn_style),
             ])
-
+            
         # End ID row
         rows.append([InlineKeyboardButton(f"━━ END ID: {cur_end} ━━", callback_data="noop", style=btn_style)])
         for i in range(0, len(steps), 2):
@@ -2479,17 +2753,17 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
                 InlineKeyboardButton(f"+{s1}", callback_data=f"fwd_br_end_inc_{s1}_{tid}_{uid}", style=btn_style),
                 InlineKeyboardButton(f"+{s2}", callback_data=f"fwd_br_end_inc_{s2}_{tid}_{uid}", style=btn_style),
             ])
-
+            
         rows.append([InlineKeyboardButton("🚀 EXECUTE BATCH", callback_data=f"fwd_br_run_{tid}_{uid}", style=btn_style)])
         rows.append([InlineKeyboardButton("🔙 Back", callback_data=f"fwd_detail_{tid}_{uid}", style=btn_style)])
-
+        
         kb = InlineKeyboardMarkup(rows)
         ok = await safe_edit_cb_text(cb, header, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
         if not ok:
             logger.error("Batch Range Menu UI Error: failed to edit UI")
             await safe_cb_answer(cb, "❌ Gagal membuka menu Batch Range.", show_alert=True)
         return
-    
+
     # ── TOGGLE BYPASS ──
     if action == "bypass":
         tid = int(parts[2]) if len(parts) > 2 else 0
@@ -2506,10 +2780,7 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
         
         text = await build_task_detail_text(task, client=ub_client)
         kb = build_task_detail_kb(task, uid)
-        try:
-            await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
-        except Exception:
-            pass
+        await safe_edit_cb_text(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
         return
     
     # ── TOGGLE MODE ──
@@ -2527,8 +2798,8 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
         if task["is_active"]:
             _unregister_live_listener(tid)
             if new_mode == "live" and ub_client:
-                from Main.plugins.userbot.xtaskmanager import generate_task_id
-                reg_tid = generate_task_id("FPL")
+                # Use predictable ID: #FPL{tid}
+                reg_tid = f"#FPL{tid}"
                 asyncio.create_task(_register_live_listener(ub_client, task, uid, reg_tid=reg_tid))
         
         mode_icon = "📡 Live" if new_mode == "live" else "📦 Batch"
@@ -2536,10 +2807,7 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
         
         text = await build_task_detail_text(task, client=ub_client)
         kb = build_task_detail_kb(task, uid)
-        try:
-            await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
-        except Exception:
-            pass
+        await safe_edit_cb_text(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
         return
     
     # ── DELETE CONFIRMATION ──
@@ -2552,14 +2820,13 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
                 InlineKeyboardButton("❌ No", callback_data=f"fwd_detail_{tid}_{uid}", style=btn_style)
             ]
         ])
-        try:
-            await cb.edit_message_text(
-                f"⚠️ <b>Are you sure you want to delete Task #{tid}?</b>\n\n"
-                f"This action cannot be undone.",
-                reply_markup=kb, parse_mode=enums.ParseMode.HTML
-            )
-        except Exception:
-            pass
+        await safe_edit_cb_text(
+            cb,
+            f"⚠️ <b>Are you sure you want to delete Task #{tid}?</b>\n\n"
+            f"This action cannot be undone.",
+            reply_markup=kb,
+            parse_mode=enums.ParseMode.HTML,
+        )
         return
     
     # ── DELETE YES ──
@@ -2579,10 +2846,7 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
         tasks = await get_tasks(uid)
         text = await build_task_list_text(uid, client=ub_client)
         kb = build_task_list_kb(uid, tasks)
-        try:
-            await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
-        except Exception:
-            pass
+        await safe_edit_cb_text(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
         return
     
     # ── WM / TR TOGGLE ──
@@ -2603,10 +2867,7 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
         
         text = await build_task_detail_text(task, client=ub_client)
         kb = build_task_detail_kb(task, uid)
-        try:
-            await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
-        except Exception:
-            pass
+        await safe_edit_cb_text(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
         return
 
     # ── TR LANGUAGE MENU (TASK / GLOBAL) ──
@@ -2637,7 +2898,7 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
         back_cbd = f"fwd_gadvopts_{uid}" if is_global else f"fwd_advopts_{tid}_{uid}"
         rows.append([InlineKeyboardButton("🔙 Back", callback_data=back_cbd, style=btn_style)])
         
-        await cb.edit_message_text(text, reply_markup=InlineKeyboardMarkup(rows), parse_mode=enums.ParseMode.HTML)
+        await safe_edit_cb_text(cb, text, reply_markup=InlineKeyboardMarkup(rows), parse_mode=enums.ParseMode.HTML)
         return
 
     # ── TR LANGUAGE SET (TASK / GLOBAL) ──
@@ -2662,7 +2923,7 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
             )
             kb = build_global_adv_opts_kb(gs, uid)
             kb.inline_keyboard.insert(-2, [InlineKeyboardButton("🌐 Set Global TR Lang", callback_data=f"fwd_gtrlang_{uid}", style=get_user_button_style(uid))])
-            await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+            await safe_edit_cb_text(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
         else:
             tid = int(parts[2])
             code = parts[3]
@@ -2672,11 +2933,12 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
             task = await get_task(tid)
             text = await build_advanced_options_text(task)
             kb = build_advanced_options_kb(task, uid)
-            await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+            await safe_edit_cb_text(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
         return
 
     # ── HELP PAGE ──
     if action == "help":
+        await safe_cb_ack(cb)
         # fwd_help_{page}_{uid}
         page = int(parts[2]) if len(parts) > 2 else 0
         text = build_info_text(page)
@@ -2690,23 +2952,18 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
             [InlineKeyboardButton("📋 Show CMD", callback_data=f"fwd_showcmd_{uid}", style=btn_style)],
             [InlineKeyboardButton("🔙 Back", callback_data=f"fwd_back_{uid}", style=btn_style)]
         ])
-        try:
-            await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
-        except Exception:
-            pass
+        await safe_edit_cb_text(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
         return
 
     # ── SHOW CMD ──
     if action == "showcmd":
+        await safe_cb_ack(cb)
         text = build_showcmd_text()
         btn_style = get_user_button_style(uid)
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("🔙 Back", callback_data=f"fwd_help_0_{uid}", style=btn_style)]
         ])
-        try:
-            await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
-        except Exception:
-            pass
+        await safe_edit_cb_text(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
         return
 
     # ── ADS SET KEYWORDS ──
@@ -2734,13 +2991,7 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("🔙 Cancel", callback_data=f"fwd_detail_{tid}_{uid}", style=btn_style)]
         ])
-        try:
-            if is_inline:
-                await Altruix.bot.edit_inline_text(inline_message_id=inl_id, text=text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
-            else:
-                await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
-        except Exception:
-            pass
+        await safe_edit_cb_text(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
         return
 
     # ── WM SET TEXT ──
@@ -2768,13 +3019,7 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("🔙 Cancel", callback_data=f"fwd_detail_{tid}_{uid}", style=btn_style)]
         ])
-        try:
-            if is_inline:
-                await Altruix.bot.edit_inline_text(inline_message_id=inl_id, text=text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
-            else:
-                await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
-        except Exception:
-            pass
+        await safe_edit_cb_text(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
         return
     
     # ── ADVANCED OPTIONS MENU ──
@@ -2786,10 +3031,7 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
         
         text = await build_advanced_options_text(task)
         kb = build_advanced_options_kb(task, uid)
-        try:
-            await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
-        except Exception:
-            pass
+        await safe_edit_cb_text(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
         return
 
     # ── ADVANCED TOGGLES (Links/Users/Ads) ──
@@ -2799,7 +3041,7 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
         field = "_".join(parts[3:-1])
         task = await get_task(tid)
         
-        valid_fields = ("clean_links", "clean_usernames", "is_ads_filter", "use_regex_pro", "forward_as_copy", "bypass_protected")
+        valid_fields = ("clean_links", "clean_usernames", "is_ads_filter", "use_regex_pro", "forward_as_copy", "bypass_protected", "forward_as_album")
         if not task or task["user_id"] != uid or field not in valid_fields:
             return await safe_cb_answer(cb, "❌ Invalid action.", show_alert=True)
         
@@ -2812,10 +3054,7 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
         # Refresh view
         text = await build_advanced_options_text(task)
         kb = build_advanced_options_kb(task, uid)
-        try:
-            await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
-        except Exception:
-            pass
+        await safe_edit_cb_text(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
         return
 
     # ── BATCH ORDER TOGGLE (TASK) ──
@@ -2833,7 +3072,7 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
         await safe_cb_answer(cb, f"🔀 Order: {new_val.title()}", show_alert=False)
         text = await build_advanced_options_text(task)
         kb = build_advanced_options_kb(task, uid)
-        await cb.edit_message_text(text, reply_markup=kb)
+        await safe_edit_cb_text(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
         return
 
     # ── MEDIA FILTER TOGGLE (TASK) ──
@@ -2867,10 +3106,7 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
             "</blockquote>"
         )
         kb = build_filter_kb(task, uid)
-        try:
-            await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
-        except:
-            pass
+        await safe_edit_cb_text(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
         return
 
     # ── MEDIA FILTER MENU (TASK) ──
@@ -2891,7 +3127,7 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
             "</blockquote>"
         )
         kb = build_filter_kb(task, uid)
-        await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
+        await safe_edit_cb_text(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
         return
 
     # ── BATCH DELAY ADJUST ──
@@ -2914,10 +3150,7 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
         
         text = await build_advanced_options_text(task)
         kb = build_advanced_options_kb(task, uid)
-        try:
-            await cb.edit_message_text(text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
-        except Exception:
-            pass
+        await safe_edit_cb_text(cb, text, reply_markup=kb, parse_mode=enums.ParseMode.HTML)
         await safe_cb_answer(cb, f"⏱ Batch Delay: {delay}s", show_alert=False)
         return
 
@@ -2929,29 +3162,29 @@ async def fwd_callback_handler(client: Client, cb: CallbackQuery):
             tid = int(parts[2])
             cb_user_id = int(parts[-1])
         except:
-            await cb.answer("Invalid callback format.", show_alert=True)
+            await safe_cb_answer(cb, "Invalid callback format.", show_alert=True)
             return
 
-        # Ensure user authorization
-        if client.me.id != cb_user_id and cb.from_user.id != cb_user_id and cb.from_user.id not in SUDO_USERS and cb.from_user.id != OWNER_ID:
-            await cb.answer("Not authorized to control this task.", show_alert=True)
-            return
+        if cb.from_user.id != cb_user_id:
+            is_sudo = await Altruix.is_sudo(cb.from_user.id)
+            if not is_sudo:
+                await safe_cb_answer(cb, "Not authorized to control this task.", show_alert=True)
+                return
 
-        if tid not in FWD_BATCH_CONTROL and action != "bstop":
-            await cb.answer("Task not found or already finished.", show_alert=True)
+        if tid not in FWD_BATCH_CONTROL:
+            await safe_cb_answer(cb, "Task not found or already finished.", show_alert=True)
             return
         
         if action == "bpause":
             FWD_BATCH_CONTROL[tid] = "paused"
-            await cb.answer("Task paused.")
+            await safe_cb_answer(cb, "Task paused.", show_alert=False)
         elif action == "bresume":
             FWD_BATCH_CONTROL[tid] = "running"
-            await cb.answer("Task resumed.")
+            await safe_cb_answer(cb, "Task resumed.", show_alert=False)
         elif action == "bstop":
             FWD_BATCH_CONTROL[tid] = "stopped"
-            await cb.answer("Task stopped.")
+            await safe_cb_answer(cb, "Task stopped.", show_alert=False)
             
-    # Confirm Bypass Forward_alert=False)
         return
 
     # ── CHAT INFO (LOGS) ──
@@ -3014,7 +3247,8 @@ async def start_batch_fwd(client: Client, user_id: int, task_id: int, start_id: 
 
         # Use task-specific delay or global default
         gs = await get_global_settings(user_id)
-        base_delay = task.get("batch_delay") if task.get("batch_delay") is not None else gs.get("default_delay", 1.5)
+        base_delay = _normalize_delay(task.get("batch_delay"), gs.get("default_delay", 1.5))
+        effective_delay = base_delay
 
         stats = {"success": 0, "failed": 0, "skipped": 0, "total": 0}
         
@@ -3086,11 +3320,11 @@ async def start_batch_fwd(client: Client, user_id: int, task_id: int, start_id: 
             f"<blockquote expandable>"
             f"📦 <b>Batch Started — Task #{task_id}</b>\n"
             f"{'━' * 18}\n"
-            f"📥 Source: <code>{source_id}</code>\n"
+            f"•  Source: <code>{source_id}</code>\n"
             f"    ├ Chat: <b>{_src_title}</b>\n"
-            f"📤 Target: <code>{target_id}</code>\n"
+            f"•  Target: <code>{target_id}</code>\n"
             f"    ├ Chat: <b>{_tgt_title}</b>\n"
-            f"📊 Range: <a href='{start_msg_link}'>{start_id}</a> to <a href='{end_msg_link}'>{end_id}</a>\n"
+            f"•  Range: <a href='{start_msg_link}'>{start_id}</a> to <a href='{end_msg_link}'>{end_id}</a>\n"
             f"{'━' * 18}"
             f"</blockquote>",
             client=client,
@@ -3099,6 +3333,7 @@ async def start_batch_fwd(client: Client, user_id: int, task_id: int, start_id: 
         )
 
         # ── Live Log State ──
+        start_time = time.time()
         log_entries = []       # List of (icon, mid, m_type, reason_short)
         live_log_msg = None    # Current editable log message
         log_part = 1           # Current part number
@@ -3127,15 +3362,26 @@ async def start_batch_fwd(client: Client, user_id: int, task_id: int, start_id: 
                 short_reason = (ereason[:25] + "…") if len(ereason) > 26 else ereason
                 lines += f"{icon} <a href='{_link}'>{eid}</a> │ {etype or '?'} │ <code>{short_reason}</code>\n"
             
-            status_line = "🔄 <i>Processing...</i>" if ctrl_active else "🏁 <i>Completed</i>"
+            elapsed = int(time.time() - start_time)
+            hours, rem = divmod(elapsed, 3600)
+            minutes, seconds = divmod(rem, 60)
+            time_str = f"{hours:02}:{minutes:02}:{seconds:02}"
+            
+            status_line = f"🔄 <i>Processing...</i> | Time: <b>{time_str}</b>" if ctrl_active else f"🏁 <i>Completed</i> | Time: <b>{time_str}</b>"
             footer = f"{'━' * 18}\n{status_line}</blockquote>"
             
             return header + lines + footer
 
         for mid in msg_ids:
             # Check control state
-            while FWD_BATCH_CONTROL.get(task_id) == "paused":
-                await asyncio.sleep(2)
+            while True:
+                state = FWD_BATCH_CONTROL.get(task_id)
+                if state == "paused":
+                    await asyncio.sleep(0.5)
+                    continue
+                if state == "stopped":
+                    break
+                break
             
             if FWD_BATCH_CONTROL.get(task_id) == "stopped":
                 break
@@ -3145,6 +3391,7 @@ async def start_batch_fwd(client: Client, user_id: int, task_id: int, start_id: 
             if not task: break
             bypass = bool(task.get("bypass_protected", False))
             filters = await _safe_json_loads(task.get("filters"))
+            effective_delay = _normalize_delay(task.get("batch_delay"), gs.get("default_delay", 1.5))
 
             m_type = None  # Reset per iteration
 
@@ -3205,12 +3452,32 @@ async def start_batch_fwd(client: Client, user_id: int, task_id: int, start_id: 
                     stats["failed"] += 1
                     log_entries.append(("❌", mid, "?", f"Retry: {str(retry_err)[:20]}"))
             except Exception as e:
-                logger.error(f"[ForwardPro] Batch task #{task_id} msg {mid} err: {e}")
+                logger.exception(f"[ForwardPro] Batch task #{task_id} msg {mid} err: {e}")
                 stats["failed"] += 1
                 log_entries.append(("❌", mid, "?", str(e)[:25]))
 
             # ── Update Live Log ──
             processed += 1
+            
+            # ⏳ Batch Cooldown Logic
+            b_size = int(task.get("batch_msg", gs.get("default_batch_msg", 30)) or 30)
+            b_delay = _normalize_delay(task.get("batch_msg_delay", gs.get("default_batch_msg_delay", 0.0)), 0.0)
+
+            if b_size > 0 and processed % b_size == 0 and processed < stats["total"]:
+                if b_delay > 0:
+                    # Notify cooldown
+                    cd_msg = await send_log(
+                        f"⏳ <b>Batch Cooldown — Task #{task_id}</b>\n"
+                        f"Processed: <b>{processed}/{stats['total']}</b>\n"
+                        f"Waiting <b>{b_delay}s</b> before next batch...",
+                        client=client, user_id=user_id
+                    )
+                    await asyncio.sleep(b_delay)
+                    try:
+                        await cd_msg.delete()
+                    except:
+                        pass
+
             if processed % UPDATE_EVERY == 0 or processed >= stats["total"]:
                 log_text = _build_live_log_text(log_entries, log_part, stats, stats["total"])
                 
@@ -3233,8 +3500,7 @@ async def start_batch_fwd(client: Client, user_id: int, task_id: int, start_id: 
                 else:
                     live_log_msg = await send_log(log_text, client=client, reply_markup=ctrl_kb, user_id=user_id)
 
-            # Batch Delay: user-configured delay + small jitter to avoid flood
-            await asyncio.sleep(base_delay + random.uniform(0.5, 1.5))
+            await asyncio.sleep(max(0.0, effective_delay))
 
         # ── Final update of live log ──
         if log_entries and live_log_msg:
@@ -3269,21 +3535,28 @@ async def start_batch_fwd(client: Client, user_id: int, task_id: int, start_id: 
 
     # End summary
     status_icon = "🏁" if stats["success"] + stats["skipped"] + stats["failed"] >= stats["total"] else "⏹"
+    
+    total_elapsed = int(time.time() - start_time)
+    h, r = divmod(total_elapsed, 3600)
+    m, s = divmod(r, 60)
+    total_time_str = f"{h:02}:{m:02}:{s:02}"
+
     summary = (
         f"<blockquote expandable>"
         f"{status_icon} <b>Batch {'Completed' if status_icon == '🏁' else 'Stopped'} — Task #{task_id}</b>\n"
         f"{'━' * 18}\n"
-        f"📥 Source: <code>{source_id}</code>\n"
+        f"•  Source: <code>{source_id}</code>\n"
         f"    ├ Chat: <b>{source_title}</b>\n"
-        f"📤 Target: <code>{target_id}</code>\n"
+        f"•  Target: <code>{target_id}</code>\n"
         f"    ├ Chat: <b>{target_title}</b>\n"
-        f"📊 Range: <a href='{_start_link}'>{start_id}</a> to <a href='{_end_link}'>{end_id}</a>\n"
-        f"🏷 msg: <code>{media_str}</code>\n"
-        f"⏱ delay permsg: <b>{base_delay}s</b>\n"
+        f"•  Range: <a href='{_start_link}'>{start_id}</a> to <a href='{_end_link}'>{end_id}</a>\n"
+        f"•  msg: <code>{media_str}</code>\n"
+        f"•  delay permsg: <b>{effective_delay}s</b>\n"
         f"✅ Success: <b>{stats['success']}</b>\n"
         f"❌ Failed: <b>{stats['failed']}</b>\n"
         f"⏭️ Skipped: <b>{stats['skipped']}</b>\n"
         f"📊 Total: <b>{stats['total']}</b>\n"
+        f"⏱️ Time: <b>{total_time_str}</b>\n"
         f"{'━' * 18}"
         f"</blockquote>"
     )
@@ -3299,8 +3572,10 @@ async def _register_live_listener(client: Client, task: dict, user_id: int, reg_
     
     if reg_tid:
         from Main.plugins.userbot.xtaskmanager import register_task
-        # Note: This is an event listener, not a polling task, but we record it for visibility.
-        register_task(reg_tid, asyncio.current_task(), "Forward Pro Live", "xforward_pro", user_id, f"Task #{tid}: {source_id} -> {task['target_id']}")
+        # Note: This is an event listener, not a polling task. 
+        # Pass None as the task object so it stays in .tasklist as "Running" 
+        # and doesn't get cleaned up as a finished task by xtaskmanager.
+        register_task(reg_tid, None, "Forward Pro Live", "xforward_pro", user_id, f"Task #{tid}: {source_id} -> {task['target_id']}")
     
     async def _live_forwarder(c: Client, msg: RawMessage):
         """Handle incoming messages from source chat and forward via central logic."""
@@ -3315,7 +3590,7 @@ async def _register_live_listener(client: Client, task: dict, user_id: int, reg_
         
         # Apply delay (Custom task delay or Global default)
         gs = await get_global_settings(user_id)
-        delay = current_task.get("batch_delay") if current_task.get("batch_delay") is not None else gs.get("default_delay", 1.5)
+        delay = _normalize_delay(current_task.get("batch_delay"), gs.get("default_delay", 1.5))
         
         if delay > 0:
             await asyncio.sleep(delay)
@@ -3374,7 +3649,12 @@ async def _register_live_listener(client: Client, task: dict, user_id: int, reg_
                 task_cfg=current_task
             )
         except Exception as e:
-            logger.error(f"[ForwardPro] Live forwarder #{tid} failed: {e}")
+            err_msg = f"❌ <b>Forward Pro:</b> Live forwarder error — Task #{tid}\nError: <code>{e}</code>"
+            logger.error(f"[ForwardPro] {err_msg}", exc_info=True)
+            if LOG_CHAT_ID:
+                try:
+                    await Altruix.bot.send_message(LOG_CHAT_ID, f"{err_msg}\n\n<pre>{traceback.format_exc()}</pre>")
+                except: pass
     
     # Create handler group to avoid conflicts
     handler_group = 100 + tid
@@ -3517,55 +3797,66 @@ def add_watermark_photo(file_path: str, text: str) -> str:
 
 def add_watermark_video(file_path: str, text: str) -> str:
     """Add text watermark to a video via PNG overlay (No ImageMagick needed)."""
+    video = None
+    overlay_path = None
+    out_path = None
     try:
         from moviepy.editor import VideoFileClip, ImageClip, CompositeVideoClip
         from PIL import Image, ImageDraw, ImageFont
-        
+
         video = VideoFileClip(file_path)
         vw, vh = video.size
-        
+
         # 1. Create a transparent PNG overlay with PIL
         overlay_img = Image.new('RGBA', (vw, vh), (0, 0, 0, 0))
         draw = ImageDraw.Draw(overlay_img)
         try:
-            font = ImageFont.truetype("arial.ttf", int(vh * 0.05)) # Scale with resolution
-        except:
+            font = ImageFont.truetype("arial.ttf", int(vh * 0.05))
+        except Exception:
             font = ImageFont.load_default()
-            
+
         # Draw text at bottom right with shadow for visibility
-        tw, th = draw.textsize(text, font=font) if hasattr(draw, 'textsize') else (200, 50)
-        pos = (vw - tw - 20, vh - th - 20)
-        draw.text((pos[0]+2, pos[1]+2), text, fill=(0,0,0,128), font=font) # Shadow
+        if hasattr(draw, 'textsize'):
+            tw, th = draw.textsize(text, font=font)
+        else:
+            tw, th = (200, 50)
+        pos = (max(10, vw - tw - 20), max(10, vh - th - 20))
+        draw.text((pos[0]+2, pos[1]+2), text, fill=(0, 0, 0, 128), font=font)
         draw.text(pos, text, fill=(255, 255, 255, 200), font=font)
-        
+
         overlay_path = file_path + ".overlay.png"
         overlay_img.save(overlay_path)
-        
+
         # 2. Use ImageClip to overlay
         txt_clip = ImageClip(overlay_path).set_duration(video.duration).set_position('center')
-        
+
         # 3. Composite and Write
         result = CompositeVideoClip([video, txt_clip])
         out_path = str(Path(file_path).with_suffix(f".wm{Path(file_path).suffix}"))
-        
+
         # Preset 'ultrafast' for bot speed
         result.write_videofile(out_path, codec='libx264', audio_codec='aac', logger=None, preset='ultrafast', threads=4)
-        
-        # Cleanup
-        video.close()
-        if os.path.exists(overlay_path): os.remove(overlay_path)
-        if os.path.exists(file_path): os.remove(file_path)
         return out_path
     except Exception as e:
-        logger.error(f"[ForwardPro] add_watermark_video err: {e}")
+        logger.error(f"[ForwardPro] add_watermark_video err: {e}\n{traceback.format_exc()}")
         return file_path
-        
-        video.close()
-        if os.path.exists(file_path): os.remove(file_path)
-        return out_path
-    except Exception as e:
-        logger.error(f"[ForwardPro] add_watermark_video err: {e}")
-        return file_path
+    finally:
+        try:
+            if video:
+                video.close()
+        except Exception:
+            pass
+        try:
+            if overlay_path and os.path.exists(overlay_path):
+                os.remove(overlay_path)
+        except Exception:
+            pass
+        try:
+            if out_path and os.path.exists(file_path):
+                # remove original only if we produced out_path
+                os.remove(file_path)
+        except Exception:
+            pass
 
 
 # ==================== STARTUP: RESTORE ACTIVE TASKS ====================
@@ -3574,61 +3865,90 @@ async def _restore_active_tasks():
     """On startup, re-register live listeners for all active tasks."""
     try:
         await auto_clear_temp()
-        await asyncio.sleep(5)  # Reduced from 20s to prevent 'stuck' feeling
+        
+        # Wait for clients to be ready (up to 30 seconds)
+        for _ in range(6):
+            if hasattr(Altruix, 'clients') and Altruix.clients:
+                break
+            await asyncio.sleep(5)
+        
         await init_db()
         
         if not hasattr(Altruix, 'clients') or not Altruix.clients:
-            logger.warning("[ForwardPro] No clients available for task restore")
+            logger.warning("[ForwardPro] No clients available for task restore after waiting.")
+            # We still proceed to register batch tasks as interrupted in xtaskmanager
+            # even if clients are missing, because batch tasks don't need persistent handlers.
+            
+        # Get all active tasks across all users from JSON data
+        all_active = [t for t in _FWD_DATA["tasks"] if t.get("is_active") == 1]
+        
+        if not all_active:
             return
         
-        # Get all active live tasks across all users
-        import aiosqlite
-        async with aiosqlite.connect(DB_PATH) as db:
-            db.row_factory = aiosqlite.Row
-            cursor = await db.execute(
-                "SELECT * FROM fwd_tasks WHERE is_active = 1 AND mode = 'live'"
-            )
-            tasks = [dict(r) for r in await cursor.fetchall()]
-        
-        if not tasks:
-            return
-        
-        logger.info(f"[ForwardPro] Restoring {len(tasks)} active task(s)...")
-        
-        for task in tasks:
-            uid = task["user_id"]
-            # Find matching client
-            ub_client = None
-            for cl in Altruix.clients:
+        live_tasks = [t for t in all_active if t["mode"] == "live"]
+        batch_tasks = [t for t in all_active if t["mode"] != "live"]
+
+        if live_tasks:
+            logger.info(f"[ForwardPro] Restoring {len(live_tasks)} active live task(s)...")
+            for task in live_tasks:
                 try:
-                    if cl.me and cl.me.id == uid:
-                        ub_client = cl
-                        break
-                except Exception:
-                    continue
-            
-            if not ub_client:
-                logger.warning(f"[ForwardPro] No client for uid {uid}, skipping task #{task['id']}")
-                continue
-            
-            from Main.plugins.userbot.xtaskmanager import generate_task_id
-            reg_tid = generate_task_id("FPL")
-            await _register_live_listener(ub_client, task, uid, reg_tid=reg_tid)
+                    uid = task["user_id"]
+                    clients = getattr(Altruix, "clients", [])
+                    ub_client = next((cl for cl in clients if cl.me and cl.me.id == uid), None)
+                    if not ub_client:
+                        logger.warning(f"[ForwardPro] No client found for user {uid}, skipping task #{task['id']}")
+                        continue
+                    
+                    # Use predictable ID: #FPL{db_id}
+                    reg_tid = f"#FPL{task['id']}"
+                    await _register_live_listener(ub_client, task, uid, reg_tid=reg_tid)
+                except Exception as e:
+                    err_msg = f"❌ <b>Forward Pro:</b> Failed to restore live task #{task.get('id')}\nError: <code>{e}</code>"
+                    logger.error(f"[ForwardPro] {err_msg}", exc_info=True)
+                    if LOG_CHAT_ID:
+                        try:
+                            await Altruix.bot.send_message(LOG_CHAT_ID, f"{err_msg}\n\n<pre>{traceback.format_exc()}</pre>")
+                        except: pass
+
+        if batch_tasks:
+            logger.info(f"[ForwardPro] Detecting {len(batch_tasks)} interrupted batch task(s)...")
+            from Main.plugins.userbot.xtaskmanager import register_task, update_task_info
+            for task in batch_tasks:
+                try:
+                    uid = task["user_id"]
+                    tid = task["id"]
+                    # Use predictable ID: #FPB{tid}
+                    reg_tid = f"#FPB{tid}"
+                    # Register as interrupted task in xtaskmanager
+                    register_task(reg_tid, None, "Forward Pro Batch", "xforward_pro", uid, f"Task #{tid}: {task['source_id']} -> {task['target_id']}")
+                    update_task_info(reg_tid, is_interrupted=True, details=f"⚠️ Interrupted (Restart) - Task #{tid}")
+                except Exception as e:
+                    err_msg = f"❌ <b>Forward Pro:</b> Failed to register interrupted task #{task.get('id')}\nError: <code>{e}</code>"
+                    logger.error(f"[ForwardPro] {err_msg}", exc_info=True)
+                    if LOG_CHAT_ID:
+                        try:
+                            await Altruix.bot.send_message(LOG_CHAT_ID, f"{err_msg}\n\n<pre>{traceback.format_exc()}</pre>")
+                        except: pass
         
-        logger.info(f"[ForwardPro] Task restoration complete")
+        logger.info(f"[ForwardPro] Task restoration complete. (Live: {len(live_tasks)}, Batch: {len(batch_tasks)})")
         
-        if LOG_CHAT_ID:
+        if LOG_CHAT_ID and all_active:
             bot = Altruix.bot
             if bot:
                 try:
                     await bot.send_message(
                         LOG_CHAT_ID,
-                        f"🔄 <b>Forward Pro:</b> Restored {len(tasks)} active task(s)"
+                        f"🔄 <b>Forward Pro:</b> Restored {len(all_active)} active task(s)"
                     )
                 except Exception:
                     pass
     except Exception as e:
-        logger.error(f"[ForwardPro] _restore_active_tasks failed: {e}")
+        err_msg = f"🚨 <b>Forward Pro:</b> Critical error in _restore_active_tasks\nError: <code>{e}</code>"
+        logger.error(f"[ForwardPro] {err_msg}", exc_info=True)
+        if LOG_CHAT_ID:
+            try:
+                await Altruix.bot.send_message(LOG_CHAT_ID, f"{err_msg}\n\n<pre>{traceback.format_exc()}</pre>")
+            except: pass
 
 
 async def auto_clear_temp():
@@ -3659,5 +3979,154 @@ def _schedule_restore():
         logger.error(f"[ForwardPro] _schedule_restore failed: {e}")
 
 
+def _sync_custom_bot_handlers():
+    try:
+        if not hasattr(Altruix, "bot_manager") or not getattr(Altruix.bot_manager, "custom_bots", None):
+            logger.debug("[ForwardPro] No custom bots to sync handlers to (yet)")
+        from pyrogram.handlers import CallbackQueryHandler, InlineQueryHandler
+        bots = list(getattr(Altruix.bot_manager, 'custom_bots', {}).values()) if hasattr(Altruix, 'bot_manager') else []
+        # Also include main assistant bot to ensure handlers exist there too
+        if hasattr(Altruix, 'bot') and Altruix.bot:
+            bots.append(Altruix.bot)
+        if not bots:
+            logger.debug("[ForwardPro] No bots available to sync handlers to")
+            return
+        logger.debug(f"[ForwardPro] Syncing handlers to {len(bots)} bot(s)")
+        for bot in bots:
+            try:
+                has_cb = False
+                has_iq = False
+                if hasattr(bot, "dispatcher") and hasattr(bot.dispatcher, "groups"):
+                    for handlers in bot.dispatcher.groups.values():
+                        for h in handlers:
+                            try:
+                                cb_func = getattr(h, "callback", None)
+                                # Unwrap decorated callbacks to compare original function
+                                orig = None
+                                try:
+                                    orig = inspect.unwrap(cb_func) if cb_func else None
+                                except Exception:
+                                    orig = getattr(cb_func, '__wrapped__', None) if cb_func else None
+
+                                if cb_func is fwd_callback_handler or orig is fwd_callback_handler:
+                                    has_cb = True
+                                if cb_func is fwd_inline_handler or orig is fwd_inline_handler:
+                                    has_iq = True
+                                # Fallback: detect by handler filters or callback name when wrappers present
+                                try:
+                                    h_filters = getattr(h, 'filters', None)
+                                    f_repr = repr(h_filters) if h_filters is not None else ''
+                                    if 'fwd_menu_uid' in f_repr or 'fwd_menu_uid' in str(h_filters):
+                                        has_iq = True
+                                    if 'fwd_' in f_repr:
+                                        has_cb = True
+                                except Exception:
+                                    pass
+                                try:
+                                    cb_name = getattr(orig, '__name__', None) or getattr(cb_func, '__name__', None)
+                                    if cb_name and ('fwd_callback_handler' in str(cb_name) or 'fwd_inline_handler' in str(cb_name)):
+                                        if 'callback' in str(cb_name) or 'fwd_callback' in str(cb_name):
+                                            has_cb = True
+                                        if 'inline' in str(cb_name) or 'fwd_inline' in str(cb_name):
+                                            has_iq = True
+                                except Exception:
+                                    pass
+                            except Exception:
+                                continue
+                            if has_cb and has_iq:
+                                break
+                        if has_cb and has_iq:
+                            break
+
+                if not has_cb:
+                    try:
+                        bot.add_handler(CallbackQueryHandler(fwd_callback_handler, filters=filters.regex(r"^fwd_(.+)$")), group=0)
+                        logger.debug(f"[ForwardPro] Added CallbackQueryHandler to bot {getattr(bot, 'username', None)}")
+                    except Exception as e:
+                        logger.error(f"[ForwardPro] Failed to add CallbackQueryHandler to bot {getattr(bot,'username',None)}: {e}")
+                if not has_iq:
+                    try:
+                        bot.add_handler(InlineQueryHandler(fwd_inline_handler, filters=filters.regex(r"^fwd_menu_uid_(?P<uid>\d+)$")), group=0)
+                        logger.debug(f"[ForwardPro] Added InlineQueryHandler to bot {getattr(bot, 'username', None)}")
+                    except Exception as e:
+                        logger.error(f"[ForwardPro] Failed to add InlineQueryHandler to bot {getattr(bot,'username',None)}: {e}")
+                # Dump registered handlers for this bot for debugging purposes
+                try:
+                    _log_registered_handlers(bot)
+                except Exception:
+                    logger.debug(f"[ForwardPro] _sync_custom_bot_handlers: failed to dump handlers for bot {getattr(bot,'username',None)}")
+            except Exception as e:
+                logger.error(f"[ForwardPro] Failed to sync handlers to custom bot: {e}\n{traceback.format_exc()}")
+    except Exception as e:
+        logger.error(f"[ForwardPro] _sync_custom_bot_handlers failed: {e}\n{traceback.format_exc()}")
+
+
 # Auto-restore on plugin load
+_sync_custom_bot_handlers()
 _schedule_restore()
+def _schedule_delayed_sync(delay_seconds: int = 5):
+    """Schedule a delayed sync of handlers to custom bots.
+
+    Some custom bots start after plugins load; schedule a retry to ensure
+    handlers are registered once those bots are available.
+    """
+    async def _delayed():
+        try:
+            await asyncio.sleep(delay_seconds)
+            logger.debug(f"[ForwardPro] Running delayed handler sync after {delay_seconds}s")
+            _sync_custom_bot_handlers()
+            # Also dump registered handlers for main bot and any available clients
+            try:
+                if hasattr(Altruix, 'bot') and Altruix.bot:
+                    _log_registered_handlers(Altruix.bot)
+            except Exception:
+                logger.debug(f"[ForwardPro] Failed to dump main bot handlers:\n{traceback.format_exc()}")
+            try:
+                if hasattr(Altruix, 'clients') and Altruix.clients:
+                    for cl in Altruix.clients:
+                        try:
+                            _log_registered_handlers(cl)
+                        except Exception:
+                            logger.debug(f"[ForwardPro] Failed to dump handlers for client {getattr(cl, 'me', None)}")
+            except Exception:
+                logger.debug(f"[ForwardPro] Failed to iterate clients for handler dump:\n{traceback.format_exc()}")
+        except Exception:
+            logger.error(f"[ForwardPro] _delayed sync failed:\n{traceback.format_exc()}")
+
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.create_task(_delayed())
+        else:
+            loop.call_soon(lambda: asyncio.create_task(_delayed()))
+    except Exception:
+        logger.error(f"[ForwardPro] _schedule_delayed_sync failed:\n{traceback.format_exc()}")
+
+
+# Run delayed sync to catch late-starting custom bots
+_schedule_delayed_sync(5)
+_schedule_delayed_sync(15)
+_schedule_delayed_sync(60)
+
+
+def _schedule_init_db(delay_seconds: int = 1):
+    """Schedule init_db shortly after plugin load to pre-warm DB and perform any migrations."""
+    async def _delayed():
+        try:
+            await asyncio.sleep(delay_seconds)
+            logger.debug(f"[ForwardPro] Running scheduled init_db after {delay_seconds}s")
+            await init_db()
+        except Exception:
+            logger.error(f"[ForwardPro] init_db scheduled task failed:\n{traceback.format_exc()}")
+
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.create_task(_delayed())
+        else:
+            loop.call_soon(lambda: asyncio.create_task(_delayed()))
+    except Exception:
+        logger.error(f"[ForwardPro] _schedule_init_db failed:\n{traceback.format_exc()}")
+
+
+_schedule_init_db(1)
