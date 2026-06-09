@@ -3,6 +3,71 @@
 All notable changes to the **Altroid-X** project from version **0.0.10.0959H** to the latest.
 Latest updates are always added at the top (newest → oldest).
 
+## [1.0.281] - 2026-06-09
+
+### 👥 CreateGroup: Log Configs Active Indicator
+- **Added: Compact active log indicator on main dashboard**:
+  - Dashboard `Log Configs` button now shows active count, e.g. `Log Configs: 2/6`, reflecting how many log-related settings are set to a non-`off` value.
+  - Settings considered: `start_log_mode`, `start_photo_log_mode`, `progress_log_mode`, `panel_log_mode`, `interrupted_log`, `delay_log_mode`.
+
+- **UI / UX**:
+  - Indicator provides quicker visibility into logging verbosity without opening the submenu.
+  - `Log Configs` submenu and per-setting toggles remain unchanged.
+
+- **Implementation Notes**:
+  - Uses existing per-user config storage and `save_user_cg_config` for persistence.
+  - Includes safe UI edits and try/except logging to avoid `MessageNotModified` and callback race issues.
+
+- **Fixed: Whitelist membership probe now handles `ParticipantIdInvalid` properly**:
+  - When `get_chat_member()` or raw `channels.GetParticipant` returns `ParticipantIdInvalid`, the check now treats the user as not present in that group and continues probing other whitelisted groups.
+  - This prevents repeated retry logs and avoids failing the overall whitelist authorization flow for users who have left or been removed from the group.
+
+- **Files changed**: [Main/core/client.py](Main/core/client.py#L940-L956)
+
+- **Notes**:
+  - Non-breaking UI enhancement; no files or existing features removed.
+  
+---
+
+## [1.0.282] - 2026-06-09
+
+### 👥 CreateGroup: Auto-Start Chunking & Signature Fix
+- **Fixed: Plugin import SyntaxError (duplicate argument)**:
+  - Normalized the `creategroup_loop` function signature to remove duplicated `auto_start` definitions and removed references to runtime `params` at definition time. This resolves the plugin import failure caused by a duplicate argument.
+
+- **Added: Runtime Auto-Start Chunking**:
+  - When `auto_start` is enabled, selected sessions are split into chunks of size `auto_start_count`. Each chunk starts its sessions concurrently and the system waits for chunk completion (or until an `auto_start_timeout` elapses) before proceeding to the next chunk.
+  - Default timeout is configurable (`auto_start_timeout`, default 300s). On timeout the chunker logs a warning and proceeds to the next chunk.
+  - Fallback to legacy staggered per-account start remains when `auto_start` is disabled.
+
+- **Implementation notes**:
+  - Safe try/except logging was added around chunk startup and control-message creation to avoid task crashes and to notify the user on failures.
+  - The change preserves existing per-user config persistence and passes `auto_start` / `auto_start_count` through existing call sites.
+
+- **Files changed**: [Main/plugins/userbot/xcreategroup.py](Main/plugins/userbot/xcreategroup.py#L1444-L1489), [Main/internals/settings_handlers/creategroup_handlers.py](Main/internals/settings_handlers/creategroup_handlers.py#L270-L300)
+
+---
+
+## [1.0.280] - 2026-06-09
+
+### 👥 CreateGroup: Tracker Log Selector & Auto Start
+- **Added: Per-task Tracker Log selector on initial progress message**:
+  - Initial progress message (`📊 Memulai Tracker Progress...`) now includes inline buttons to choose where start/update logs are sent per task: `Tracker Log: Both / Group Log / PM Bot / Off`.
+  - Selection is persisted to the task params and reflected in the UI; permission checks and debounce guards applied to callbacks.
+
+- **Added: Auto Start option in main dashboard**:
+  - New dashboard buttons: `Auto Start: On/Off` and `Auto Start Count: <n>` (configurable count similar to `Batch Account`).
+  - Values persist to per-user config (`xcreategroup_user_configs.json`) and are passed into `creategroup_loop` call sites.
+
+- **Improved: UI wording and safety**:
+  - Renamed `Start Log` labels to `Tracker Log` across settings UI and callbacks for clarity.
+  - Added try/except logging and safe edit wrappers to reduce `MessageNotModified` and callback race issues.
+
+- **Notes**:
+  - Runtime auto-start behavior (starting tasks automatically per N accounts) is wired into configs and call sites; execution semantics will be implemented and validated in a follow-up patch.
+  
+---
+
 ## [1.0.279] - 2026-06-08
 
 ### 📡 xforward_pro: Skip Delay When Message Missing
@@ -15,6 +80,7 @@ Latest updates are always added at the top (newest → oldest).
 ### Notes
 - Logic is safe by default and includes try/except fallbacks; no features or files removed.
 
+---
 
 ## [1.0.277] - 2026-06-07
 ### 📡 xforward_pro: Album Forwarding & Defaults
@@ -77,6 +143,8 @@ Latest updates are always added at the top (newest → oldest).
 - **Improved: Task Manager Integration**:
   - Updated `xtaskmanager` to support dual-database scanning (JSON & SQLite) for Forward Pro tasks.
   - Integrated Forward Pro into the global `handle_restore_action`, allowing manual restoration via the "♻️ Restore" button in the Task Manager dashboard.
+  
+---
 
 ### 🐞 xforward_pro: Compatibility, Robust Save, and Debug Improvements
 - **Fixed: Inline button compatibility**:
@@ -93,6 +161,7 @@ Latest updates are always added at the top (newest → oldest).
   - Ensured `.fwd glog` stores `log_channel` key consistently with `get_global_settings` and `send_log` usage.
 - **Notes**: No existing features or files were removed; these are stability, compatibility and observability improvements to make debugging and restores reliable.
 
+---
 
 ### 👥 CreateGroup: Album Grouping untuk Msg Img & Msg Vid
 - **Added: Album Mode Toggles (Per Type)**:
@@ -173,6 +242,8 @@ Latest updates are always added at the top (newest → oldest).
   - Applied the fix to all reporting and UI dashboard handlers to prevent UI freezes during rapid updates.
 - **Fixed: Inconsistent Session Speed Investigation**:
   - Confirmed that speed variations are primarily due to server-side `FloodWait` or network conditions, as task initialization and delays are correctly synchronized.
+
+---
 
 ## [1.0.270] - 2026-06-03
 

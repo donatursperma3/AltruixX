@@ -431,6 +431,7 @@ async def get_inline_bot_results_for_client(client: Any, query: str):
         raise
 
 
+
 async def download_ytcut_thumbnail(url: str, dest: str) -> None:
     if not url:
         return
@@ -445,6 +446,18 @@ async def download_ytcut_thumbnail(url: str, dest: str) -> None:
 
 
 async def run_ytcut_download(state: Dict[str, Any], temp_dir: str, client: Any) -> List[str]:
+    try:
+        return await _run_ytcut_download_impl(state, temp_dir, client)
+    except Exception as e:
+        tb = traceback.format_exc()
+        Altruix.log(
+            f"YTcut download exception: task={state.get('task_id')} error={e}\n{tb}",
+            level=logging.INFO,
+        )
+        raise
+
+
+async def _run_ytcut_download_impl(state: Dict[str, Any], temp_dir: str, client: Any) -> List[str]:
     sections: List[str] = []
     if state["mode"] == "keep":
         if not state["segments"]:
@@ -492,6 +505,16 @@ async def run_ytcut_download(state: Dict[str, Any], temp_dir: str, client: Any) 
         level=logging.INFO,
     )
 
+    # Watchdog for inactivity: if no stdout/stderr seen for this many seconds, kill process
+    # Increased default timeout to reduce false positives on slow networks/servers
+    idle_timeout = 600  # 10 minutes
+
+    # Log the exact command and watchdog timeout for debugging
+    try:
+        Altruix.log(f"YTcut download command: {' '.join(cmd)} idle_timeout={idle_timeout}", level=logging.INFO)
+    except Exception:
+        Altruix.log(f"YTcut download command (failed to join cmd): cmd={cmd} idle_timeout={idle_timeout}", level=logging.INFO)
+
     # Regex for yt-dlp percentage: [download]  10.5% of ...
     prog_regex = re.compile(r"\[download\]\s+(\d+\.\d+)%")
     
@@ -505,7 +528,8 @@ async def run_ytcut_download(state: Dict[str, Any], temp_dir: str, client: Any) 
     full_stdout: List[str] = []
     stderr_lines: List[str] = []
     # Watchdog for inactivity: if no stdout/stderr seen for this many seconds, kill process
-    idle_timeout = 300  # 5 minutes
+    # Increased default timeout to reduce false positives on slow networks/servers
+    idle_timeout = 600  # 10 minutes
     last_output_time = time.time()
     killed_by_watchdog = False
     # Track current percentage parsed from yt-dlp output for heartbeat updates
@@ -520,13 +544,15 @@ async def run_ytcut_download(state: Dict[str, Any], temp_dir: str, client: Any) 
                 if process.returncode is not None:
                     return
                 now = time.time()
-                if now - last_output_time > idle_timeout:
+                idle_elapsed = int(now - last_output_time)
+                if idle_elapsed > idle_timeout:
                     Altruix.log(
-                        f"YTcut watchdog: killing process due to {int(now-last_output_time)}s inactivity: task={state.get('task_id')}",
+                        f"YTcut watchdog: killing process due to {idle_elapsed}s inactivity (idle_timeout={idle_timeout}): task={state.get('task_id')} pid={getattr(process, 'pid', 'unknown')} last_output_time={last_output_time} now={now}",
                         level=logging.INFO,
                     )
                     try:
                         process.kill()
+                        Altruix.log(f"YTcut watchdog: process.kill sent to pid={getattr(process, 'pid', 'unknown')} for task={state.get('task_id')}", level=logging.INFO)
                     except Exception as kill_err:
                         Altruix.log(
                             f"YTcut watchdog process.kill failed: task={state.get('task_id')} error={kill_err}",
@@ -564,68 +590,72 @@ async def run_ytcut_download(state: Dict[str, Any], temp_dir: str, client: Any) 
 
     heartbeat_task = asyncio.create_task(_download_heartbeat())
 
-    async def _drain_stream(stream, collector):
+    async def _drain_stream(stream, collector, stream_name: str):
         nonlocal last_update
         nonlocal last_output_time
         nonlocal current_percentage
+        buffer = b""
         while True:
-            line = await stream.readline()
-            if not line:
+            chunk = await stream.read(1024)
+            if not chunk:
+                if buffer:
+                    line_str = buffer.decode(errors="replace").strip()
+                    if line_str:
+                        collector.append(line_str)
+                        Altruix.log(
+                            f"YTcut {stream_name}: {line_str}",
+                            level=logging.INFO,
+                        )
+                        last_output_time = time.time()
+                        match = prog_regex.search(line_str)
+                        if match:
+                            percentage = float(match.group(1))
+                            current_percentage = percentage
+                            now = time.time()
+                            if now - last_update >= 6:
+                                last_update = now
+                                asyncio.create_task(edit_ytcut_dashboard_status(
+                                    client, state,
+                                    "Step 1/3: Mendownload segmen...",
+                                    "Proses download sedang berjalan.",
+                                    progress=percentage
+                                ))
                 break
-            line_str = line.decode(errors="replace").strip()
-            if not line_str:
-                continue
-            collector.append(line_str)
-            Altruix.log(
-                f"YTcut stderr: {line_str}",
-                level=logging.INFO,
-            )
-            last_output_time = time.time()
-            match = prog_regex.search(line_str)
-            if match:
-                percentage = float(match.group(1))
-                current_percentage = percentage
-                now = time.time()
-                if now - last_update >= 6:
-                    last_update = now
-                    asyncio.create_task(edit_ytcut_dashboard_status(
-                        client, state,
-                        "Step 1/3: Mendownload segmen...",
-                        "Proses download sedang berjalan.",
-                        progress=percentage
-                    ))
 
-    stderr_task = asyncio.create_task(_drain_stream(process.stderr, stderr_lines))
+            last_output_time = time.time()
+            buffer += chunk
+            while b"\n" in buffer or b"\r" in buffer:
+                sep_pos = min(
+                    pos for pos in (buffer.find(b"\n"), buffer.find(b"\r")) if pos != -1
+                )
+                line_bytes = buffer[:sep_pos]
+                buffer = buffer[sep_pos + 1:]
+                line_str = line_bytes.decode(errors="replace").strip()
+                if not line_str:
+                    continue
+                collector.append(line_str)
+                Altruix.log(
+                    f"YTcut {stream_name}: {line_str}",
+                    level=logging.INFO,
+                )
+                match = prog_regex.search(line_str)
+                if match:
+                    percentage = float(match.group(1))
+                    current_percentage = percentage
+                    now = time.time()
+                    if now - last_update >= 6:
+                        last_update = now
+                        asyncio.create_task(edit_ytcut_dashboard_status(
+                            client, state,
+                            "Step 1/3: Mendownload segmen...",
+                            "Proses download sedang berjalan.",
+                            progress=percentage
+                        ))
+
+    stderr_task = asyncio.create_task(_drain_stream(process.stderr, stderr_lines, "stderr"))
+    stdout_task = asyncio.create_task(_drain_stream(process.stdout, full_stdout, "stdout"))
     try:
-        while True:
-            line = await process.stdout.readline()
-            if not line:
-                break
-
-            line_str = line.decode(errors="replace").strip()
-            if not line_str:
-                continue
-            full_stdout.append(line_str)
-            Altruix.log(
-                f"YTcut stdout: {line_str}",
-                level=logging.INFO,
-            )
-            last_output_time = time.time()
-            match = prog_regex.search(line_str)
-            if match:
-                percentage = float(match.group(1))
-                current_percentage = percentage
-                now = time.time()
-                if now - last_update >= 6:
-                    last_update = now
-                    asyncio.create_task(edit_ytcut_dashboard_status(
-                        client, state,
-                        "Step 1/3: Mendownload segmen...",
-                        "Proses download sedang berjalan.",
-                        progress=percentage
-                    ))
-
-        await stderr_task
+        await asyncio.gather(stdout_task, stderr_task)
         await process.wait()
         ret = process.returncode
         out = "\n".join(full_stdout)
@@ -787,6 +817,12 @@ async def run_ytcut_ffmpeg_concat(parts: List[str], output_path: str, extract: s
     
     hb_task = asyncio.create_task(heartbeat())
 
+    Altruix.log(
+        f"YTcut ffmpeg concat preparing: task_id={state.get('task_id')} parts={parts} "
+        f"output_path={output_path} extract={extract} thumb_path={thumb_path}",
+        level=logging.INFO,
+    )
+
     cmd = [
         "ffmpeg",
         "-y",
@@ -797,6 +833,8 @@ async def run_ytcut_ffmpeg_concat(parts: List[str], output_path: str, extract: s
         output_path,
     ]
     
+    out = ""
+    err = ""
     try:
         ret, out, err = await run_subprocess(cmd)
         if ret != 0:
@@ -1319,6 +1357,7 @@ async def process_ytcut_task(state: Dict[str, Any], client: Any) -> None:
     try:
         current_stage = "Step 1/3: Mendownload segmen..."
         state["ytcut_stage"] = current_stage
+        await sync_ytcut_task(task_id)
         # Add stage transition logging
         Altruix.log(
             f"YTcut stage transition: task_id={task_id} user_id={state.get('user_id')} "
@@ -1353,6 +1392,7 @@ async def process_ytcut_task(state: Dict[str, Any], client: Any) -> None:
 
         current_stage = "Step 2/3: Menggabungkan segmen..."
         state["ytcut_stage"] = current_stage
+        await sync_ytcut_task(task_id)
         # Add stage transition logging
         Altruix.log(
             f"YTcut stage transition: task_id={task_id} user_id={state.get('user_id')} "
@@ -1391,6 +1431,7 @@ async def process_ytcut_task(state: Dict[str, Any], client: Any) -> None:
 
         current_stage = "Step 3/3: Mengirim hasil..."
         state["ytcut_stage"] = current_stage
+        await sync_ytcut_task(task_id)
         # Add stage transition logging
         Altruix.log(
             f"YTcut stage transition: task_id={task_id} user_id={state.get('user_id')} "

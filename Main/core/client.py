@@ -106,6 +106,7 @@ from pyrogram.errors import (
     # ChatWriteForbidden,
     # UserIsBlocked,
     PeerIdInvalid,
+    ParticipantIdInvalid,
     MessageNotModified
 )
 
@@ -931,8 +932,8 @@ class AltruixClient:
                         else:
                             self.log(f"❌ [WL_CHECK] User {user_id} in {chat_id} has invalid status: {member.status.name}", level=20)
                     except Exception as e:
-                        from pyrogram.errors import PeerIdInvalid, UserNotParticipant
-                        if isinstance(e, (PeerIdInvalid, UserNotParticipant)):
+                        from pyrogram.errors import UserNotParticipant
+                        if isinstance(e, (PeerIdInvalid, UserNotParticipant, ParticipantIdInvalid)):
                             try:
                                 from pyrogram.raw import functions, types
                                 channel_peer = await client_probe.resolve_peer(int(chat_id))
@@ -948,6 +949,8 @@ class AltruixClient:
                                     break
                                 else:
                                     self.log(f"❌ [WL_CHECK] User {user_id} in {chat_id} has invalid Raw status: {parsed_member.status.name}", level=20)
+                            except ParticipantIdInvalid:
+                                self.log(f"⚠️ [WL_CHECK] User {user_id} NOT FOUND (ParticipantIdInvalid) in group {chat_id}: User likely left or was removed from group", level=20)
                             except Exception as ex:
                                 self.log(f"⚠️ [WL_CHECK] Raw API fallback failed for user {user_id} in group {chat_id}: {type(ex).__name__}: {ex}", level=20)
                         else:
