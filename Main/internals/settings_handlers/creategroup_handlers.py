@@ -17,6 +17,7 @@ import re
 from Main.core.decorators import log_errors, iuser_check, send_log_message
 from Main.core.client import Altruix
 from pyrogram.enums import ParseMode
+from datetime import datetime
 
 
 from .states import user_creategroup_state
@@ -352,7 +353,13 @@ async def creategroup_resall_handler(c: Client, cb: CallbackQuery):
                 rand_upper=params.get("rand_upper", False), rand_static=params.get("rand_static", False),
                 batch_action=params.get("batch_action", 30), ba_delay=params.get("ba_delay", 30),
                 user_id=client_id, task_id=tid, is_resume=True,
-                account_idx=params.get("account_idx", 1), total_accs=params.get("total_accs", 1)
+                account_idx=params.get("account_idx", 1), total_accs=params.get("total_accs", 1),
+                start_log_mode=params.get("start_log_mode", "both"),
+                start_photo_log_mode=params.get("start_photo_log_mode", "both"),
+                progress_log_mode=params.get("progress_log_mode", "both"),
+                panel_log_mode=params.get("panel_log_mode", "log_group"),
+                auto_start=params.get("auto_start", False),
+                auto_start_count=params.get("auto_start_count", params.get("batch_account", 3)),
             ))
 
     # Refresh UI with suppression for MessageNotModified
@@ -729,7 +736,7 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
     pg = state["page"]
     sub_menu = state.get("sub_menu")
 
-    per_page = 8
+    per_page = 5
     total_sessions = len(Altruix.clients)
     total_pages = (total_sessions + per_page - 1) // per_page if total_sessions else 1
     if state["session_page"] >= total_pages:
@@ -1054,18 +1061,64 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
     elif sub_menu == "select_sessions":
         selected = state.get("selected_sessions", [idx])
         # Pagination logic for sessions
-        per_page = 8
+        per_page = 5
         total_sessions = len(Altruix.clients)
         total_pages = (total_sessions + per_page - 1) // per_page if total_sessions else 1
         s_page = min(max(0, state.get("session_page", 0)), total_pages - 1)
         state["session_page"] = s_page
-        
+
+        # Account filter support: 'all' | 'newest' | 'oldest'
+        acct_filter = config.get("account_filter", "all") or "all"
+
+        # Build sortable session list (idx, client)
+        indexed_clients = [(i + 1, client) for i, client in enumerate(Altruix.clients)]
+        try:
+            report_data = load_creation_report()
+        except Exception:
+            report_data = {}
+
+        def _last_created_time_for_idx(idx):
+            try:
+                me = getattr(Altruix.clients[idx - 1], "me", None) or asyncio.get_event_loop().run_until_complete(Altruix.clients[idx - 1].get_me())
+                s_uid = str(getattr(me, "id", None)) if me else None
+                if s_uid and s_uid in report_data:
+                    groups = report_data[s_uid].get("created_groups", [])
+                    if groups:
+                        # parse latest time
+                        times = []
+                        for g in groups:
+                            t = g.get("time")
+                            if not t: continue
+                            try:
+                                times.append(datetime.strptime(t, "%Y-%m-%d %H:%M:%S"))
+                            except Exception:
+                                continue
+                        if times:
+                            return max(times)
+            except Exception:
+                pass
+            return None
+
+        if acct_filter == "newest":
+            indexed_clients.sort(key=lambda it: _last_created_time_for_idx(it[0]) or datetime.fromtimestamp(0), reverse=True)
+        elif acct_filter == "oldest":
+            indexed_clients.sort(key=lambda it: _last_created_time_for_idx(it[0]) or datetime.fromtimestamp(2**31-1))
+
         start = s_page * per_page
         end = start + per_page
-        paged_clients = Altruix.clients[start:end]
+        paged_slice = indexed_clients[start:end]
+        # Keep the original (index, client) pairs so we can show correct session numbers
+        paged_clients = paged_slice
+        # Record the original session indices displayed on this page so handlers can act on them
+        try:
+            state["last_paged_indices"] = [orig for orig, _ in paged_slice]
+        except Exception:
+            state["last_paged_indices"] = []
 
-        # Load creation reports to show counts on buttons
-        report_data = load_creation_report()
+        # Load creation reports to show counts on buttons (already attempted above)
+        # report_data variable is available; fallback to loader
+        if 'report_data' not in locals():
+            report_data = load_creation_report()
         
         text = (
             f"<blockquote expandable>"
@@ -1076,15 +1129,21 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
             f"</blockquote>"
         )
         
-        buttons = []
-        for i, client in enumerate(paged_clients):
-            actual_idx = start + i + 1
+        # Filter buttons row
+        filter_buttons = [
+            InlineKeyboardButton(f"{'✅' if acct_filter=='all' else '◻️'} All", callback_data=f"creategroup_filter_all_{idx}_{pg}", style=user_style),
+            InlineKeyboardButton(f"{'✅' if acct_filter=='newest' else '◻️'} Newest", callback_data=f"creategroup_filter_newest_{idx}_{pg}", style=user_style),
+            InlineKeyboardButton(f"{'✅' if acct_filter=='oldest' else '◻️'} Oldest", callback_data=f"creategroup_filter_oldest_{idx}_{pg}", style=user_style)
+        ]
+        buttons = [filter_buttons]
+        for i, (orig_idx, client) in enumerate(paged_clients):
+            actual_idx = orig_idx
             is_sel = actual_idx in selected
             icon = "☑️" if is_sel else "☐"
-            
-            # 🔥 INDICATOR: Mark the session that triggered the command
+
+            # 🔥 INDICATOR: Mark the session that triggered the command (compare against original index)
             current_tag = " ⭐ [ Current ]" if actual_idx == idx else ""
-            
+
             try:
                 me = getattr(client, "me", None) or await client.get_me()
                 name = me.first_name
@@ -1093,14 +1152,14 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
                 logger.warning(f"Failed to resolve session name for idx={actual_idx}: {e}")
                 name = f"Session {actual_idx}"
                 s_uid = None
-            
+
             # Count groups created by this session
             count_info = ""
             if s_uid and s_uid in report_data:
                 count = len(report_data[s_uid].get("created_groups", []))
                 if count > 0:
                     count_info = f" ({count})"
-            
+
             buttons.append([InlineKeyboardButton(f"{icon} {actual_idx}. {name}{count_info}{current_tag}", callback_data=f"creategroup_tsel_{actual_idx}_{pg}", style=user_style)])
             
         # Select Page / Deselect Page
@@ -1194,6 +1253,36 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
     is_channel = config.get('group_type', 'a') == 'c'
     type_indicator = "c" if is_channel else "g"
 
+    # Compute Log Configs indicator: count active log settings out of known log keys
+    try:
+        log_keys = [
+            'start_log_mode', 'start_photo_log_mode', 'progress_log_mode',
+            'panel_log_mode', 'interrupted_log', 'delay_log_mode'
+        ]
+        total_log_keys = len(log_keys)
+        active_count = 0
+        for k in log_keys:
+            v = config.get(k)
+            if v is None:
+                continue
+            # For boolean-like or string modes: consider active if not 'off'
+            if isinstance(v, str):
+                if v.lower() != 'off':
+                    active_count += 1
+            elif isinstance(v, bool):
+                if v:
+                    active_count += 1
+            else:
+                try:
+                    if bool(v):
+                        active_count += 1
+                except Exception:
+                    continue
+    except Exception as e:
+        logger.error(f"Failed to compute log config indicator: {e}\n{traceback.format_exc()}")
+        active_count = 0
+        total_log_keys = 6
+
     buttons = [
         [
             InlineKeyboardButton(f"Acc(s): {sel_count} Sel", callback_data=f"creategroup_submenu_{idx}_{pg}_select_sessions", style=user_style),
@@ -1249,7 +1338,7 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
             InlineKeyboardButton(f"Album Vid: {'On' if config.get('msg_vid_album', False) else 'Off'}", callback_data=f"creategroup_toggle_{idx}_{pg}_msg_vid_album", style=user_style)
         ],
         [
-            InlineKeyboardButton("Log Configs", callback_data=f"creategroup_submenu_{idx}_{pg}_log_settings", style=user_style),
+            InlineKeyboardButton(f"Log Configs: {active_count}/{total_log_keys}", callback_data=f"creategroup_submenu_{idx}_{pg}_log_settings", style=user_style),
             InlineKeyboardButton("All Reports", callback_data=f"creategroup_reports_{idx}_{pg}_1", style=user_style)
         ],
         [
@@ -1416,6 +1505,34 @@ async def creategroup_session_page_handler(c: Client, cb: CallbackQuery):
     await render_creategroup_ui(cb, user_creategroup_state[user_id])
     await cb.answer()
 
+
+@Altruix.bot.on_callback_query(filters.regex(r"^creategroup_filter_(\w+)_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def creategroup_filter_handler(c: Client, cb: CallbackQuery):
+    try:
+        mode = cb.matches[0].group(1)
+        idx = int(cb.matches[0].group(2))
+        pg = int(cb.matches[0].group(3))
+        user_id = cb.from_user.id
+        if user_id not in user_creategroup_state:
+            await _ensure_creategroup_ui_state(c, cb, idx, pg)
+
+        state = user_creategroup_state[user_id]
+        conf = state.get("config") or load_user_cg_config(user_id)
+        if mode not in ("all", "newest", "oldest"):
+            await safe_cb_answer(cb, "Unknown filter mode", show_alert=True)
+            return
+
+        conf["account_filter"] = mode
+        save_user_cg_config(user_id, conf)
+        state["config"] = conf
+        await render_creategroup_ui(cb, state)
+        await cb.answer()
+    except Exception as e:
+        logger.error(f"Error in creategroup_filter_handler: {e}\n{traceback.format_exc()}")
+        await safe_cb_answer(cb, "❌ Error applying filter", show_alert=True)
+
 @Altruix.bot.on_callback_query(filters.regex(r"^creategroup_sall_(\d+)_(\d+)$"))
 @iuser_check
 @log_errors
@@ -1449,12 +1566,17 @@ async def creategroup_session_select_page_handler(c: Client, cb: CallbackQuery):
         state = user_creategroup_state[user_id]
         state["session_page"] = s_page
 
-        per_page = 8
+        per_page = 5
         total_sessions = len(Altruix.clients)
-        start = max(0, s_page) * per_page
-        end = min(start + per_page, total_sessions)
 
-        page_indices = list(range(start + 1, end + 1))
+        # Prefer using the last rendered paged indices if available (handles filtered ordering)
+        last_page_indices = state.get("last_paged_indices") or []
+        if last_page_indices and state.get("session_page") == s_page:
+            page_indices = list(last_page_indices)
+        else:
+            start = max(0, s_page) * per_page
+            end = min(start + per_page, total_sessions)
+            page_indices = list(range(start + 1, end + 1))
         selected = state.get("selected_sessions", []) or []
 
         merged = set(selected)
@@ -1500,12 +1622,17 @@ async def creategroup_session_deselect_page_handler(c: Client, cb: CallbackQuery
         state = user_creategroup_state[user_id]
         state["session_page"] = s_page
 
-        per_page = 8
+        per_page = 5
         total_sessions = len(Altruix.clients)
-        start = max(0, s_page) * per_page
-        end = min(start + per_page, total_sessions)
 
-        page_indices = set(range(start + 1, end + 1))
+        # Prefer using the last rendered paged indices if available (handles filtered ordering)
+        last_page_indices = state.get("last_paged_indices") or []
+        if last_page_indices and state.get("session_page") == s_page:
+            page_indices = set(last_page_indices)
+        else:
+            start = max(0, s_page) * per_page
+            end = min(start + per_page, total_sessions)
+            page_indices = set(range(start + 1, end + 1))
         selected = state.get("selected_sessions", []) or []
         state["selected_sessions"] = [x for x in selected if x not in page_indices]
 

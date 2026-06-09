@@ -3,6 +3,39 @@
 All notable changes to the **Altroid-X** project from version **0.0.10.0959H** to the latest.
 Latest updates are always added at the top (newest → oldest).
 
+## [1.0.284] - 2026-06-10
+
+### 👥 CreateGroup: Session Page Selection & Pagination Fixes
+- **Fixed: Inconsistent Select/Deselect Page behavior with account filters**:
+  - Resolved an issue where the `Select Page` / `Deselect Page` buttons acted on the unfiltered index order when the UI was showing `newest`/`oldest` filtered pages, causing incorrect accounts to be selected or deselected.
+  - `get_creategroup_ui_data` now records the actual session indices displayed on each rendered page (`last_paged_indices`) and the select/deselect handlers use those indices when available.
+
+- **Changed: Reduced accounts per page**:
+  - The session selection UI now shows **5** accounts per page (previously 8) to reduce visual clutter and improve usability on narrow screens.
+
+- **Files changed**: [Main/internals/settings_handlers/creategroup_handlers.py](Main/internals/settings_handlers/creategroup_handlers.py)
+
+- **Notes**:
+  - This fix keeps the "Current" session indicator and selection state consistent when users switch filters (`All` / `Newest` / `Oldest`).
+  - No change to persistence or external APIs; purely UI/handler behavior.
+
+---
+
+## [1.0.283] - 2026-06-10
+
+### 👥 CreateGroup: Signature Mismatch Fix
+- **Fixed: Unexpected keyword arguments passed during task resume**:
+  - Resolved a mismatch where `creategroup_handlers` passed `auto_start` and `auto_start_count` to `creategroup_loop`, but the loop signature did not accept those keywords, causing a `TypeError` on resume/recover flows.
+  - Normalized the plugin surface so `creategroup_loop` accepts `auto_start` and `auto_start_count` (with sensible defaults) and the handlers consistently pass them through.
+
+- **Files changed**: [Main/plugins/userbot/xcreategroup.py](Main/plugins/userbot/xcreategroup.py), [Main/internals/settings_handlers/creategroup_handlers.py](Main/internals/settings_handlers/creategroup_handlers.py)
+
+- **Notes**:
+  - This is a non-breaking fix ensuring bulk-resume and cached-task recovery paths no longer raise unexpected-argument errors.
+  - No behavior changes to auto-start semantics were made beyond making the parameters accepted and propagated; further runtime tuning remains in follow-ups.
+
+---
+
 ## [1.0.281] - 2026-06-09
 
 ### 👥 CreateGroup: Log Configs Active Indicator
