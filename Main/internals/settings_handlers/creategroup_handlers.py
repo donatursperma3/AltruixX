@@ -1584,7 +1584,7 @@ async def creategroup_session_select_page_handler(c: Client, cb: CallbackQuery):
         state["selected_sessions"] = sorted(merged)
 
         await render_creategroup_ui(cb, state)
-        await cb.answer("Page selected")
+        await safe_cb_answer(cb, "Page selected", show_alert=False)
     except Exception as e:
         logger.error(f"Error in creategroup_session_select_page_handler: {e}\n{traceback.format_exc()}")
         await safe_cb_answer(cb, "❌ Error select page", show_alert=True)
