@@ -3,6 +3,26 @@
 All notable changes to the **Altroid-X** project from version **0.0.10.0959H** to the latest.
 Latest updates are always added at the top (newest → oldest).
 
+## [1.0.286] - 2026-06-12
+
+### 🛠️ CreateGroup: Recovery, UI refresh & integer formatting fixes
+- **Fixed: Resolve undefined `LOG_CHAT_ID` usage in handlers**
+  - `creategroup_handlers` now resolves the log chat via `getattr(Altruix, 'log_chat', None) or getattr(Altruix.config, 'LOG_CHAT_ID', None)` before sending to the log group, avoiding NameError in environments where the module-level `LOG_CHAT_ID` isn't available.
+
+- **Fixed: Clear stale control_message_id on recover failures**
+  - In `Main/plugins/userbot/xcreategroup.py` the control-message recovery logic now detects "Invalid message ids"/similar errors, clears the stale `control_message_id` from task state, persists the cache, and logs at DEBUG level to reduce noise.
+
+- **Fixed: Dashboard UI not updating after launches finish**
+  - `launch_tasks_bg` now proactively refreshes the user's dashboard message when the launch completes (or is cancelled), ensuring the `⛔ Cancel Launch` button is removed immediately.
+
+- **Fixed: Numeric formatting for batch values (UI + storage)**
+  - `batch_action` and `batch_size` are forced to integers when adjusted and displayed in the UI (dashboard text, control buttons, and submenu headers), eliminating float artifacts like `40.0` or `11.g`.
+  - The adjustment handler (`creategroup_adjust_handler`) was fixed to include `batch_action` and `batch_size` in the integer key list and to sanitize stored values to int.
+
+- **Files changed**: [Main/internals/settings_handlers/creategroup_handlers.py](Main/internals/settings_handlers/creategroup_handlers.py), [Main/plugins/userbot/xcreategroup.py](Main/plugins/userbot/xcreategroup.py)
+
+---
+
 ## [1.0.285] - 2026-06-10
 
 ### 👥 CreateGroup: Chunk Notifications & Aggressive Cancel

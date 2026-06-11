@@ -80,6 +80,11 @@ DEFAULT_CREATEGROUP_CONFIG.update({
     "auto_start_count": 3,
     "auto_start_timeout": 300
 })
+# New granular log toggles
+DEFAULT_CREATEGROUP_CONFIG.update({
+    "staggered_start_log_mode": "both",
+    "init_task_log_mode": "both"
+})
 
 
 # ─── Persistent User Config ───
@@ -886,8 +891,8 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
         f"• <b>Count:</b> {config['count']} {unit_name}\n"
         f"• <b>Action Delay:</b> {config['action_delay']}s\n"
         f"• <b>Delay:</b> {config['delay']}s\n"
-        f"• <b>Batch Delay:</b> {config['batch_delay']}m | <b>Batch Size:</b> {config['batch_size']} {unit_name}\n"
-        f"• <b>Batch Act:</b> {config.get('batch_action', 30)} act | <b>B.Act Delay:</b> {config.get('ba_delay', 30)}s\n"
+        f"• <b>Batch Delay:</b> {config['batch_delay']}m | <b>Batch Size:</b> {int(round(config.get('batch_size', 0) or 0))} {unit_name}\n"
+        f"• <b>Batch Act:</b> {int(round(config.get('batch_action', 30) or 0))} act | <b>B.Act Delay:</b> {config.get('ba_delay', 30)}s\n"
         f"• <b>Account Delay:</b> {config.get('account_delay', 0.5)}s | <b>B.Acc Size:</b> {config.get('batch_account', 3)} acc\n"
         f"• <b>B.Acc Delay:</b> {config.get('ba_account_delay', 60)}s\n"
         f"• <b>Auto Start:</b> {'On' if config.get('auto_start') else 'Off'} | <b>A.Start Count:</b> {config.get('auto_start_count', config.get('batch_account', 3))}\n"
@@ -935,6 +940,12 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
         
         label = labels.get(sub_menu, sub_menu.capitalize())
         curr_val = config.get(sub_menu)
+        # Ensure integer display for integer-like settings
+        if sub_menu in ("batch_size", "batch_action", "batch_account", "auto_start_count", "count", "ba_account_delay"):
+            try:
+                curr_val = int(round(curr_val or 0))
+            except Exception:
+                pass
         unit = unit_map.get(sub_menu, "")
         
         # Generate adjustment rows based on sub_menu
@@ -1270,6 +1281,10 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
         _pgl_label = _pgl_labels.get(config.get('progress_log_mode', 'both'), 'Both')
         _pnl_labels = {'both': 'Both', 'log_group': 'Group Log', 'pm_bot': 'PM Bot', 'off': 'Off'}
         _pnl_label = _pnl_labels.get(config.get('panel_log_mode', 'log_group'), 'Group Log')
+        _ss_labels = {'both': 'Both', 'log_group': 'Group Log', 'pm_bot': 'PM Bot', 'off': 'Off'}
+        _ss_label = _ss_labels.get(config.get('staggered_start_log_mode', 'both'), 'Both')
+        _it_labels = {'both': 'Both', 'log_group': 'Group Log', 'pm_bot': 'PM Bot', 'off': 'Off'}
+        _it_label = _it_labels.get(config.get('init_task_log_mode', 'both'), 'Both')
         _dl_labels = {'both': 'Both', 'log_group': 'Group Log', 'pm_bot': 'PM Bot', 'off': 'Off'}
         _dl_label = _dl_labels.get(config.get('delay_log_mode', 'both'), 'Both')
 
@@ -1302,6 +1317,10 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
                 InlineKeyboardButton(f"FileLog To: {'Both' if log_dest == 'both' else ('GroupLog' if log_dest == 'log_group' else 'SavedMsg')}", callback_data=f"creategroup_toggle_{idx}_{pg}_log_destination", style=user_style),
                 InlineKeyboardButton(f"Log Format: {config.get('log_format', 'zip').upper()}", callback_data=f"creategroup_toggle_{idx}_{pg}_log_format", style=user_style)
             ],
+            [
+                InlineKeyboardButton(f"Stagger Start: {_ss_label}", callback_data=f"creategroup_toggle_{idx}_{pg}_staggered_start_log_mode", style=user_style),
+                InlineKeyboardButton(f"Init Task: {_it_label}", callback_data=f"creategroup_toggle_{idx}_{pg}_init_task_log_mode", style=user_style)
+            ],
             [InlineKeyboardButton("Back to Dashboard", callback_data=f"creategroup_back_submenu_{idx}_{pg}", style=user_style)]
         ]
         return text, InlineKeyboardMarkup(buttons)
@@ -1314,7 +1333,8 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
     try:
         log_keys = [
             'start_log_mode', 'start_photo_log_mode', 'progress_log_mode',
-            'panel_log_mode', 'interrupted_log', 'delay_log_mode'
+            'panel_log_mode', 'interrupted_log', 'delay_log_mode',
+            'staggered_start_log_mode', 'init_task_log_mode'
         ]
         total_log_keys = len(log_keys)
         active_count = 0
@@ -1346,8 +1366,8 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
             InlineKeyboardButton(f"Delay/Acc: {config.get('account_delay', 0.5)}s", callback_data=f"creategroup_submenu_{idx}_{pg}_account_delay", style=user_style)
         ],
         [
-            InlineKeyboardButton(f"B.Acc: {config.get('batch_account', 3)} acc", callback_data=f"creategroup_submenu_{idx}_{pg}_batch_account", style=user_style),
-            InlineKeyboardButton(f"B.Acc Delay: {config.get('ba_account_delay', 60)}s", callback_data=f"creategroup_submenu_{idx}_{pg}_ba_account_delay", style=user_style)
+            InlineKeyboardButton(f"Batch Acc: {config.get('batch_account', 3)} acc", callback_data=f"creategroup_submenu_{idx}_{pg}_batch_account", style=user_style),
+            InlineKeyboardButton(f"Delay/B.Acc: {config.get('ba_account_delay', 60)}s", callback_data=f"creategroup_submenu_{idx}_{pg}_ba_account_delay", style=user_style)
         ],
         [
             InlineKeyboardButton(f"Auto Start: {'On' if config.get('auto_start') else 'Off'}", callback_data=f"creategroup_toggle_{idx}_{pg}_auto_start", style=user_style),
@@ -1356,19 +1376,19 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
         # Chunk notifications moved to Log Configs submenu
         [
             InlineKeyboardButton(f"Type: {'Group' if not is_channel else 'Channel'}", callback_data=f"creategroup_submenu_{idx}_{pg}_group_type", style=user_style),
-            InlineKeyboardButton(f"Count: {config['count']}{type_indicator}", callback_data=f"creategroup_submenu_{idx}_{pg}_count", style=user_style)
+            InlineKeyboardButton(f"Delay/Act: {config['action_delay']}s", callback_data=f"creategroup_submenu_{idx}_{pg}_action_delay", style=user_style)
         ],
         [
-            InlineKeyboardButton(f"Delay/Act: {config['action_delay']}s", callback_data=f"creategroup_submenu_{idx}_{pg}_action_delay", style=user_style),
+            InlineKeyboardButton(f"Count: {config['count']}{type_indicator}", callback_data=f"creategroup_submenu_{idx}_{pg}_count", style=user_style),
             InlineKeyboardButton(f"Delay/{'GC' if not is_channel else 'CH'}: {config['delay']}s", callback_data=f"creategroup_submenu_{idx}_{pg}_delay", style=user_style)
         ],
         [
-            InlineKeyboardButton(f"B.{'GC' if not is_channel else 'CH'}: {config['batch_size']}{type_indicator}", callback_data=f"creategroup_submenu_{idx}_{pg}_batch_size", style=user_style),
-            InlineKeyboardButton(f"B.{'GC' if not is_channel else 'CH'} Delay: {config['batch_delay']}m", callback_data=f"creategroup_submenu_{idx}_{pg}_batch_delay", style=user_style)
+            InlineKeyboardButton(f"Batch {'GC' if not is_channel else 'CH'}: {int(round(config.get('batch_size', 0) or 0))}{type_indicator}", callback_data=f"creategroup_submenu_{idx}_{pg}_batch_size", style=user_style),
+            InlineKeyboardButton(f"Delay/B.{'GC' if not is_channel else 'CH'}: {config['batch_delay']}m", callback_data=f"creategroup_submenu_{idx}_{pg}_batch_delay", style=user_style)
         ],
         [
-            InlineKeyboardButton(f"B.Act: {config.get('batch_action', 30)} act", callback_data=f"creategroup_submenu_{idx}_{pg}_batch_action", style=user_style),
-            InlineKeyboardButton(f"B.Act Delay: {config.get('ba_delay', 30)}s", callback_data=f"creategroup_submenu_{idx}_{pg}_ba_delay", style=user_style)
+            InlineKeyboardButton(f"Batch Act: {int(round(config.get('batch_action', 30) or 0))} act", callback_data=f"creategroup_submenu_{idx}_{pg}_batch_action", style=user_style),
+            InlineKeyboardButton(f"Delay/B.Act: {config.get('ba_delay', 30)}s", callback_data=f"creategroup_submenu_{idx}_{pg}_ba_delay", style=user_style)
         ],
         [InlineKeyboardButton(f"Name: {config['pattern'][:25]}...", callback_data=f"creategroup_submenu_{idx}_{pg}_pattern", style=user_style)],
         [InlineKeyboardButton(f"Desc: {config['description'][:25]}...", callback_data=f"creategroup_submenu_{idx}_{pg}_description", style=user_style)],
@@ -1529,8 +1549,8 @@ async def creategroup_adjust_handler(c: Client, cb: CallbackQuery):
     min_v, max_v = limits.get(key, (0, 100))
     final_val = max(min_v, min(val, max_v))
     
-    # 🔥 CRITICAL FIX: Ensure specific keys don't become floats (User requested ONLY 'count')
-    int_keys = ["count", "batch_account", "ba_account_delay", "auto_start_count"]
+    # 🔥 CRITICAL FIX: Ensure specific keys don't become floats
+    int_keys = ["count", "batch_account", "ba_account_delay", "auto_start_count", "batch_action", "batch_size"]
     if key in int_keys:
         final_val = int(round(final_val))
         
@@ -1552,7 +1572,7 @@ async def creategroup_submenu_handler(c: Client, cb: CallbackQuery):
         user_creategroup_state[user_id]["sub_menu"] = field
         user_creategroup_state[user_id]["last_action_ts"] = time.time()
         try:
-            await safe_cb_answer(cb, f"Opening submenu: {field}", show_alert=True)
+            await safe_cb_answer(cb, f"Opening submenu: {field}", show_alert=False)
         except Exception:
             pass
 
@@ -1560,7 +1580,7 @@ async def creategroup_submenu_handler(c: Client, cb: CallbackQuery):
     except Exception as e:
         logger.error(f"[creategroup_submenu_handler] error handling submenu callback: {e}\n{traceback.format_exc()}")
         try:
-            await safe_cb_answer(cb, "❌ Error opening submenu", show_alert=True)
+            await safe_cb_answer(cb, "❌ Error opening submenu", show_alert=False)
         except Exception:
             pass
 
@@ -1891,6 +1911,18 @@ async def creategroup_toggle_handler(c: Client, cb: CallbackQuery):
             if curr == "log_group": conf["log_destination"] = "saved_messages"
             elif curr == "saved_messages": conf["log_destination"] = "both"
             else: conf["log_destination"] = "log_group"
+        elif key == "staggered_start_log_mode":
+            curr = conf.get("staggered_start_log_mode", "both")
+            if curr == "both": conf["staggered_start_log_mode"] = "log_group"
+            elif curr == "log_group": conf["staggered_start_log_mode"] = "pm_bot"
+            elif curr == "pm_bot": conf["staggered_start_log_mode"] = "off"
+            else: conf["staggered_start_log_mode"] = "both"
+        elif key == "init_task_log_mode":
+            curr = conf.get("init_task_log_mode", "both")
+            if curr == "both": conf["init_task_log_mode"] = "log_group"
+            elif curr == "log_group": conf["init_task_log_mode"] = "pm_bot"
+            elif curr == "pm_bot": conf["init_task_log_mode"] = "off"
+            else: conf["init_task_log_mode"] = "both"
         elif key == "interrupted_log":
             curr = conf.get("interrupted_log", "off")
             if curr == "both": conf["interrupted_log"] = "log_group"
@@ -2710,16 +2742,53 @@ async def creategroup_confirm_task_handler(c: Client, cb: CallbackQuery):
                                     s_name = "Unknown"
                                     
                                 msg_text = f"🔄 Initializing task for Session {s_idx} [<b>{html.escape(s_name)}</b>] ({acc_preview}) [<code>{tid}</code>]..."
+                                # Prepare optional staggered/batch prefix based on config
+                                ss_mode = conf_copy.get('staggered_start_log_mode', conf_copy.get('staggered_start_log_mode', 'both'))
                                 if i > 0:
                                     if is_batch_boundary:
-                                        msg_text = f"⏳ Batch Account Delay ({ba_account_delay}s)... {acc_preview}\n{msg_text}"
+                                        prefix = f"⏳ Batch Account Delay ({ba_account_delay}s)... {acc_preview}\n"
                                     else:
-                                        msg_text = f"⏳ Staggered Start ({acc_delay}s)... {acc_preview}\n{msg_text}"
-                                
-                                if cb_msg:
-                                    control_msg = await cb_msg.reply(f"<blockquote expandable>{msg_text}</blockquote>")
+                                        prefix = f"⏳ Staggered Start ({acc_delay}s)... {acc_preview}\n"
                                 else:
-                                    control_msg = await Altruix.bot.send_message(uid, f"<blockquote expandable>{msg_text}</blockquote>")
+                                    prefix = ""
+
+                                # Include prefix only if staggered_start mode is not 'off'
+                                if ss_mode == 'off':
+                                    full_text = msg_text
+                                else:
+                                    full_text = prefix + msg_text
+
+                                # Determine where to send the init message based on init_task_log_mode
+                                it_mode = conf_copy.get('init_task_log_mode', 'both')
+                                control_msg = None
+                                sent_msgs = []
+                                try:
+                                    if it_mode in ('log_group', 'both'):
+                                        log_chat = getattr(Altruix, 'log_chat', None) or getattr(getattr(Altruix, 'config', None), 'LOG_CHAT_ID', None)
+                                        if log_chat:
+                                            m = await Altruix.bot.send_message(log_chat, f"<blockquote expandable>{full_text}</blockquote>", parse_mode=ParseMode.HTML)
+                                            sent_msgs.append(m)
+                                            if not control_msg:
+                                                control_msg = m
+                                        else:
+                                            logger.warning("LOG_CHAT_ID not configured; skipping log_group init message")
+                                except Exception as e:
+                                    logger.warning(f"Gagal kirim init task ke LOG_CHAT_ID: {e}")
+                                try:
+                                    if it_mode in ('pm_bot', 'both'):
+                                        m2 = await Altruix.bot.send_message(uid, f"<blockquote expandable>{full_text}</blockquote>", parse_mode=ParseMode.HTML)
+                                        sent_msgs.append(m2)
+                                        if not control_msg:
+                                            control_msg = m2
+                                except Exception as e:
+                                    logger.warning(f"Gagal kirim init task ke user PM: {e}")
+
+                                # Fallback to reply to cb_msg if nothing sent and cb_msg available
+                                if not control_msg and cb_msg:
+                                    try:
+                                        control_msg = await cb_msg.reply(f"<blockquote expandable>{full_text}</blockquote>")
+                                    except Exception:
+                                        control_msg = None
                             except Exception as e:
                                 from pyrogram.errors import PeerIdInvalid, UserIsBlocked
                                 if isinstance(e, (PeerIdInvalid, UserIsBlocked)):
@@ -2815,6 +2884,25 @@ async def creategroup_confirm_task_handler(c: Client, cb: CallbackQuery):
                 # Clean up launch cancel flag for this user
                 try:
                     LAUNCH_CANCEL.pop(uid, None)
+                except Exception:
+                    pass
+                # Refresh the dashboard UI for the user so the Cancel Launch button is removed immediately
+                try:
+                    st = user_creategroup_state.get(uid)
+                    if st and st.get("ui_chat_id") and st.get("ui_msg_id"):
+                        try:
+                            txt, markup = await get_creategroup_ui_data(uid, st.get("session_index", 1), st.get("page", 1))
+                            full = f"<b>🚀 𝗔𝗨𝗧𝗢 𝗖𝗥𝗘𝗔𝗧𝗘 𝗗𝗔𝗦𝗛𝗕𝗢𝗔𝗥𝗗</b>\n\n<blockquote expandable>{txt}</blockquote>"
+                            try:
+                                await Altruix.bot.edit_message_text(chat_id=st.get("ui_chat_id"), message_id=st.get("ui_msg_id"), text=full, reply_markup=markup, parse_mode=ParseMode.HTML)
+                            except Exception:
+                                # Fallback: try safe_edit_message_text if callback context isn't available
+                                try:
+                                    await safe_edit_message_text(None, full, reply_markup=markup, chat_id=st.get("ui_chat_id"), message_id=st.get("ui_msg_id"))
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
                 except Exception:
                     pass
         

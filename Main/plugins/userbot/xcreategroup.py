@@ -1709,7 +1709,22 @@ async def creategroup_loop(
              try:
                   control_message = await bot_client.get_messages(LOG_CHAT_ID, state["control_message_id"])
              except Exception as e:
-                  logger.warning(f"Gagal recover control message: {e}")
+                  err_text = str(e) or ""
+                  # Common recoverable case: message was deleted or id invalid — clear stale id
+                  if "Invalid message ids" in err_text or "Invalid message id" in err_text or "MessageIdInvalid" in err_text:
+                      try:
+                          if state and "control_message_id" in state:
+                              state["control_message_id"] = None
+                              # Persist cleared state to avoid repeated failures
+                              try:
+                                  await save_creategroup_cache()
+                              except Exception:
+                                  pass
+                      except Exception:
+                          pass
+                      logger.debug(f"Cleared stale control_message_id during recovery: {err_text}")
+                  else:
+                      logger.warning(f"Gagal recover control message: {e}")
 
         # Dapatkan info user dasar dulu untuk nama di control message
         try:
@@ -2009,21 +2024,18 @@ async def creategroup_loop(
             state["static_rand_text"] = static_rand_text
             await save_creategroup_cache()
 
-        # Inisialisasi progress message di log group jika command bukan dari log group
-        curr_control_chat_id = getattr(getattr(control_message, "chat", None), "id", None) if control_message else None
-        if control_message and curr_control_chat_id is not None and str(curr_control_chat_id) != str(LOG_CHAT_ID):
-            try:
-                log_progress_msg = await bot_client.send_message(
-                    LOG_CHAT_ID,
-                    f"<blockquote expandable>📊 <b>Memulai Tracker Progress {account_idx}/{total_accs}...</b>\n"
-                    f"• Task ID: <code>{tid}</code>\n"
-                    f"• Account: <b>{html.escape(account_name_raw)}</b></blockquote>",
-                    parse_mode=ParseMode.HTML
-                )
-                if state:
-                    state["log_progress_msg"] = log_progress_msg
-            except Exception as e:
-                logger.error(f"Gagal kirim log progress awal: {e}")
+        # Inisialisasi progress message sesuai pengaturan Start Log (pm_bot/log_group/both/off)
+        try:
+            start_text = (
+                f"<blockquote expandable>📊 <b>Memulai Tracker Progress {account_idx}/{total_accs}...</b>\n"
+                f"• Task ID: <code>{tid}</code>\n"
+                f"• Account: <b>{html.escape(account_name_raw)}</b></blockquote>"
+            )
+            log_progress_msg = await send_start_log(start_text)
+            if state and log_progress_msg:
+                state["log_progress_msg"] = log_progress_msg
+        except Exception as e:
+            logger.error(f"Gagal kirim log progress awal: {e}")
 
         # Recovery control message if missing (moved higher, removing duplicate here)
         pass
@@ -2460,11 +2472,13 @@ async def creategroup_loop(
                             try:
                                 await bot_client.send_message(
                                     created_chat_id, 
+                                    f"<blockquote expandable>"
                                     f"🚀 <b>Group Initialized!</b>\n"                                    
                                     f"━━━━━━━━━━━━━━━━━━━━\n"
                                     f"🆔 <b>Chat ID:</b><code>{created_chat_id}</code>\n"
                                     f"📊 <b>Status:</b> Active\n\n"
-                                    f"<i>Powered by Altroid-X Engine</i>",
+                                    f"<i>Powered by Altroid-X Engine</i>"
+                                    f"</blockquote>",
                                     parse_mode=ParseMode.HTML
                                 )
                             except Exception as ew:
@@ -2563,11 +2577,13 @@ async def creategroup_loop(
                                     # Welcome message from bot (tanpa info akun)
                                     await bot_client.send_message(
                                         created_chat_id, 
+                                        f"<blockquote expandable>"
                                         f"🚀 <b>{type_label_full} Initialized!</b>\n"                                 
                                         f"━━━━━━━━━━━━━━━━━━━━\n"
                                         f"🆔 <b>Chat ID:</b><code>{created_chat_id}</code>\n"
                                         f"📊 <b>Status:</b> Active\n\n"
-                                        f"<i>Powered by Altroid-X Engine</i>",
+                                        f"<i>Powered by Altroid-X Engine</i>"
+                                        f"</blockquote>",
                                         parse_mode=ParseMode.HTML
                                     )
                                 except Exception as ebot:
