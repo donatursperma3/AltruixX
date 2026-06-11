@@ -166,12 +166,18 @@ async def save_creategroup_cache():
         import asyncio
         if isinstance(obj, dict):
             return {k: make_serializable(v) for k, v in obj.items()}
-        elif isinstance(obj, list):
+        if isinstance(obj, list):
             return [make_serializable(i) for i in obj]
-        elif hasattr(obj, "isoformat"):
+        if hasattr(obj, "isoformat"):
             return obj.isoformat()
-        elif isinstance(obj, asyncio.Event) or "Task" in str(type(obj)) or "Message" in str(type(obj)):
-            return None # Skip non-serializable objects
+        # Skip non-serializable runtime objects
+        try:
+            if isinstance(obj, asyncio.Event) or isinstance(obj, asyncio.Future):
+                return None
+        except Exception:
+            pass
+        if "Task" in str(type(obj)) or "Message" in str(type(obj)):
+            return None
         return obj
 
     async with _CACHE_SAVE_LOCK:
@@ -184,7 +190,8 @@ async def save_creategroup_cache():
             
             for tid, task in CREATEGROUP_TASKS.items():
                 task_copy = task.copy()
-                keys_to_remove = ["pause_event", "status_task", "task", "task_obj", "log_progress_msg"]
+                # Remove runtime-only keys that are not JSON-serializable
+                keys_to_remove = ["pause_event", "status_task", "task", "task_obj", "log_progress_msg", "done_future"]
                 for key in keys_to_remove:
                     task_copy.pop(key, None)
                 data["tasks"][tid] = make_serializable(task_copy)
@@ -339,11 +346,29 @@ async def load_creategroup_cache():
                     except ValueError as ve:
                         logger.warning(f"[CreateGroup] Invalid start_time format for task {tid}: {ve}, using current time")
                         task_data["start_time"] = datetime.now()
-                task_data["pause_event"] = asyncio.Event()
-                task_data["pause_event"].set()
+                # Ensure runtime-only objects exist to avoid races with other modules
+                task_data.setdefault("pause_event", asyncio.Event())
+                try:
+                    task_data["pause_event"].set()
+                except Exception:
+                    task_data["pause_event"] = asyncio.Event()
+                    task_data["pause_event"].set()
+
+                # Provide a completion future so UI/launcher can wait on it even before resume
+                if "done_future" not in task_data:
+                    try:
+                        task_data["done_future"] = asyncio.get_event_loop().create_future()
+                    except Exception:
+                        task_data["done_future"] = asyncio.Future()
+
                 # Ensure status flags are reset on startup/load
-                task_data["running"] = False
-                task_data["recovering"] = False
+                task_data.setdefault("running", False)
+                task_data.setdefault("recovering", False)
+                # Ensure common keys exist to avoid KeyError in handlers
+                task_data.setdefault("control_message_id", None)
+                task_data.setdefault("admin_id", None)
+                task_data.setdefault("user_id", None)
+
                 # ✅ FIX: Gunakan tid asli dari JSON sebagai key di memory agar unik per-akun
                 CREATEGROUP_TASKS[tid] = task_data
                 
@@ -1399,6 +1424,10 @@ async def creategroup_loop(
     start_photo_log_mode: str = "both",
     progress_log_mode: str = "both",
     panel_log_mode: str = "log_group"
+    ,
+    auto_start: bool = False,
+    auto_start_count: int = 3,
+    auto_start_timeout: int = 300
 ):
     """Main loop untuk membuat grup"""
     effective_user_id = user_id or (initial_message.from_user.id if initial_message and initial_message.from_user else None)
@@ -1582,6 +1611,10 @@ async def creategroup_loop(
                 state["params"]["total_accs"] = total_accs
                 state["params"]["batch_account"] = batch_account
                 state["params"]["ba_account_delay"] = ba_account_delay
+                # Keep auto-start settings in sync when resuming
+                state["params"]["auto_start"] = auto_start
+                state["params"]["auto_start_count"] = auto_start_count
+                state["params"]["auto_start_timeout"] = auto_start_timeout
                 
             if "pause_event" not in state:
                 state["pause_event"] = asyncio.Event()
@@ -1592,6 +1625,7 @@ async def creategroup_loop(
                 "paused": False,
                 "paused_by_user": False,
                 "pause_event": asyncio.Event(),
+                "done_future": asyncio.get_event_loop().create_future(),
                 "tid": tid,
                 "current_index": 0,
                 "current_step": None,
@@ -1640,6 +1674,9 @@ async def creategroup_loop(
                     "total_accs": total_accs,
                     "batch_account": batch_account,
                     "ba_account_delay": ba_account_delay,
+                    "auto_start": auto_start,
+                    "auto_start_count": auto_start_count,
+                    "auto_start_timeout": auto_start_timeout,
                     "start_log_mode": start_log_mode,
                     "start_photo_log_mode": start_photo_log_mode,
                     "progress_log_mode": progress_log_mode,
@@ -1648,7 +1685,13 @@ async def creategroup_loop(
                 "task_obj": asyncio.current_task()
             }
             state = CREATEGROUP_TASKS[task_key]
+        # Ensure pause_event and done_future are ready
         state["pause_event"].set()
+        if "done_future" not in state:
+            try:
+                state["done_future"] = asyncio.get_event_loop().create_future()
+            except Exception:
+                state["done_future"] = asyncio.Future()
         
         def sync_to_registry():
             """Helper to sync current progress and step to the global task registry."""
@@ -3276,6 +3319,13 @@ async def creategroup_loop(
                 account_idx=account_idx,
                 total_accs=total_accs
             )
+            # Mark completion future as successful
+            try:
+                df = state.get("done_future")
+                if df and not df.done():
+                    df.set_result(True)
+            except Exception:
+                pass
         else:
             # Task dihentikan
             await send_log_notification(
@@ -3289,6 +3339,13 @@ async def creategroup_loop(
                 reply_id,
                 user_client=user_client
             )
+            # Mark completion future as cancelled/stopped
+            try:
+                df = state.get("done_future")
+                if df and not df.done():
+                    df.set_result(False)
+            except Exception:
+                pass
     
     except Exception as e:
         logger.error(f"Critical error in creategroup_loop: {e}", exc_info=True)
@@ -3341,6 +3398,17 @@ async def creategroup_loop(
             effective_user_id,
             reply_id
         )
+        # Mark completion future as failed
+        try:
+            state = CREATEGROUP_TASKS.get(task_key, {})
+            df = state.get("done_future") if isinstance(state, dict) else None
+            if df and not df.done():
+                try:
+                    df.set_exception(e)
+                except Exception:
+                    df.set_result(False)
+        except Exception:
+            pass
     finally:
         if 'tid' in locals():
             unregister_task(tid)
@@ -3397,6 +3465,58 @@ async def send_completion_report(
         unit_label = "channel" if is_channel else "grup"
         type_name = "Channel" if is_channel else "Grup"
         
+        # If nothing succeeded, avoid creating/sending a log file; just notify
+        if success_count == 0:
+            # Notify targets without attachment
+            short_caption = (
+                f"<blockquote expandable>\n"
+                f"❌ <b>Laporan Create {type_label} Selesai</b>\n\n"
+                f"• Berhasil: {success_count}/{requested_count} {unit_label}\n"
+                f"• Durasi: {format_duration(total_duration)}\n"
+                f"• Account: {html.escape(f'{user_info.first_name or ''} {user_info.last_name or ''}'.strip() or 'N/A')}\n"
+                f"• Account ID: <code>{user_info.id}</code>\n"
+                f"• Task ID: <code>{task_id or 'N/A'}</code>\n\n"
+                f"<i>Module by @AlphaXproject team</i>\n"
+                f"</blockquote>"
+            )
+            try:
+                # Send notifications according to destination
+                if log_destination in ("both", "log_group"):
+                    try:
+                        await bot_client.send_message(LOG_CHAT_ID, short_caption, parse_mode=ParseMode.HTML)
+                    except Exception as e:
+                        logger.warning(f"Gagal kirim notif ke log group: {e}")
+                if log_destination in ("both", "saved_messages", "me"):
+                    try:
+                        await user_client.send_message("me", short_caption, parse_mode=ParseMode.HTML)
+                    except Exception as e:
+                        logger.warning(f"Gagal kirim notif ke Saved Messages: {e}")
+            except Exception:
+                logger.exception("Gagal kirim notifikasi ketika tidak ada grup berhasil")
+
+            # Update control message accordingly
+            if control_message:
+                try:
+                    chat_id = getattr(getattr(control_message, "chat", None), "id", LOG_CHAT_ID)
+                    await bot_client.edit_message_text(
+                        chat_id=chat_id,
+                        message_id=control_message.id,
+                        text=(
+                            f"<blockquote expandable>\n"
+                            f"❌ <b>Laporan Create {type_label} Selesai {account_idx}/{total_accs}</b>\n\n"
+                            f"• <b>Task ID:</b> <code>{task_id or 'N/A'}</code>\n"
+                            f"• <b>User:</b> {html.escape(f'{user_info.first_name or ''} {user_info.last_name or ''}'.strip() or 'Unknown')}\n"
+                            f"• <b>Detail:</b> Berhasil {success_count}/{requested_count} {unit_label}\n"
+                            f"• <b>Durasi:</b> {format_duration(total_duration)}\n"
+                            f"</blockquote>"
+                        ),
+                        parse_mode=ParseMode.HTML
+                    )
+                except Exception:
+                    logger.exception("Gagal update control message untuk laporan kosong")
+
+            return
+
         # Buat log file
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         # Use TID in filename to avoid collision in multi-session
@@ -3539,8 +3659,12 @@ async def send_completion_report(
             except Exception as e:
                 logger.warning(f"Gagal reply command awal: {e}")
 
-        # Hapus file lokal
-        os.remove(log_filename)
+        # Hapus file lokal if exists
+        try:
+            if os.path.exists(log_filename):
+                os.remove(log_filename)
+        except Exception as e:
+            logger.warning(f"Gagal menghapus file log lokal: {e}")
         
         # Determine labels based on type
         is_channel = group_type == "c"
@@ -4584,6 +4708,7 @@ async def creategroup_control_handler(client: Client, callback_query: CallbackQu
                 ]
                 try:
                     await callback_query.edit_message_text(
+                        f"<blockquote expandable>"
                         f"🔁 <b>Konfirmasi Recurring</b>\n\n"
                         f"Apakah Anda yakin ingin mengulang task ini?\n"
                         f"• Account: <b>{callback_query.from_user.mention}</b>\n"
@@ -4595,7 +4720,8 @@ async def creategroup_control_handler(client: Client, callback_query: CallbackQu
                         f"• Batch Act: <code>{conf.get('batch_action', 30)}</code> | <code>{conf.get('ba_delay', 30)}</code>s\n"
                         f"• Pattern: <code>{html.escape(conf['name_pattern'][:25])}...</code>\n"
                         f"• Bots: <code>{'Yes' if conf.get('invite_bots', True) else 'No'}</code>\n\n"
-                        f"<i>Task akan menggunakan konfigurasi yang sama.</i>",
+                        f"<i>Task akan menggunakan konfigurasi yang sama.</i>"
+                        f"</blockquote>",
                         reply_markup=InlineKeyboardMarkup(buttons),
                         parse_mode=ParseMode.HTML
                     )

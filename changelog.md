@@ -3,6 +3,34 @@
 All notable changes to the **Altroid-X** project from version **0.0.10.0959H** to the latest.
 Latest updates are always added at the top (newest → oldest).
 
+## [1.0.285] - 2026-06-10
+
+### 👥 CreateGroup: Chunk Notifications & Aggressive Cancel
+- **Added: Per-chunk notifications (configurable)**:
+  - Moved chunk notification controls into the **Log Configs** submenu and introduced a multi-mode setting `Chunk Notif: Both / Group Log / PM Bot / Off`.
+  - When enabled, the launcher will send start/completion notifications for each chunk to the configured target(s) and edit those messages when the chunk completes or times out.
+
+- **Added: Chunk notification persistence & UI parity**:
+  - `notify_chunks` is persisted in the per-user `xcreategroup_user_configs.json` (cycled with the existing log-mode toggle pattern) and reflected in the `Log Configs` label.
+  - Safe save/load wrappers and `save_user_cg_config` are used to ensure configuration is stored atomically and survives restarts.
+
+- **Added: Aggressive cancellation for admin-triggered aborts**:
+  - When a user requests an End/Cancel (or `LAUNCH_CANCEL` is set), the launch loop will aggressively cancel any in-memory `CREATEGROUP_TASKS` entries that belong to that admin (`admin_id == user_id`), cancel their asyncio tasks, and remove them from the registry.
+  - The cache is persisted after aggressive cancellation to avoid dangling task entries on disk.
+
+- **Implementation & Safety**:
+  - Per-chunk notifications route to the selected mode(s): reply to control message, PM to admin, and/or log group.
+  - All notification sends and edits are wrapped in try/except and logged; failures do not abort the launch flow.
+  - Chunk waits use `asyncio.wait(..., timeout=...)` and timeouts are logged; on timeout the launcher proceeds to next chunk unless user requests cancel.
+
+- **Files changed**: [Main/internals/settings_handlers/creategroup_handlers.py](Main/internals/settings_handlers/creategroup_handlers.py)
+
+- **Notes**:
+  - This patch preserves existing behavior when `Chunk Notif` is `Off` and maintains legacy staggered startup when `auto_start` is disabled.
+  - Aggressive cancellation is intentionally conservative and only removes tasks where `admin_id` matches the requesting user to avoid cross-admin interference.
+
+---
+
 ## [1.0.284] - 2026-06-10
 
 ### 👥 CreateGroup: Session Page Selection & Pagination Fixes
