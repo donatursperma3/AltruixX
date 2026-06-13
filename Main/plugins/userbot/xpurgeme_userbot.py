@@ -561,11 +561,12 @@ async def purgeme_cmd(client: Client, message: Message):
             "delay": user_config.get("delay", 1.0),
             "types": user_config.get("types", ["all"]),
             "mode": user_config.get("mode", "oldest"),
-            "from_id": "me", # New: Sender ID (me or channel id)
+            "from_id": user_config.get("from_id", "me"), # New: Sender ID (me or channel id)
             "sender_list": sender_list, # New: List of available senders
             "batch_size": user_config.get("batch_size", 30),
             "send_as_locally_available": send_as_locally_available,
             "batch_delay": user_config.get("batch_delay", 0), 
+            "callback_lock": asyncio.Lock(),
             "keep_recent": user_config.get("keep_recent", 0), 
             "max_scan": user_config.get("max_scan", 500),
             "offset": user_config.get("offset", 0),

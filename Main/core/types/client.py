@@ -292,7 +292,8 @@ class CustomClientMethods:
                     "MessageNotModified", "MESSAGE_NOT_MODIFIED",
                     "MessageIdsEmpty", "MessageEmpty", "MessageIdInvalid", 
                     "UserNotParticipant", "ChatWriteForbidden", "UserIsBlocked",
-                    "PeerIdInvalid", "ChannelInvalid", "PEER_ID_INVALID", "CHANNEL_INVALID",
+                    "PeerIdInvalid", "ParticipantIdInvalid", "PEER_ID_INVALID", "PARTICIPANT_ID_INVALID",
+                    "ChannelInvalid", "CHANNEL_INVALID",
                     "ChatAdminRequired", "ChatIdInvalid", "BroadcastForbidden",
                     "StickersetInvalid", "STICKERSET_INVALID", "StickersEmpty",
                     "DataInvalid", "DATA_INVALID", # ✅ Corrupted data/stale callbacks

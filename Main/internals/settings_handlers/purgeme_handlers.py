@@ -15,6 +15,7 @@ DEFAULT_PURGEME_CONFIG = {
     "batch_size": 30,
     "batch_delay": 0, # in seconds
     "mode": "oldest",
+    "from_id": "me",
     "notify": False,
     "forward_log": "off", # options: off, group_log, pm_bot, saved
     "fwd_delay": 0.5, # delay between forward and delete

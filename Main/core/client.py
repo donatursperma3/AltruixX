@@ -779,6 +779,22 @@ class AltruixClient:
         """
         # logger.debug(f"🔍 is_sudo(user_id={user_id}, ...)") # Too slow for tight loops
         
+        # ✅ QUICK CHECK: Bot Assistant is always authorized (custom or default)
+        bot_me = None
+        if self.bot:
+            bot_me = getattr(self.bot, "me", None) or getattr(self, "bot_info", None) or getattr(self.bot, "myself", None)
+        if bot_me and getattr(bot_me, "id", None) == user_id:
+            return True
+
+        # Quick-allow any configured secondary assistant bots
+        try:
+            for sec in getattr(self, "secondary_bots", []) or []:
+                sec_me = getattr(sec, "me", None) or getattr(sec, "myself", None)
+                if sec_me and getattr(sec_me, "id", None) == user_id:
+                    return True
+        except Exception:
+            pass
+        
         if user_id in self._auth_users_cache:
             return True
             
@@ -851,7 +867,18 @@ class AltruixClient:
             self.log(f"✅ is_sudo: User {user_id} is a member of a whitelisted group.", level=logging.INFO)
             return True
         
-        self.log(f"❌ is_sudo: User {user_id} NOT AUTHORIZED.", level=logging.INFO)
+        # Debounce repeated is_sudo denial logs per user (short window)
+        try:
+            if not hasattr(self, '_auth_denied_log_cache'):
+                self._auth_denied_log_cache = {}
+            key = (user_id, 'is_sudo_denied')
+            now = time.time()
+            last = self._auth_denied_log_cache.get(key, 0)
+            if now - last >= 30:
+                self._auth_denied_log_cache[key] = now
+                self.log(f"❌ is_sudo: User {user_id} NOT AUTHORIZED.", level=logging.INFO)
+        except Exception:
+            self.log(f"❌ is_sudo: User {user_id} NOT AUTHORIZED.", level=logging.INFO)
         return False
 
     async def is_member_of_whitelisted_group(self, user_id: int, client: Client = None) -> bool:
@@ -950,11 +977,43 @@ class AltruixClient:
                                 else:
                                     self.log(f"❌ [WL_CHECK] User {user_id} in {chat_id} has invalid Raw status: {parsed_member.status.name}", level=20)
                             except ParticipantIdInvalid:
-                                self.log(f"⚠️ [WL_CHECK] User {user_id} NOT FOUND (ParticipantIdInvalid) in group {chat_id}: User likely left or was removed from group", level=20)
+                                # Debounce repeated NOT FOUND logs per user+group
+                                try:
+                                    if not hasattr(self, '_auth_denied_log_cache'):
+                                        self._auth_denied_log_cache = {}
+                                    key = (user_id, 'wl_nf', chat_id)
+                                    now = time.time()
+                                    last = self._auth_denied_log_cache.get(key, 0)
+                                    if now - last >= 60:
+                                        self._auth_denied_log_cache[key] = now
+                                        self.log(f"⚠️ [WL_CHECK] User {user_id} NOT FOUND (ParticipantIdInvalid) in group {chat_id}: User likely left or was removed from group", level=20)
+                                except Exception:
+                                    self.log(f"⚠️ [WL_CHECK] User {user_id} NOT FOUND (ParticipantIdInvalid) in group {chat_id}: User likely left or was removed from group", level=20)
                             except Exception as ex:
-                                self.log(f"⚠️ [WL_CHECK] Raw API fallback failed for user {user_id} in group {chat_id}: {type(ex).__name__}: {ex}", level=20)
+                                # Debounce Raw API fallback logs per user+group
+                                try:
+                                    if not hasattr(self, '_auth_denied_log_cache'):
+                                        self._auth_denied_log_cache = {}
+                                    key = (user_id, 'wl_raw', chat_id)
+                                    now = time.time()
+                                    last = self._auth_denied_log_cache.get(key, 0)
+                                    if now - last >= 60:
+                                        self._auth_denied_log_cache[key] = now
+                                        self.log(f"⚠️ [WL_CHECK] Raw API fallback failed for user {user_id} in group {chat_id}: {type(ex).__name__}: {ex}", level=20)
+                                except Exception:
+                                    self.log(f"⚠️ [WL_CHECK] Raw API fallback failed for user {user_id} in group {chat_id}: {type(ex).__name__}: {ex}", level=20)
                         else:
-                            self.log(f"⚠️ [WL_CHECK] API error for user {user_id} in group {chat_id}: {type(e).__name__}: {e}", level=20)
+                            try:
+                                if not hasattr(self, '_auth_denied_log_cache'):
+                                    self._auth_denied_log_cache = {}
+                                key = (user_id, 'wl_api', chat_id)
+                                now = time.time()
+                                last = self._auth_denied_log_cache.get(key, 0)
+                                if now - last >= 60:
+                                    self._auth_denied_log_cache[key] = now
+                                    self.log(f"⚠️ [WL_CHECK] API error for user {user_id} in group {chat_id}: {type(e).__name__}: {e}", level=20)
+                            except Exception:
+                                self.log(f"⚠️ [WL_CHECK] API error for user {user_id} in group {chat_id}: {type(e).__name__}: {e}", level=20)
                         continue
                 if is_member:
                     break
@@ -964,8 +1023,20 @@ class AltruixClient:
                 self._sudo_membership_cache[user_id] = True
                 self.log(f"✅ [WL_CHECK] User {user_id} AUTHORIZED via whitelisted group membership. ({len(clients_to_try)} clients probed)", level=logging.INFO)
             else:
-                self._sudo_negative_cache[user_id] = time.time()
-                self.log(f"🔴 [WL_CHECK] User {user_id} NOT found in any of {len(group_list)} whitelisted groups. ({len(clients_to_try)} clients probed)", level=logging.INFO)
+                # Debounce final NOT found in groups per user
+                try:
+                    if not hasattr(self, '_auth_denied_log_cache'):
+                        self._auth_denied_log_cache = {}
+                    key = (user_id, 'wl_notfound')
+                    now = time.time()
+                    last = self._auth_denied_log_cache.get(key, 0)
+                    if now - last >= 60:
+                        self._auth_denied_log_cache[key] = now
+                        self._sudo_negative_cache[user_id] = time.time()
+                        self.log(f"🔴 [WL_CHECK] User {user_id} NOT found in any of {len(group_list)} whitelisted groups. ({len(clients_to_try)} clients probed)", level=logging.INFO)
+                except Exception:
+                    self._sudo_negative_cache[user_id] = time.time()
+                    self.log(f"🔴 [WL_CHECK] User {user_id} NOT found in any of {len(group_list)} whitelisted groups. ({len(clients_to_try)} clients probed)", level=logging.INFO)
             return is_member
 
     @property
@@ -1009,6 +1080,25 @@ class AltruixClient:
                         new_sudo_set.update(uids)
                 except Exception as e:
                     self.log(f"Error fetching sudo from session: {e}", level=logging.DEBUG)
+            
+            # ✅ ADD BOT ASSISTANT: Always include bot's own ID as authorized
+            bot_me = None
+            if self.bot:
+                bot_me = getattr(self.bot, "me", None) or getattr(self, "myself", None) or getattr(self, "bot_info", None)
+            if bot_me and getattr(bot_me, "id", None):
+                new_sudo_set.add(bot_me.id)
+
+            # ✅ ALSO include any secondary/alternative assistant bots
+            try:
+                for sec in getattr(self, "secondary_bots", []) or []:
+                    try:
+                        sec_me = getattr(sec, "me", None) or getattr(sec, "myself", None)
+                        if sec_me and getattr(sec_me, "id", None):
+                            new_sudo_set.add(sec_me.id)
+                    except Exception:
+                        continue
+            except Exception:
+                pass
             
             self.db_sudo_users = new_sudo_set
             

@@ -3,6 +3,35 @@
 All notable changes to the **Altroid-X** project from version **0.0.10.0959H** to the latest.
 Latest updates are always added at the top (newest → oldest).
 
+## [1.0.287] - 2026-06-14
+
+### 🧹 Purgeme: Concurrency & Config Persistence Fixes
+- **Fixed: Double-trigger behavior on rapid submenu button clicks**:
+  - Added async lock (`asyncio.Lock`) to prevent race conditions when callbacks are processed simultaneously. Each purgeme session now serializes state modifications under `async with state["callback_lock"]:`, ensuring no concurrent state corruption.
+  - Callback handler body properly indented to fall under the lock context, guaranteeing sequential execution of all state changes per session.
+
+- **Fixed: Sender selection not persisting across sessions**:
+  - User-selected sender (`from_id`) is now persisted to JSON config during auto-save. When `.purgeme` is restarted, the previously selected sender (or channel) is restored automatically.
+  - Added `"from_id": "me"` to `DEFAULT_PURGEME_CONFIG` in `purgeme_handlers.py` to ensure new users start with correct default.
+
+- **Enhanced: Auto-save config includes sender preference**:
+  - Config auto-save logic now includes `from_id` field in the saved dictionary whenever a configuration-modifying action is detected (e.g., `pg_set_sender_`, `pg_cnt_`, `pg_mode_`, etc.).
+  - Sender changes trigger config persistence immediately, maintaining synchronization between runtime state and persistent storage.
+
+- **Implementation & Safety**:
+  - Lock is lazily initialized in state if missing, preventing crashes on legacy session resumption.
+  - All callback actions (count adjust, delay adjust, mode change, sender select, type toggle, etc.) are now atomic and race-condition-free.
+  - Config save uses atomic file replacement pattern (write to temp file, then replace) to prevent data loss on crash.
+
+- **Files changed**: [Main/plugins/userbot/xpurgeme_userbot.py](Main/plugins/userbot/xpurgeme_userbot.py), [Main/plugins/bot/xpurgeme_bot.py](Main/plugins/bot/xpurgeme_bot.py), [Main/internals/settings_handlers/purgeme_handlers.py](Main/internals/settings_handlers/purgeme_handlers.py)
+
+- **Notes**:
+  - This patch eliminates the double-trigger issue observed when users rapidly click submenu buttons (e.g., `+`, `-`, mode selection).
+  - Sender selection now survives session restarts, improving UX for users who frequently change from/to different accounts or channels.
+  - No changes to UI, button callbacks, or external API; purely internal state management and persistence improvements.
+
+---
+
 ## [1.0.286] - 2026-06-12
 
 ### 🛠️ CreateGroup: Recovery, UI refresh & integer formatting fixes

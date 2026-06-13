@@ -1040,6 +1040,12 @@ async def ytcut_confirm_yes_cb(c: Any, cb: CallbackQuery):
             caption="⏳ <b>Memulai proses YTcut...</b>\nMohon tunggu hingga proses download dimulai.",
             parse_mode=enums.ParseMode.HTML
         )
+    except MessageNotModified:
+        # Nothing to change; user already saw the same caption.
+        try:
+            return await cb.answer()
+        except Exception:
+            return
     except Exception as e:
         Altruix.log(f"[YTcut] Failed to edit message caption: {html.escape(str(e))}\n{traceback.format_exc()}")
         try:
@@ -1047,6 +1053,11 @@ async def ytcut_confirm_yes_cb(c: Any, cb: CallbackQuery):
                 text="⏳ <b>Memulai proses YTcut...</b>\nMohon tunggu hingga proses download dimulai.",
                 parse_mode=enums.ParseMode.HTML,
             )
+        except MessageNotModified:
+            try:
+                return await cb.answer()
+            except Exception:
+                return
         except Exception as inner_e:
             Altruix.log(f"[YTcut] Failed to edit message text fallback: {html.escape(str(inner_e))}\n{traceback.format_exc()}")
 

@@ -748,41 +748,38 @@ async def purgeme_inline_handler(client: Client, query: InlineQuery):
 async def purgeme_callback_handler(client: Client, cb: CallbackQuery):
     data = cb.data
     parts = data.split("_")
-    
-    # ─── 🔐 SECURITY ENFORCEMENT & ID EXTRACTION ───
-    # Format: pg_{action}_{params/sub_action}_{unique_id}
-    # where unique_id = {chat_id}_{user_id}
-    # Since chat_id and user_id are always integers (no underscores),
-    # we reliably extract the last two parts as the unique_id.
+
     try:
-        # Extract the last two parts as unique_id components
         parts_all = data.rsplit("_", 2)
         if len(parts_all) < 3:
             raise ValueError("Too few parts")
-            
+
         chat_id_str, user_id_str = parts_all[-2], parts_all[-1]
         unique_id = f"{chat_id_str}_{user_id_str}"
         chat_id = int(chat_id_str)
         user_id = int(user_id_str)
-        
-        # Security: Verify if user is authorized
+
         from Main.utils.access_control import is_authorized_user
         if str(cb.from_user.id) != str(user_id_str) and not is_authorized_user(cb.from_user.id, Altruix.config.OWNER_USERS_ID, Altruix.config.SUDO_USERS_ID):
-            unauth = Altruix.get_string("ACCESS_DENIED")
-            return await cb.answer(unauth, show_alert=True)
+            return await cb.answer(Altruix.get_string("ACCESS_DENIED"), show_alert=True)
     except (ValueError, IndexError):
         return await cb.answer("Invalid Session ID or Format.", show_alert=True)
 
     state = Altruix.PURGEME_STATE.get(unique_id)
     if not state:
-         # ─── 2. FIX: Session Not Found Friendly Handling ───
-         try:
-            await Altruix.edit_cb(cb, "<b>Session Expired</b>\n\nSesi ini telah berakhir atau tidak ditemukan. Silakan mulai perintah <code>.purgeme</code> lagi.", parse_mode=enums.ParseMode.HTML)
+        try:
+            await Altruix.edit_cb(
+                cb,
+                "<b>Session Expired</b>\n\nSesi ini telah berakhir atau tidak ditemukan. Silakan mulai perintah <code>.purgeme</code> lagi.",
+                parse_mode=enums.ParseMode.HTML
+            )
             return
-         except:
+        except:
             return await cb.answer("Session Expired.", show_alert=True)
 
-    # Capture message details for dashboard updates and cleanup
+    if "callback_lock" not in state:
+        state["callback_lock"] = asyncio.Lock()
+
     if cb.message:
         state["dashboard_msg_id"] = cb.message.id
         state["dashboard_chat_id"] = cb.message.chat.id
@@ -790,365 +787,360 @@ async def purgeme_callback_handler(client: Client, cb: CallbackQuery):
         state["inline_message_id"] = cb.inline_message_id
 
     try:
-        # Check for direct parameter modifications in command string
-        cmd = "_".join(parts[1:-2]) # e.g., cnt_add_10
-        if cmd.startswith("kr_"):
-            # Keep Recent Adjustment
-            # Format: pg_kr_{action}_{val}_{unique_id}
-            action = parts[2] # add or sub
-            val = int(parts[3])
-            current = state.get("keep_recent", 0)
-            if action == "add": state["keep_recent"] = current + val
-            else: state["keep_recent"] = max(0, current - val)
-            
-        if "cnt_add" in data:
-            val = int(parts[3])
-            state["count"] += val
-            
-        elif "cnt_sub" in data:
-            val = int(parts[3])
-            state["count"] = max(1, state["count"] - val)
+        async with state["callback_lock"]:
+            # Log incoming callback for debugging
+            Altruix.log(f"Purgeme CB: from={getattr(cb.from_user, 'id', None)} data={data} msg_id={getattr(cb.message, 'id', None)} inline_id={cb.inline_message_id}", level=10)
 
-        elif "dly_add" in data:
-            val = float(parts[3])
-            state["delay"] = round(state["delay"] + val, 2)
-
-        elif "dly_sub" in data:
-            val = float(parts[3])
-            state["delay"] = max(0, round(state["delay"] - val, 2))
-            
-        elif "dly_reset" in data:
-            # Reset message delay to 0
-            state["delay"] = 0
-
-        elif "fdl_add" in data:
-            # Increase forward delay
-            val = float(parts[3])
-            state["fwd_delay"] = round(state.get("fwd_delay", 0.5) + val, 2)
-
-        elif "fdl_sub" in data:
-            # Decrease forward delay (minimum 0)
-            val = float(parts[3])
-            state["fwd_delay"] = max(0, round(state.get("fwd_delay", 0.5) - val, 2))
-            
-        elif "fdl_reset" in data:
-            # Reset forward delay to default 0.5s
-            state["fwd_delay"] = 0.5
-
-        # ─── SUB-MENU NAVIGATION (must be checked BEFORE short prefixes!) ───
-        # "mode_" substring exists in "menu_mode", so menu_* MUST come first
-        elif "menu_count" in data:
-            state["sub_menu"] = "count"
-        elif "menu_batch" in data:
-            state["sub_menu"] = "batch"
-        elif "menu_keeprecent" in data:
-            state["sub_menu"] = "keeprecent"
-        elif "menu_delay" in data:
-            state["sub_menu"] = "delay"
-        elif "menu_bdelay" in data:
-            state["sub_menu"] = "bdelay"
-        elif "menu_mode" in data:
-            state["sub_menu"] = "mode"
-        elif "menu_offset" in data:
-            state["sub_menu"] = "offset"
-        elif "menu_bounds" in data:
-            state["sub_menu"] = "bounds"
-        elif "menu_dates" in data:
-            state["sub_menu"] = "dates"
-        elif "menu_maxscan" in data:
-            state["sub_menu"] = "maxscan"
-        elif "menu_forwardlog" in data:
-            state["sub_menu"] = "forwardlog"
-        elif "menu_fwddelay" in data:
-            state["sub_menu"] = "fwddelay"
-        elif "menu_filter" in data:
-            state["sub_menu"] = "filter"
-        elif "menu_sender" in data:
-            state["sub_menu"] = "sender"
-
-        elif "mode_" in data:
-            # Change purge order mode (oldest first or latest first)
-            mode = parts[2]
-            state["mode"] = mode
-
-        elif "set_fwd_" in data:
-            # Set the forward destination (Format: pg_set_fwd_{val}_{unique_id})
-            # Robust extraction to handle values with underscores like 'group_log'
-            f_val = data.replace("pg_set_fwd_", "", 1).replace(f"_{unique_id}", "", 1)
-            state["forward_log"] = f_val
-            await cb.answer(f"Forward Log: {f_val.replace('_', ' ').title()}")
-
-        elif "set_sender_" in data:
-            # Format: pg_set_sender_{sender_id}_{unique_id}
-            # Remove prefix and suffix to get sender_id
-            s_id_raw = data.replace("pg_set_sender_", "", 1).replace(f"_{unique_id}", "", 1)
-            
-            if s_id_raw == "me":
-                state["from_id"] = "me"
-            else:
+            # Simple de-duplication guard: ignore repeated identical callbacks
+            now = time.time()
+            last_cb = state.get("_last_callback")
+            cb_key = (getattr(cb.from_user, 'id', None), data, state.get("dashboard_msg_id") or state.get("inline_message_id"))
+            if last_cb and last_cb.get("key") == cb_key and (now - last_cb.get("t", 0)) < 0.8:
+                Altruix.log(f"Duplicate purgeme callback ignored: {cb_key}", level=10)
                 try:
-                    state["from_id"] = int(s_id_raw)
-                except:
-                    state["from_id"] = s_id_raw
-            
-            # Recalculate total messages for this sender
-            try:
-                client = state.get("client")
-                chat_id = state.get("chat_id")
-                if client and chat_id:
-                    total = await client.search_messages_count(chat_id, from_user=state["from_id"])
-                    state["total_account_messages"] = total
-            except:
-                pass
-
-        elif "notify" in data:
-            # ─── 3. FIX: Toggle Notification Logic ───
-            state["notify"] = not state.get("notify", True)
-
-        elif "typ_" in data:
-            # Extract full type name by stripping prefix and unique_id suffix
-            # This handles multi-word types like video_note, web_page correctly
-            # Format: pg_typ_{type}_{unique_id} where unique_id = {chat_id}_{user_id}
-            # Format: pg_typ_{type}_{unique_id}
-            # Remove prefix 'pg_typ_' and suffix '_{unique_id}'
-            t_type = data.replace("pg_typ_", "", 1).replace(f"_{unique_id}", "", 1)
-            if t_type == "all":
-                if "all" in state["types"]:
-                    state["types"] = []
-                else:
-                    state["types"] = ["all"]
-            else:
-                if "all" in state["types"]: state["types"].remove("all")
-                if t_type in state["types"]:
-                    state["types"].remove(t_type)
-                else:
-                    state["types"].append(t_type)
-                if not state["types"]: state["types"] = ["all"]
-        
-        elif "btc_add" in data:
-            val = int(parts[3])
-            state["batch_size"] = state.get("batch_size", 60) + val
-        
-        elif "btc_sub" in data:
-            val = int(parts[3])
-            curr = state.get("batch_size", 60)
-            state["batch_size"] = max(10, curr - val)
-
-        elif "dbc_add" in data:
-            val_str = parts[3].replace('m', '')
-            val_min = int(val_str)
-            val_sec = val_min * 60
-            state["batch_delay"] = state.get("batch_delay", 120) + val_sec
-
-        elif "dbc_sub" in data:
-            val_str = parts[3].replace('m', '')
-            val_min = int(val_str)
-            val_sec = val_min * 60
-            curr = state.get("batch_delay", 120)
-            state["batch_delay"] = max(0, curr - val_sec)
-
-        elif "off_add" in data:
-            val = int(parts[3])
-            state["offset"] = state.get("offset", 0) + val
-
-        elif "off_sub" in data:
-            val = int(parts[3])
-            curr = state.get("offset", 0)
-            state["offset"] = max(0, curr - val)
-
-        elif "off_reset" in data:
-            state["offset"] = 0
-
-        elif "bnd_min_add" in data:
-            val = int(parts[4])
-            state["min_id"] = state.get("min_id", 0) + val
-            
-        elif "bnd_min_sub" in data:
-            val = int(parts[4])
-            state["min_id"] = max(0, state.get("min_id", 0) - val)
-            
-        elif "bnd_max_add" in data:
-            val = int(parts[4])
-            state["max_id"] = state.get("max_id", 0) + val
-            
-        elif "bnd_max_sub" in data:
-            val = int(parts[4])
-            state["max_id"] = max(0, state.get("max_id", 0) - val)
-            
-        elif "bnd_min_reset" in data:
-            state["min_id"] = 0
-            
-        elif "bnd_max_reset" in data:
-            state["max_id"] = 0
-
-        elif "dat_min_add" in data:
-            val = int(parts[4])
-            state["min_days"] = state.get("min_days", 0) + val
-            
-        elif "dat_min_sub" in data:
-            val = int(parts[4])
-            state["min_days"] = max(0, state.get("min_days", 0) - val)
-            
-        elif "dat_max_add" in data:
-            val = int(parts[4])
-            state["max_days"] = state.get("max_days", 0) + val
-            
-        elif "dat_max_sub" in data:
-            val = int(parts[4])
-            state["max_days"] = max(0, state.get("max_days", 0) - val)
-            
-        elif "dat_min_reset" in data:
-            state["min_days"] = 0
-            
-        elif "dat_max_reset" in data:
-            state["max_days"] = 0
-
-        elif "scn_add" in data:
-            val = int(parts[3])
-            state["max_scan"] = state.get("max_scan", 500) + val
-            
-        elif "scn_sub" in data:
-            val = int(parts[3])
-            state["max_scan"] = max(10, state.get("max_scan", 500) - val)
-            
-        elif "scn_reset" in data:
-            state["max_scan"] = 500
-
-        elif "info" in data:
-            # ─── 1. FIX: Info Page Logic ───
-            state["sub_menu"] = None
-            state["status"] = "info"
-            
-        elif "back" in data:
-            # If we're in a sub-menu, go back to main config; otherwise go to config from info
-            if state.get("sub_menu"):
-                state["sub_menu"] = None
-            else:
-                state["status"] = "config"
-
-
-
-        elif "start" in data:
-            # Switch to confirm state instead of immediately starting
-            state["status"] = "confirm"
-            # Fall through to general keyboard update below
-
-        elif "confirmyes" in data:
-            if state.get("event") and not state["event"].is_set(): 
-                state["event"].set()
-                # Immediate Feedback
-                title = Altruix.get_string("purgeme_title") or "<b>Userbot Purgeme</b>"
-                btn_style_local = get_user_button_style(int(user_id_str))
-                
-                chat_name = state.get("chat_name", "Unknown")
-                chat_link = state.get("chat_link")
-                display_name = f"<a href='{chat_link}'>{chat_name}</a>" if chat_link else f"<b>{chat_name}</b>"
-                
-                # IMPORTANT: Ensure persistent message tracking for deletion later
-                if cb.message:
-                    state["dashboard_msg_id"] = cb.message.id
-                    state["dashboard_chat_id"] = cb.message.chat.id
-                    
-                await Altruix.edit_cb(
-                    cb,
-                    f"<blockquote expandable>{title}\n<i>Task is in progress...</i>\n<b>Chat:</b> {display_name}</blockquote>",
-                    parse_mode=enums.ParseMode.HTML,
-                    disable_web_page_preview=True,
-                    reply_markup=InlineKeyboardMarkup([
-                        [
-                            InlineKeyboardButton("Delete MSG", callback_data=f"purgeme_close_{unique_id}", style=btn_style_local),
-                            InlineKeyboardButton("Cancel", callback_data=f"pg_abort_{unique_id}", style=btn_style_local)
-                        ],
-                        [InlineKeyboardButton("Status", callback_data=f"pg_refresh_{unique_id}", style=btn_style_local)]
-                    ])
-                )
-            return # Prevent further processing
-
-        elif "abort" in data:
-            state["status"] = "cancelled"
-            if state.get("event"): state["event"].set()
-            if state.get("stop_event"): state["stop_event"].set()
-            await cb.answer("Proses purgeme dihentikan!", show_alert=True)
-            title = Altruix.get_string("purgeme_title") or "<b>Userbot Purgeme</b>"
-            await Altruix.edit_cb(cb, f"{title}\n<b>Task Cancelled / Aborted</b>")
-
-        # ─── AUTO-SAVE CONFIG ───
-        # Identify if this was a configuration change action
-        # Actions that modify settings: pg_cnt_, pg_dly_, pg_btc_, pg_dbc_, pg_mode_, pg_off_, pg_bnd_, pg_dat_, pg_scn_, pg_typ_, pg_notify, pg_set_fwd, pg_kr_, pg_fdl_
-        settings_prefixes = ["pg_cnt_", "pg_dly_", "pg_btc_", "pg_dbc_", "pg_mode_", "pg_off_", "pg_bnd_", "pg_dat_", "pg_scn_", "pg_typ_", "pg_notify", "pg_set_fwd", "pg_kr_", "pg_fdl_"]
-        if any(data.startswith(pref) for pref in settings_prefixes):
-            # Extract persistent fields
-            config_to_save = {
-                "count": state.get("count"),
-                "delay": state.get("delay"),
-                "batch_size": state.get("batch_size"),
-                "batch_delay": state.get("batch_delay"),
-                "mode": state.get("mode"),
-                "notify": state.get("notify"),
-                "forward_log": state.get("forward_log"),
-                "fwd_delay": state.get("fwd_delay", 0.5),
-                "keep_recent": state.get("keep_recent"),
-                "max_scan": state.get("max_scan"),
-                "offset": state.get("offset"),
-                "min_id": state.get("min_id"),
-                "max_id": state.get("max_id"),
-                "min_days": state.get("min_days"),
-                "max_days": state.get("max_days"),
-                "types": state.get("types")
-            }
-            save_user_purgeme_config(user_id, config_to_save)
-            # FIX: Do not sleep or delete; allow UI to update normally below
-
-        elif "cancel" in data:
-            state["status"] = "cancelled"
-            if state.get("event"): state["event"].set()
-            if state.get("stop_event"): state["stop_event"].set()
-            # Try to delete, but answer callback regardless
-            try:
-                await Altruix.delete_cb(cb)
-            except:
-                # If deletion fails (e.g., inline result), edit to show cancellation
-                try:
-                    title = Altruix.get_string("purgeme_title") or "<b>Userbot Purgeme</b>"
-                    await Altruix.edit_cb(cb, f"{title}\n<b>Cancelled</b>")
+                    await cb.answer()
                 except:
                     pass
-            await cb.answer("Cancelled", show_alert=False)
-            return # Prevent further processing
+                return
+            state["_last_callback"] = {"key": cb_key, "t": now}
 
-        elif "stop" in data:
-            if state.get("stop_event"): state["stop_event"].set()
-            await cb.answer("Stopped", show_alert=False)
+            cmd = "_".join(parts[1:-2]) if len(parts) > 3 else ""
 
-        elif "pause" in data:
-            state["status"] = "paused"
-            if state.get("pause_event"): state["pause_event"].clear()
-            # No need to answer here, will be answered by general update below
+            if cmd.startswith("kr_"):
+                action = parts[2]
+                val = int(parts[3])
+                current = state.get("keep_recent", 0)
+                if action == "add":
+                    state["keep_recent"] = current + val
+                else:
+                    state["keep_recent"] = max(0, current - val)
 
-        elif "resume" in data:
-            state["status"] = "running"
-            if state.get("pause_event"): state["pause_event"].set()
-            # No need to answer here, will be answered by general update below
+            elif "cnt_add" in data:
+                val = int(parts[3])
+                state["count"] += val
 
-        elif "repeat" in data:
-            state["status"] = "config"
-            state["sub_menu"] = None
-            state["processed"] = 0
-            state["scanned"] = 0
-            state["failed"] = 0
-            if state.get("event"): state["event"].clear()
-            if state.get("stop_event"): state["stop_event"].clear()
-            if state.get("pause_event"): state["pause_event"].set()
-            # Falls through to general UI update
+            elif "cnt_sub" in data:
+                val = int(parts[3])
+                state["count"] = max(1, state["count"] - val)
 
-        elif "refresh" in data:
-            # Just trigger UI update, answer will be handled below
-            pass
+            elif "dly_add" in data:
+                val = float(parts[3])
+                state["delay"] = round(state["delay"] + val, 2)
 
-        # General Keyboard Update
+            elif "dly_sub" in data:
+                val = float(parts[3])
+                state["delay"] = max(0, round(state["delay"] - val, 2))
+
+            elif "dly_reset" in data:
+                state["delay"] = 0
+
+            elif "fdl_add" in data:
+                val = float(parts[3])
+                state["fwd_delay"] = round(state.get("fwd_delay", 0.5) + val, 2)
+
+            elif "fdl_sub" in data:
+                val = float(parts[3])
+                state["fwd_delay"] = max(0, round(state.get("fwd_delay", 0.5) - val, 2))
+
+            elif "fdl_reset" in data:
+                state["fwd_delay"] = 0.5
+
+            elif "menu_count" in data:
+                state["sub_menu"] = "count"
+            elif "menu_batch" in data:
+                state["sub_menu"] = "batch"
+            elif "menu_keeprecent" in data:
+                state["sub_menu"] = "keeprecent"
+            elif "menu_delay" in data:
+                state["sub_menu"] = "delay"
+            elif "menu_bdelay" in data:
+                state["sub_menu"] = "bdelay"
+            elif "menu_mode" in data:
+                state["sub_menu"] = "mode"
+            elif "menu_offset" in data:
+                state["sub_menu"] = "offset"
+            elif "menu_bounds" in data:
+                state["sub_menu"] = "bounds"
+            elif "menu_dates" in data:
+                state["sub_menu"] = "dates"
+            elif "menu_maxscan" in data:
+                state["sub_menu"] = "maxscan"
+            elif "menu_forwardlog" in data:
+                state["sub_menu"] = "forwardlog"
+            elif "menu_fwddelay" in data:
+                state["sub_menu"] = "fwddelay"
+            elif "menu_filter" in data:
+                state["sub_menu"] = "filter"
+            elif "menu_sender" in data:
+                state["sub_menu"] = "sender"
+
+            elif "mode_" in data:
+                mode = parts[2]
+                state["mode"] = mode
+
+            elif "set_fwd_" in data:
+                f_val = data.replace("pg_set_fwd_", "", 1).replace(f"_{unique_id}", "", 1)
+                state["forward_log"] = f_val
+                await cb.answer(f"Forward Log: {f_val.replace('_', ' ').title()}")
+
+            elif "set_sender_" in data:
+                s_id_raw = data.replace("pg_set_sender_", "", 1).replace(f"_{unique_id}", "", 1)
+                if s_id_raw == "me":
+                    state["from_id"] = "me"
+                else:
+                    try:
+                        state["from_id"] = int(s_id_raw)
+                    except:
+                        state["from_id"] = s_id_raw
+
+                try:
+                    client_ref = state.get("client")
+                    chat_ref = state.get("chat_id")
+                    if client_ref and chat_ref:
+                        total = await client_ref.search_messages_count(chat_ref, from_user=state["from_id"])
+                        state["total_account_messages"] = total
+                except:
+                    pass
+
+            elif "notify" in data:
+                state["notify"] = not state.get("notify", True)
+
+            elif "typ_" in data:
+                t_type = data.replace("pg_typ_", "", 1).replace(f"_{unique_id}", "", 1)
+                if t_type == "all":
+                    if "all" in state["types"]:
+                        state["types"] = []
+                    else:
+                        state["types"] = ["all"]
+                else:
+                    if "all" in state["types"]:
+                        state["types"].remove("all")
+                    if t_type in state["types"]:
+                        state["types"].remove(t_type)
+                    else:
+                        state["types"].append(t_type)
+                    if not state["types"]:
+                        state["types"] = ["all"]
+
+            elif "btc_add" in data:
+                val = int(parts[3])
+                state["batch_size"] = state.get("batch_size", 60) + val
+
+            elif "btc_sub" in data:
+                val = int(parts[3])
+                curr = state.get("batch_size", 60)
+                state["batch_size"] = max(10, curr - val)
+
+            elif "dbc_add" in data:
+                val_str = parts[3].replace('m', '')
+                val_min = int(val_str)
+                val_sec = val_min * 60
+                state["batch_delay"] = state.get("batch_delay", 120) + val_sec
+
+            elif "dbc_sub" in data:
+                val_str = parts[3].replace('m', '')
+                val_min = int(val_str)
+                val_sec = val_min * 60
+                curr = state.get("batch_delay", 120)
+                state["batch_delay"] = max(0, curr - val_sec)
+
+            elif "off_add" in data:
+                val = int(parts[3])
+                state["offset"] = state.get("offset", 0) + val
+
+            elif "off_sub" in data:
+                val = int(parts[3])
+                curr = state.get("offset", 0)
+                state["offset"] = max(0, curr - val)
+
+            elif "off_reset" in data:
+                state["offset"] = 0
+
+            elif "bnd_min_add" in data:
+                val = int(parts[4])
+                state["min_id"] = state.get("min_id", 0) + val
+
+            elif "bnd_min_sub" in data:
+                val = int(parts[4])
+                state["min_id"] = max(0, state.get("min_id", 0) - val)
+
+            elif "bnd_max_add" in data:
+                val = int(parts[4])
+                state["max_id"] = state.get("max_id", 0) + val
+
+            elif "bnd_max_sub" in data:
+                val = int(parts[4])
+                state["max_id"] = max(0, state.get("max_id", 0) - val)
+
+            elif "bnd_min_reset" in data:
+                state["min_id"] = 0
+
+            elif "bnd_max_reset" in data:
+                state["max_id"] = 0
+
+            elif "dat_min_add" in data:
+                val = int(parts[4])
+                state["min_days"] = state.get("min_days", 0) + val
+
+            elif "dat_min_sub" in data:
+                val = int(parts[4])
+                state["min_days"] = max(0, state.get("min_days", 0) - val)
+
+            elif "dat_max_add" in data:
+                val = int(parts[4])
+                state["max_days"] = state.get("max_days", 0) + val
+
+            elif "dat_max_sub" in data:
+                val = int(parts[4])
+                state["max_days"] = max(0, state.get("max_days", 0) - val)
+
+            elif "dat_min_reset" in data:
+                state["min_days"] = 0
+
+            elif "dat_max_reset" in data:
+                state["max_days"] = 0
+
+            elif "scn_add" in data:
+                val = int(parts[3])
+                state["max_scan"] = state.get("max_scan", 500) + val
+
+            elif "scn_sub" in data:
+                val = int(parts[3])
+                state["max_scan"] = max(10, state.get("max_scan", 500) - val)
+
+            elif "scn_reset" in data:
+                state["max_scan"] = 500
+
+            elif "info" in data:
+                state["sub_menu"] = None
+                state["status"] = "info"
+
+            elif "back" in data:
+                if state.get("sub_menu"):
+                    state["sub_menu"] = None
+                else:
+                    state["status"] = "config"
+
+            elif "start" in data:
+                state["status"] = "confirm"
+
+            elif "confirmyes" in data:
+                if state.get("event") and not state["event"].is_set():
+                    state["event"].set()
+                    title = Altruix.get_string("purgeme_title") or "<b>Userbot Purgeme</b>"
+                    btn_style_local = get_user_button_style(int(user_id_str))
+
+                    chat_name = state.get("chat_name", "Unknown")
+                    chat_link = state.get("chat_link")
+                    display_name = f"<a href='{chat_link}'>{chat_name}</a>" if chat_link else f"<b>{chat_name}</b>"
+
+                    if cb.message:
+                        state["dashboard_msg_id"] = cb.message.id
+                        state["dashboard_chat_id"] = cb.message.chat.id
+
+                    await Altruix.edit_cb(
+                        cb,
+                        f"<blockquote expandable>{title}\n<i>Task is in progress...</i>\n<b>Chat:</b> {display_name}</blockquote>",
+                        parse_mode=enums.ParseMode.HTML,
+                        disable_web_page_preview=True,
+                        reply_markup=InlineKeyboardMarkup([
+                            [
+                                InlineKeyboardButton("Delete MSG", callback_data=f"purgeme_close_{unique_id}", style=btn_style_local),
+                                InlineKeyboardButton("Cancel", callback_data=f"pg_abort_{unique_id}", style=btn_style_local)
+                            ],
+                            [InlineKeyboardButton("Status", callback_data=f"pg_refresh_{unique_id}", style=btn_style_local)]
+                        ])
+                    )
+                return
+
+            elif "abort" in data:
+                state["status"] = "cancelled"
+                if state.get("event"): state["event"].set()
+                if state.get("stop_event"): state["stop_event"].set()
+                await cb.answer("Proses purgeme dihentikan!", show_alert=True)
+                title = Altruix.get_string("purgeme_title") or "<b>Userbot Purgeme</b>"
+                await Altruix.edit_cb(
+                    cb,
+                    f"{title}\n<b>Task Cancelled / Aborted</b>",
+                    parse_mode=enums.ParseMode.HTML,
+                )
+
+            elif "cancel" in data:
+                state["status"] = "cancelled"
+                if state.get("event"): state["event"].set()
+                if state.get("stop_event"): state["stop_event"].set()
+                try:
+                    await Altruix.delete_cb(cb)
+                except:
+                    try:
+                        title = Altruix.get_string("purgeme_title") or "<b>Userbot Purgeme</b>"
+                        await Altruix.edit_cb(
+                            cb,
+                            f"{title}\n<b>Cancelled</b>",
+                            parse_mode=enums.ParseMode.HTML,
+                        )
+                    except:
+                        pass
+                await cb.answer("Cancelled", show_alert=False)
+                return
+
+            elif "stop" in data:
+                if state.get("stop_event"): state["stop_event"].set()
+                await cb.answer("Stopped", show_alert=False)
+
+            elif "pause" in data:
+                state["status"] = "paused"
+                if state.get("pause_event"): state["pause_event"].clear()
+
+            elif "resume" in data:
+                state["status"] = "running"
+                if state.get("pause_event"): state["pause_event"].set()
+
+            elif "repeat" in data:
+                state["status"] = "config"
+                state["sub_menu"] = None
+                state["processed"] = 0
+                state["scanned"] = 0
+                state["failed"] = 0
+                if state.get("event"): state["event"].clear()
+                if state.get("stop_event"): state["stop_event"].clear()
+                if state.get("pause_event"): state["pause_event"].set()
+
+            elif "refresh" in data:
+                pass
+
+            settings_prefixes = [
+                "pg_cnt_", "pg_dly_", "pg_btc_", "pg_dbc_", "pg_mode_", "pg_off_",
+                "pg_bnd_", "pg_dat_", "pg_scn_", "pg_typ_", "pg_notify",
+                "pg_set_fwd_", "pg_set_sender_", "pg_kr_", "pg_fdl_"
+            ]
+            if any(data.startswith(pref) for pref in settings_prefixes):
+                try:
+                    save_user_purgeme_config(user_id, {
+                        "count": state.get("count"),
+                        "delay": state.get("delay"),
+                        "batch_size": state.get("batch_size"),
+                        "batch_delay": state.get("batch_delay"),
+                        "mode": state.get("mode"),
+                        "notify": state.get("notify"),
+                        "forward_log": state.get("forward_log"),
+                        "fwd_delay": state.get("fwd_delay", 0.5),
+                        "keep_recent": state.get("keep_recent"),
+                        "max_scan": state.get("max_scan"),
+                        "offset": state.get("offset"),
+                        "min_id": state.get("min_id"),
+                        "max_id": state.get("max_id"),
+                        "min_days": state.get("min_days"),
+                        "max_days": state.get("max_days"),
+                        "types": state.get("types"),
+                        "from_id": state.get("from_id", "me")
+                    })
+                except Exception as save_err:
+                    Altruix.log(f"Purgeme config save failed: {save_err}\n{traceback.format_exc()}", level=40)
+
         new_kb = await get_purgeme_keyboard(chat_id, user_id, unique_id)
         new_text = get_purgeme_text(state)
-        
+
         try:
             await Altruix.edit_cb(
                 cb,
@@ -1158,10 +1150,8 @@ async def purgeme_callback_handler(client: Client, cb: CallbackQuery):
                 disable_web_page_preview=True
             )
         except MessageNotModified:
-            # Content didn't change, just answer the callback to stop loading animation
             await cb.answer("Status Updated", show_alert=False)
         except FloodWait as fw:
-            # Respect Telegram's rate limit, then retry once
             await asyncio.sleep(fw.value + 1)
             try:
                 await Altruix.edit_cb(
@@ -1178,12 +1168,11 @@ async def purgeme_callback_handler(client: Client, cb: CallbackQuery):
 
     except Exception as e:
         Altruix.log(f"Purgeme Callback Fatal Error: {e}\n{traceback.format_exc()}", level=40)
-        # Only alert if it's NOT MessageNotModified (which we caught above)
         if "MessageNotModified" not in str(e):
-             try:
-                 await cb.answer(f"Error: {str(e)[:50]}", show_alert=True)
-             except:
-                 pass
+            try:
+                await cb.answer(f"Error: {str(e)[:50]}", show_alert=True)
+            except:
+                pass
 
 @Altruix.bot.on_callback_query(filters.regex(r"^purgeme_close(_|$)"))
 async def purgeme_close(client, cb: CallbackQuery):

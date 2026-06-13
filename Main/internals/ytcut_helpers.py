@@ -37,7 +37,18 @@ YTCUT_CONFIG_FILE = get_db_path("xytcut_settings.json")
 # ✅ VERIFICATION: Import-level check to confirm module loaded with INFO logging enabled
 Altruix.log("✅ YTcut helpers module loaded with INFO-level logging enabled (v1.0.267+)", level=logging.INFO)
 YTCUT_DEFAULT_CONFIG = {
-    "global": {"mode": "keep", "extract": YTCUT_DEFAULT_EXTRACT, "quality": YTCUT_DEFAULT_QUALITY},
+    "global": {
+        "mode": "keep",
+        "extract": YTCUT_DEFAULT_EXTRACT,
+        "quality": YTCUT_DEFAULT_QUALITY,
+        "download_fallbacks": {
+            "socket_timeout": 15,
+            "http_chunk_size": "10M",
+            "no_continue": True,
+            "no_part": True,
+            "max_retries": 3,
+        },
+    },
     "users": {},
 }
 
@@ -474,30 +485,65 @@ async def _run_ytcut_download_impl(state: Dict[str, Any], temp_dir: str, client:
     if not sections:
         raise ValueError("Tidak ada segmen yang valid untuk didownload.")
 
-    out_template = os.path.join(temp_dir, "part_%(section_number)03d.%(ext)s")
-    cmd = [
-        "yt-dlp",
-        "--newline", # Ensure newline for line-by-line parsing
-        "--no-warnings",
-        "--no-call-home",
-        "--no-playlist",
-        "--retries", "3",
-        "--output", out_template,
-        "--merge-output-format", "mp4",
-    ]
-    for section in sections:
-        cmd.extend(["--download-sections", section])
-    
-    cmd.append(state["url"])
+    # ✅ Clean temp_dir to remove leftover files from previous runs or aborted downloads
+    # This prevents matching stale part_NNN files from earlier operations
+    try:
+        for existing_file in os.listdir(temp_dir):
+            try:
+                file_path = os.path.join(temp_dir, existing_file)
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
+                    Altruix.log(f"YTcut cleaned old file: {existing_file}", level=logging.DEBUG)
+            except Exception as clean_err:
+                Altruix.log(f"YTcut cleanup failed for {existing_file}: {clean_err}", level=logging.DEBUG)
+    except Exception as e:
+        Altruix.log(f"YTcut temp_dir cleanup exception: {e}", level=logging.DEBUG)
 
-    if state["extract"] == "audio":
-        cmd.extend(["-f", "bestaudio/best", "-x", "--audio-format", "mp3", "--audio-quality", "0"])
-    else:
-        quality = state["quality"]
-        if quality and quality.isdigit():
-            cmd.extend(["-f", f"bestvideo[height<={quality}]+bestaudio/best[height<={quality}]" if quality != "1080" else "bestvideo+bestaudio/best"])
+    out_template = os.path.join(temp_dir, "part_%(section_number)03d.%(ext)s")
+
+    # Load per-user or global download fallback settings from config.
+    download_config = get_ytcut_user_config(state.get("user_id")).get("download_fallbacks", {})
+
+    def build_yt_dlp_cmd(use_fallback: bool = False) -> List[str]:
+        cmd = [
+            "yt-dlp",
+            "--no-warnings",
+            "--no-call-home",
+            "--no-playlist",
+        ]
+        retries = 3
+        if use_fallback:
+            retries = int(download_config.get("max_retries", retries))
+        cmd.extend(["--retries", str(retries)])
+        cmd.extend(["--output", out_template, "--merge-output-format", "mp4"])
+
+        for section in sections:
+            cmd.extend(["--download-sections", section])
+
+        cmd.append(state["url"])
+
+        if state["extract"] == "audio":
+            cmd.extend(["-f", "bestaudio/best", "-x", "--audio-format", "mp3", "--audio-quality", "0"])
         else:
-            cmd.extend(["-f", "bestvideo+bestaudio/best"])
+            quality = state["quality"]
+            if quality and quality.isdigit():
+                cmd.extend(["-f", f"bestvideo[height<={quality}]+bestaudio/best[height<={quality}]" if quality != "1080" else "bestvideo+bestaudio/best"])
+            else:
+                cmd.extend(["-f", "bestvideo+bestaudio/best"])
+
+        if use_fallback:
+            if download_config.get("socket_timeout") is not None:
+                cmd.extend(["--socket-timeout", str(int(download_config.get("socket_timeout")))])
+            if download_config.get("http_chunk_size"):
+                cmd.extend(["--http-chunk-size", str(download_config.get("http_chunk_size"))])
+            if download_config.get("no_continue"):
+                cmd.append("--no-continue")
+            if download_config.get("no_part"):
+                cmd.append("--no-part")
+
+        return cmd
+
+    cmd = build_yt_dlp_cmd(False)
 
     Altruix.log(
         f"YTcut download starting: task={state.get('task_id')} url={state.get('url')} temp_dir={temp_dir} "
@@ -505,18 +551,17 @@ async def _run_ytcut_download_impl(state: Dict[str, Any], temp_dir: str, client:
         level=logging.INFO,
     )
 
-    # Watchdog for inactivity: if no stdout/stderr seen for this many seconds, kill process
-    # Increased default timeout to reduce false positives on slow networks/servers
-    idle_timeout = 600  # 10 minutes
-
     # Log the exact command and watchdog timeout for debugging
     try:
-        Altruix.log(f"YTcut download command: {' '.join(cmd)} idle_timeout={idle_timeout}", level=logging.INFO)
+        Altruix.log(f"YTcut download command: {' '.join(cmd)}", level=logging.INFO)
     except Exception:
-        Altruix.log(f"YTcut download command (failed to join cmd): cmd={cmd} idle_timeout={idle_timeout}", level=logging.INFO)
+        Altruix.log(f"YTcut download command (failed to join cmd): cmd={cmd}", level=logging.INFO)
 
     # Regex for yt-dlp percentage: [download]  10.5% of ...
-    prog_regex = re.compile(r"\[download\]\s+(\d+\.\d+)%")
+    prog_regex = re.compile(r"\[download\]\s+(\d+(?:\.\d+)?)%")
+    # Detect if yt-dlp emits a runtime warning asking to remove problematic options
+    sanitation_requested = False
+    retried_sanitized = False
     
     process = await asyncio.create_subprocess_exec(
         *cmd,
@@ -524,12 +569,12 @@ async def _run_ytcut_download_impl(state: Dict[str, Any], temp_dir: str, client:
         stderr=asyncio.subprocess.PIPE
     )
 
+    download_start = time.time()
     last_update = 0
     full_stdout: List[str] = []
     stderr_lines: List[str] = []
     # Watchdog for inactivity: if no stdout/stderr seen for this many seconds, kill process
-    # Increased default timeout to reduce false positives on slow networks/servers
-    idle_timeout = 600  # 10 minutes
+    idle_timeout = 900  # 15 minutes
     last_output_time = time.time()
     killed_by_watchdog = False
     # Track current percentage parsed from yt-dlp output for heartbeat updates
@@ -567,13 +612,12 @@ async def _run_ytcut_download_impl(state: Dict[str, Any], temp_dir: str, client:
 
     async def _download_heartbeat():
         # Periodically update dashboard to show activity even when yt-dlp emits no output
-        start_time = time.time()
         try:
             while True:
                 await asyncio.sleep(6)
                 if process.returncode is not None:
                     return
-                elapsed = int(time.time() - start_time)
+                elapsed = int(time.time() - download_start)
                 try:
                     await edit_ytcut_dashboard_status(
                         client,
@@ -594,6 +638,7 @@ async def _run_ytcut_download_impl(state: Dict[str, Any], temp_dir: str, client:
         nonlocal last_update
         nonlocal last_output_time
         nonlocal current_percentage
+        nonlocal sanitation_requested
         buffer = b""
         while True:
             chunk = await stream.read(1024)
@@ -614,10 +659,11 @@ async def _run_ytcut_download_impl(state: Dict[str, Any], temp_dir: str, client:
                             now = time.time()
                             if now - last_update >= 6:
                                 last_update = now
+                                elapsed = int(time.time() - download_start)
                                 asyncio.create_task(edit_ytcut_dashboard_status(
                                     client, state,
                                     "Step 1/3: Mendownload segmen...",
-                                    "Proses download sedang berjalan.",
+                                    f"Proses download sedang berjalan. Elapsed: {elapsed}s",
                                     progress=percentage
                                 ))
                 break
@@ -645,21 +691,119 @@ async def _run_ytcut_download_impl(state: Dict[str, Any], temp_dir: str, client:
                     now = time.time()
                     if now - last_update >= 6:
                         last_update = now
+                        elapsed = int(time.time() - download_start)
                         asyncio.create_task(edit_ytcut_dashboard_status(
                             client, state,
                             "Step 1/3: Mendownload segmen...",
-                            "Proses download sedang berjalan.",
+                            f"Proses download sedang berjalan. Elapsed: {elapsed}s",
                             progress=percentage
                         ))
+                # Detect known yt-dlp advisory lines that ask to remove options
+                try:
+                    low = line_str.lower()
+                    if "please remove them from your command/configuration" in low or "see  https://github.com/yt-dlp/yt-dlp/issues" in line_str:
+                        sanitation_requested = True
+                        Altruix.log(f"YTcut detected yt-dlp advisory: sanitation_requested=True task={state.get('task_id')}", level=logging.INFO)
+                except Exception:
+                    pass
 
     stderr_task = asyncio.create_task(_drain_stream(process.stderr, stderr_lines, "stderr"))
     stdout_task = asyncio.create_task(_drain_stream(process.stdout, full_stdout, "stdout"))
     try:
-        await asyncio.gather(stdout_task, stderr_task)
+        # Wait for process to complete, not for drains to complete
+        # (drains will auto-finish when process closes streams)
         await process.wait()
+        
+        # Give drains a little time to flush remaining buffered lines
+        await asyncio.sleep(0.5)
+        
+        # Cancel drain tasks if still running
+        try:
+            stdout_task.cancel()
+        except Exception:
+            pass
+        try:
+            stderr_task.cancel()
+        except Exception:
+            pass
+        
         ret = process.returncode
         out = "\n".join(full_stdout)
         err = "\n".join(stderr_lines)
+
+        # If the first download attempt failed, try a conservative fallback command.
+        if ret != 0 and not killed_by_watchdog:
+            fallback_cmd = build_yt_dlp_cmd(True)
+            if fallback_cmd != cmd:
+                Altruix.log(
+                    f"YTcut initial download failed, trying conservative fallback command: task={state.get('task_id')} ret={ret}"
+                    f" initial_cmd={' '.join(cmd)} fallback_cmd={' '.join(fallback_cmd)}",
+                    level=logging.INFO,
+                )
+                try:
+                    fret, fout, ferr = await run_subprocess(fallback_cmd)
+                    if fret == 0:
+                        ret = fret
+                        full_stdout = fout.splitlines() if isinstance(fout, str) else []
+                        stderr_lines = ferr.splitlines() if isinstance(ferr, str) else []
+                        out = fout
+                        err = ferr
+                        cmd = fallback_cmd
+                        Altruix.log(
+                            f"YTcut conservative fallback succeeded: task={state.get('task_id')}"
+                            f" fallback_cmd={' '.join(fallback_cmd)}",
+                            level=logging.INFO,
+                        )
+                    else:
+                        Altruix.log(
+                            f"YTcut conservative fallback failed: task={state.get('task_id')}" 
+                            f" ret={fret} fallback_cmd={' '.join(fallback_cmd)}",
+                            level=logging.INFO,
+                        )
+                    # Continue processing error handling and any sanitation retry below.
+                except Exception as fallback_err:
+                    Altruix.log(
+                        f"YTcut conservative fallback exception: task={state.get('task_id')} error={fallback_err}\n{traceback.format_exc()}",
+                        level=logging.INFO,
+                    )
+
+        # If yt-dlp asked to remove problematic options, attempt one sanitized retry
+        if sanitation_requested and not retried_sanitized:
+            retried_sanitized = True
+            try:
+                # Build sanitized command by removing known problematic flags and their params
+                def build_sanitized(orig_cmd):
+                    blacklist = {"--newline", "--merge-output-format", "--retries", "--no-call-home"}
+                    blacklist_with_arg = {"--merge-output-format", "--retries"}
+                    out_cmd = []
+                    i = 0
+                    while i < len(orig_cmd):
+                        tok = orig_cmd[i]
+                        if tok in blacklist:
+                            if tok in blacklist_with_arg and i + 1 < len(orig_cmd):
+                                i += 2
+                                continue
+                            i += 1
+                            continue
+                        out_cmd.append(tok)
+                        i += 1
+                    return out_cmd
+
+                sanitized_cmd = build_sanitized(cmd)
+                Altruix.log(f"YTcut retrying download with sanitized command: {' '.join(sanitized_cmd)} task={state.get('task_id')}", level=logging.INFO)
+                sret, sout, serr = await run_subprocess(sanitized_cmd)
+                if sret == 0:
+                    # Replace collected outputs and returncode with sanitized run results
+                    ret = sret
+                    full_stdout = sout.splitlines() if isinstance(sout, str) else []
+                    stderr_lines = serr.splitlines() if isinstance(serr, str) else []
+                    out = sout
+                    err = serr
+                    Altruix.log(f"YTcut sanitized retry succeeded: task={state.get('task_id')}", level=logging.INFO)
+                else:
+                    Altruix.log(f"YTcut sanitized retry failed: task={state.get('task_id')} ret={sret}", level=logging.INFO)
+            except Exception as retry_err:
+                Altruix.log(f"YTcut sanitized retry exception: task={state.get('task_id')} error={retry_err}\n{traceback.format_exc()}", level=logging.INFO)
         Altruix.log(
             f"YTcut download finished: task={state.get('task_id')} ret={ret} stdout_lines={len(full_stdout)} stderr_lines={len(stderr_lines)} killed_by_watchdog={killed_by_watchdog}",
             level=logging.INFO,
@@ -703,16 +847,36 @@ async def _run_ytcut_download_impl(state: Dict[str, Any], temp_dir: str, client:
         f"YTcut expected sections: {len(sections)} sections_list={sections}",
         level=logging.INFO,
     )
+    
+    # Valid video extensions to filter out cache/temp files
+    valid_video_exts = {'.mp4', '.mkv', '.webm', '.mov', '.avi', '.flv', '.m4v', '.ts', '.mts', '.wmv', '.3gp', '.ogv'}
+    
     for i in range(1, len(sections) + 1):
         # We search for files matching part_00i.* (could be .mp4, .mkv, .webm before merging)
         # But we requested --merge-output-format mp4, so it should be .mp4
         pattern = f"part_{i:03d}."
         found = False
+        matching_files = []
+        
         for filename in sorted(os.listdir(temp_dir)):
             if filename.startswith(pattern):
-                downloaded_files.append(os.path.abspath(os.path.join(temp_dir, filename)))
-                found = True
-                break
+                _, ext = os.path.splitext(filename)
+                # Only consider valid video extensions
+                if ext.lower() in valid_video_exts:
+                    matching_files.append(filename)
+        
+        # Take the first (or largest) video file if multiple exist for same section
+        if matching_files:
+            # Sort by file size (largest first) to prefer the actual output vs any temp files
+            matching_files.sort(key=lambda f: os.path.getsize(os.path.join(temp_dir, f)), reverse=True)
+            selected_file = matching_files[0]
+            downloaded_files.append(os.path.abspath(os.path.join(temp_dir, selected_file)))
+            found = True
+            if len(matching_files) > 1:
+                Altruix.log(
+                    f"YTcut section {i}: found {len(matching_files)} matching files, selected largest: {selected_file}",
+                    level=logging.INFO,
+                )
     
     # BUG FIX: Fallback if partial match occurred (found < expected sections)
     # Note: yt-dlp with --merge-output-format mp4 may auto-merge all sections into ONE final file
@@ -725,13 +889,28 @@ async def _run_ytcut_download_impl(state: Dict[str, Any], temp_dir: str, client:
             f"expected={len(sections)} found={len(downloaded_files)} - using fallback"
         )
         downloaded_files.clear()
-        # Fallback to any part_* files if the above precise matching fails
+        # Fallback to any part_* files with valid video extension
+        fallback_files = []
         for filename in sorted(os.listdir(temp_dir)):
             if filename.startswith("part_"):
-                path = os.path.abspath(os.path.join(temp_dir, filename))
-                downloaded_files.append(path)
+                _, ext = os.path.splitext(filename)
+                # Only consider valid video extensions
+                if ext.lower() in valid_video_exts:
+                    fallback_files.append(filename)
+        
+        # Sort by section number parsed from filename, then by file size if ambiguous
+        def parse_section_num(fname):
+            match = re.match(r'part_(\d+)', fname)
+            return int(match.group(1)) if match else 999
+        
+        fallback_files.sort(key=lambda f: (parse_section_num(f), -os.path.getsize(os.path.join(temp_dir, f))))
+        
+        for filename in fallback_files:
+            path = os.path.abspath(os.path.join(temp_dir, filename))
+            downloaded_files.append(path)
+        
         Altruix.log(
-            f"YTcut fallback files used: task={state.get('task_id')} fallback_files={downloaded_files}",
+            f"YTcut fallback files used: task={state.get('task_id')} found={len(fallback_files)} files: {[os.path.basename(f) for f in downloaded_files]}",
             level=logging.INFO,
         )
 
@@ -746,14 +925,18 @@ async def _run_ytcut_download_impl(state: Dict[str, Any], temp_dir: str, client:
                     if os.path.exists(os.path.join(temp_dir, fname)):
                         ab = os.path.abspath(os.path.join(temp_dir, fname))
                         if ab not in downloaded_files:
-                            downloaded_files.append(ab)
+                            _, ext = os.path.splitext(fname)
+                            if ext.lower() in valid_video_exts:
+                                downloaded_files.append(ab)
                 m2 = merge_re.search(line)
                 if m2:
                     fname = m2.group(1).strip()
                     if os.path.exists(os.path.join(temp_dir, fname)):
                         ab = os.path.abspath(os.path.join(temp_dir, fname))
                         if ab not in downloaded_files:
-                            downloaded_files.append(ab)
+                            _, ext = os.path.splitext(fname)
+                            if ext.lower() in valid_video_exts:
+                                downloaded_files.append(ab)
         except Exception as e:
             Altruix.log(f"YTcut download fallback parsing failed: {e}\n{traceback.format_exc()}")
             pass
