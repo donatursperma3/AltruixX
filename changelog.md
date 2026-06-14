@@ -3,7 +3,48 @@
 All notable changes to the **Altroid-X** project from version **0.0.10.0959H** to the latest.
 Latest updates are always added at the top (newest → oldest).
 
+## [1.0.289] - 2026-06-15
+
+### 👥 CreateGroup: Restore Invite Assistant UI, Param, & Delay Enforcement
+- **Restored: Invite Assistant UI & parameter plumbing**
+  - Reintroduced the `Invite Asst` dashboard toggle and UI button; `invite_assistant` is now included in `DEFAULT_CREATEGROUP_CONFIG` and shown in summaries/confirmations.
+  - `creategroup_handlers` now passes `invite_assistant` into `creategroup_loop` to make assistant invite behavior configurable per-launch.
+
+- **Restored: Delay semantics (per-group & per-batch)**
+  - Reapplied per-group `delay` (seconds) between each created group and `extra_delay_minutes` (minutes) applied after each `batch_size` groups.
+  - Batch-level waits reuse `wait_with_countdown(...)` for visible countdowns and respect pause/cancel signals during waits.
+
+- **Changed: Assistant invite logic now uses `invite_assistant`**
+  - Plugin checks for assistant invites/promotions now use `if invite_assistant:` (separate from `invite_bots`) so assistant behavior is independent and predictable.
+
+- **Files changed**: [Main/plugins/userbot/xcreategroup.py](Main/plugins/userbot/xcreategroup.py), [Main/internals/settings_handlers/creategroup_handlers.py](Main/internals/settings_handlers/creategroup_handlers.py)
+
+---
+
 ## [1.0.287] - 2026-06-14
+
+### 👥 CreateGroup: Delay Enforcement, Invite Assistant Split & Pagination Fixes
+- **Added: Per-group and per-batch delay enforcement**
+  - Enforced `delay` (seconds) between each created group and `extra_delay_minutes` (minutes) after each `batch_size` groups.
+  - Batch-level waits use the existing `wait_with_countdown(...)` helper for visible countdowns; per-group waits respect pause/stop signals.
+
+- **Changed: Separate Assistant Invite toggle & behaviour**
+  - Introduced explicit `invite_assistant` flag and UI toggle so assistant bot invite/promotion is independent from `invite_bots`.
+  - Assistant invite/promotion occurs during creation/setup; non-assistant bot invites are processed later in the `invite_bots` step.
+
+- **Fixed: Pagination select/deselect mismatch with filters**
+  - Added `_get_ordered_session_indices(state)` to compute session indices in the same ordering as the UI render (honors `account_filter: all/newest/oldest`).
+  - `Select Page` / `Deselect Page` and page navigation now use the ordered indices (and `last_paged_indices`) to avoid selecting wrong accounts when filters are active.
+
+- **Fixed: Async helper safety & indentation bug**
+  - Removed `run_until_complete(...)` usage from the ordering helper to avoid running the event loop inside callbacks.
+  - Fixed an over-indentation causing a syntax/indent error in `creategroup_handlers.py`.
+
+- **Files changed**: [Main/plugins/userbot/xcreategroup.py](Main/plugins/userbot/xcreategroup.py), [Main/internals/settings_handlers/creategroup_handlers.py](Main/internals/settings_handlers/creategroup_handlers.py)
+
+---
+
+## [1.0.288] - 2026-06-14
 
 ### 🧹 Purgeme: Concurrency & Config Persistence Fixes
 - **Fixed: Double-trigger behavior on rapid submenu button clicks**:

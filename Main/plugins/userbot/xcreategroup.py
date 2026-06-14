@@ -1393,6 +1393,7 @@ async def creategroup_loop(
     control_message: Message,
     action_delay: float = 3.0,
     invite_bots: bool = True,
+    invite_assistant: bool = True,
     anon_mode: bool = True,
     copy_messages: bool = True,
     description: str = "Powered by @AlphaXproject",
@@ -2449,8 +2450,8 @@ async def creategroup_loop(
                     if group_type == "b":
                         # Basic group
                         try:
-                            # Try with assistant if invite_bots is True
-                            users_to_add = [assistant.id] if invite_bots else []
+                            # Try with assistant if invite_assistant is True
+                            users_to_add = [assistant.id] if invite_assistant else []
                             try:
                                 chat = await user_client.create_group(
                                     title=current_group_name,
@@ -2558,7 +2559,7 @@ async def creategroup_loop(
                                     await update_group_log(f"❌ Gagal set anonymous admin: {str(e)}")
 
                             # Invite and Promote Assistant Bot for supergroups/channels
-                            if invite_bots:
+                            if invite_assistant:
                                 try:
                                     await user_client.add_chat_members(created_chat_id, assistant.id)
                                     await user_client.promote_chat_member(
@@ -3235,7 +3236,35 @@ async def creategroup_loop(
                 state["current_chat_id"] = None
                 sync_to_registry()
                 await save_creategroup_cache()
+                # Move to next group and apply configured delays
+                prev_i = i
                 i += 1
+
+                # Respect batch-level extra delays (extra_delay_minutes) when a batch completes
+                try:
+                    if batch_size and batch_size > 0 and extra_delay_minutes and ((prev_i) % batch_size) == 0 and prev_i < count:
+                        # Use the same countdown helper used for BA delays so users see progress
+                        current_log_msg = None
+                        if current_log_msgs:
+                            current_log_msg = current_log_msgs[0][1]
+                        await wait_with_countdown(int(extra_delay_minutes * 60), current_log_msg)
+                        await update_group_log(f"✅ Batch delay selesai: <code>{extra_delay_minutes}m</code>")
+                    else:
+                        # Per-group delay between creations
+                        if delay and delay > 0:
+                            # Respect pause/stop signals while sleeping
+                            _sync_pause_from_registry(task_key, tid)
+                            while CREATEGROUP_TASKS.get(task_key, {}).get("paused"):
+                                _sync_resume_from_registry(task_key, tid)
+                                if not CREATEGROUP_TASKS.get(task_key, {}).get("paused"):
+                                    break
+                                await asyncio.sleep(1)
+                            if not CREATEGROUP_TASKS.get(task_key, {}).get("running"):
+                                break
+                            await asyncio.sleep(delay)
+                except Exception as err_d:
+                    # Non-fatal: log and continue
+                    logger.debug(f"Error while applying inter-group or batch delay: {err_d}", exc_info=True)
                 
             except FloodWait as fw:
                 account_name = f"{user_info.first_name or ''} {user_info.last_name or ''}".strip()

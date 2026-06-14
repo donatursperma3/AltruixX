@@ -65,7 +65,7 @@ DEFAULT_CREATEGROUP_CONFIG = {
     "batch_action": 30, "ba_delay": 30,
     "pattern": "🔰 X(tahun) B(bulan)-T(tanggal)", "username": None, "description": "Powered by @AlphaXProject",
     "bots": "@MissRose_bot @simixbot @Spillgame_bot @truthordaresbot @truthordares_bot @truthordarerp_bot @truthordarerln_bot @truthordares18_bot",
-    "invite_bots": True, "anon_mode": True, "copy_messages": True, "msg_img": True, "msg_vid": True,
+    "invite_bots": True, "invite_assistant": True, "anon_mode": True, "copy_messages": True, "msg_img": True, "msg_vid": True,
     "msg_img_album": False, "msg_vid_album": False,
     "photo_source": "source", "custom_photo_id": None,
     "log_destination": "both", "group_type": "a",
@@ -359,7 +359,7 @@ async def creategroup_resall_handler(c: Client, cb: CallbackQuery):
                 batch_size=params.get("batch_size"), group_type=params.get("group_type"),
                 name_pattern=params.get("name_pattern"), username_prefix=params.get("username_prefix"),
                 bot_identifiers=params.get("bot_identifiers"), control_message=None,
-                action_delay=params.get("action_delay", 3.0), invite_bots=params.get("invite_bots", True),
+                action_delay=params.get("action_delay", 3.0), invite_bots=params.get("invite_bots", True), invite_assistant=params.get("invite_assistant", True),
                 anon_mode=params.get("anon_mode", True), copy_messages=params.get("copy_messages", True),
                 description=params.get("description", "Powered by @AlphaXproject"),
                 photo_source=params.get("photo_source", "source"), custom_photo_id=params.get("custom_photo_id"),
@@ -902,6 +902,7 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
         f"• <b>Photo:</b> {photo_status}\n"
         f"• <b>Anon Admin:</b> {'Yes' if config['anon_mode'] else 'No'} | <b>Copy Msg:</b> {'Yes' if config['copy_messages'] else 'No'}\n"
         f"• <b>Invite Bots:</b> {'Yes' if config['invite_bots'] else 'No'}\n"
+        f"• <b>Invite Assistant:</b> {'Yes' if config.get('invite_assistant', True) else 'No'}\n"
         f"• <b>Bot List:</b> {bot_list_text}\n"
         f"• <b>Pin First Msg:</b> {'Yes' if config.get('pin_first_msg', True) else 'No'} | <b>Temp Pin:</b> {'Yes' if config.get('temp_pin', True) else 'No'}\n"
         f"• <b>Quote Block:</b> {'Yes' if config.get('quote_block', True) else 'No'} | <b>Msg Img:</b> {'Yes' if config.get('msg_img', True) else 'No'}\n"
@@ -1401,7 +1402,10 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
             InlineKeyboardButton(f"Copy Msg: {'Yes' if config['copy_messages'] else 'No'}", callback_data=f"creategroup_toggle_{idx}_{pg}_copy_messages", style=user_style)
         ],
         [
-            InlineKeyboardButton(f"Invite Bots: {'Yes' if config['invite_bots'] else 'No'}", callback_data=f"creategroup_toggle_{idx}_{pg}_invite_bots", style=user_style),
+            InlineKeyboardButton(f"Invite Asst: {'Yes' if config.get('invite_assistant', True) else 'No'}", callback_data=f"creategroup_toggle_{idx}_{pg}_invite_assistant", style=user_style),
+            InlineKeyboardButton(f"Invite Bots: {'Yes' if config['invite_bots'] else 'No'}", callback_data=f"creategroup_toggle_{idx}_{pg}_invite_bots", style=user_style)
+        ],
+        [
             InlineKeyboardButton(f"Bots: {len(config['bots'].split() if config['bots'] else [])}", callback_data=f"creategroup_submenu_{idx}_{pg}_bots", style=user_style)
         ],
         [
@@ -2425,6 +2429,7 @@ async def creategroup_run_handler(c: Client, cb: CallbackQuery):
         f"• <b>Photo Source:</b> {photo_text}\n"
         f"• <b>Description:</b> {html.escape(conf.get('description', ''))}\n"
         f"• <b>Invite Bots:</b> {'Yes' if conf['invite_bots'] else 'No'} ({len(conf['bots'].split() if conf['bots'] else [])})\n"
+        f"• <b>Invite Assistant:</b> {'Yes' if conf.get('invite_assistant', True) else 'No'}\n"
         f"• <b>Pin First Msg:</b> {'Yes' if conf.get('pin_first_msg', True) else 'No'}\n"
         f"• <b>Log Destination:</b> {'📡 Both' if conf.get('log_destination', 'both') == 'both' else ('📡 Group Log' if conf.get('log_destination') == 'log_group' else '📥 Saved Messages')}\n\n"
         f"• <b>Progress Log:</b> <code>{prog_lbl}</code> | <b>Panel Log:</b> <code>{pnl_lbl}</code>\n\n"
@@ -2590,7 +2595,7 @@ async def creategroup_confirm_task_handler(c: Client, cb: CallbackQuery):
                                     bot_identifiers=bots,
                                     control_message=control_msg,
                                     action_delay=conf_copy.get("action_delay", 3.0),
-                                    invite_bots=conf_copy.get("invite_bots", False),
+                                    invite_bots=conf_copy.get("invite_bots", False), invite_assistant=conf_copy.get("invite_assistant", True),
                                     anon_mode=conf_copy.get("anon_mode", True),
                                     copy_messages=conf_copy.get("copy_messages", True),
                                     description=conf_copy.get("description", "Powered by @AlphaXProject"),
@@ -2813,8 +2818,7 @@ async def creategroup_confirm_task_handler(c: Client, cb: CallbackQuery):
                                 username_prefix=conf_copy.get("username", ""),
                                 bot_identifiers=bots,
                                 control_message=control_msg,
-                                action_delay=conf_copy.get("action_delay", 3.0),
-                                invite_bots=conf_copy.get("invite_bots", False),
+                                action_delay=conf_copy.get("action_delay", 3.0), invite_bots=conf_copy.get("invite_bots", False), invite_assistant=conf_copy.get("invite_assistant", True),
                                 anon_mode=conf_copy.get("anon_mode", True),
                                 copy_messages=conf_copy.get("copy_messages", True),
                                 description=conf_copy.get("description", "Powered by @AlphaXProject"),
@@ -3132,7 +3136,8 @@ async def creategroup_recurring_handler(c: Client, cb: CallbackQuery):
         f"• Delay/GC: <code>{conf['delay']}</code>s\n"
         f"• Batch: <code>{conf['batch_size']}</code> | <code>{conf['extra_delay_minutes']}</code>m\n"
         f"• Pattern: <code>{html.escape(conf['name_pattern'][:25])}...</code>\n"
-        f"• Bots: <code>{'Yes' if conf.get('invite_bots', True) else 'No'}</code>\n\n"
+        f"• Bots: <code>{'Yes' if conf.get('invite_bots', True) else 'No'}</code>\n"
+        f"• Assistant: <code>{'Yes' if conf.get('invite_assistant', True) else 'No'}</code>\n\n"
         f"<i>Task akan menggunakan konfigurasi yang sama.</i>"
     )
     
@@ -3196,8 +3201,7 @@ async def creategroup_confirm_recur_handler(c: Client, cb: CallbackQuery):
         username_prefix=conf["username_prefix"],
         bot_identifiers=conf["bot_identifiers"],
         control_message=control_msg,
-        action_delay=conf.get("action_delay", 3.0),
-        invite_bots=conf.get("invite_bots", True),
+        action_delay=conf.get("action_delay", 3.0), invite_bots=conf.get("invite_bots", True), invite_assistant=conf.get("invite_assistant", True),
         anon_mode=conf.get("anon_mode", True),
         copy_messages=conf.get("copy_messages", True),
         description=conf.get("description", "Powered by @AlphaXproject"),
