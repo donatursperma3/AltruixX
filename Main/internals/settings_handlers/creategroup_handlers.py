@@ -723,19 +723,28 @@ async def show_creategroup_ui(c: Client, cb: CallbackQuery, session_index: int, 
         await render_creategroup_running_ui(cb, task, session_index, page)
         return
 
+    # Initialize or refresh UI state. Preserve existing `selected_sessions` when possible
     if user_id not in user_creategroup_state or user_creategroup_state[user_id].get("step") != "ui_config":
+        # If there is a leftover prompt message, try to delete it
         if user_id in user_creategroup_state and user_creategroup_state[user_id].get("prompt_msg_id"):
             try:
                 if cb.message:
                     await c.delete_messages(cb.message.chat.id, user_creategroup_state[user_id]["prompt_msg_id"])
             except: pass
-            
+            user_creategroup_state[user_id]["prompt_msg_id"] = None
+
+        # If an existing state exists, preserve selected_sessions where possible
+        prev_selected = None
+        if user_id in user_creategroup_state:
+            prev = user_creategroup_state[user_id]
+            prev_selected = prev.get("selected_sessions") if isinstance(prev.get("selected_sessions"), list) else None
+
         user_creategroup_state[user_id] = {
             "step": "ui_config",
             "session_index": session_index,
             "page": page,
             "config": load_user_cg_config(user_id),
-            "selected_sessions": [session_index], # ✅ DEFAULT: Current session
+            "selected_sessions": prev_selected if prev_selected is not None else [session_index],
             "session_page": 0,
             "input_mode": None,
             "ui_msg_id": cb.message.id if cb.message else None,
@@ -1178,8 +1187,11 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
         # Record the original session indices displayed on this page so handlers can act on them
         try:
             state["last_paged_indices"] = [orig for orig, _ in paged_slice]
+            # Record which page those indices correspond to so handlers can validate
+            state["last_paged_page"] = s_page
         except Exception:
             state["last_paged_indices"] = []
+            state["last_paged_page"] = None
 
         # Load creation reports to show counts on buttons (already attempted above)
         # report_data variable is available; fallback to loader
@@ -1372,7 +1384,7 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
         ],
         [
             InlineKeyboardButton(f"Auto Start: {'On' if config.get('auto_start') else 'Off'}", callback_data=f"creategroup_toggle_{idx}_{pg}_auto_start", style=user_style),
-            InlineKeyboardButton(f"A.Start Count: {config.get('auto_start_count', config.get('batch_account', 3))}", callback_data=f"creategroup_submenu_{idx}_{pg}_auto_start_count", style=user_style)
+            InlineKeyboardButton(f"A.Start Count: {config.get('auto_start_count', config.get('batch_account', 3))} acc", callback_data=f"creategroup_submenu_{idx}_{pg}_auto_start_count", style=user_style)
         ],
         # Chunk notifications moved to Log Configs submenu
         [
@@ -1627,12 +1639,16 @@ async def creategroup_session_toggle_handler(c: Client, cb: CallbackQuery):
         try: selected_set.add(int(x))
         except: pass
     
+    before = sorted(list(selected_set))
     if s_idx in selected_set:
         selected_set.remove(s_idx)
     else:
         selected_set.add(s_idx)
 
-    state["selected_sessions"] = sorted(list(selected_set))
+    # Sanitize and persist
+    new_sel = sorted([s for s in selected_set if 1 <= s <= len(Altruix.clients)])
+    state["selected_sessions"] = new_sel
+    logger.info(f"[creategroup_session_toggle] user={user_id} toggled={s_idx} before={before} after={new_sel}")
     await render_creategroup_ui(cb, state)
     await cb.answer()
 
@@ -1719,7 +1735,9 @@ async def creategroup_session_select_page_handler(c: Client, cb: CallbackQuery):
 
         # Prefer using the last rendered paged indices if available (handles filtered ordering)
         last_page_indices = state.get("last_paged_indices") or []
-        if last_page_indices and state.get("session_page") == s_page:
+        last_page_page = state.get("last_paged_page")
+        # Use recorded last_paged_indices only when they correspond to the same page
+        if last_page_indices and last_page_page is not None and last_page_page == s_page:
             page_indices = list(last_page_indices)
         else:
             start = max(0, s_page) * per_page
@@ -1727,10 +1745,13 @@ async def creategroup_session_select_page_handler(c: Client, cb: CallbackQuery):
             page_indices = list(range(start + 1, end + 1))
         selected = state.get("selected_sessions", []) or []
 
+        before = sorted(selected)
         merged = set(selected)
         merged.update(page_indices)
-        state["selected_sessions"] = sorted(merged)
-
+        # Sanitize
+        new_sel = sorted([s for s in merged if 1 <= s <= len(Altruix.clients)])
+        state["selected_sessions"] = new_sel
+        logger.info(f"[creategroup_selp] user={user_id} page={s_page} before={before} after={new_sel}")
         await render_creategroup_ui(cb, state)
         await safe_cb_answer(cb, "Page selected", show_alert=False)
     except Exception as e:
@@ -1775,15 +1796,21 @@ async def creategroup_session_deselect_page_handler(c: Client, cb: CallbackQuery
 
         # Prefer using the last rendered paged indices if available (handles filtered ordering)
         last_page_indices = state.get("last_paged_indices") or []
-        if last_page_indices and state.get("session_page") == s_page:
+        last_page_page = state.get("last_paged_page")
+        # Use recorded last_paged_indices only when they correspond to the same page
+        if last_page_indices and last_page_page is not None and last_page_page == s_page:
             page_indices = set(last_page_indices)
         else:
             start = max(0, s_page) * per_page
             end = min(start + per_page, total_sessions)
             page_indices = set(range(start + 1, end + 1))
         selected = state.get("selected_sessions", []) or []
-        state["selected_sessions"] = [x for x in selected if x not in page_indices]
-
+        before = sorted(selected)
+        new_sel = [x for x in selected if x not in page_indices]
+        # Sanitize
+        new_sel = sorted([s for s in new_sel if 1 <= s <= len(Altruix.clients)])
+        state["selected_sessions"] = new_sel
+        logger.info(f"[creategroup_dselp] user={user_id} page={s_page} before={before} after={new_sel}")
         await render_creategroup_ui(cb, state)
         await cb.answer("Page deselected")
     except Exception as e:
