@@ -74,6 +74,16 @@ DEFAULT_CREATEGROUP_CONFIG = {
     "interrupted_log": "off", "start_log_mode": "both", "start_photo_log_mode": "both",
     "progress_log_mode": "both", "panel_log_mode": "log_group", "delay_log_mode": "both"
 }
+# Recurring defaults
+DEFAULT_CREATEGROUP_CONFIG.update({
+    "recurring": False,
+    "recurring_mode": "interval",  # interval / time
+    "recurring_interval_hours": 0,
+    "recurring_interval_minutes": 10,
+    "recurring_specific_hour": 0,
+    "recurring_specific_minute": 0,
+    "repeat_count": 0,  # 0 = off, >0 = number of additional repeats
+})
 # Auto-start runtime options
 DEFAULT_CREATEGROUP_CONFIG.update({
     "auto_start": False,
@@ -801,6 +811,18 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
     pg = state["page"]
     sub_menu = state.get("sub_menu")
 
+    # Compose recurring preview label (avoid embedding callables in button payloads)
+    try:
+        if config.get('recurring', False):
+            if config.get('recurring_mode', 'interval') == 'interval':
+                rec_btn_label = f"Recurring: Every {config.get('recurring_interval_hours', 0)}h {config.get('recurring_interval_minutes', 0)}m"
+            else:
+                rec_btn_label = f"Recurring: At {config.get('recurring_specific_hour', 0):02d}:{config.get('recurring_specific_minute', 0):02d}"
+        else:
+            rec_btn_label = "Recurring: OFF"
+    except Exception:
+        rec_btn_label = "Recurring: OFF"
+
     per_page = 5
     total_sessions = len(Altruix.clients)
     total_pages = (total_sessions + per_page - 1) // per_page if total_sessions else 1
@@ -905,6 +927,7 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
         f"• <b>Account Delay:</b> {config.get('account_delay', 0.5)}s | <b>B.Acc Size:</b> {config.get('batch_account', 3)} acc\n"
         f"• <b>B.Acc Delay:</b> {config.get('ba_account_delay', 60)}s\n"
         f"• <b>Auto Start:</b> {'On' if config.get('auto_start') else 'Off'} | <b>A.Start Count:</b> {config.get('auto_start_count', config.get('batch_account', 3))}\n"
+        f"• <b>Repeat:</b> {('Off' if not config.get('repeat_count') else str(config.get('repeat_count')) + 'x')}\n"
         f"• <b>Name:</b> {html.escape(name_preview)}\n"
         f"• <b>Username:</b> {config['username'] or 'None'}\n"
         f"• <b>Description:</b> {html.escape(config['description'])}\n"
@@ -1076,6 +1099,77 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
             buttons.append([InlineKeyboardButton(lbl, callback_data=f"creategroup_upload_photo_{idx}_{pg}", style=user_style)])
         
         buttons.append([InlineKeyboardButton("Back", callback_data=f"creategroup_back_submenu_{idx}_{pg}", style=user_style)])
+        return text, InlineKeyboardMarkup(buttons)
+
+    elif sub_menu == "recurring":
+        # Recurring configuration submenu
+        is_recur = config.get("recurring", False)
+        mode = config.get("recurring_mode", "interval")
+        h = config.get("recurring_interval_hours", 0)
+        m = config.get("recurring_interval_minutes", 10)
+        spec_h = config.get("recurring_specific_hour", 0)
+        spec_m = config.get("recurring_specific_minute", 0)
+
+        # Derived display label (mirrors xauto_pro_gcast style)
+        if is_recur:
+            if mode == 'interval':
+                rec_btn_label = f"Recurring: Every {h}h {m}m"
+            else:
+                rec_btn_label = f"Recurring: At {spec_h:02d}:{spec_m:02d}"
+        else:
+            rec_btn_label = "Recurring: OFF"
+
+        buttons = [
+            [InlineKeyboardButton(f"━━ {rec_btn_label} ━━", callback_data="noop", style=user_style)],
+            [InlineKeyboardButton(f"Toggle Recurring", callback_data=f"creategroup_toggle_{idx}_{pg}_recurring", style=user_style)],
+            [InlineKeyboardButton(f"Mode: {mode}", callback_data="noop", style=user_style)],
+            [
+                InlineKeyboardButton("Interval Mode", callback_data=f"creategroup_setv_{idx}_{pg}_recurring_mode_interval", style=user_style),
+                InlineKeyboardButton("Specific Time", callback_data=f"creategroup_setv_{idx}_{pg}_recurring_mode_time", style=user_style)
+            ],
+            [InlineKeyboardButton(f"Interval H: {h}h", callback_data="noop", style=user_style), InlineKeyboardButton(f"Interval M: {m}m", callback_data="noop", style=user_style)],
+            [
+                InlineKeyboardButton("-1h", callback_data=f"creategroup_adj_{idx}_{pg}_recurring_interval_hours_sub1", style=user_style),
+                InlineKeyboardButton("-5h", callback_data=f"creategroup_adj_{idx}_{pg}_recurring_interval_hours_sub5", style=user_style),
+            ],
+            [
+                InlineKeyboardButton("+1h", callback_data=f"creategroup_adj_{idx}_{pg}_recurring_interval_hours_add1", style=user_style),
+                InlineKeyboardButton("+5h", callback_data=f"creategroup_adj_{idx}_{pg}_recurring_interval_hours_add5", style=user_style),
+            ],
+            [
+                InlineKeyboardButton("-1m", callback_data=f"creategroup_adj_{idx}_{pg}_recurring_interval_minutes_sub1", style=user_style),
+                InlineKeyboardButton("-5m", callback_data=f"creategroup_adj_{idx}_{pg}_recurring_interval_minutes_sub5", style=user_style),
+            ],
+            [
+                InlineKeyboardButton("+1m", callback_data=f"creategroup_adj_{idx}_{pg}_recurring_interval_minutes_add1", style=user_style),
+                InlineKeyboardButton("+5m", callback_data=f"creategroup_adj_{idx}_{pg}_recurring_interval_minutes_add5", style=user_style),
+            ],
+            [InlineKeyboardButton(f"Specific Time: {spec_h:02d}:{spec_m:02d}", callback_data="noop", style=user_style)],
+            [
+                InlineKeyboardButton("Set Hour", callback_data=f"creategroup_in_{idx}_{pg}_recurring_specific_hour", style=user_style),
+                InlineKeyboardButton("Set Minute", callback_data=f"creategroup_in_{idx}_{pg}_recurring_specific_minute", style=user_style)
+            ],
+            [InlineKeyboardButton("Back", callback_data=f"creategroup_back_submenu_{idx}_{pg}", style=user_style)]
+        ]
+        return text, InlineKeyboardMarkup(buttons)
+
+    elif sub_menu == "repeat":
+        # Repeat submenu: choose how many times to re-run after completion
+        curr = int(config.get('repeat_count', 0) or 0)
+        lbl = 'Off' if curr == 0 else f"{curr}x"
+        buttons = [
+            [InlineKeyboardButton(f"━━ Repeat: {lbl} ━━", callback_data="noop", style=user_style)],
+            [
+                InlineKeyboardButton("1×", callback_data=f"creategroup_setv_{idx}_{pg}_repeat_count_1", style=user_style),
+                InlineKeyboardButton("3×", callback_data=f"creategroup_setv_{idx}_{pg}_repeat_count_3", style=user_style)
+            ],
+            [
+                InlineKeyboardButton("5×", callback_data=f"creategroup_setv_{idx}_{pg}_repeat_count_5", style=user_style),
+                InlineKeyboardButton("10×", callback_data=f"creategroup_setv_{idx}_{pg}_repeat_count_10", style=user_style)
+            ],
+            [InlineKeyboardButton("Off", callback_data=f"creategroup_setv_{idx}_{pg}_repeat_count_off", style=user_style)],
+            [InlineKeyboardButton("Back", callback_data=f"creategroup_back_submenu_{idx}_{pg}", style=user_style)]
+        ]
         return text, InlineKeyboardMarkup(buttons)
 
     elif sub_menu == "bots":
@@ -1443,6 +1537,9 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
             InlineKeyboardButton("Restore Tasks", callback_data=f"creategroup_cached_{idx}_{pg}", style=user_style),
             InlineKeyboardButton("Info", callback_data=f"creategroup_submenu_{idx}_{pg}_info", style=user_style)
         ],
+        # Recurring preview on main dashboard (mirrors submenu preview)
+        [InlineKeyboardButton(f"━━ {rec_btn_label} ━━", callback_data=f"creategroup_submenu_{idx}_{pg}_recurring", style=user_style)],
+        [InlineKeyboardButton(f"Repeat: {('Off' if not config.get('repeat_count') else str(config.get('repeat_count')) + 'x')}", callback_data=f"creategroup_submenu_{idx}_{pg}_repeat", style=user_style)],
         [
             InlineKeyboardButton("Back", callback_data=f"creategroup_menu_{idx}_{pg}", style=user_style),
             InlineKeyboardButton("✅ Run Task", callback_data=f"creategroup_run_{idx}_{pg}", style=user_style)
@@ -1552,6 +1649,9 @@ async def creategroup_adjust_handler(c: Client, cb: CallbackQuery):
     conf = user_creategroup_state[user_id]["config"]
     steps = {"delay": 10, "count": 1, "batch_delay": 1, "batch_size": 1, "action_delay": 0.5, "account_delay": 0.5, "rand_len": 1, "batch_action": 5, "ba_delay": 10, "batch_account": 1, "ba_account_delay": 10, "auto_start_count": 1}
     limits = {"delay": (0, 3600), "count": (1, 1000), "batch_delay": (0, 300), "batch_size": (1, 100), "action_delay": (0, 30.0), "account_delay": (0, 30.0), "rand_len": (0, 64), "batch_action": (0, 500), "ba_delay": (0, 3600), "batch_account": (1, 999), "ba_account_delay": (0, 3600), "auto_start_count": (1, 999)}
+    # Recurring adjustments
+    steps.update({"recurring_interval_hours": 1, "recurring_interval_minutes": 1})
+    limits.update({"recurring_interval_hours": (0, 999), "recurring_interval_minutes": (0, 59)})
     val = conf.get(key, 0)
     
     # Handle extended step actions (sub10, add60, sub0.5 etc)
@@ -1834,7 +1934,17 @@ async def creategroup_set_val_handler(c: Client, cb: CallbackQuery):
     if key == "bots" and val_raw == "default":
         val = DEFAULT_CREATEGROUP_CONFIG["bots"]
         
-    user_creategroup_state[user_id]["config"][key] = val
+    # Normalize repeat keys: accept 'repeat' or 'repeat_count' -> save to 'repeat_count'
+    if key in ("repeat", "repeat_count"):
+        if val_raw in ("off", "none"):
+            user_creategroup_state[user_id]["config"]["repeat_count"] = 0
+        else:
+            try:
+                user_creategroup_state[user_id]["config"]["repeat_count"] = int(val_raw)
+            except Exception:
+                user_creategroup_state[user_id]["config"]["repeat_count"] = 0
+    else:
+        user_creategroup_state[user_id]["config"][key] = val
     save_user_cg_config(user_id, user_creategroup_state[user_id]["config"])
     await render_creategroup_ui(cb, user_creategroup_state[user_id])
     await cb.answer(f"Updated {key} to {val_raw}")
@@ -1903,6 +2013,20 @@ async def creategroup_input_request(c: Client, cb: CallbackQuery):
             f"<b>Current:</b> <code>{html.escape(user_creategroup_state[user_id]['config']['username'] or 'None')}</code>\n\n"
             "Kirim awalan username (tanpa @) untuk grup publik, atau <b>'none'</b> untuk menjadikannya grup private.\n\n"
             "<b>Contoh:</b> <code>MyXProject</code>\n\n"
+            "<i>Ketik /cancel untuk membatalkan.</i>"
+        )
+    elif field == "recurring_specific_hour":
+        prompt_text = (
+            "<b>✏️ Set Recurring Hour (0-23)</b>\n\n"
+            f"<b>Current:</b> <code>{user_creategroup_state[user_id]['config'].get('recurring_specific_hour', 0)}</code>\n\n"
+            "Kirim angka jam (0-23) untuk waktu spesifik recurring.\n\n"
+            "<i>Ketik /cancel untuk membatalkan.</i>"
+        )
+    elif field == "recurring_specific_minute":
+        prompt_text = (
+            "<b>✏️ Set Recurring Minute (0-59)</b>\n\n"
+            f"<b>Current:</b> <code>{user_creategroup_state[user_id]['config'].get('recurring_specific_minute', 0)}</code>\n\n"
+            "Kirim angka menit (0-59) untuk waktu spesifik recurring.\n\n"
             "<i>Ketik /cancel untuk membatalkan.</i>"
         )
     else:
@@ -1993,6 +2117,18 @@ async def creategroup_toggle_handler(c: Client, cb: CallbackQuery):
                 conf["notify_chunks"] = "off"
             else:
                 conf["notify_chunks"] = "both"
+        elif key == "recurring":
+            # Toggle recurring explicitly and give a short feedback like xauto_pro_gcast
+            conf["recurring"] = not conf.get("recurring", False)
+            save_user_cg_config(user_id, conf)
+            user_creategroup_state[user_id]["config"] = conf
+            try:
+                await safe_cb_answer(cb, f"Recurring: {'ENABLED' if conf['recurring'] else 'DISABLED'}", show_alert=False)
+            except Exception:
+                pass
+            await render_creategroup_ui(cb, user_creategroup_state[user_id])
+            await cb.answer()
+            return
         elif key in conf: conf[key] = not conf[key]
         save_user_cg_config(user_id, conf)
         await render_creategroup_ui(cb, user_creategroup_state[user_id])
@@ -3474,16 +3610,38 @@ async def process_creategroup_input(c: Client, m: Message, text: str = None):
              for b in bots: clean_bots.append(b if (b.startswith("@") or b.isdigit()) else f"@{b}")
              state["config"]["bots"] = " ".join(clean_bots)
              dl.info(f"[DEBUG-CG] Field 'bots' successfully updated {len(clean_bots)} bots.")
-        elif field in ["delay", "count", "batch_delay", "batch_size", "action_delay", "account_delay", "batch_action", "ba_delay", "batch_account", "ba_account_delay"]:
+        elif field in ["delay", "count", "batch_delay", "batch_size", "action_delay", "account_delay", "batch_action", "ba_delay", "batch_account", "ba_account_delay", "recurring_interval_hours", "recurring_interval_minutes"]:
             is_float_field = field in ["action_delay", "account_delay"]
             if text.isdigit() or (is_float_field and text.replace(".", "", 1).isdigit()):
-                 val = float(text) if is_float_field else int(text)
-                 state["config"][field] = val
-                 dl.info(f"[DEBUG-CG] Field '{field}' successfully updated to integer/float {val}.")
+                val = float(text) if is_float_field else int(text)
+                state["config"][field] = val
+                dl.info(f"[DEBUG-CG] Field '{field}' successfully updated to integer/float {val}.")
             else:
                  dl.warning(f"[DEBUG-CG] Input for '{field}' was rejected due to non-digit: '{text}'")
                  await m.reply("❌ Input harus angka!")
                  return
+        elif field == "recurring_specific_hour":
+            # Expect integer 0-23
+            if not text.isdigit():
+                await m.reply("❌ Input harus angka (0-23)!")
+                return
+            val = int(text)
+            if val < 0 or val > 23:
+                await m.reply("❌ Jam harus di antara 0 dan 23!")
+                return
+            state["config"][field] = val
+            dl.info(f"[DEBUG-CG] Field '{field}' successfully updated to {val}.")
+        elif field == "recurring_specific_minute":
+            # Expect integer 0-59
+            if not text.isdigit():
+                await m.reply("❌ Input harus angka (0-59)!")
+                return
+            val = int(text)
+            if val < 0 or val > 59:
+                await m.reply("❌ Menit harus di antara 0 dan 59!")
+                return
+            state["config"][field] = val
+            dl.info(f"[DEBUG-CG] Field '{field}' successfully updated to {val}.")
         else:
              dl.error(f"[DEBUG-CG] WARNING: Unrecognized field mode: '{field}'")
              

@@ -3329,6 +3329,9 @@ async def creategroup_loop(
                 "temp_pin": temp_pin,
                 "quote_block": quote_block,
                 "msg_img": msg_img,
+                "msg_img_album": msg_img_album,
+                "msg_vid_album": msg_vid_album,
+                "invite_assistant": invite_assistant,
                 "rand_len": rand_len,
                 "rand_lower": rand_lower,
                 "rand_upper": rand_upper,
@@ -3344,6 +3347,23 @@ async def creategroup_loop(
                 "account_name": account_name or "Unknown",
                 "status": "completed"
             }
+            # Quick verification logging/assert to help debug recurring runs
+            try:
+                saved = COMPLETED_CREATEGROUP_TASKS[task_key]
+                # Assert presence of important flags (don't let assertion kill process)
+                try:
+                    assert 'msg_img_album' in saved and 'msg_vid_album' in saved and 'invite_assistant' in saved
+                except AssertionError:
+                    logger.warning(f"[CreateGroup] Completed task missing expected flags: {list(saved.keys())}")
+                # Log current saved values for diagnostics
+                try:
+                    from Main.internals.settings_handlers.creategroup_handlers import load_user_cg_config
+                    cfg = load_user_cg_config(effective_user_id)
+                    logger.info(f"[CreateGroup] Saved complete flags for task={task_key} user={effective_user_id} msg_img_album={saved.get('msg_img_album')} msg_vid_album={saved.get('msg_vid_album')} invite_assistant={saved.get('invite_assistant')} repeat_count={cfg.get('repeat_count')}")
+                except Exception:
+                    logger.info(f"[CreateGroup] Saved complete flags for task={task_key} user={effective_user_id} msg_img_album={saved.get('msg_img_album')} msg_vid_album={saved.get('msg_vid_album')} invite_assistant={saved.get('invite_assistant')}")
+            except Exception:
+                logger.exception("[CreateGroup] Error while logging completed task flags")
             
             # Kirim laporan akhir
             await send_completion_report(
@@ -3371,6 +3391,119 @@ async def creategroup_loop(
                     df.set_result(True)
             except Exception:
                 pass
+            # Auto-reschedule recurring tasks based on user's saved CreateGroup config
+            try:
+                from Main.internals.settings_handlers.creategroup_handlers import load_user_cg_config
+                user_cfg = load_user_cg_config(effective_user_id)
+                if user_cfg.get("recurring", False):
+                    # compute wait seconds
+                    if user_cfg.get("recurring_mode", "interval") == "interval":
+                        hrs = int(user_cfg.get("recurring_interval_hours", 0))
+                        mins = int(user_cfg.get("recurring_interval_minutes", 0))
+                        wait_secs = max(0, hrs * 3600 + mins * 60)
+                    else:
+                        # specific daily time
+                        from datetime import timedelta
+                        now = datetime.now()
+                        sh = int(user_cfg.get("recurring_specific_hour", 0))
+                        sm = int(user_cfg.get("recurring_specific_minute", 0))
+                        target = now.replace(hour=sh, minute=sm, second=0, microsecond=0)
+                        if target <= now:
+                            target = target + timedelta(days=1)
+                        wait_secs = int((target - now).total_seconds())
+
+                    # Only schedule if wait is positive and repeat_count > 0
+                    repeat_count = int(user_cfg.get("repeat_count", 0) or 0)
+                    if wait_secs > 0 and repeat_count > 0:
+                        SCHED_RECURRING = globals().setdefault("_SCHED_RECURRING", {})
+                        if not SCHED_RECURRING.get(task_key):
+                            # store remaining counter
+                            SCHED_RECURRING[task_key] = {"remaining": repeat_count}
+                            async def _reschedule():
+                                try:
+                                    while True:
+                                        # refresh config in case user updated or disabled recurring
+                                        try:
+                                            user_cfg_local = load_user_cg_config(effective_user_id)
+                                        except Exception:
+                                            user_cfg_local = user_cfg
+                                        if not user_cfg_local.get("recurring", False):
+                                            break
+                                        rem = SCHED_RECURRING.get(task_key, {}).get("remaining", 0)
+                                        if rem <= 0:
+                                            break
+                                        await asyncio.sleep(wait_secs)
+                                        # re-run using saved completed conf
+                                        conf = COMPLETED_CREATEGROUP_TASKS.get(task_key)
+                                        if not conf:
+                                            break
+                                        # find client
+                                        client_id = conf.get("client_id") or conf.get("user_id")
+                                        user_client = next((c for c in Altruix.clients if getattr(c, 'me', None) and c.me.id == client_id), None)
+                                        if not user_client and Altruix.clients:
+                                            user_client = Altruix.clients[0]
+                                        if not user_client:
+                                            break
+                                        # spawn a new loop
+                                        try:
+                                            asyncio.create_task(creategroup_loop(
+                                                user_client=user_client,
+                                                bot_client=Altruix.bot,
+                                                initial_message=None,
+                                                delay=conf.get("delay", 60),
+                                                count=conf.get("count", 1),
+                                                extra_delay_minutes=conf.get("extra_delay_minutes", 0),
+                                                batch_size=conf.get("batch_size", 1),
+                                                group_type=conf.get("group_type", "a"),
+                                                name_pattern=conf.get("name_pattern") or conf.get("name_pattern", ""),
+                                                username_prefix=conf.get("username_prefix"),
+                                                bot_identifiers=conf.get("bot_identifiers", []),
+                                                control_message=None,
+                                                action_delay=conf.get("action_delay", 3.0),
+                                                invite_bots=conf.get("invite_bots", True),
+                                                invite_assistant=conf.get("invite_assistant", True),
+                                                anon_mode=conf.get("anon_mode", True),
+                                                copy_messages=conf.get("copy_messages", True),
+                                                description=conf.get("description"),
+                                                photo_source=conf.get("photo_source", "source"),
+                                                custom_photo_id=conf.get("custom_photo_id"),
+                                                log_destination=conf.get("log_destination", "both"),
+                                                log_format=conf.get("log_format", "zip"),
+                                                pin_first_msg=conf.get("pin_first_msg", True),
+                                                temp_pin=conf.get("temp_pin", True),
+                                                quote_block=conf.get("quote_block", True),
+                                                msg_img=conf.get("msg_img", True),
+                                                msg_vid=conf.get("msg_vid", True),
+                                                msg_img_album=conf.get("msg_img_album", False),
+                                                msg_vid_album=conf.get("msg_vid_album", False),
+                                                rand_len=conf.get("rand_len", 0),
+                                                rand_lower=conf.get("rand_lower", False),
+                                                rand_upper=conf.get("rand_upper", False),
+                                                rand_static=conf.get("rand_static", False),
+                                                batch_action=conf.get("batch_action", 30),
+                                                ba_delay=conf.get("ba_delay", 30),
+                                                user_id=conf.get("user_id"),
+                                                task_id=None,
+                                                start_log_mode=user_cfg_local.get("start_log_mode", conf.get("start_log_mode", "both")),
+                                                start_photo_log_mode=user_cfg_local.get("start_photo_log_mode", conf.get("start_photo_log_mode", "both")),
+                                                progress_log_mode=user_cfg_local.get("progress_log_mode", conf.get("progress_log_mode", "both")),
+                                                panel_log_mode=user_cfg_local.get("panel_log_mode", conf.get("panel_log_mode", "log_group")),
+                                            ))
+                                        except Exception:
+                                            logger.exception("Failed to spawn recurring creategroup_loop")
+                                        # decrement remaining
+                                        try:
+                                            SCHED_RECURRING[task_key]["remaining"] = max(0, SCHED_RECURRING[task_key].get("remaining", 0) - 1)
+                                        except Exception:
+                                            break
+                                        # If reached zero, break
+                                        if SCHED_RECURRING[task_key].get("remaining", 0) <= 0:
+                                            break
+                                finally:
+                                    SCHED_RECURRING.pop(task_key, None)
+                            asyncio.create_task(_reschedule())
+            except Exception:
+                logger.debug("Failed to schedule recurring run", exc_info=True)
         else:
             # Task dihentikan
             await send_log_notification(

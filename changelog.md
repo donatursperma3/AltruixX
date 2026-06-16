@@ -3,6 +3,25 @@
 All notable changes to the **Altroid-X** project from version **0.0.10.0959H** to the latest.
 Latest updates are always added at the top (newest → oldest).
 
+## [1.0.290] - 2026-06-16
+
+### 👥 CreateGroup: Repeat indicator, recurring persistence & verification logging
+- **Fixed: Repeat submenu value mismatch**
+  - Normalized callback keys to `repeat_count` and updated `creategroup_set_val_handler` to accept `repeat` or `repeat_count` and persist to `repeat_count`, ensuring dashboard shows correct "Repeat: Nx" immediately.
+
+- **Fixed: Recurring runs ignored album & invite flags**
+  - Persisted `msg_img_album`, `msg_vid_album`, and `invite_assistant` into `COMPLETED_CREATEGROUP_TASKS` and forwarded them when auto-rescheduling recurring runs so album behavior and assistant invites are honored on repeats.
+
+- **Added: Verification logging on completed-task save**
+  - Added an assertion/log line after saving completed-task metadata to log saved flags (`msg_img_album`,`msg_vid_album`,`invite_assistant`,`repeat_count`) to help runtime diagnostics.
+
+- **Changed: Rescheduler guard & repeat handling**
+  - Rescheduler uses `_SCHED_RECURRING` guard to avoid duplicate scheduling and honors `repeat_count` remaining counter.
+
+- **Files changed**: [Main/plugins/userbot/xcreategroup.py](Main/plugins/userbot/xcreategroup.py), [Main/internals/settings_handlers/creategroup_handlers.py](Main/internals/settings_handlers/creategroup_handlers.py)
+
+---
+
 ## [1.0.289] - 2026-06-15
 
 ### 👥 CreateGroup: Restore Invite Assistant UI, Param, & Delay Enforcement
