@@ -41,11 +41,10 @@ from Main.core.types.message import Message as AltruixMessage
 from Main.utils.helpers import ChatPrivileges
 from Main.utils.essentials import Essentials
 # from Main.utils.helpers import run_shell_cmd
-import logging
 
 plugin_name = f"{os.path.basename(__file__)}"
 __plugin_name__ = plugin_name if plugin_name else "xcreategroup"
-PLUGIN_VERSION = "0.2.408"  # ✅ FIXED: 'NoneType' object has no attribute 'id' error in report generation
+PLUGIN_VERSION = "0.2.408"
 
 logger = logging.getLogger("altruix.xcreategroup")
 logger.setLevel(logging.INFO)
@@ -78,6 +77,7 @@ CONFIRMATION_TTL_SECONDS = 300  # Expire confirmation data after 5 minutes
 # Keyed by message (chat_id:message_id) or user id fallback
 CALLBACK_BUSY: Dict[str, float] = {}
 
+
 async def _cleanup_pending_confirmations() -> None:
     """Remove stale pending confirmation entries to avoid memory growth."""
     if not PENDING_CONFIRMATIONS:
@@ -101,7 +101,7 @@ def format_duration(seconds: float) -> str:
     minutes, seconds = divmod(seconds, 60)
     hours, minutes = divmod(minutes, 60)
     days, hours = divmod(hours, 24)
-    months, days = divmod(days, 30) # Pendekatan 1 bulan = 30 hari
+    months, days = divmod(days, 30)  # Pendekatan 1 bulan = 30 hari
     
     parts = []
     if months > 0:
@@ -116,6 +116,7 @@ def format_duration(seconds: float) -> str:
         parts.append(f"{seconds} detik")
         
     return " ".join(parts)
+
 
 async def _load_cg_user_config(user_id: int) -> dict:
     """
@@ -671,17 +672,34 @@ async def check_interrupted_tasks():
 
             for dest in destinations:
                 try:
-                    await Altruix.bot.send_message(
-                        chat_id=dest,
-                        text=f"<blockquote expandable>"
+                    # Determine repeat indicator for this task if available
+                    try:
+                        repeat_cnt = int(task_data.get("params", {}).get("repeat_count", 0) or 0)
+                        if not repeat_cnt:
+                            from Main.internals.settings_handlers.creategroup_handlers import load_user_cg_config
+                            repeat_cfg = load_user_cg_config(task_data.get("user_id") or task_data.get("client_id"))
+                            repeat_cnt = int(repeat_cfg.get("repeat_count", 0) or 0)
+                    except Exception:
+                        repeat_cnt = 0
+
+                    msg_text = (
+                        f"<blockquote expandable>"
                         f"⚠️ <b>Interrupted Task Detected {acc_idx}/{tot_accs}</b>\n\n"
                         f"Task CreateGroup terhenti akibat restart.\n"
                         f"• Account: <b>{html.escape(account_name)}</b>\n"
                         f"• Task ID: <code>{tid_display}</code>\n"
+                    )
+                    if repeat_cnt > 0:
+                        msg_text += f"• 🔁 Repeat: {repeat_cnt}x\n"
+                    msg_text += (
                         f"• Progress: {current}/{total} grup (sisa {remaining})\n"
                         f"• Step terakhir: <code>{step_info}</code>\n\n"
                         f"<i>Ingin melanjutkan proses yang tersisa?</i>"
-                        f"</blockquote>",
+                        f"</blockquote>"
+                    )
+                    await Altruix.bot.send_message(
+                        chat_id=dest,
+                        text=msg_text,
                         reply_markup=buttons,
                         parse_mode=ParseMode.HTML
                     )
@@ -705,6 +723,8 @@ async def check_interrupted_tasks():
                 "total_duration": (datetime.now() - task_data.get("start_time")).total_seconds() if isinstance(task_data.get("start_time"), datetime) else 0,
                 "user_id": task_data.get("user_id"),
                 "client_id": task_data.get("user_id"),
+                "client_ids": task_data.get("params", {}).get("client_ids", [task_data.get("user_id")]),
+                "repeat_count": int(task_data.get("params", {}).get("repeat_count", 0) or 0),
                 "start_time": task_data.get("start_time").strftime('%Y-%m-%d %H:%M:%S') if isinstance(task_data.get("start_time"), datetime) else task_data.get("start_time"),
                 "finish_time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 "account_name": task_data.get("account_name", "Unknown"),
@@ -1428,7 +1448,8 @@ async def creategroup_loop(
     ,
     auto_start: bool = False,
     auto_start_count: int = 3,
-    auto_start_timeout: int = 300
+    auto_start_timeout: int = 300,
+    spawned_by_rescheduler: bool = False
 ):
     """Main loop untuk membuat grup"""
     effective_user_id = user_id or (initial_message.from_user.id if initial_message and initial_message.from_user else None)
@@ -1926,6 +1947,27 @@ async def creategroup_loop(
             "total": count,
             "last_step": state.get("current_step", "setup")
         })
+        # Ensure state params track client ids used in this run so recurring can re-run across them
+        try:
+            state = CREATEGROUP_TASKS.get(task_key)
+            if state is None:
+                state = {}
+                CREATEGROUP_TASKS[task_key] = state
+            params = state.setdefault("params", {})
+            # Record whether this run was spawned by the rescheduler to avoid re-initializing schedulers
+            try:
+                params.setdefault("spawned_by_rescheduler", False)
+            except Exception:
+                pass
+            client_ids_list = params.setdefault("client_ids", [])
+            try:
+                cur_cid = getattr(user_client, 'me', None).id if getattr(user_client, 'me', None) else (getattr(user_client, 'user_id', None) or None)
+            except Exception:
+                cur_cid = None
+            if cur_cid and cur_cid not in client_ids_list:
+                client_ids_list.append(cur_cid)
+        except Exception:
+            logger.debug("Failed to record client_id into state.params.client_ids", exc_info=True)
         
         if is_resume:
             resume_msg = (
@@ -2027,11 +2069,21 @@ async def creategroup_loop(
 
         # Inisialisasi progress message sesuai pengaturan Start Log (pm_bot/log_group/both/off)
         try:
+            # Append Repeat indicator if configured for this user
+            try:
+                from Main.internals.settings_handlers.creategroup_handlers import load_user_cg_config
+                cfg_tmp = load_user_cg_config(effective_user_id)
+                repeat_cnt = int(cfg_tmp.get("repeat_count", 0) or 0)
+            except Exception:
+                repeat_cnt = 0
+
             start_text = (
-                f"<blockquote expandable>📊 <b>Memulai Tracker Progress {account_idx}/{total_accs}...</b>\n"
-                f"• Task ID: <code>{tid}</code>\n"
-                f"• Account: <b>{html.escape(account_name_raw)}</b></blockquote>"
-            )
+                    f"<blockquote expandable>📊 <b>Memulai Tracker Progress {account_idx}/{total_accs}...</b>\n"
+                    f"• Task ID: <code>{tid}</code>\n"
+                    f"• Account: <b>{html.escape(account_name_raw)}</b>"
+                    + (f"\n• 🔁 Repeat: {repeat_cnt}x" if repeat_cnt > 0 else "")
+                    + "</blockquote>"
+                )
             log_progress_msg = await send_start_log(start_text)
             if state and log_progress_msg:
                 state["log_progress_msg"] = log_progress_msg
@@ -2476,8 +2528,8 @@ async def creategroup_loop(
                                     f"<blockquote expandable>"
                                     f"🚀 <b>Group Initialized!</b>\n"                                    
                                     f"━━━━━━━━━━━━━━━━━━━━\n"
-                                    f"🆔 <b>Chat ID:</b><code>{created_chat_id}</code>\n"
-                                    f"📊 <b>Status:</b> Active\n\n"
+                                    f"• <b>Chat ID:</b><code>{created_chat_id}</code>\n"
+                                    f"• <b>Status:</b> Active\n\n"
                                     f"<i>Powered by Altroid-X Engine</i>"
                                     f"</blockquote>",
                                     parse_mode=ParseMode.HTML
@@ -2581,8 +2633,8 @@ async def creategroup_loop(
                                         f"<blockquote expandable>"
                                         f"🚀 <b>{type_label_full} Initialized!</b>\n"                                 
                                         f"━━━━━━━━━━━━━━━━━━━━\n"
-                                        f"🆔 <b>Chat ID:</b><code>{created_chat_id}</code>\n"
-                                        f"📊 <b>Status:</b> Active\n\n"
+                                        f"• <b>Chat ID:</b><code>{created_chat_id}</code>\n"
+                                        f"• <b>Status:</b> Active\n\n"
                                         f"<i>Powered by Altroid-X Engine</i>"
                                         f"</blockquote>",
                                         parse_mode=ParseMode.HTML
@@ -3342,6 +3394,9 @@ async def creategroup_loop(
                 "total_duration": total_duration,
                 "user_id": effective_user_id,
                 "client_id": user_info.id if user_info else None,
+                # Preserve list of client ids used in this run (if available in state.params)
+                "client_ids": state.get("params", {}).get("client_ids", [user_info.id if user_info else state.get("params", {}).get("user_id")]),
+                "repeat_count": int(state.get("params", {}).get("repeat_count", 0) or 0),
                 "start_time": start_time.strftime('%Y-%m-%d %H:%M:%S'),
                 "finish_time": end_time.strftime('%Y-%m-%d %H:%M:%S'),
                 "account_name": account_name or "Unknown",
@@ -3381,6 +3436,8 @@ async def creategroup_loop(
                 batch_action,
                 ba_delay,
                 task_id=tid, # Pass tid here
+                # Persist repeat_count from state params if present so reports can show it
+                repeat_count=int(state.get("params", {}).get("repeat_count", 0) or 0),
                 account_idx=account_idx,
                 total_accs=total_accs
             )
@@ -3414,7 +3471,9 @@ async def creategroup_loop(
 
                     # Only schedule if wait is positive and repeat_count > 0
                     repeat_count = int(user_cfg.get("repeat_count", 0) or 0)
-                    if wait_secs > 0 and repeat_count > 0:
+                    # Do not initialize a fresh scheduler if this run was spawned by the rescheduler
+                    spawned_flag = bool(state.get("params", {}).get("spawned_by_rescheduler", False))
+                    if wait_secs > 0 and repeat_count > 0 and not spawned_flag:
                         SCHED_RECURRING = globals().setdefault("_SCHED_RECURRING", {})
                         if not SCHED_RECURRING.get(task_key):
                             # store remaining counter
@@ -3444,7 +3503,13 @@ async def creategroup_loop(
                                             user_client = Altruix.clients[0]
                                         if not user_client:
                                             break
-                                        # spawn a new loop
+                                        # spawn a new loop and ensure it has a unique task id
+                                        try:
+                                            from Main.plugins.userbot.xtaskmanager import generate_task_id
+                                            new_tid = generate_task_id("CG")
+                                        except Exception:
+                                            new_tid = None
+
                                         try:
                                             asyncio.create_task(creategroup_loop(
                                                 user_client=user_client,
@@ -3483,11 +3548,14 @@ async def creategroup_loop(
                                                 batch_action=conf.get("batch_action", 30),
                                                 ba_delay=conf.get("ba_delay", 30),
                                                 user_id=conf.get("user_id"),
-                                                task_id=None,
+                                                task_id=new_tid,
                                                 start_log_mode=user_cfg_local.get("start_log_mode", conf.get("start_log_mode", "both")),
                                                 start_photo_log_mode=user_cfg_local.get("start_photo_log_mode", conf.get("start_photo_log_mode", "both")),
                                                 progress_log_mode=user_cfg_local.get("progress_log_mode", conf.get("progress_log_mode", "both")),
                                                 panel_log_mode=user_cfg_local.get("panel_log_mode", conf.get("panel_log_mode", "log_group")),
+                                                spawned_by_rescheduler=True,
+                                                # Preserve original repeat_count so reports for spawned runs show it
+                                                repeat_count=int(conf.get('repeat_count', user_cfg_local.get('repeat_count', 0) or 0)),
                                             ))
                                         except Exception:
                                             logger.exception("Failed to spawn recurring creategroup_loop")
@@ -3539,6 +3607,8 @@ async def creategroup_loop(
             "total_duration": (datetime.now() - start_time).total_seconds(),
             "user_id": user_info.id if user_info else None,
             "client_id": user_info.id if user_info else None,
+            "client_ids": state.get("params", {}).get("client_ids", [user_info.id if user_info else state.get("params", {}).get("user_id")]),
+            "repeat_count": int(state.get("params", {}).get("repeat_count", 0) or 0),
             "status": "failed",
             "error": str(e),
             "start_time": start_time.strftime('%Y-%m-%d %H:%M:%S') if hasattr(start_time, "strftime") else str(start_time),
@@ -3623,10 +3693,12 @@ async def send_completion_report(
     ba_delay: int = 3,
     task_id: str = None,
     account_idx: int = 1,
-    total_accs: int = 1
+    total_accs: int = 1,
+    repeat_count: int = 0
 ):
     """Kirim laporan penyelesaian task"""
     try:
+        logger.info(f"[CreateGroup] send_completion_report called task_id={task_id} user={getattr(user_info,'id',None)} log_destination={log_destination}")
         success_count = len(created_groups)
         
         # Determine log info text
@@ -3643,6 +3715,18 @@ async def send_completion_report(
         unit_label = "channel" if is_channel else "grup"
         type_name = "Channel" if is_channel else "Grup"
         
+        # Determine repeat indicator for this task
+        try:
+            # Use explicit repeat_count param if provided (caller override), otherwise fall back to saved/computed values
+            repeat_cnt = int(repeat_count or 0)
+            if not repeat_cnt and task_id and task_id in COMPLETED_CREATEGROUP_TASKS:
+                repeat_cnt = int(COMPLETED_CREATEGROUP_TASKS.get(task_id, {}).get('repeat_count', 0) or 0)
+            if not repeat_cnt:
+                from Main.internals.settings_handlers.creategroup_handlers import load_user_cg_config
+                repeat_cnt = int(load_user_cg_config(user_info.id).get('repeat_count', 0) or 0)
+        except Exception:
+            repeat_cnt = 0
+
         # If nothing succeeded, avoid creating/sending a log file; just notify
         if success_count == 0:
             # Notify targets without attachment
@@ -3653,6 +3737,10 @@ async def send_completion_report(
                 f"• Durasi: {format_duration(total_duration)}\n"
                 f"• Account: {html.escape(f'{user_info.first_name or ''} {user_info.last_name or ''}'.strip() or 'N/A')}\n"
                 f"• Account ID: <code>{user_info.id}</code>\n"
+            )
+            if repeat_cnt > 0:
+                short_caption += f"• 🔁 Repeat: {repeat_cnt}x\n"
+            short_caption += (
                 f"• Task ID: <code>{task_id or 'N/A'}</code>\n\n"
                 f"<i>Module by @AlphaXproject team</i>\n"
                 f"</blockquote>"
@@ -3757,21 +3845,26 @@ async def send_completion_report(
         log_msg = None
         for target_chat, sender_client in targets:
             try:
+                caption = (
+                    f"<blockquote expandable>"
+                    f"📊 <b>Laporan Create {type_label} Selesai {account_idx}/{total_accs}</b>\n\n"
+                    f"✅ Berhasil: {success_count}/{requested_count} {unit_label}\n"
+                    f"• Durasi: {format_duration(total_duration)}\n"
+                    f"• Batch: {batch_action} act / {ba_delay}s\n"
+                    f"• Account: {html.escape(f'{user_info.first_name or ''} {user_info.last_name or ''}'.strip() or 'N/A')}\n"
+                    f"• Account ID: <code>{user_info.id}</code>\n"
+                )
+                if repeat_cnt > 0:
+                    caption += f"• 🔁 Repeat: {repeat_cnt}x\n"
+                caption += (
+                    f"• Task ID: <code>{task_id or 'N/A'}</code>\n\n"
+                    f"<i>Module by @AlphaXproject team</i>"
+                    f"</blockquote>"
+                )
                 msg = await sender_client.send_document(
                     target_chat,
                     document=log_filename,
-                    caption=(
-                        f"<blockquote expandable>"
-                        f"📊 <b>Laporan Create {type_label} Selesai {account_idx}/{total_accs}</b>\n\n"
-                        f"✅ Berhasil: {success_count}/{requested_count} {unit_label}\n"
-                        f"• Durasi: {format_duration(total_duration)}\n"
-                        f"• Batch: {batch_action} act / {ba_delay}s\n"
-                        f"• Account: {html.escape(f'{user_info.first_name or ''} {user_info.last_name or ''}'.strip() or 'N/A')}\n"
-                        f"• Account ID: <code>{user_info.id}</code>\n"
-                        f"• Task ID: <code>{task_id or 'N/A'}</code>\n\n"
-                        f"<i>Module by @AlphaXproject team</i>"
-                        f"</blockquote>"
-                    ),
+                    caption=caption,
                     parse_mode=ParseMode.HTML
                 )
                 if not log_msg:
@@ -3882,17 +3975,21 @@ async def send_completion_report(
                 # Fix: Handle NoneType chat.id error by using explicit chat_id or fallback
                 chat_id = getattr(getattr(control_message, "chat", None), "id", LOG_CHAT_ID)
                 try:
-                    await bot_client.edit_message_text(
-                        chat_id=chat_id,
-                        message_id=control_message.id,
-                        text=f"<blockquote expandable>"
+                    text_str = (
+                        f"<blockquote expandable>"
                         f"✅ <b>Laporan Create {type_label} Selesai {account_idx}/{total_accs}</b>\n\n"
                         f"• <b>Task ID:</b> <code>{task_id or 'N/A'}</code>\n"
                         f"• <b>User:</b> {html.escape(account_name)}\n"
                         f"• <b>Detail:</b> Berhasil {success_count}/{requested_count} {unit_label}\n"
                         f"• <b>Durasi:</b> {format_duration(total_duration)}\n"
-                        f"• <b>Log:</b> {log_info}"
-                        f"</blockquote>",
+                    )
+                    if repeat_cnt > 0:
+                        text_str += f"• <b>Repeat:</b> {repeat_cnt}x\n"
+                    text_str += f"• <b>Log:</b> {log_info}" + f"</blockquote>"
+                    await bot_client.edit_message_text(
+                        chat_id=chat_id,
+                        message_id=control_message.id,
+                        text=text_str,
                         reply_markup=final_buttons,
                         parse_mode=ParseMode.HTML
                     )
@@ -3918,20 +4015,23 @@ async def send_completion_report(
                             return
                         except Exception as retry_err:
                             logger.error(f"Retry edit_text gagal: {retry_err}")
-                    
+
                     # Fallback: Kirim laporan baru menggunakan bot_client (Hanya akun bot asisten)
                     try:
                         logger.info("Mencoba kirim laporan baru via bot_client ke LOG_CHAT_ID...")
                         new_msg = await bot_client.send_message(
                             LOG_CHAT_ID,
-                            f"<blockquote expandable>"
-                            f"✅ <b>[FALLBACK] Laporan Create {type_label} Selesai {account_idx}/{total_accs}</b>\n\n"
-                            f"• <b>Task ID:</b> <code>{task_id or 'N/A'}</code>\n"
-                            f"• <b>User:</b> {html.escape(account_name)}\n"
-                            f"• <b>Detail:</b> Berhasil {success_count}/{requested_count} {unit_label}\n"
-                            f"• <b>Durasi:</b> {format_duration(total_duration)}\n"
-                            f"• <b>Log:</b> {log_info}"
-                            f"</blockquote>",
+                            (
+                                f"<blockquote expandable>"
+                                f"✅ <b>[FALLBACK] Laporan Create {type_label} Selesai {account_idx}/{total_accs}</b>\n\n"
+                                f"• <b>Task ID:</b> <code>{task_id or 'N/A'}</code>\n"
+                                f"• <b>User:</b> {html.escape(account_name)}\n"
+                                f"• <b>Detail:</b> Berhasil {success_count}/{requested_count} {unit_label}\n"
+                                f"• <b>Durasi:</b> {format_duration(total_duration)}\n"
+                            ) + (f"• <b>Repeat:</b> {repeat_cnt}x\n" if repeat_cnt > 0 else "") + (
+                                f"• <b>Log:</b> {log_info}"
+                                f"</blockquote>"
+                            ),
                             reply_markup=final_buttons,
                             parse_mode=ParseMode.HTML
                         )

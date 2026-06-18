@@ -1129,20 +1129,20 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
             ],
             [InlineKeyboardButton(f"Interval H: {h}h", callback_data="noop", style=user_style), InlineKeyboardButton(f"Interval M: {m}m", callback_data="noop", style=user_style)],
             [
-                InlineKeyboardButton("-1h", callback_data=f"creategroup_adj_{idx}_{pg}_recurring_interval_hours_sub1", style=user_style),
-                InlineKeyboardButton("-5h", callback_data=f"creategroup_adj_{idx}_{pg}_recurring_interval_hours_sub5", style=user_style),
-            ],
-            [
-                InlineKeyboardButton("+1h", callback_data=f"creategroup_adj_{idx}_{pg}_recurring_interval_hours_add1", style=user_style),
-                InlineKeyboardButton("+5h", callback_data=f"creategroup_adj_{idx}_{pg}_recurring_interval_hours_add5", style=user_style),
-            ],
-            [
                 InlineKeyboardButton("-1m", callback_data=f"creategroup_adj_{idx}_{pg}_recurring_interval_minutes_sub1", style=user_style),
-                InlineKeyboardButton("-5m", callback_data=f"creategroup_adj_{idx}_{pg}_recurring_interval_minutes_sub5", style=user_style),
+                InlineKeyboardButton("+1m", callback_data=f"creategroup_adj_{idx}_{pg}_recurring_interval_minutes_add1", style=user_style),
             ],
             [
-                InlineKeyboardButton("+1m", callback_data=f"creategroup_adj_{idx}_{pg}_recurring_interval_minutes_add1", style=user_style),
+                InlineKeyboardButton("-5m", callback_data=f"creategroup_adj_{idx}_{pg}_recurring_interval_minutes_sub5", style=user_style),
                 InlineKeyboardButton("+5m", callback_data=f"creategroup_adj_{idx}_{pg}_recurring_interval_minutes_add5", style=user_style),
+            ],
+            [
+                InlineKeyboardButton("-1h", callback_data=f"creategroup_adj_{idx}_{pg}_recurring_interval_hours_sub1", style=user_style),
+                InlineKeyboardButton("+1h", callback_data=f"creategroup_adj_{idx}_{pg}_recurring_interval_hours_add1", style=user_style),
+            ],
+            [
+                InlineKeyboardButton("-5h", callback_data=f"creategroup_adj_{idx}_{pg}_recurring_interval_hours_sub5", style=user_style),
+                InlineKeyboardButton("+5h", callback_data=f"creategroup_adj_{idx}_{pg}_recurring_interval_hours_add5", style=user_style),
             ],
             [InlineKeyboardButton(f"Specific Time: {spec_h:02d}:{spec_m:02d}", callback_data="noop", style=user_style)],
             [
@@ -1160,12 +1160,12 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
         buttons = [
             [InlineKeyboardButton(f"━━ Repeat: {lbl} ━━", callback_data="noop", style=user_style)],
             [
-                InlineKeyboardButton("1×", callback_data=f"creategroup_setv_{idx}_{pg}_repeat_count_1", style=user_style),
-                InlineKeyboardButton("3×", callback_data=f"creategroup_setv_{idx}_{pg}_repeat_count_3", style=user_style)
+                InlineKeyboardButton("-1", callback_data=f"creategroup_adj_{idx}_{pg}_repeat_count_sub1", style=user_style),
+                InlineKeyboardButton("+1", callback_data=f"creategroup_adj_{idx}_{pg}_repeat_count_add1", style=user_style)
             ],
             [
-                InlineKeyboardButton("5×", callback_data=f"creategroup_setv_{idx}_{pg}_repeat_count_5", style=user_style),
-                InlineKeyboardButton("10×", callback_data=f"creategroup_setv_{idx}_{pg}_repeat_count_10", style=user_style)
+                InlineKeyboardButton("-5", callback_data=f"creategroup_adj_{idx}_{pg}_repeat_count_sub5", style=user_style),
+                InlineKeyboardButton("+5", callback_data=f"creategroup_adj_{idx}_{pg}_repeat_count_add5", style=user_style)
             ],
             [InlineKeyboardButton("Off", callback_data=f"creategroup_setv_{idx}_{pg}_repeat_count_off", style=user_style)],
             [InlineKeyboardButton("Back", callback_data=f"creategroup_back_submenu_{idx}_{pg}", style=user_style)]
@@ -1650,8 +1650,8 @@ async def creategroup_adjust_handler(c: Client, cb: CallbackQuery):
     steps = {"delay": 10, "count": 1, "batch_delay": 1, "batch_size": 1, "action_delay": 0.5, "account_delay": 0.5, "rand_len": 1, "batch_action": 5, "ba_delay": 10, "batch_account": 1, "ba_account_delay": 10, "auto_start_count": 1}
     limits = {"delay": (0, 3600), "count": (1, 1000), "batch_delay": (0, 300), "batch_size": (1, 100), "action_delay": (0, 30.0), "account_delay": (0, 30.0), "rand_len": (0, 64), "batch_action": (0, 500), "ba_delay": (0, 3600), "batch_account": (1, 999), "ba_account_delay": (0, 3600), "auto_start_count": (1, 999)}
     # Recurring adjustments
-    steps.update({"recurring_interval_hours": 1, "recurring_interval_minutes": 1})
-    limits.update({"recurring_interval_hours": (0, 999), "recurring_interval_minutes": (0, 59)})
+    steps.update({"recurring_interval_hours": 1, "recurring_interval_minutes": 1, "repeat_count": 1})
+    limits.update({"recurring_interval_hours": (0, 999), "recurring_interval_minutes": (0, 59), "repeat_count": (0, 999)})
     val = conf.get(key, 0)
     
     # Handle extended step actions (sub10, add60, sub0.5 etc)
@@ -1666,7 +1666,7 @@ async def creategroup_adjust_handler(c: Client, cb: CallbackQuery):
     final_val = max(min_v, min(val, max_v))
     
     # 🔥 CRITICAL FIX: Ensure specific keys don't become floats
-    int_keys = ["count", "batch_account", "ba_account_delay", "auto_start_count", "batch_action", "batch_size"]
+    int_keys = ["count", "batch_account", "ba_account_delay", "auto_start_count", "batch_action", "batch_size", "repeat_count"]
     if key in int_keys:
         final_val = int(round(final_val))
         

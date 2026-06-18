@@ -564,7 +564,23 @@ async def sendto_cmd(c: Client, m: Message):
         )
         await send_action_log(c, c.me.id, log_text, sent_msg=sent_msg, target_link=t_link)
         await asyncio.sleep(2)
-        await wait.delete()
+        # If the command was run inside the configured log group, keep the
+        # success notification visible. Only delete it when executed elsewhere.
+        log_chat = Altruix.config.LOG_CHAT_ID
+        if isinstance(log_chat, str) and log_chat.lstrip("-").isdigit():
+            try:
+                log_chat = int(log_chat)
+            except:
+                pass
+
+        try:
+            current_chat_id = m.chat.id if hasattr(m, "chat") and getattr(m.chat, "id", None) is not None else None
+        except:
+            current_chat_id = None
+
+        if current_chat_id != log_chat:
+            await wait.delete()
+
         await m.delete_if_self()
     except Exception as e:
         await wait.edit_msg(f"❌ <b>Failed:</b> <code>{str(e)}</code>")
@@ -668,7 +684,23 @@ async def sendfromto_cmd(c: Client, m: Message):
         )
         await send_action_log(c, c.me.id, log_text, sent_msg=sent_msg, source_link=s_link, target_link=t_link)
         await asyncio.sleep(2)
-        await wait.delete()
+        # If the command was run inside the configured log group, keep the
+        # success notification visible. Only delete it when executed elsewhere.
+        log_chat = Altruix.config.LOG_CHAT_ID
+        if isinstance(log_chat, str) and log_chat.lstrip("-").isdigit():
+            try:
+                log_chat = int(log_chat)
+            except:
+                pass
+
+        try:
+            current_chat_id = m.chat.id if hasattr(m, "chat") and getattr(m.chat, "id", None) is not None else None
+        except:
+            current_chat_id = None
+
+        if current_chat_id != log_chat:
+            await wait.delete()
+
         await m.delete_if_self()
     except Exception as e:
         await wait.edit_msg(f"❌ <b>Error:</b> <code>{str(e)}</code>")
@@ -769,7 +801,23 @@ async def sendfromtocus_cmd(c: Client, m: Message):
         )
         await send_action_log(c, c.me.id, log_text, sent_msg=sent_msg, source_link=s_link, target_link=t_link)
         await asyncio.sleep(2)
-        await wait.delete()
+        # If the command was run inside the configured log group, keep the
+        # success notification visible. Only delete it when executed elsewhere.
+        log_chat = Altruix.config.LOG_CHAT_ID
+        if isinstance(log_chat, str) and log_chat.lstrip("-").isdigit():
+            try:
+                log_chat = int(log_chat)
+            except:
+                pass
+
+        try:
+            current_chat_id = m.chat.id if hasattr(m, "chat") and getattr(m.chat, "id", None) is not None else None
+        except:
+            current_chat_id = None
+
+        if current_chat_id != log_chat:
+            await wait.delete()
+
         await m.delete_if_self()
     except Exception as e:
         await wait.edit_msg(f"❌ <b>Error:</b> <code>{str(e)}</code>")
@@ -872,7 +920,23 @@ async def sendfromtos_cmd(c: Client, m: Message):
         )
         await send_action_log(c, c.me.id, log_text, sent_msg=sent_msg, source_link=s_link, target_link=t_link)
         await asyncio.sleep(2)
-        await wait.delete()
+        # If the command was run inside the configured log group, keep the
+        # success notification visible. Only delete it when executed elsewhere.
+        log_chat = Altruix.config.LOG_CHAT_ID
+        if isinstance(log_chat, str) and log_chat.lstrip("-").isdigit():
+            try:
+                log_chat = int(log_chat)
+            except:
+                pass
+
+        try:
+            current_chat_id = m.chat.id if hasattr(m, "chat") and getattr(m.chat, "id", None) is not None else None
+        except:
+            current_chat_id = None
+
+        if current_chat_id != log_chat:
+            await wait.delete()
+
         await m.delete_if_self()
     except Exception as e:
         await wait.edit_msg(f"❌ <b>Error:</b> <code>{str(e)}</code>")
@@ -983,7 +1047,23 @@ async def sendfromtoscus_cmd(c: Client, m: Message):
         )
         await send_action_log(c, c.me.id, log_text, sent_msg=sent_msg, source_link=story_link_str, target_link=t_link)
         await asyncio.sleep(2)
-        await wait.delete()
+        # If the command was run inside the configured log group, keep the
+        # success notification visible. Only delete it when executed elsewhere.
+        log_chat = Altruix.config.LOG_CHAT_ID
+        if isinstance(log_chat, str) and log_chat.lstrip("-").isdigit():
+            try:
+                log_chat = int(log_chat)
+            except:
+                pass
+
+        try:
+            current_chat_id = m.chat.id if hasattr(m, "chat") and getattr(m.chat, "id", None) is not None else None
+        except:
+            current_chat_id = None
+
+        if current_chat_id != log_chat:
+            await wait.delete()
+
         await m.delete_if_self()
     except Exception as e:
         await wait.edit_msg(f"❌ <b>Error:</b> <code>{str(e)}</code>")

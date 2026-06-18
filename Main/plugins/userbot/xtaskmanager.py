@@ -350,6 +350,10 @@ def scan_and_merge_caches():
                         "user_id": tdata.get("user_id"),
                         "user_name": tdata.get("account_name", "Unknown"),
                         "paused": tdata.get("paused", False),
+                        # Persist recurring flag from CreateGroup cache so TaskManager
+                        # knows whether this interrupted task should be considered recurring
+                        # after a restart.
+                        "recurring": tdata.get("recurring", False),
                         "details": f"⚠️ Interrupted (Progress: {current}/{total})",
                         "is_interrupted": True,
                         "extra": {
@@ -1099,6 +1103,26 @@ def toggle_recurring_by_id(task_id: str) -> tuple:
         task_name = registry[task_id].get("name", "Unknown")
         
         Altruix.log(f"[TaskManager] Recurring {state} for task {task_id}: {task_name}", level=20)
+        # If this task belongs to CreateGroup, mirror the recurring flag into
+        # the plugin's in-memory cache and persist it so the flag survives restarts.
+        try:
+            if registry[task_id].get("plugin") == "xcreategroup":
+                from Main.plugins.userbot.xcreategroup import CREATEGROUP_TASKS, save_creategroup_cache
+                if task_id in CREATEGROUP_TASKS:
+                    CREATEGROUP_TASKS[task_id]["recurring"] = registry[task_id]["recurring"]
+                    # Persist asynchronously
+                    try:
+                        import asyncio as _asyncio
+                        _asyncio.create_task(save_creategroup_cache())
+                        Altruix.log(f"[TaskManager] Synced recurring flag to CG cache for {task_id}", level=20)
+                    except Exception:
+                        # Best-effort: if async create_task fails, call save synchronously
+                        try:
+                            save_creategroup_cache()
+                        except Exception:
+                            pass
+        except Exception as _e:
+            _tm_error("toggle_recurring_by_id.sync", _e, task_id=task_id)
         return True, f"<blockquote expandable>🔁 Recurring <b>{state}</b> for task <b>{task_id}</b> ({task_name}).</blockquote>"
     except Exception as e:
         _tm_error("toggle_recurring_by_id", e, task_id=task_id)
