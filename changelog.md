@@ -5,6 +5,25 @@ Latest updates are always added at the top (newest → oldest).
 
 ## [1.0.290] - 2026-06-16
 
+### 👥 Multi-Session Selection: Account Filters & CHANNELS_TOO_MUCH persistence
+- **Added: Account filter buttons** — Added `Limit`, `Most`, and `Least` filters to the `👥 Multi-Session Selection` UI so users can quickly show accounts with the most creations, the least creations, or those that previously hit channel limits. Buttons are arranged as two rows: `[All] [Newest] [Oldest]` and `[Limit] [Most] [Least]`.
+
+- **Added: Persistent error reporting for terminal errors** — When a session hits a terminal `CHANNELS_TOO_MUCH` error during create (HTTP 400), the plugin now persists an error record into `xcreategroup_created_report.json` (keyed by account id) via `save_failed_error_to_report(...)`. This enables the `[Limit]` filter to only surface accounts that have recorded that specific error.
+
+- **Fixed: UI ordering & select/deselect synchronization** — The `select_sessions` page now computes the same ordered/filtered session indices as the UI and records `last_paged_indices` so `Select Page` / `Deselect Page` operate on the exact accounts the user sees (avoids selecting wrong accounts when filters are active).
+
+- **Added: Account preview in logs** — Failure and termination notifications now include the account index preview `N/N` (e.g. `❌ Gagal membuat Supergroup 4/40`) and `account_idx/total_accs` are passed to `creategroup_loop` and recorded in state to keep logs consistent and easy to trace.
+
+- **Safety & persistence** — Config and report files continue to use atomic write patterns (write `.tmp` then replace). All file I/O and network operations are wrapped in try/except and log full tracebacks to assist debugging without interrupting main flows.
+
+- **No removals** — No existing features were removed; all changes are additive and include fallbacks when report/config files are missing or corrupted.
+
+- **Files changed**: [Main/internals/settings_handlers/creategroup_handlers.py](Main/internals/settings_handlers/creategroup_handlers.py), [Main/plugins/userbot/xcreategroup.py](Main/plugins/userbot/xcreategroup.py)
+
+---
+
+## [1.0.291] - 2026-06-18
+
 ### 👥 CreateGroup: Repeat indicator, recurring persistence & verification logging
 - **Fixed: Repeat submenu value mismatch**
   - Normalized callback keys to `repeat_count` and updated `creategroup_set_val_handler` to accept `repeat` or `repeat_count` and persist to `repeat_count`, ensuring dashboard shows correct "Repeat: Nx" immediately.

@@ -428,6 +428,51 @@ async def save_created_group_to_report(account_id: int, account_name: str, usern
     except Exception as e:
         logger.error(f"[CreateGroup] Failed to save created group to report: {e}\n{traceback.format_exc()}")
 
+
+async def save_failed_error_to_report(account_id: int, account_name: str, username: str, error_code: str, error_msg: str):
+    """Persist a failure/error record per account into the same report JSON under 'errors'."""
+    from Main.utils.file_helpers import get_db_path
+    import json
+    import os
+    file_path = get_db_path("xcreategroup_created_report.json")
+    try:
+        data = {}
+        if os.path.exists(file_path):
+            with open(file_path, "r", encoding="utf-8") as f:
+                try:
+                    data = json.load(f)
+                except Exception:
+                    logger.warning(f"Report file corrupted, resetting: {traceback.format_exc()}")
+
+        acc_key = str(account_id)
+        if acc_key not in data:
+            data[acc_key] = {
+                "account_name": account_name,
+                "username": username,
+                "created_groups": [],
+                "errors": []
+            }
+        else:
+            # ensure errors key exists
+            data[acc_key].setdefault("errors", [])
+            data[acc_key]["account_name"] = account_name
+            data[acc_key]["username"] = username
+
+        # Append the error record
+        data[acc_key]["errors"].append({
+            "time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "code": error_code,
+            "message": error_msg
+        })
+
+        tmp = f"{file_path}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        os.replace(tmp, file_path)
+        logger.info(f"[CreateGroup] Saved failed error '{error_code}' for account {account_id} to report database.")
+    except Exception as e:
+        logger.error(f"[CreateGroup] Failed to save error to report: {e}\n{traceback.format_exc()}")
+
 async def sync_existing_created_groups():
     from Main.utils.file_helpers import get_db_path
     import json
@@ -2528,7 +2573,7 @@ async def creategroup_loop(
                                     f"<blockquote expandable>"
                                     f"🚀 <b>Group Initialized!</b>\n"                                    
                                     f"━━━━━━━━━━━━━━━━━━━━\n"
-                                    f"• <b>Chat ID:</b><code>{created_chat_id}</code>\n"
+                                    f"• <b>Chat ID:</b><code> {created_chat_id}</code>\n"
                                     f"• <b>Status:</b> Active\n\n"
                                     f"<i>Powered by Altroid-X Engine</i>"
                                     f"</blockquote>",
@@ -2633,7 +2678,7 @@ async def creategroup_loop(
                                         f"<blockquote expandable>"
                                         f"🚀 <b>{type_label_full} Initialized!</b>\n"                                 
                                         f"━━━━━━━━━━━━━━━━━━━━\n"
-                                        f"• <b>Chat ID:</b><code>{created_chat_id}</code>\n"
+                                        f"• <b>Chat ID:</b><code> {created_chat_id}</code>\n"
                                         f"• <b>Status:</b> Active\n\n"
                                         f"<i>Powered by Altroid-X Engine</i>"
                                         f"</blockquote>",
@@ -2665,7 +2710,7 @@ async def creategroup_loop(
                             
                             error_msg = (
                                 f"<blockquote expandable>"
-                                f"❌ <b>Gagal membuat {type_label_full}</b>\n"
+                                f"❌ <b>Gagal membuat {type_label_full} {account_idx}/{total_accs}</b>\n"
                                 f"• Account: {html.escape(account_name_raw)}\n"
                                 f"• Error: <code>{html.escape(err_str)}</code>"
                                 f"</blockquote>"
@@ -2679,11 +2724,23 @@ async def creategroup_loop(
                             
                             # 3. Special handling for "Too many channels" - this is a terminal error for this session
                             if "CHANNELS_TOO_MUCH" in err_str:
-                                await update_group_log("🛑 <b>Task dihentikan:</b> Limit akun tercapai (Channels Too Much).")
+                                # Persist the CHANNELS_TOO_MUCH error to the persistent report so filters can detect it
+                                try:
+                                    acct_id = getattr(user_client, 'me', None) and getattr(user_client.me, 'id', None)
+                                    uname = getattr(user_client.me, 'username', '') if getattr(user_client, 'me', None) else ''
+                                    if acct_id:
+                                        try:
+                                            await save_failed_error_to_report(acct_id, account_name_raw, uname, 'CHANNELS_TOO_MUCH', err_str)
+                                        except Exception:
+                                            logger.warning(f"Failed to persist CHANNELS_TOO_MUCH error for account {acct_id}")
+                                except Exception:
+                                    pass
+
+                                await update_group_log(f"🛑 <b>Task dihentikan:</b> Limit akun tercapai ({account_idx}/{total_accs}) - Channels Too Much.")
                                 await send_log_notification(
                                     bot_client, 
                                     f"<blockquote expandable>"
-                                    f"🛑 <b>Task Create {type_label_full} Dihentikan</b>\n"
+                                    f"🛑 <b>Task Create {type_label_full} Dihentikan {account_idx}/{total_accs}</b>\n"
                                     f"• Account: {html.escape(account_name_raw)}\n"
                                     f"• Reason: <code>CHANNELS_TOO_MUCH</code> (Limit tercapai)"
                                     f"</blockquote>",

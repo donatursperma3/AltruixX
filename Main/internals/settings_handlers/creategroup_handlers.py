@@ -74,6 +74,11 @@ DEFAULT_CREATEGROUP_CONFIG = {
     "interrupted_log": "off", "start_log_mode": "both", "start_photo_log_mode": "both",
     "progress_log_mode": "both", "panel_log_mode": "log_group", "delay_log_mode": "both"
 }
+# Account filter defaults
+DEFAULT_CREATEGROUP_CONFIG.update({
+    "account_filter": "all",
+    "account_filter_limit": 1,
+})
 # Recurring defaults
 DEFAULT_CREATEGROUP_CONFIG.update({
     "recurring": False,
@@ -1236,8 +1241,9 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
         s_page = min(max(0, state.get("session_page", 0)), total_pages - 1)
         state["session_page"] = s_page
 
-        # Account filter support: 'all' | 'newest' | 'oldest'
+        # Account filter support: 'all' | 'newest' | 'oldest' | 'most' | 'least' | 'limit'
         acct_filter = config.get("account_filter", "all") or "all"
+        acct_limit = int(config.get("account_filter_limit", 1) or 1)
 
         # Build sortable session list (idx, client)
         indexed_clients = [(i + 1, client) for i, client in enumerate(Altruix.clients)]
@@ -1257,7 +1263,8 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
                         times = []
                         for g in groups:
                             t = g.get("time")
-                            if not t: continue
+                            if not t:
+                                continue
                             try:
                                 times.append(datetime.strptime(t, "%Y-%m-%d %H:%M:%S"))
                             except Exception:
@@ -1268,10 +1275,51 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
                 pass
             return None
 
+        def _count_created_for_idx(idx):
+            try:
+                me = getattr(Altruix.clients[idx - 1], "me", None) or asyncio.get_event_loop().run_until_complete(Altruix.clients[idx - 1].get_me())
+                s_uid = str(getattr(me, "id", None)) if me else None
+                if s_uid and s_uid in report_data:
+                    return len(report_data[s_uid].get("created_groups", []))
+            except Exception:
+                pass
+            return 0
+
+        # Apply ordering/filter based on selected mode
         if acct_filter == "newest":
             indexed_clients.sort(key=lambda it: _last_created_time_for_idx(it[0]) or datetime.fromtimestamp(0), reverse=True)
         elif acct_filter == "oldest":
             indexed_clients.sort(key=lambda it: _last_created_time_for_idx(it[0]) or datetime.fromtimestamp(2**31-1))
+        elif acct_filter == "most":
+            indexed_clients.sort(key=lambda it: _count_created_for_idx(it[0]), reverse=True)
+        elif acct_filter == "least":
+            indexed_clients.sort(key=lambda it: _count_created_for_idx(it[0]))
+        elif acct_filter == "limit":
+            # Filter to accounts that have previously recorded a CHANNELS_TOO_MUCH error (persisted to the report)
+            def _has_channel_limit_error(idx):
+                try:
+                    me = getattr(Altruix.clients[idx - 1], "me", None) or asyncio.get_event_loop().run_until_complete(Altruix.clients[idx - 1].get_me())
+                    s_uid = str(getattr(me, "id", None)) if me else None
+                    if not s_uid:
+                        return False
+                    entry = report_data.get(s_uid) if isinstance(report_data, dict) else {}
+                    if not entry:
+                        return False
+                    errs = entry.get("errors", [])
+                    for er in errs:
+                        code = (er.get("code") or "").upper()
+                        msg = (er.get("message") or "").upper()
+                        if "CHANNELS_TOO_MUCH" in code or "CHANNELS_TOO_MUCH" in msg:
+                            return True
+                except Exception:
+                    return False
+                return False
+
+            try:
+                filtered = [(i, c) for (i, c) in indexed_clients if _has_channel_limit_error(i)]
+                indexed_clients = filtered
+            except Exception:
+                pass
 
         start = s_page * per_page
         end = start + per_page
@@ -1301,13 +1349,21 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
             f"</blockquote>"
         )
         
-        # Filter buttons row
+        # Filter buttons row (All/Newest/Oldest)
         filter_buttons = [
             InlineKeyboardButton(f"{'✅' if acct_filter=='all' else '◻️'} All", callback_data=f"creategroup_filter_all_{idx}_{pg}", style=user_style),
             InlineKeyboardButton(f"{'✅' if acct_filter=='newest' else '◻️'} Newest", callback_data=f"creategroup_filter_newest_{idx}_{pg}", style=user_style),
             InlineKeyboardButton(f"{'✅' if acct_filter=='oldest' else '◻️'} Oldest", callback_data=f"creategroup_filter_oldest_{idx}_{pg}", style=user_style)
         ]
-        buttons = [filter_buttons]
+
+        # Additional filter row (Limit/Most/Least)
+        filter_buttons_2 = [
+            InlineKeyboardButton(f"{'✅' if acct_filter=='limit' else '◻️'} Limit", callback_data=f"creategroup_filter_limit_{idx}_{pg}", style=user_style),
+            InlineKeyboardButton(f"{'✅' if acct_filter=='most' else '◻️'} Most", callback_data=f"creategroup_filter_most_{idx}_{pg}", style=user_style),
+            InlineKeyboardButton(f"{'✅' if acct_filter=='least' else '◻️'} Least", callback_data=f"creategroup_filter_least_{idx}_{pg}", style=user_style)
+        ]
+
+        buttons = [filter_buttons, filter_buttons_2]
         for i, (orig_idx, client) in enumerate(paged_clients):
             actual_idx = orig_idx
             is_sel = actual_idx in selected
@@ -1478,7 +1534,7 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
         ],
         [
             InlineKeyboardButton(f"Auto Start: {'On' if config.get('auto_start') else 'Off'}", callback_data=f"creategroup_toggle_{idx}_{pg}_auto_start", style=user_style),
-            InlineKeyboardButton(f"A.Start Count: {config.get('auto_start_count', config.get('batch_account', 3))} acc", callback_data=f"creategroup_submenu_{idx}_{pg}_auto_start_count", style=user_style)
+            InlineKeyboardButton(f"A.Start: {config.get('auto_start_count', config.get('batch_account', 3))} acc", callback_data=f"creategroup_submenu_{idx}_{pg}_auto_start_count", style=user_style)
         ],
         # Chunk notifications moved to Log Configs submenu
         [
@@ -1784,11 +1840,14 @@ async def creategroup_filter_handler(c: Client, cb: CallbackQuery):
 
         state = user_creategroup_state[user_id]
         conf = state.get("config") or load_user_cg_config(user_id)
-        if mode not in ("all", "newest", "oldest"):
+        if mode not in ("all", "newest", "oldest", "most", "least", "limit"):
             await safe_cb_answer(cb, "Unknown filter mode", show_alert=True)
             return
 
         conf["account_filter"] = mode
+        # If limit mode selected, ensure there's a numeric limit in config
+        if mode == "limit":
+            conf.setdefault("account_filter_limit", conf.get("account_filter_limit", 1) or 1)
         save_user_cg_config(user_id, conf)
         state["config"] = conf
         await render_creategroup_ui(cb, state)
