@@ -1402,6 +1402,12 @@ async def get_creategroup_keyboard(client_id: int, tid: str, menu_type: str = "m
                                      callback_data=f"log_toggle:{tid}:log_group")
             ],
             [
+                InlineKeyboardButton(await Essentials.get_user_button_style(client_id, "AutoSwitch: Off"),
+                                     callback_data=f"autoswitch_toggle:{tid}"),
+                InlineKeyboardButton(await Essentials.get_user_button_style(client_id, "A.Switch Count: 1"),
+                                     callback_data=f"autoswitch_count:{tid}:inc")
+            ],
+            [
                 InlineKeyboardButton(await Essentials.get_user_button_style(client_id, both_lbl), 
                                      callback_data=f"log_toggle:{tid}:both"),
                 InlineKeyboardButton(await Essentials.get_user_button_style(client_id, disable_lbl), 
@@ -2747,7 +2753,104 @@ async def creategroup_loop(
                                     effective_user_id,
                                     reply_to_msg_id=reply_id
                                 )
-                                break # Exit the loop for this session
+                                # Auto-switch handling: attempt to replace failed account(s) with next selected accounts
+                                try:
+                                    from Main.internals.settings_handlers.creategroup_handlers import load_user_cg_config
+                                    try:
+                                        cfg = load_user_cg_config(effective_user_id)
+                                    except Exception:
+                                        cfg = {}
+                                    auto_switch = bool(cfg.get("auto_switch_on_error", False))
+                                    switch_count = int(cfg.get("auto_switch_on_error_count", 1) or 1)
+                                except Exception:
+                                    auto_switch = False
+                                    switch_count = 1
+
+                                if auto_switch and state:
+                                    try:
+                                        failed = state.setdefault("failed_accounts", [])
+                                        cur_cid = None
+                                        try:
+                                            cur_cid = getattr(user_client.me, 'id', None)
+                                        except Exception:
+                                            cur_cid = None
+                                        if cur_cid and cur_cid not in failed:
+                                            failed.append(cur_cid)
+
+                                        client_ids = state.get("params", {}).get("client_ids", []) or []
+                                        candidates = [cid for cid in client_ids if cid not in failed and cid != cur_cid]
+                                        spawn = min(switch_count, len(candidates))
+                                        spawned = 0
+                                        for cid in candidates[:spawn]:
+                                            next_client = next((c for c in Altruix.clients if getattr(c, 'me', None) and c.me.id == cid), None)
+                                            if not next_client:
+                                                continue
+                                            try:
+                                                asyncio.create_task(creategroup_loop(
+                                                    user_client=next_client,
+                                                    bot_client=bot_client,
+                                                    initial_message=initial_message,
+                                                    delay=delay,
+                                                    count=count,
+                                                    extra_delay_minutes=extra_delay_minutes,
+                                                    batch_size=batch_size,
+                                                    group_type=group_type,
+                                                    name_pattern=name_pattern,
+                                                    username_prefix=username_prefix,
+                                                    bot_identifiers=bot_identifiers,
+                                                    control_message=control_message,
+                                                    action_delay=action_delay,
+                                                    invite_bots=invite_bots,
+                                                    invite_assistant=invite_assistant,
+                                                    anon_mode=anon_mode,
+                                                    copy_messages=copy_messages,
+                                                    description=description,
+                                                    photo_source=photo_source,
+                                                    custom_photo_id=custom_photo_id,
+                                                    log_destination=log_destination,
+                                                    log_format=log_format,
+                                                    pin_first_msg=pin_first_msg,
+                                                    msg_img=msg_img,
+                                                    msg_vid=msg_vid,
+                                                    msg_img_album=msg_img_album,
+                                                    msg_vid_album=msg_vid_album,
+                                                    rand_len=rand_len,
+                                                    rand_lower=rand_lower,
+                                                    rand_upper=rand_upper,
+                                                    rand_static=rand_static,
+                                                    batch_action=batch_action,
+                                                    ba_delay=ba_delay,
+                                                    temp_pin=temp_pin,
+                                                    quote_block=quote_block,
+                                                    user_id=effective_user_id,
+                                                    task_id=None,
+                                                    is_resume=False,
+                                                    account_idx=state.get("params", {}).get("account_idx", 1),
+                                                    total_accs=state.get("params", {}).get("total_accs", 1),
+                                                    batch_account=batch_account,
+                                                    ba_account_delay=ba_account_delay,
+                                                    start_log_mode=start_log_mode,
+                                                    start_photo_log_mode=start_photo_log_mode,
+                                                    progress_log_mode=progress_log_mode,
+                                                    panel_log_mode=panel_log_mode
+                                                ))
+                                                spawned += 1
+                                            except Exception as e:
+                                                logger.warning(f"Failed to spawn replacement creategroup for client {cid}: {e}\n{traceback.format_exc()}")
+
+                                        if spawned:
+                                            try:
+                                                await update_group_log(f"🔁 AutoSwitch: spawned {spawned} replacement account(s) to replace failed account(s)")
+                                            except Exception:
+                                                pass
+                                            try:
+                                                await save_creategroup_cache()
+                                            except Exception:
+                                                pass
+                                    except Exception as e:
+                                        logger.error(f"Error handling autoswitch: {e}\n{traceback.format_exc()}")
+
+                                break
                                 
                             i += 1
                             continue
@@ -3887,15 +3990,19 @@ async def send_completion_report(
             log_filename = zip_filename
 
         # Kirim file log
-        # Determine targets
+        # Determine targets. Prefer using the assistant bot (Altruix.bot)
+        # for LOG_CHAT_ID deliveries so the group log is always posted by
+        # the assistant. Fall back to the provided bot_client only if
+        # Altruix.bot is unavailable.
+        log_sender = getattr(Altruix, 'bot', None) or bot_client
         targets = []
         if log_destination == "both":
             targets = [
-                (LOG_CHAT_ID, bot_client),
+                (LOG_CHAT_ID, log_sender),
                 ("me", user_client)
             ]
         elif log_destination == "log_group":
-            targets = [(LOG_CHAT_ID, bot_client)]
+            targets = [(LOG_CHAT_ID, log_sender)]
         else: # saved_messages
             targets = [("me", user_client)]
 
@@ -4359,6 +4466,11 @@ async def creategroup_ui_cmd_handler(c: Client, m: AltruixMessage):
         
     # 2. Ambil username bot asisten (bisa custom bot atau main bot)
     bot_username = Altruix.bot_manager.get_bot_username(me.id)
+    # Diagnostic: if bot_username is missing or unknown, give clearer error
+    if not bot_username or bot_username in ("Unknown", "unknown"):
+        logger.error(f".cgui: Assistant bot username not resolved for session {me.id} (bot_username={bot_username})")
+        await m.reply("❌ Bot Asisten tidak tersedia atau belum dikonfigurasi. Pastikan bot asisten berjalan dan terdaftar di pengaturan.")
+        return
     
     try:
         # Encode chat title for query safety
@@ -4369,6 +4481,7 @@ async def creategroup_ui_cmd_handler(c: Client, m: AltruixMessage):
         # 3. Ambil hasil inline bot untuk query 'creategroup_{index}'
         # Menambahkan metadata ke query
         query_str = f"creategroup_{index} cid={chat} ctit={encoded_title}"
+        logger.debug(f".cgui: querying inline bot @{bot_username} with: {query_str}")
         results = await c.get_inline_bot_results(bot_username, query_str)
         
         if results and results.results:
@@ -4382,7 +4495,23 @@ async def creategroup_ui_cmd_handler(c: Client, m: AltruixMessage):
             # 5. Hapus pesan perintah
             await m.delete_if_self()
         else:
-            await m.reply("❌ Bot Asisten gagal memberikan Dashboard Create Group.")
+            # Fallback: try to render and send local UI directly
+            try:
+                from Main.internals.settings_handlers.creategroup_handlers import get_creategroup_ui_data
+                user_id = m.from_user.id if m.from_user else None
+                if user_id is None:
+                    await m.reply("❌ Gagal mempersiapkan UI (user id tidak tersedia)")
+                else:
+                    text, reply_markup = await get_creategroup_ui_data(user_id, index, page=1)
+                    full_text = f"<b>🚀 𝗔𝗨𝗧𝗢 𝗖𝗥𝗘𝗔𝗧𝗘 𝗗𝗔𝗦𝗛𝗕𝗢𝗔𝗥𝗗</b>\n\n<blockquote expandable>{text}</blockquote>"
+                    await c.send_message(chat, full_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+                    try:
+                        await m.delete_if_self()
+                    except Exception:
+                        pass
+            except Exception as e:
+                logger.error(f"Fallback local UI for .cgui failed: {e}\n{traceback.format_exc()}")
+                await m.reply("❌ Bot Asisten gagal memberikan Dashboard Create Group.")
             
     except Exception as e:
         logger.error(f"Error in .creategroupui userbot handler: {e}")
@@ -5261,6 +5390,156 @@ async def log_toggle_callback_handler(client: Client, callback_query: CallbackQu
         await callback_query.edit_message_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
     except Exception as e:
         logger.error(f"Error updating dashboard after log toggle: {e}")
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^autoswitch_toggle:(?P<tid>.+?)$"))
+@log_errors
+@iuser_check
+async def autoswitch_toggle_handler(client: Client, callback_query: CallbackQuery):
+    if not _callback_debounce(callback_query):
+        try: await callback_query.answer("Tunggu sebentar...", show_alert=False)
+        except Exception: pass
+        return
+
+    tid = callback_query.matches[0].group("tid")
+    user_id = callback_query.from_user.id
+    from Main.internals.settings_handlers.creategroup_handlers import load_user_cg_config, save_user_cg_config
+    try:
+        cfg = load_user_cg_config(user_id)
+    except Exception:
+        cfg = {}
+
+    curr = bool(cfg.get("auto_switch_on_error", False))
+    cfg["auto_switch_on_error"] = not curr
+    save_user_cg_config(user_id, cfg)
+
+    # Update in-memory task params if present
+    if tid in CREATEGROUP_TASKS:
+        CREATEGROUP_TASKS[tid].setdefault("params", {})["auto_switch_on_error"] = cfg["auto_switch_on_error"]
+        try:
+            await save_creategroup_cache()
+        except Exception:
+            logger.debug("Failed save cache after autoswitch toggle", exc_info=True)
+
+    # If this callback originated from the cgui dashboard (tid like 'cgui_<user_id>'),
+    # update the user_creategroup_state config and re-render the inline UI via render_creategroup_ui.
+    try:
+        if isinstance(tid, str) and tid.startswith("cgui_"):
+            try:
+                tgt_uid = int(tid.split("_", 1)[1])
+            except Exception as e:
+                logger.debug(f"Failed to extract target user ID from tid '{tid}': {e}")
+                tgt_uid = user_id
+            from Main.internals.settings_handlers.creategroup_handlers import user_creategroup_state, render_creategroup_ui
+            # Reload saved config to ensure consistency
+            try:
+                user_conf = load_user_cg_config(tgt_uid)
+            except Exception as e:
+                logger.debug(f"Failed to load user config for ID {tgt_uid}: {e}")
+                user_conf = cfg
+            # Persist merged config back to storage (already saved above for caller user)
+            try:
+                save_user_cg_config(tgt_uid, user_conf)
+            except Exception:
+                logger.debug(f"Failed to mirror autoswitch config to user {tgt_uid}", exc_info=True)
+
+            if tgt_uid in user_creategroup_state:
+                user_creategroup_state[tgt_uid]["config"] = user_conf
+                try:
+                    await render_creategroup_ui(callback_query, user_creategroup_state[tgt_uid])
+                except Exception as re:
+                    logger.error(f"Failed to re-render cgui for user {tgt_uid}: {re}\n{traceback.format_exc()}")
+                try:
+                    await callback_query.answer(f"AutoSwitch on error set to: {cfg['auto_switch_on_error']}", show_alert=False)
+                except Exception as e:
+                    logger.debug(f"Failed to answer callback query for autoswitch toggle: {e}", exc_info=True)
+                    pass
+                return
+    except Exception as e:
+        logger.debug(f"Autoswitch cgui update branch failed: {e}", exc_info=True)
+
+    await callback_query.answer(f"AutoSwitch on error set to: {cfg['auto_switch_on_error']}", show_alert=False)
+    try:
+        text = get_creategroup_dashboard_text(tid)
+        keyboard = await get_creategroup_keyboard(client.me.id, tid, menu_type="manage")
+        await callback_query.edit_message_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    except Exception as e:
+        logger.error(f"Error updating dashboard after autoswitch toggle: {e}")
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^autoswitch_count:(?P<tid>.+?):(?P<op>inc|dec)$"))
+@log_errors
+@iuser_check
+async def autoswitch_count_handler(client: Client, callback_query: CallbackQuery):
+    if not _callback_debounce(callback_query):
+        try: await callback_query.answer("Tunggu sebentar...", show_alert=False)
+        except Exception: pass
+        return
+
+    m = callback_query.matches[0]
+    tid = m.group("tid")
+    op = m.group("op")
+    user_id = callback_query.from_user.id
+    from Main.internals.settings_handlers.creategroup_handlers import load_user_cg_config, save_user_cg_config
+    try:
+        cfg = load_user_cg_config(user_id)
+    except Exception:
+        cfg = {}
+
+    curr = int(cfg.get("auto_switch_on_error_count", 1) or 1)
+    if op == "inc":
+        curr = min(10, curr + 1)
+    else:
+        curr = max(1, curr - 1)
+    cfg["auto_switch_on_error_count"] = curr
+    save_user_cg_config(user_id, cfg)
+
+    # Update in-memory task params if present
+    if tid in CREATEGROUP_TASKS:
+        CREATEGROUP_TASKS[tid].setdefault("params", {})["auto_switch_on_error_count"] = curr
+        try:
+            await save_creategroup_cache()
+        except Exception:
+            logger.debug("Failed save cache after autoswitch count change", exc_info=True)
+
+    # Handle cgui dashboard callbacks specially (tid like 'cgui_<user_id>') to update UI
+    try:
+        if isinstance(tid, str) and tid.startswith("cgui_"):
+            try:
+                tgt_uid = int(tid.split("_", 1)[1])
+            except Exception:
+                tgt_uid = user_id
+            from Main.internals.settings_handlers.creategroup_handlers import user_creategroup_state, render_creategroup_ui
+            try:
+                user_conf = load_user_cg_config(tgt_uid)
+            except Exception:
+                user_conf = cfg
+            try:
+                save_user_cg_config(tgt_uid, user_conf)
+            except Exception:
+                logger.debug(f"Failed mirror autoswitch count to user {tgt_uid}", exc_info=True)
+
+            if tgt_uid in user_creategroup_state:
+                user_creategroup_state[tgt_uid]["config"] = user_conf
+                try:
+                    await render_creategroup_ui(callback_query, user_creategroup_state[tgt_uid])
+                except Exception as re:
+                    logger.error(f"Failed to re-render cgui for user {tgt_uid}: {re}\n{traceback.format_exc()}")
+                try:
+                    await callback_query.answer(f"AutoSwitch count set to: {curr}", show_alert=False)
+                except Exception:
+                    pass
+                return
+    except Exception as e:
+        logger.debug(f"Autoswitch count cgui branch failed: {e}", exc_info=True)
+
+    await callback_query.answer(f"AutoSwitch count set to: {curr}", show_alert=False)
+    try:
+        text = get_creategroup_dashboard_text(tid)
+        keyboard = await get_creategroup_keyboard(client.me.id, tid, menu_type="manage")
+        await callback_query.edit_message_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    except Exception as e:
+        logger.error(f"Error updating dashboard after autoswitch count change: {e}")
 
 
 @Altruix.bot.on_callback_query(filters.regex(r"^log_refresh:(?P<tid>.+?)$"))

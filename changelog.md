@@ -3,6 +3,27 @@
 All notable changes to the **Altroid-X** project from version **0.0.10.0959H** to the latest.
 Latest updates are always added at the top (newest → oldest).
 
+## [1.0.292] - 2026-06-21
+
+### 👥 CreateGroup: Inline Assistant Button Unresponsive & Multi-Session Bouncing Buttons Fixes
+- **Fixed: Inline assistant buttons unresponsive (updating PM instead of inline/group chat)**
+  - Updated [safe_edit_message_text](file:///f:/2026/APRIL/AltruixX/Main/internals/settings_handlers/creategroup_handlers.py#L52) to correctly identify callbacks that originate from inline messages (checking `getattr(cb, 'inline_message_id', None)`) and use the assistant bot's `edit_inline_text` method instead of trying to edit the PM message.
+  - Corrected [render_creategroup_ui](file:///f:/2026/APRIL/AltruixX/Main/internals/settings_handlers/creategroup_handlers.py#L485) to properly accept and use `inline_message_id` when rendering/updating the UI, ensuring that when button clicks occur, the update modifies the inline message in-place instead of spamming PM.
+
+- **Fixed: Multi-Session Selection bouncing buttons (selections not saving/syncing and reverting)**
+  - Fixed debounce logic to use specific callback data in the lock key (`cb:{chat_id}:{message_id}:{cb_data}` / `cb:{uid}:{cb_data}`), preventing a click on one session button from blocking unrelated clicks on other session buttons within the 0.3s debounce window.
+  - Ensured `selected_sessions` changes are immediately saved to persistent config JSON (`xcreategroup_user_configs.json`) by invoking `save_user_cg_config(user_id, ...)` whenever sessions are selected, deselected, or page select/deselect operations occur.
+  - Fixed state re-initialization logic in `get_creategroup_ui_state`, `show_creategroup_ui`, and `get_creategroup_ui_data` to properly restore `selected_sessions` from the saved user configuration instead of resetting to the default `[session_index]`.
+  - Moved `cb.answer()` execution to occur *before* the rendering process starts, preventing Telegram from displaying endless loading spinners on clicked buttons.
+
+- **Safety & Verification**
+  - Syntactic validation of `creategroup_handlers.py` and `xcreategroup.py` completed using `py_compile` to ensure no syntax/runtime issues exist.
+  - All changes were implemented with proper try-except handlers and error loggers to maintain stability.
+
+- **Files changed**: [Main/internals/settings_handlers/creategroup_handlers.py](file:///f:/2026/APRIL/AltruixX/Main/internals/settings_handlers/creategroup_handlers.py), [Main/plugins/userbot/xcreategroup.py](file:///f:/2026/APRIL/AltruixX/Main/plugins/userbot/xcreategroup.py)
+
+---
+
 ## [1.0.290] - 2026-06-16
 
 ### 👥 Multi-Session Selection: Account Filters & CHANNELS_TOO_MUCH persistence

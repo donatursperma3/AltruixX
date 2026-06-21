@@ -5,6 +5,10 @@ import asyncio
 import logging
 import traceback
 import time
+import random
+import string
+import re
+import json as _json
 from typing import Optional, Dict
 from pyrogram import Client, filters
 from pyrogram.errors import QueryIdInvalid, MessageNotModified
@@ -13,7 +17,6 @@ from pyrogram.types import (
     InlineQuery, InlineQueryResultArticle, InputTextMessageContent,
     ChosenInlineResult, LinkPreviewOptions
 )
-import re
 from Main.core.decorators import log_errors, iuser_check, send_log_message
 from Main.core.client import Altruix
 from pyrogram.enums import ParseMode
@@ -25,9 +28,19 @@ from .states import user_creategroup_state
 # Per-user launch cancellation flags (used to abort background launch_tasks_bg)
 LAUNCH_CANCEL = {}
 
-HANDLER_VERSION = "0.3.231" # ✅ ADDED: Persistent Creation Reports, Log Exports, & Account Batching
+HANDLER_VERSION = "0.3.231"
 logger = logging.getLogger("altruix.creategroup.handlers")
 logger.setLevel(logging.INFO)
+
+
+def _get_bot_for_user(user_id: int):
+    """Resolve the appropriate bot Client for a given user (custom bot or assistant)."""
+    try:
+        if hasattr(Altruix, 'bot_manager') and getattr(Altruix, 'bot_manager'):
+            return Altruix.bot_manager.get_bot(user_id)
+    except Exception:
+        pass
+    return getattr(Altruix, 'bot', None)
 
 async def safe_cb_answer(cb: CallbackQuery, text: str = None, show_alert: bool = True):
     """Safely answer callback queries when the query may have expired."""
@@ -41,17 +54,83 @@ async def safe_cb_answer(cb: CallbackQuery, text: str = None, show_alert: bool =
     except Exception as e:
         logger.debug(f"Ignored callback answer failure: {e}")
 
-async def safe_edit_message_text(cb: CallbackQuery, text: str, reply_markup=None, parse_mode=ParseMode.HTML, **kwargs):
-    """Safely edit message text, ignoring MessageNotModified and QueryIdInvalid."""
+async def safe_edit_message_text(cb: Optional[CallbackQuery], text: str, reply_markup=None, parse_mode=ParseMode.HTML, **kwargs):
+    """Safely edit message text.
+
+    Supports two modes:
+    - `cb` provided: use `cb.edit_message_text`
+    - `cb` is None: use `chat_id` and `message_id` kwargs to call `Altruix.bot.edit_message_text`
+
+    Ignores `MessageNotModified` and `QueryIdInvalid` (logged at DEBUG).
+    """
     try:
-        msg_id = getattr(cb.message, 'message_id', getattr(cb.message, 'id', None)) if getattr(cb, 'message', None) else None
-        chat_id = getattr(cb.message.chat, 'id', None) if getattr(cb, 'message', None) and getattr(cb.message, 'chat', None) else None
-        logger.warning(f"[safe_edit_message_text] attempt edit chat={chat_id} msg_id={msg_id}")
-        res = await cb.edit_message_text(text=text, reply_markup=reply_markup, parse_mode=parse_mode, **kwargs)
-        logger.warning(f"[safe_edit_message_text] edit succeeded chat={chat_id} msg_id={msg_id}")
-        return res
+        # Diagnostics: log cb type and presence of message
+        try:
+            cb_type = type(cb).__name__ if cb is not None else 'None'
+        except Exception:
+            cb_type = 'Unknown'
+        logger.debug(f"[safe_edit_message_text] called cb_type={cb_type} has_message={bool(getattr(cb,'message',None))}")
+
+        # If we have a CallbackQuery, prefer editing via callback context (handles both normal and inline callbacks)
+        if cb:
+            if hasattr(cb, 'edit_message_text'):
+                res = await cb.edit_message_text(text=text, reply_markup=reply_markup, parse_mode=parse_mode, **kwargs)
+                return res
+            elif getattr(cb, 'message', None):
+                msg = cb.message
+                if hasattr(msg, 'edit_text'):
+                    res = await msg.edit_text(text=text, reply_markup=reply_markup, parse_mode=parse_mode, **kwargs)
+                    return res
+
+        # Fallback: use explicit chat_id/message_id passed in kwargs
+        chat_id = kwargs.get('chat_id')
+        message_id = kwargs.get('message_id')
+        if chat_id or message_id:
+            try:
+                logger.debug(f"[safe_edit_message_text] attempt edit via bot chat={chat_id} msg_id={message_id}")
+                # Prefer per-user bot when we can determine the user from cb
+                user_id = None
+                try:
+                    if cb and getattr(cb, 'from_user', None):
+                        user_id = cb.from_user.id
+                    else:
+                        user_id = kwargs.get('user_id')
+                except Exception:
+                    user_id = kwargs.get('user_id')
+
+                bot_for_user = _get_bot_for_user(user_id) if user_id else None
+                client_to_use = bot_for_user if bot_for_user else Altruix.bot
+
+                # Inline message edits use a string inline_id (message_id); use edit_inline_text if supported
+                if isinstance(message_id, str):
+                    if hasattr(client_to_use, 'edit_inline_text'):
+                        await client_to_use.edit_inline_text(inline_message_id=message_id, text=text, reply_markup=reply_markup, parse_mode=parse_mode)
+                    else:
+                        await client_to_use.edit_message_text(inline_message_id=message_id, text=text, reply_markup=reply_markup, parse_mode=parse_mode)
+                else:
+                    await client_to_use.edit_message_text(chat_id=chat_id, message_id=message_id, text=text, reply_markup=reply_markup, parse_mode=parse_mode)
+
+                logger.debug(f"[safe_edit_message_text] edit succeeded via bot chat={chat_id} msg_id={message_id}")
+                return True
+            except (MessageNotModified, QueryIdInvalid) as e:
+                logger.debug(f"[safe_edit_message_text] ignored edit (bot): {e} chat={chat_id} msg_id={message_id}")
+                return True
+            except Exception as e:
+                logger.error(f"[safe_edit_message_text] unexpected bot edit error: {e}\n{traceback.format_exc()}")
+                return False
+
+        # Nothing to edit
+        logger.debug("[safe_edit_message_text] no callback message or chat/message_id provided; skipping edit")
+        return False
     except (MessageNotModified, QueryIdInvalid) as e:
-        logger.warning(f"[safe_edit_message_text] ignored edit: {e} chat={getattr(cb.message.chat,'id',None) if getattr(cb,'message',None) else None} msg_id={getattr(cb.message,'message_id',None) if getattr(cb,'message',None) else None}")
+        # These are expected and non-fatal; log at debug level to avoid log noise
+        try:
+            chat_id = getattr(cb.message.chat, 'id', None) if getattr(cb, 'message', None) else None
+            msg_id = getattr(cb.message, 'message_id', None) if getattr(cb, 'message', None) else None
+        except Exception:
+            chat_id = None
+            msg_id = None
+        logger.debug(f"[safe_edit_message_text] ignored edit: {e} chat={chat_id} msg_id={msg_id}")
         return True
     except Exception as e:
         logger.error(f"[safe_edit_message_text] unexpected error: {e}\n{traceback.format_exc()}")
@@ -101,6 +180,14 @@ DEFAULT_CREATEGROUP_CONFIG.update({
     "init_task_log_mode": "both"
 })
 
+# Auto-switch on error settings: when enabled, the system will auto-replace
+# failed accounts with next selected accounts. Count determines how many
+# replacements to spawn when triggered.
+DEFAULT_CREATEGROUP_CONFIG.update({
+    "auto_switch_on_error": False,
+    "auto_switch_on_error_count": 1,
+})
+
 
 # ─── Persistent User Config ───
 from Main.utils.file_helpers import get_db_path as _get_db_path
@@ -110,12 +197,22 @@ _USER_CG_CONFIG_FILE = _get_db_path("xcreategroup_user_configs.json")
 CALLBACK_BUSY: Dict[str, float] = {}
 
 async def _callback_debounce(cb: CallbackQuery, interval: float = 0.5) -> bool:
-    """Simple debounce guard for interactive CreateGroup callbacks."""
+    """Simple debounce guard for interactive CreateGroup callbacks.
+    Uses callback_data in the key so that clicking different buttons (e.g.
+    different session toggle buttons) does NOT block each other."""
     try:
-        if cb.message and getattr(cb.message, 'message_id', None):
-            key = f"cb:{cb.message.chat.id}:{cb.message.message_id}"
+        cb_data = getattr(cb, 'data', '') or ''
+        uid = cb.from_user.id
+        # Use callback_data + user_id as key so each button has its own
+        # debounce window. This prevents the "bounce" where clicking
+        # button A blocks unrelated button B for the same user.
+        inline_id = getattr(cb, 'inline_message_id', None)
+        if inline_id:
+            key = f"cb:{uid}:{cb_data}"
+        elif cb.message and getattr(cb.message, 'message_id', None):
+            key = f"cb:{cb.message.chat.id}:{cb.message.message_id}:{cb_data}"
         else:
-            key = f"user:{cb.from_user.id}"
+            key = f"cb:{uid}:{cb_data}"
     except Exception:
         try:
             key = f"user:{cb.from_user.id}"
@@ -668,6 +765,31 @@ async def _resolve_cg_session_index_from_cb(cb: CallbackQuery, fallback_idx: int
                 mapped = await _find_session_index_by_user_id(session_user_id)
                 if mapped:
                     return mapped
+        # As a further fallback, inspect the message's inline keyboard for any
+        # creategroup callback_data that encodes a session index (e.g. creategroup_ui_{idx}_{pg})
+        # This helps resolve the correct session when callbacks don't include the index directly.
+        try:
+            if msg and getattr(msg, 'reply_markup', None):
+                ik = getattr(msg.reply_markup, 'inline_keyboard', None) or []
+                import re as _re
+                for row in ik:
+                    for btn in row:
+                        cd = getattr(btn, 'callback_data', None) or getattr(btn, 'data', None)
+                        if not cd or not isinstance(cd, str):
+                            continue
+                        m = _re.search(r"creategroup_ui_(\d+)_(\d+)", cd)
+                        if not m:
+                            m = _re.search(r"creategroup_[a-z]+_(\d+)_(\d+)", cd)
+                        if m:
+                            try:
+                                val = int(m.group(1))
+                                if 1 <= val <= len(Altruix.clients):
+                                    return val
+                            except Exception:
+                                continue
+        except Exception as e:
+            logger.warning(f"Failed to inspect inline keyboard for session index: {e}\n{traceback.format_exc()}")
+            pass
     except Exception as e:
         logger.warning(f"Failed to resolve CG session index from callback: {e}\n{traceback.format_exc()}")
 
@@ -695,7 +817,12 @@ async def _ensure_creategroup_ui_state(c: Client, cb: CallbackQuery, session_ind
             state["config"] = load_user_cg_config(user_id)
 
         if "selected_sessions" not in state or not isinstance(state.get("selected_sessions"), list):
-            state["selected_sessions"] = [session_index]
+            # Try to restore selected_sessions from saved config first
+            saved_sel = state["config"].get("selected_sessions")
+            if isinstance(saved_sel, list) and len(saved_sel) > 0:
+                state["selected_sessions"] = [int(x) for x in saved_sel if isinstance(x, (int, float)) or (isinstance(x, str) and x.isdigit())]
+            else:
+                state["selected_sessions"] = [session_index]
         # Removed forced selection of current session when list is empty to allow deselection
 
         if session_page is not None:
@@ -703,83 +830,124 @@ async def _ensure_creategroup_ui_state(c: Client, cb: CallbackQuery, session_ind
         else:
             state.setdefault("session_page", 0)
 
-        if cb.message:
+        # CRITICAL: Preserve inline_message_id for inline callbacks.
+        # When cb.inline_message_id is set, the callback originated from an inline
+        # message and editing must use the string inline_message_id, not cb.message.id.
+        cb_inline_id = getattr(cb, 'inline_message_id', None)
+        if cb_inline_id:
+            # Inline callback: store the string inline_message_id
+            state["ui_msg_id"] = cb_inline_id
+            state["ui_chat_id"] = None  # inline messages have no chat context
+        elif cb.message:
             state["ui_msg_id"] = cb.message.id
             state["ui_chat_id"] = cb.message.chat.id if cb.message.chat else None
         else:
+            # No message and no inline_id: preserve existing state or default to None
             state.setdefault("ui_msg_id", None)
             state.setdefault("ui_chat_id", None)
 
         state.setdefault("prompt_msg_id", None)
+        # Per-user callback lock to serialize UI state mutations and avoid bounce
+        try:
+            if "callback_lock" not in state or not isinstance(state.get("callback_lock"), asyncio.Lock):
+                state["callback_lock"] = asyncio.Lock()
+        except Exception:
+            # In rare cases where asyncio.Lock can't be created, ignore and continue
+            pass
         return state
     except Exception as e:
         logger.error(f"Failed to ensure CreateGroup UI state: {e}\n{traceback.format_exc()}")
+        _fb_inline_id = getattr(cb, 'inline_message_id', None)
+        _fb_config = load_user_cg_config(user_id)
+        # Try to restore selected_sessions from saved config
+        _fb_saved_sel = _fb_config.get("selected_sessions")
+        if isinstance(_fb_saved_sel, list) and len(_fb_saved_sel) > 0:
+            _fb_sel = [int(x) for x in _fb_saved_sel if isinstance(x, (int, float)) or (isinstance(x, str) and x.isdigit())]
+        else:
+            _fb_sel = [session_index]
         user_creategroup_state[user_id] = {
             "step": "ui_config",
             "session_index": session_index,
             "page": page,
-            "config": load_user_cg_config(user_id),
-            "selected_sessions": [session_index],
+            "config": _fb_config,
+            "selected_sessions": _fb_sel,
             "input_mode": None,
-            "ui_msg_id": cb.message.id if cb.message else None,
-            "ui_chat_id": cb.message.chat.id if cb.message and cb.message.chat else None,
+            "ui_msg_id": _fb_inline_id if _fb_inline_id else (cb.message.id if cb.message else None),
+            "ui_chat_id": None if _fb_inline_id else (cb.message.chat.id if cb.message and cb.message.chat else None),
             "prompt_msg_id": None,
             "sub_menu": None,
             "launching": False
         }
+        try:
+            user_creategroup_state[user_id]["callback_lock"] = asyncio.Lock()
+        except Exception:
+            pass
         return user_creategroup_state[user_id]
 
 async def show_creategroup_ui(c: Client, cb: CallbackQuery, session_index: int, page: int):
     user_id = cb.from_user.id
-    
-    # Check if task is already running
-    task = await _find_task_by_session_idx(session_index)
-    if task and task.get("running"):
-        await render_creategroup_running_ui(cb, task, session_index, page)
-        return
+    try:
+        # Check if task is already running
+        task = await _find_task_by_session_idx(session_index)
+        if task and task.get("running"):
+            await render_creategroup_running_ui(cb, task, session_index, page)
+            return
 
-    # Initialize or refresh UI state. Preserve existing `selected_sessions` when possible
-    if user_id not in user_creategroup_state or user_creategroup_state[user_id].get("step") != "ui_config":
-        # If there is a leftover prompt message, try to delete it
-        if user_id in user_creategroup_state and user_creategroup_state[user_id].get("prompt_msg_id"):
-            try:
-                if cb.message:
-                    await c.delete_messages(cb.message.chat.id, user_creategroup_state[user_id]["prompt_msg_id"])
-            except: pass
-            user_creategroup_state[user_id]["prompt_msg_id"] = None
+        # Initialize or refresh UI state. Preserve existing `selected_sessions` when possible
+        if user_id not in user_creategroup_state or user_creategroup_state[user_id].get("step") != "ui_config":
+            # If there is a leftover prompt message, try to delete it
+            if user_id in user_creategroup_state and user_creategroup_state[user_id].get("prompt_msg_id"):
+                try:
+                    if cb.message:
+                        await c.delete_messages(cb.message.chat.id, user_creategroup_state[user_id]["prompt_msg_id"])
+                except: pass
+                user_creategroup_state[user_id]["prompt_msg_id"] = None
 
-        # If an existing state exists, preserve selected_sessions where possible
-        prev_selected = None
-        if user_id in user_creategroup_state:
-            prev = user_creategroup_state[user_id]
-            prev_selected = prev.get("selected_sessions") if isinstance(prev.get("selected_sessions"), list) else None
+            # If an existing state exists, preserve selected_sessions where possible
+            prev_selected = None
+            if user_id in user_creategroup_state:
+                prev = user_creategroup_state[user_id]
+                prev_selected = prev.get("selected_sessions") if isinstance(prev.get("selected_sessions"), list) else None
 
-        user_creategroup_state[user_id] = {
-            "step": "ui_config",
-            "session_index": session_index,
-            "page": page,
-            "config": load_user_cg_config(user_id),
-            "selected_sessions": prev_selected if prev_selected is not None else [session_index],
-            "session_page": 0,
-            "input_mode": None,
-            "ui_msg_id": cb.message.id if cb.message else None,
-            "ui_chat_id": cb.message.chat.id if cb.message else None,
-            "prompt_msg_id": None,
-            "sub_menu": None,
-            "launching": False
-        }
-    else:
-        user_creategroup_state[user_id]["step"] = "ui_config"
-        user_creategroup_state[user_id]["input_mode"] = None
-        user_creategroup_state[user_id]["launching"] = False
-        if user_creategroup_state[user_id].get("prompt_msg_id"):
-            try:
-                if cb.message:
-                    await c.delete_messages(cb.message.chat.id, user_creategroup_state[user_id]["prompt_msg_id"])
-            except: pass
-            user_creategroup_state[user_id]["prompt_msg_id"] = None
-    
-    await render_creategroup_ui(cb, user_creategroup_state[user_id])
+            _show_inline_id = getattr(cb, 'inline_message_id', None)
+            _show_config = load_user_cg_config(user_id)
+            # Restore selected_sessions: prefer prev state > saved config > default
+            if prev_selected is None:
+                _saved_sel = _show_config.get("selected_sessions")
+                if isinstance(_saved_sel, list) and len(_saved_sel) > 0:
+                    prev_selected = [int(x) for x in _saved_sel if isinstance(x, (int, float)) or (isinstance(x, str) and x.isdigit())]
+            user_creategroup_state[user_id] = {
+                "step": "ui_config",
+                "session_index": session_index,
+                "page": page,
+                "config": _show_config,
+                "selected_sessions": prev_selected if prev_selected is not None else [session_index],
+                "session_page": 0,
+                "input_mode": None,
+                "ui_msg_id": _show_inline_id if _show_inline_id else (cb.message.id if cb.message else None),
+                "ui_chat_id": None if _show_inline_id else (cb.message.chat.id if cb.message else None),
+                "prompt_msg_id": None,
+                "sub_menu": None,
+                "launching": False
+            }
+        else:
+            user_creategroup_state[user_id]["step"] = "ui_config"
+            user_creategroup_state[user_id]["input_mode"] = None
+            user_creategroup_state[user_id]["launching"] = False
+            if user_creategroup_state[user_id].get("prompt_msg_id"):
+                try:
+                    if cb.message:
+                        await c.delete_messages(cb.message.chat.id, user_creategroup_state[user_id]["prompt_msg_id"])
+                except: pass
+                user_creategroup_state[user_id]["prompt_msg_id"] = None
+
+        await render_creategroup_ui(cb, user_creategroup_state[user_id])
+    except Exception as e:
+        logger.error(f"[show_creategroup_ui] unexpected error: {e}\n{traceback.format_exc()}")
+        try:
+            await safe_cb_answer(cb, "❌ Error membuka CreateGroup UI", show_alert=False)
+        except Exception:
+            pass
 
 async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 1):
     """
@@ -787,12 +955,19 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
     Used for both callback-based and inline-based UI.
     """
     if user_id not in user_creategroup_state:
+        _init_config = load_user_cg_config(user_id)
+        # Restore selected_sessions from saved config if available
+        _init_saved_sel = _init_config.get("selected_sessions")
+        if isinstance(_init_saved_sel, list) and len(_init_saved_sel) > 0:
+            _init_sel = [int(x) for x in _init_saved_sel if isinstance(x, (int, float)) or (isinstance(x, str) and x.isdigit())]
+        else:
+            _init_sel = [session_index]
         user_creategroup_state[user_id] = {
             "step": "ui_config",
             "session_index": session_index,
             "page": page,
-            "config": load_user_cg_config(user_id),
-            "selected_sessions": [session_index], # ✅ Initialize with 1-based index
+            "config": _init_config,
+            "selected_sessions": _init_sel, # ✅ Restore from config or default to 1-based index
             "input_mode": None,
             "ui_msg_id": None,
             "ui_chat_id": None,
@@ -951,10 +1126,10 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
     )
     
     # ─── SUB-MENUS ───
-    if sub_menu in ["action_delay", "account_delay", "delay", "count", "batch_delay", "batch_size", "batch_action", "ba_delay", "batch_account", "ba_account_delay", "auto_start_count"]:
+    if sub_menu in ["action_delay", "account_delay", "delay", "count", "batch_delay", "batch_size", "batch_action", "ba_delay", "batch_account", "ba_account_delay", "auto_start_count", "auto_switch_on_error_count"]:
         # Sub-Menu Keypad
         # steps = {"delay": 10, "count": 1, "batch_delay": 1, "batch_size": 1, "action_delay": 0.5}
-        step_map = {"delay": 10, "count": 1, "batch_delay": 1, "batch_size": 1, "action_delay": 0.5, "account_delay": 0.5, "batch_action": 5, "ba_delay": 10, "batch_account": 1, "ba_account_delay": 10, "auto_start_count": 1}
+        step_map = {"delay": 10, "count": 1, "batch_delay": 1, "batch_size": 1, "action_delay": 0.5, "account_delay": 0.5, "batch_action": 5, "ba_delay": 10, "batch_account": 1, "ba_account_delay": 10, "auto_start_count": 1, "auto_switch_on_error_count": 1}
         step = step_map.get(sub_menu, 1)
         step_str = f"{step}" if step < 1 else f"{int(step)}"
         
@@ -963,7 +1138,7 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
             "action_delay": "Action Delay", "account_delay": "Account Delay", "delay": "Group Delay", 
             "count": "Total Groups", "batch_delay": "Batch Delay", "batch_size": "Batch Size",
             "batch_action": "Batch Act", "ba_delay": "B.Act Delay",
-            "batch_account": "Batch Account", "ba_account_delay": "B.Acc Delay", "auto_start_count": "Auto Start Count"
+            "batch_account": "Batch Account", "ba_account_delay": "B.Acc Delay", "auto_start_count": "Auto Start Count", "auto_switch_on_error_count": "A.Switch Count"
         }
         unit_map = {
             "action_delay": "s", 
@@ -973,13 +1148,14 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
             "count": "c" if config.get('group_type', 'a') == 'c' else "g", 
             "batch_size": "c" if config.get('group_type', 'a') == 'c' else "g",
             "batch_account": " acc", "ba_account_delay": "s",
-            "batch_action": " act", "ba_delay": "s"
+            "batch_action": " act", "ba_delay": "s",
+            "auto_switch_on_error_count": " acc"
         }
         
         label = labels.get(sub_menu, sub_menu.capitalize())
         curr_val = config.get(sub_menu)
         # Ensure integer display for integer-like settings
-        if sub_menu in ("batch_size", "batch_action", "batch_account", "auto_start_count", "count", "ba_account_delay"):
+        if sub_menu in ("batch_size", "batch_action", "batch_account", "auto_start_count", "auto_switch_on_error_count", "count", "ba_account_delay"):
             try:
                 curr_val = int(round(curr_val or 0))
             except Exception:
@@ -1007,6 +1183,8 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
         elif sub_menu == "ba_account_delay":
             adj_steps = [5, 10, 30, 60, 120, 300]
         elif sub_menu == "auto_start_count":
+            adj_steps = [1, 3, 5, 10, 50, 100]
+        elif sub_menu == "auto_switch_on_error_count":
             adj_steps = [1, 3, 5, 10, 50, 100]
         
         buttons = [[InlineKeyboardButton(f"━━ {label}: {curr_val}{unit} ━━", callback_data="noop", style=user_style)]]
@@ -1536,6 +1714,10 @@ async def get_creategroup_ui_data(user_id: int, session_index: int, page: int = 
             InlineKeyboardButton(f"Auto Start: {'On' if config.get('auto_start') else 'Off'}", callback_data=f"creategroup_toggle_{idx}_{pg}_auto_start", style=user_style),
             InlineKeyboardButton(f"A.Start: {config.get('auto_start_count', config.get('batch_account', 3))} acc", callback_data=f"creategroup_submenu_{idx}_{pg}_auto_start_count", style=user_style)
         ],
+        [
+            InlineKeyboardButton(f"Auto Switch: {'On' if config.get('auto_switch_on_error') else 'Off'}", callback_data=f"autoswitch_toggle:cgui_{user_id}", style=user_style),
+            InlineKeyboardButton(f"A.Switch: {int(config.get('auto_switch_on_error_count', 1) or 1)} acc", callback_data=f"creategroup_submenu_{idx}_{pg}_auto_switch_on_error_count", style=user_style)
+        ],
         # Chunk notifications moved to Log Configs submenu
         [
             InlineKeyboardButton(f"Type: {'Group' if not is_channel else 'Channel'}", callback_data=f"creategroup_submenu_{idx}_{pg}_group_type", style=user_style),
@@ -1635,31 +1817,110 @@ async def render_creategroup_ui(cb: Optional[CallbackQuery], state: dict, messag
         logger.warning(f"[render_creategroup_ui] enter user={user_id} state_keys={list(state.keys())}")
         if cb:
             try:
-                # If callback has no usable message (inline context) but we have a stored inline ui_msg_id,
-                # prefer editing the inline message via the bot client. This handles callbacks
-                # originating from inline messages where cb.message is None or missing ids.
                 cb_msg = getattr(cb, 'message', None)
                 cb_msg_id = getattr(cb_msg, 'message_id', getattr(cb_msg, 'id', None)) if cb_msg else None
                 cb_chat = getattr(cb_msg.chat, 'id', None) if cb_msg and getattr(cb_msg, 'chat', None) else None
-                logger.warning(f"[render_creategroup_ui] cb.message={repr(cb_msg)} cb_msg_id={cb_msg_id} cb_chat={cb_chat} ui_msg_id={state.get('ui_msg_id')}")
-                if (not cb_msg or not cb_msg_id or not cb_chat) and state.get('ui_msg_id'):
-                    from Main.core.client import Altruix
+                inline_id = getattr(cb, 'inline_message_id', None)
+                
+                logger.warning(f"[render_creategroup_ui] cb.message={repr(cb_msg)} cb_msg_id={cb_msg_id} cb_chat={cb_chat} inline_id={inline_id} ui_msg_id={state.get('ui_msg_id')}")
+                
+                # Check 1: If it's an inline callback query
+                if inline_id:
                     try:
-                        logger.warning(f"[render_creategroup_ui] editing via inline ui_msg_id={state.get('ui_msg_id')} for user={user_id}")
-                        await Altruix.bot.edit_inline_message_text(state['ui_msg_id'], full_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
-                        logger.warning(f"[render_creategroup_ui] inline edit succeeded ui_msg_id={state.get('ui_msg_id')}")
+                        logger.warning(f"[render_creategroup_ui] cb.inline_message_id present; attempting inline edit for user={user_id} inline_id={inline_id}")
+                        await cb.edit_message_text(text=full_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+                        state['ui_msg_id'] = inline_id
+                        state['ui_chat_id'] = None
+                        logger.warning(f"[render_creategroup_ui] inline edit succeeded via cb.edit_message_text inline_id={inline_id}")
                     except (MessageNotModified, QueryIdInvalid) as e:
                         logger.warning(f"[render_creategroup_ui] inline edit ignored: {e}")
+                        state['ui_msg_id'] = inline_id
+                        state['ui_chat_id'] = None
                     except Exception as e:
-                        logger.error(f"[render_creategroup_ui] inline edit failed: {e}\n{traceback.format_exc()}")
+                        logger.warning(f"[render_creategroup_ui] cb.edit_message_text failed: {e}. Trying candidates...")
+                        # Fallback to candidates
+                        candidates = []
+                        cb_client = getattr(cb, '_client', getattr(cb, 'client', None))
+                        if cb_client:
+                            candidates.append(cb_client)
+                        bot_for_user = _get_bot_for_user(user_id)
+                        if bot_for_user and bot_for_user not in candidates:
+                            candidates.append(bot_for_user)
+                        from Main.core.client import Altruix
+                        if getattr(Altruix, 'bot', None) and Altruix.bot not in candidates:
+                            candidates.append(Altruix.bot)
+
+                        edited = False
+                        for client_candidate in candidates:
+                            if not client_candidate:
+                                continue
+                            try:
+                                if hasattr(client_candidate, 'edit_inline_text'):
+                                    await client_candidate.edit_inline_text(inline_message_id=inline_id, text=full_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+                                else:
+                                    await client_candidate.edit_message_text(inline_message_id=inline_id, text=full_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+                                edited = True
+                                logger.warning(f"[render_creategroup_ui] inline edit succeeded via candidate {client_candidate}")
+                                state['ui_msg_id'] = inline_id
+                                state['ui_chat_id'] = None
+                                break
+                            except (MessageNotModified, QueryIdInvalid) as e_ign:
+                                logger.warning(f"[render_creategroup_ui] inline edit ignored for candidate: {e_ign}")
+                                edited = True
+                                state['ui_msg_id'] = inline_id
+                                state['ui_chat_id'] = None
+                                break
+                            except Exception as e_cand:
+                                logger.debug(f"[render_creategroup_ui] candidate edit failed: {e_cand}")
+                                
+                        if not edited:
+                            raise e  # Propagate the original error to fallback to PM
+                            
+                # Check 2: If we don't have active inline_id on callback query, but we have a stored inline ui_msg_id
+                elif (not cb_msg or not cb_msg_id or not cb_chat) and isinstance(state.get('ui_msg_id'), str):
+                    ui_id = state['ui_msg_id']
+                    try:
+                        logger.warning(f"[render_creategroup_ui] editing stored inline ui_msg_id={ui_id} for user={user_id}")
+                        bot_for_user = _get_bot_for_user(user_id)
+                        client_to_use = bot_for_user if bot_for_user else Altruix.bot
+                        if hasattr(client_to_use, 'edit_inline_text'):
+                            await client_to_use.edit_inline_text(inline_message_id=ui_id, text=full_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+                        else:
+                            await client_to_use.edit_message_text(inline_message_id=ui_id, text=full_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+                        logger.warning(f"[render_creategroup_ui] stored inline edit succeeded")
+                    except (MessageNotModified, QueryIdInvalid) as e:
+                        logger.warning(f"[render_creategroup_ui] stored inline edit ignored: {e}")
+                    except Exception as e:
+                        logger.error(f"[render_creategroup_ui] stored inline edit failed: {e}. Falling back to PM.")
+                        raise e  # Propagate to trigger PM fallback
+                
+                # Check 3: Normal callback query with message
                 else:
-                    msg_id = getattr(cb.message, 'message_id', getattr(cb.message, 'id', None)) if getattr(cb, 'message', None) else None
-                    chat_id = getattr(cb.message.chat, 'id', None) if getattr(cb, 'message', None) and getattr(cb.message, 'chat', None) else None
-                    logger.warning(f"[render_creategroup_ui] editing via cb chat={chat_id} msg_id={msg_id}")
+                    logger.warning(f"[render_creategroup_ui] editing normal message via cb")
                     res = await safe_edit_message_text(cb, full_text, reply_markup=reply_markup)
-                    logger.warning(f"[render_creategroup_ui] edit result={res} chat={chat_id} msg_id={msg_id}")
+                    logger.warning(f"[render_creategroup_ui] normal edit result={res}")
             except Exception as e:
-                logger.error(f"[render_creategroup_ui] edit via cb failed: {e}\n{traceback.format_exc()}")
+                # PM Fallback
+                logger.warning(f"[render_creategroup_ui] callback edit failed; falling back to PM: {e}\n{traceback.format_exc()}")
+                bot_for_user = _get_bot_for_user(user_id)
+                fallback_text = f"<b>⚠️ UI Fallback</b>\nInline panel could not be updated. Opening local panel here:\n\n{full_text}"
+                try:
+                    if bot_for_user:
+                        from pyrogram.errors import PeerIdInvalid, UserIsBlocked
+                        try:
+                            pm = await bot_for_user.send_message(user_id, fallback_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+                        except (PeerIdInvalid, UserIsBlocked):
+                            pm = await Altruix.bot.send_message(user_id, fallback_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+                    else:
+                        pm = await Altruix.bot.send_message(user_id, fallback_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+                    state['ui_msg_id'] = pm.message_id
+                    state['ui_chat_id'] = pm.chat.id if getattr(pm, 'chat', None) else user_id
+                    try:
+                        await safe_cb_answer(cb, "Inline panel couldn't be updated; opened local panel in PM.", show_alert=False)
+                    except:
+                        pass
+                except Exception as pm_err:
+                    logger.error(f"[render_creategroup_ui] failed to send fallback PM: {pm_err}\n{traceback.format_exc()}")
         elif message:
             try:
                 logger.warning(f"[render_creategroup_ui] editing via message object id={getattr(message,'message_id',getattr(message,'id',None))}")
@@ -1673,12 +1934,18 @@ async def render_creategroup_ui(cb: Optional[CallbackQuery], state: dict, messag
             from Main.core.client import Altruix
             try:
                 logger.info(f"[render_creategroup_ui] editing inline message id={state['ui_msg_id']}")
-                await Altruix.bot.edit_inline_message_text(
-                    state["ui_msg_id"], 
-                    full_text, 
-                    reply_markup=reply_markup, 
-                    parse_mode=ParseMode.HTML
-                )
+                bot_for_user = _get_bot_for_user(user_id)
+                if bot_for_user:
+                    if hasattr(bot_for_user, 'edit_inline_text'):
+                        await bot_for_user.edit_inline_text(inline_message_id=state["ui_msg_id"], text=full_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+                    else:
+                        await bot_for_user.edit_message_text(inline_message_id=state["ui_msg_id"], text=full_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+                else:
+                    from Main.core.client import Altruix
+                    if hasattr(Altruix.bot, 'edit_inline_text'):
+                        await Altruix.bot.edit_inline_text(inline_message_id=state["ui_msg_id"], text=full_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+                    else:
+                        await Altruix.bot.edit_message_text(inline_message_id=state["ui_msg_id"], text=full_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
             except (MessageNotModified, QueryIdInvalid) as e:
                 logger.warning(f"[render_creategroup_ui] inline edit ignored: {e}")
             except Exception as e:
@@ -1703,8 +1970,8 @@ async def creategroup_adjust_handler(c: Client, cb: CallbackQuery):
         await _ensure_creategroup_ui_state(c, cb, idx, pg)
          
     conf = user_creategroup_state[user_id]["config"]
-    steps = {"delay": 10, "count": 1, "batch_delay": 1, "batch_size": 1, "action_delay": 0.5, "account_delay": 0.5, "rand_len": 1, "batch_action": 5, "ba_delay": 10, "batch_account": 1, "ba_account_delay": 10, "auto_start_count": 1}
-    limits = {"delay": (0, 3600), "count": (1, 1000), "batch_delay": (0, 300), "batch_size": (1, 100), "action_delay": (0, 30.0), "account_delay": (0, 30.0), "rand_len": (0, 64), "batch_action": (0, 500), "ba_delay": (0, 3600), "batch_account": (1, 999), "ba_account_delay": (0, 3600), "auto_start_count": (1, 999)}
+    steps = {"delay": 10, "count": 1, "batch_delay": 1, "batch_size": 1, "action_delay": 0.5, "account_delay": 0.5, "rand_len": 1, "batch_action": 5, "ba_delay": 10, "batch_account": 1, "ba_account_delay": 10, "auto_start_count": 1, "auto_switch_on_error_count": 1}
+    limits = {"delay": (0, 3600), "count": (1, 1000), "batch_delay": (0, 300), "batch_size": (1, 100), "action_delay": (0, 30.0), "account_delay": (0, 30.0), "rand_len": (0, 64), "batch_action": (0, 500), "ba_delay": (0, 3600), "batch_account": (1, 999), "ba_account_delay": (0, 3600), "auto_start_count": (1, 999), "auto_switch_on_error_count": (1, 999)}
     # Recurring adjustments
     steps.update({"recurring_interval_hours": 1, "recurring_interval_minutes": 1, "repeat_count": 1})
     limits.update({"recurring_interval_hours": (0, 999), "recurring_interval_minutes": (0, 59), "repeat_count": (0, 999)})
@@ -1722,7 +1989,7 @@ async def creategroup_adjust_handler(c: Client, cb: CallbackQuery):
     final_val = max(min_v, min(val, max_v))
     
     # 🔥 CRITICAL FIX: Ensure specific keys don't become floats
-    int_keys = ["count", "batch_account", "ba_account_delay", "auto_start_count", "batch_action", "batch_size", "repeat_count"]
+    int_keys = ["count", "batch_account", "ba_account_delay", "auto_start_count", "auto_switch_on_error_count", "batch_action", "batch_size", "repeat_count"]
     if key in int_keys:
         final_val = int(round(final_val))
         
@@ -1778,35 +2045,66 @@ async def creategroup_session_toggle_handler(c: Client, cb: CallbackQuery):
 
     s_idx, pg = int(cb.matches[0].group(1)), int(cb.matches[0].group(2))
     user_id = cb.from_user.id
+
+    # Answer callback EARLY to prevent Telegram from showing a loading spinner
+    # and avoid QueryIdInvalid if render takes too long.
+    try:
+        await cb.answer()
+    except Exception:
+        pass
+
     if user_id not in user_creategroup_state:
         idx = await _resolve_cg_session_index_from_cb(cb, fallback_idx=s_idx)
         await _ensure_creategroup_ui_state(c, cb, idx, pg)
 
     state = user_creategroup_state[user_id]
     state.setdefault("session_page", 0)
-    
-    # Use a set for efficient and clean toggling
-    current_selected = state.get("selected_sessions", [])
-    if not isinstance(current_selected, list):
-        current_selected = [state.get("session_index", s_idx)]
-        
-    selected_set = set()
-    for x in current_selected:
-        try: selected_set.add(int(x))
-        except: pass
-    
-    before = sorted(list(selected_set))
-    if s_idx in selected_set:
-        selected_set.remove(s_idx)
-    else:
-        selected_set.add(s_idx)
+    # Ensure lock exists
+    lock = state.setdefault("callback_lock", None)
+    if lock is None:
+        try:
+            state["callback_lock"] = asyncio.Lock()
+            lock = state["callback_lock"]
+        except Exception:
+            lock = None
 
-    # Sanitize and persist
-    new_sel = sorted([s for s in selected_set if 1 <= s <= len(Altruix.clients)])
-    state["selected_sessions"] = new_sel
-    logger.info(f"[creategroup_session_toggle] user={user_id} toggled={s_idx} before={before} after={new_sel}")
-    await render_creategroup_ui(cb, state)
-    await cb.answer()
+    # Use a lock to serialize toggles for this user
+    async def _do_toggle_local():
+        # Use a set for efficient and clean toggling
+        st = user_creategroup_state[user_id]
+        current_selected = st.get("selected_sessions", [])
+        if not isinstance(current_selected, list):
+            current_selected = [st.get("session_index", s_idx)]
+        selected_set = set()
+        for x in current_selected:
+            try:
+                selected_set.add(int(x))
+            except Exception:
+                pass
+        before = sorted(list(selected_set))
+        if s_idx in selected_set:
+            selected_set.remove(s_idx)
+        else:
+            selected_set.add(s_idx)
+        # Sanitize and persist to in-memory state
+        new_sel = sorted([s for s in selected_set if 1 <= s <= len(Altruix.clients)])
+        st["selected_sessions"] = new_sel
+        logger.info(f"[creategroup_session_toggle] user={user_id} toggled={s_idx} before={before} after={new_sel}")
+        # Persist selected_sessions to config JSON so it survives state re-init
+        try:
+            conf = st.get("config") or load_user_cg_config(user_id)
+            conf["selected_sessions"] = new_sel
+            st["config"] = conf
+            save_user_cg_config(user_id, conf)
+        except Exception as e_save:
+            logger.error(f"[creategroup_session_toggle] save config error: {e_save}\n{traceback.format_exc()}")
+        await render_creategroup_ui(cb, st)
+
+    if lock is not None:
+        async with lock:
+            await _do_toggle_local()
+    else:
+        await _do_toggle_local()
 
 @Altruix.bot.on_callback_query(filters.regex(r"^creategroup_spage_(\d+)_(\d+)$"))
 @iuser_check
@@ -1871,9 +2169,37 @@ async def creategroup_session_select_all_handler(c: Client, cb: CallbackQuery):
         await _ensure_creategroup_ui_state(c, cb, idx, pg, session_page=s_page)
     state = user_creategroup_state[user_id]
     state.setdefault("session_page", s_page)
-    state["selected_sessions"] = list(range(1, len(Altruix.clients) + 1))
-    await render_creategroup_ui(cb, state)
-    await cb.answer("All sessions selected")
+    # Ensure lock exists and perform update under lock
+    lock = state.setdefault("callback_lock", None)
+    if lock is None:
+        try:
+            state["callback_lock"] = asyncio.Lock()
+            lock = state["callback_lock"]
+        except Exception:
+            lock = None
+    # Answer callback EARLY
+    try:
+        await cb.answer("All sessions selected")
+    except Exception:
+        pass
+
+    async def _do_sel_all():
+        new_sel = list(range(1, len(Altruix.clients) + 1))
+        state["selected_sessions"] = new_sel
+        # Persist to config JSON
+        try:
+            conf = state.get("config") or load_user_cg_config(user_id)
+            conf["selected_sessions"] = new_sel
+            state["config"] = conf
+            save_user_cg_config(user_id, conf)
+        except Exception as e_save:
+            logger.error(f"[creategroup_sall] save config error: {e_save}\n{traceback.format_exc()}")
+        await render_creategroup_ui(cb, state)
+    if lock is not None:
+        async with lock:
+            await _do_sel_all()
+    else:
+        await _do_sel_all()
 
 @Altruix.bot.on_callback_query(filters.regex(r"^creategroup_selp_(\d+)_(\d+)$"))
 @iuser_check
@@ -1904,15 +2230,44 @@ async def creategroup_session_select_page_handler(c: Client, cb: CallbackQuery):
             page_indices = list(range(start + 1, end + 1))
         selected = state.get("selected_sessions", []) or []
 
-        before = sorted(selected)
-        merged = set(selected)
-        merged.update(page_indices)
-        # Sanitize
-        new_sel = sorted([s for s in merged if 1 <= s <= len(Altruix.clients)])
-        state["selected_sessions"] = new_sel
-        logger.info(f"[creategroup_selp] user={user_id} page={s_page} before={before} after={new_sel}")
-        await render_creategroup_ui(cb, state)
-        await safe_cb_answer(cb, "Page selected", show_alert=False)
+        # Perform under lock to avoid concurrent mutations
+        lock = state.setdefault("callback_lock", None)
+        if lock is None:
+            try:
+                state["callback_lock"] = asyncio.Lock()
+                lock = state["callback_lock"]
+            except Exception:
+                lock = None
+
+        # Answer callback EARLY
+        try:
+            await safe_cb_answer(cb, "Page selected", show_alert=False)
+        except Exception:
+            pass
+
+        async def _do_select_page():
+            before = sorted(selected)
+            merged = set(selected)
+            merged.update(page_indices)
+            # Sanitize
+            new_sel = sorted([s for s in merged if 1 <= s <= len(Altruix.clients)])
+            state["selected_sessions"] = new_sel
+            logger.info(f"[creategroup_selp] user={user_id} page={s_page} before={before} after={new_sel}")
+            # Persist to config JSON
+            try:
+                conf = state.get("config") or load_user_cg_config(user_id)
+                conf["selected_sessions"] = new_sel
+                state["config"] = conf
+                save_user_cg_config(user_id, conf)
+            except Exception as e_save:
+                logger.error(f"[creategroup_selp] save config error: {e_save}\n{traceback.format_exc()}")
+            await render_creategroup_ui(cb, state)
+
+        if lock is not None:
+            async with lock:
+                await _do_select_page()
+        else:
+            await _do_select_page()
     except Exception as e:
         logger.error(f"Error in creategroup_session_select_page_handler: {e}\n{traceback.format_exc()}")
         await safe_cb_answer(cb, "❌ Error select page", show_alert=True)
@@ -1932,9 +2287,36 @@ async def creategroup_session_deselect_all_handler(c: Client, cb: CallbackQuery)
         await _ensure_creategroup_ui_state(c, cb, idx, pg, session_page=s_page)
     state = user_creategroup_state[user_id]
     state.setdefault("session_page", s_page)
-    state["selected_sessions"] = []
-    await render_creategroup_ui(cb, state)
-    await cb.answer("All sessions deselected")
+    # perform under lock
+    lock = state.setdefault("callback_lock", None)
+    if lock is None:
+        try:
+            state["callback_lock"] = asyncio.Lock()
+            lock = state["callback_lock"]
+        except Exception:
+            lock = None
+    # Answer callback EARLY
+    try:
+        await cb.answer("All sessions deselected")
+    except Exception:
+        pass
+
+    async def _do_ds_all():
+        state["selected_sessions"] = []
+        # Persist to config JSON
+        try:
+            conf = state.get("config") or load_user_cg_config(user_id)
+            conf["selected_sessions"] = []
+            state["config"] = conf
+            save_user_cg_config(user_id, conf)
+        except Exception as e_save:
+            logger.error(f"[creategroup_dsall] save config error: {e_save}\n{traceback.format_exc()}")
+        await render_creategroup_ui(cb, state)
+    if lock is not None:
+        async with lock:
+            await _do_ds_all()
+    else:
+        await _do_ds_all()
 
 @Altruix.bot.on_callback_query(filters.regex(r"^creategroup_dselp_(\d+)_(\d+)$"))
 @iuser_check
@@ -1964,14 +2346,43 @@ async def creategroup_session_deselect_page_handler(c: Client, cb: CallbackQuery
             end = min(start + per_page, total_sessions)
             page_indices = set(range(start + 1, end + 1))
         selected = state.get("selected_sessions", []) or []
-        before = sorted(selected)
-        new_sel = [x for x in selected if x not in page_indices]
-        # Sanitize
-        new_sel = sorted([s for s in new_sel if 1 <= s <= len(Altruix.clients)])
-        state["selected_sessions"] = new_sel
-        logger.info(f"[creategroup_dselp] user={user_id} page={s_page} before={before} after={new_sel}")
-        await render_creategroup_ui(cb, state)
-        await cb.answer("Page deselected")
+        # perform under lock
+        lock = state.setdefault("callback_lock", None)
+        if lock is None:
+            try:
+                state["callback_lock"] = asyncio.Lock()
+                lock = state["callback_lock"]
+            except Exception:
+                lock = None
+
+        # Answer callback EARLY
+        try:
+            await cb.answer("Page deselected")
+        except Exception:
+            pass
+
+        async def _do_deselect_page():
+            before = sorted(selected)
+            new_sel = [x for x in selected if x not in page_indices]
+            # Sanitize
+            new_sel = sorted([s for s in new_sel if 1 <= s <= len(Altruix.clients)])
+            state["selected_sessions"] = new_sel
+            logger.info(f"[creategroup_dselp] user={user_id} page={s_page} before={before} after={new_sel}")
+            # Persist to config JSON
+            try:
+                conf = state.get("config") or load_user_cg_config(user_id)
+                conf["selected_sessions"] = new_sel
+                state["config"] = conf
+                save_user_cg_config(user_id, conf)
+            except Exception as e_save:
+                logger.error(f"[creategroup_dselp] save config error: {e_save}\n{traceback.format_exc()}")
+            await render_creategroup_ui(cb, state)
+
+        if lock is not None:
+            async with lock:
+                await _do_deselect_page()
+        else:
+            await _do_deselect_page()
     except Exception as e:
         logger.error(f"Error in creategroup_session_deselect_page_handler: {e}\n{traceback.format_exc()}")
         await safe_cb_answer(cb, "❌ Error deselect page", show_alert=True)
@@ -2026,15 +2437,28 @@ async def creategroup_input_request(c: Client, cb: CallbackQuery):
     session_user_id = _get_session_user_id(idx)
     user_style = get_user_button_style(session_user_id)
     
-    # Preserve ui_msg_id if it's already an inline ID (string) and cb.message is missing
+    # Preserve ui_msg_id: prefer inline_message_id (string) for inline callbacks
     current_ui_msg_id = user_creategroup_state[user_id].get("ui_msg_id")
-    new_ui_msg_id = cb.message.id if cb.message else (current_ui_msg_id if isinstance(current_ui_msg_id, str) else None)
+    _inp_inline_id = getattr(cb, 'inline_message_id', None)
+    if _inp_inline_id:
+        new_ui_msg_id = _inp_inline_id
+        new_ui_chat_id = None
+    elif isinstance(current_ui_msg_id, str):
+        # Already have an inline ID stored; keep it even if cb.message is present
+        new_ui_msg_id = current_ui_msg_id
+        new_ui_chat_id = user_creategroup_state[user_id].get("ui_chat_id")
+    elif cb.message:
+        new_ui_msg_id = cb.message.id
+        new_ui_chat_id = cb.message.chat.id if cb.message.chat else None
+    else:
+        new_ui_msg_id = None
+        new_ui_chat_id = user_creategroup_state[user_id].get("ui_chat_id")
     
     user_creategroup_state[user_id].update({
         "input_mode": field, 
         "step": "awaiting_input", 
         "ui_msg_id": new_ui_msg_id, 
-        "ui_chat_id": cb.message.chat.id if cb.message else user_creategroup_state[user_id].get("ui_chat_id"),
+        "ui_chat_id": new_ui_chat_id,
         "session_index": idx, # Ensure session index is current
         "page": pg # Ensure page is current
     })
@@ -2099,7 +2523,7 @@ async def creategroup_input_request(c: Client, cb: CallbackQuery):
         prompt_msg = await c.send_message(chat_id, prompt_text, parse_mode=ParseMode.HTML)
         user_creategroup_state[user_id]["prompt_msg_id"] = prompt_msg.id
     except Exception as e:
-        logger.error(f"Failed to send prompt in creategroup: {e}")
+        logger.error(f"Failed to send prompt in creategroup: {e}\n{traceback.format_exc()}")
 
 @Altruix.bot.on_callback_query(filters.regex(r"^creategroup_toggle_(\d+)_(\d+)_(\w+)$"))
 @iuser_check
@@ -2111,6 +2535,8 @@ async def creategroup_toggle_handler(c: Client, cb: CallbackQuery):
 
     idx, pg, key = int(cb.matches[0].group(1)), int(cb.matches[0].group(2)), cb.matches[0].group(3)
     user_id = cb.from_user.id
+    if user_id not in user_creategroup_state:
+        await _ensure_creategroup_ui_state(c, cb, idx, pg)
     if user_id in user_creategroup_state:
         if user_creategroup_state[user_id].get("prompt_msg_id"):
             try:
@@ -2588,7 +3014,9 @@ async def creategroup_upload_photo_handler(c: Client, cb: CallbackQuery):
     session_user_id = _get_session_user_id(idx)
     user_style = get_user_button_style(session_user_id)
     
-    user_creategroup_state[user_id].update({"step": "awaiting_photo", "input_mode": "custom_photo", "ui_msg_id": cb.message.id if cb.message else None})
+    cb_inline_id = getattr(cb, 'inline_message_id', None)
+    ui_msg_id = cb_inline_id if cb_inline_id else (cb.message.id if cb.message else None)
+    user_creategroup_state[user_id].update({"step": "awaiting_photo", "input_mode": "custom_photo", "ui_msg_id": ui_msg_id})
     text = "<b>📸 Awaiting Photo Upload...</b>\n\nSilakan lihat instruksi pada pesan di bawah."
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancel", callback_data=f"creategroup_ui_{idx}_{pg}", style=user_style)]])
     
@@ -2603,7 +3031,7 @@ async def creategroup_upload_photo_handler(c: Client, cb: CallbackQuery):
         prompt_msg = await c.send_message(chat_id, "<b>📸 Upload Custom Photo</b>\n\nSilakan kirim atau reply pesan ini dengan foto yang ingin dijadikan profil grup.\nKetik /cancel untuk membatalkan.", parse_mode=ParseMode.HTML)
         user_creategroup_state[user_id]["prompt_msg_id"] = prompt_msg.id
     except Exception as e:
-        logger.error(f"Failed to send photo prompt in creategroup: {e}")
+        logger.error(f"Failed to send photo prompt in creategroup: {e}\n{traceback.format_exc()}")
     finally:
         await cb.answer()
 
@@ -2751,10 +3179,14 @@ async def creategroup_confirm_task_handler(c: Client, cb: CallbackQuery):
                                         chunk_msgs.append(m)
                                     except Exception:
                                         pass
-                                # PM to admin
+                                # PM to admin using per-user bot when available
                                 if notify_mode in ("pm_bot", "both"):
                                     try:
-                                        m = await Altruix.bot.send_message(uid, f"<blockquote expandable>{chunk_text}</blockquote>")
+                                        bot_for_user = _get_bot_for_user(uid)
+                                        if bot_for_user:
+                                            m = await bot_for_user.send_message(uid, f"<blockquote expandable>{chunk_text}</blockquote>")
+                                        else:
+                                            m = await Altruix.bot.send_message(uid, f"<blockquote expandable>{chunk_text}</blockquote>")
                                         chunk_msgs.append(m)
                                     except Exception:
                                         pass
@@ -2791,7 +3223,11 @@ async def creategroup_confirm_task_handler(c: Client, cb: CallbackQuery):
                                     if cb_msg:
                                         control_msg = await cb_msg.reply(f"<blockquote expandable>{msg_text}</blockquote>")
                                     else:
-                                        control_msg = await Altruix.bot.send_message(uid, f"<blockquote expandable>{msg_text}</blockquote>")
+                                        bot_for_user = _get_bot_for_user(uid)
+                                        if bot_for_user:
+                                            control_msg = await bot_for_user.send_message(uid, f"<blockquote expandable>{msg_text}</blockquote>")
+                                        else:
+                                            control_msg = await Altruix.bot.send_message(uid, f"<blockquote expandable>{msg_text}</blockquote>")
                                 except Exception as e:
                                     from pyrogram.errors import PeerIdInvalid, UserIsBlocked
                                     if isinstance(e, (PeerIdInvalid, UserIsBlocked)):
@@ -2801,9 +3237,10 @@ async def creategroup_confirm_task_handler(c: Client, cb: CallbackQuery):
                                         continue
 
                                 bots = conf_copy.get("bots", "").split() if conf_copy.get("bots") else []
+                                bot_for_user = _get_bot_for_user(uid)
                                 t = asyncio.create_task(creategroup_loop(
                                     user_client=executor,
-                                    bot_client=Altruix.bot,
+                                    bot_client=(bot_for_user or Altruix.bot),
                                     initial_message=cb_msg,
                                     delay=conf_copy.get("delay", 60),
                                     count=conf_copy.get("count", 1),
@@ -2879,7 +3316,11 @@ async def creategroup_confirm_task_handler(c: Client, cb: CallbackQuery):
                                     if cb_msg:
                                         await cb_msg.reply(err_notify)
                                     else:
-                                        await Altruix.bot.send_message(uid, err_notify)
+                                        bot_for_user = _get_bot_for_user(uid)
+                                        if bot_for_user:
+                                            await bot_for_user.send_message(uid, err_notify)
+                                        else:
+                                            await Altruix.bot.send_message(uid, err_notify)
                                 except Exception:
                                     pass
 
@@ -3003,7 +3444,11 @@ async def creategroup_confirm_task_handler(c: Client, cb: CallbackQuery):
                                     logger.warning(f"Gagal kirim init task ke LOG_CHAT_ID: {e}")
                                 try:
                                     if it_mode in ('pm_bot', 'both'):
-                                        m2 = await Altruix.bot.send_message(uid, f"<blockquote expandable>{full_text}</blockquote>", parse_mode=ParseMode.HTML)
+                                        bot_for_user = _get_bot_for_user(uid)
+                                        if bot_for_user:
+                                            m2 = await bot_for_user.send_message(uid, f"<blockquote expandable>{full_text}</blockquote>", parse_mode=ParseMode.HTML)
+                                        else:
+                                            m2 = await Altruix.bot.send_message(uid, f"<blockquote expandable>{full_text}</blockquote>", parse_mode=ParseMode.HTML)
                                         sent_msgs.append(m2)
                                         if not control_msg:
                                             control_msg = m2
@@ -3084,7 +3529,11 @@ async def creategroup_confirm_task_handler(c: Client, cb: CallbackQuery):
                                 if cb_msg:
                                     await cb_msg.reply(err_notify)
                                 else:
-                                    await Altruix.bot.send_message(uid, err_notify)
+                                    bot_for_user = _get_bot_for_user(uid)
+                                    if bot_for_user:
+                                        await bot_for_user.send_message(uid, err_notify)
+                                    else:
+                                        await Altruix.bot.send_message(uid, err_notify)
                             except Exception:
                                 pass  # Best-effort notification
             except Exception as e:
@@ -3101,7 +3550,11 @@ async def creategroup_confirm_task_handler(c: Client, cb: CallbackQuery):
                     if cb_msg:
                         await cb_msg.reply(err_notify)
                     else:
-                        await Altruix.bot.send_message(uid, err_notify)
+                        bot_for_user = _get_bot_for_user(uid)
+                        if bot_for_user:
+                            await bot_for_user.send_message(uid, err_notify)
+                        else:
+                            await Altruix.bot.send_message(uid, err_notify)
                 except Exception:
                     pass  # Best-effort notification
             finally:
@@ -3405,7 +3858,8 @@ async def creategroup_confirm_recur_handler(c: Client, cb: CallbackQuery):
     
     try:
         control_msg = await Altruix.bot.send_message(cb.from_user.id, f"<blockquote expandable>🔄 Re-initializing recurring task for Session {idx} [<code>{tid}</code>]...</blockquote>")
-    except Exception:
+    except Exception as e:
+        logger.error(f"Failed to send control_msg in creategroup_confirm_recur_handler: {e}\n{traceback.format_exc()}")
         control_msg = None
         
     asyncio.create_task(creategroup_loop(
