@@ -3,12 +3,45 @@
 All notable changes to the **Altroid-X** project from version **0.0.10.0959H** to the latest.
 Latest updates are always added at the top (newest → oldest).
 
+## [0.0.221-F] - 2026-06-27
+
+### 👥 CreateGroup: Save Manual Scan Button on Account Scan Result
+- **Added:** A `💾 Save Manual Scan to Report` button directly in the account-level scan result view (`🔎 Scan This Account Group`).
+- **Improved flow:** Users can now save scan results from the account detail flow without returning to the main reports menu first.
+- **Preserved behavior:** The action reuses the same safe manual-scan persistence path, keeps the existing report DB merge logic, and returns the user to the account detail view after saving.
+- **Files changed**: [Main/internals/settings_handlers/creategroup_handlers.py](Main/internals/settings_handlers/creategroup_handlers.py)
+
+---
+
+## [0.0.221-D] - 2026-06-27
+
+### 🗃️ Cache Manager: Paginated Session Picker for /settings
+- **Added:** Pagination support to `🗃️ Cache Manager` so the picker can handle large session lists safely without UI overload.
+- **Improved flow:** The session selector now uses page-aware buttons (`Prev`, `Next`, `First`, `Last`) and preserves the current page when navigating cache options.
+- **Preserved config & style:** Button style resolution still uses `get_user_button_style`, and navigation uses the existing `configs_menu`/`settings_menu` return flow.
+- **Safety & robustness:** Added try/except handling and fallback text for empty session lists, with stable callback routing using `cache_manager_picker_{page}`.
+- **Files changed**: [Main/internals/settings.py](Main/internals/settings.py)
+
+---
+
+## [0.0.221-E] - 2026-06-27
+
+### 👥 CreateGroup: Manual Owner Scan Combine & Safe Report Persistence
+- **Added:** New buttons in the Creation Reports menu for scanning owner dialogs per session, across all sessions, and for a global total summary.
+- **Added:** A dedicated `💾 Save Manual Scan to Report` action that merges manual owner-scan results into the persisted CreateGroup report JSON/database without duplicating existing chat IDs.
+- **Improved:** The scan results now show three values side by side: manual scan total, report DB total, and combined unique total for safer reporting and reconciliation.
+- **Improved safety:** Manual-scan merge uses a dedicated helper with logging, traceback capture, and `try/except` guards so report persistence remains robust even if data is partial or fallback files exist.
+- **Preserved flow:** Existing report UI, cleanup, export, and report detail handlers remain intact; the new merge path is additive and does not replace the existing CreateGroup report behavior.
+- **Files changed**: [Main/internals/settings_handlers/creategroup_handlers.py](Main/internals/settings_handlers/creategroup_handlers.py), [Main/plugins/userbot/xcreategroup.py](Main/plugins/userbot/xcreategroup.py), [test_report_persistence.py](test_report_persistence.py)
+
+---
+
 ## [1.0.292] - 2026-06-21
 
 ### 👥 CreateGroup: Inline Assistant Button Unresponsive & Multi-Session Bouncing Buttons Fixes
 - **Fixed: Inline assistant buttons unresponsive (updating PM instead of inline/group chat)**
-  - Updated [safe_edit_message_text](file:///f:/2026/APRIL/AltruixX/Main/internals/settings_handlers/creategroup_handlers.py#L52) to correctly identify callbacks that originate from inline messages (checking `getattr(cb, 'inline_message_id', None)`) and use the assistant bot's `edit_inline_text` method instead of trying to edit the PM message.
-  - Corrected [render_creategroup_ui](file:///f:/2026/APRIL/AltruixX/Main/internals/settings_handlers/creategroup_handlers.py#L485) to properly accept and use `inline_message_id` when rendering/updating the UI, ensuring that when button clicks occur, the update modifies the inline message in-place instead of spamming PM.
+  - Updated [safe_edit_message_text](Main/internals/settings_handlers/creategroup_handlers.py#L52) to correctly identify callbacks that originate from inline messages (checking `getattr(cb, 'inline_message_id', None)`) and use the assistant bot's `edit_inline_text` method instead of trying to edit the PM message.
+  - Corrected [render_creategroup_ui](Main/internals/settings_handlers/creategroup_handlers.py#L485) to properly accept and use `inline_message_id` when rendering/updating the UI, ensuring that when button clicks occur, the update modifies the inline message in-place instead of spamming PM.
 
 - **Fixed: Multi-Session Selection bouncing buttons (selections not saving/syncing and reverting)**
   - Fixed debounce logic to use specific callback data in the lock key (`cb:{chat_id}:{message_id}:{cb_data}` / `cb:{uid}:{cb_data}`), preventing a click on one session button from blocking unrelated clicks on other session buttons within the 0.3s debounce window.
@@ -20,7 +53,7 @@ Latest updates are always added at the top (newest → oldest).
   - Syntactic validation of `creategroup_handlers.py` and `xcreategroup.py` completed using `py_compile` to ensure no syntax/runtime issues exist.
   - All changes were implemented with proper try-except handlers and error loggers to maintain stability.
 
-- **Files changed**: [Main/internals/settings_handlers/creategroup_handlers.py](file:///f:/2026/APRIL/AltruixX/Main/internals/settings_handlers/creategroup_handlers.py), [Main/plugins/userbot/xcreategroup.py](file:///f:/2026/APRIL/AltruixX/Main/plugins/userbot/xcreategroup.py)
+- **Files changed**: [Main/internals/settings_handlers/creategroup_handlers.py](Main/internals/settings_handlers/creategroup_handlers.py), [Main/plugins/userbot/xcreategroup.py](Main/plugins/userbot/xcreategroup.py)
 
 ---
 

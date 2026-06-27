@@ -12,6 +12,7 @@ import random
 import string
 import asyncio
 import multiprocessing
+import glob
 from functools import wraps
 from concurrent.futures.thread import ThreadPoolExecutor
 
@@ -91,6 +92,70 @@ def migrate_db_files(filenames: list):
                 print(f"[Migration] Moved {old_path} to {new_path}")
             except Exception as e:
                 print(f"[Migration] Failed to move {old_path}: {e}")
+
+
+def merge_report_data(primary_data: dict, fallback_data: dict) -> dict:
+    """Merge CreateGroup report data from main and temporary files without duplicating entries."""
+    merged = {}
+    acc_ids = set(primary_data.keys()) | set(fallback_data.keys())
+
+    for acc_id in sorted(acc_ids):
+        primary_entry = primary_data.get(acc_id, {}) if isinstance(primary_data.get(acc_id), dict) else {}
+        fallback_entry = fallback_data.get(acc_id, {}) if isinstance(fallback_data.get(acc_id), dict) else {}
+
+        merged_entry = {
+            "account_name": primary_entry.get("account_name") or fallback_entry.get("account_name") or "Unknown Account",
+            "username": primary_entry.get("username") or fallback_entry.get("username") or "",
+            "created_groups": [],
+        }
+
+        merged_groups = []
+        group_index = {}
+        for entry in [primary_entry.get("created_groups", []), fallback_entry.get("created_groups", [])]:
+            for group in entry or []:
+                if not isinstance(group, dict):
+                    continue
+                gid = group.get("id")
+                if gid is None:
+                    continue
+                group_index[gid] = group
+
+        for group in group_index.values():
+            merged_groups.append(group)
+
+        merged_entry["created_groups"] = merged_groups
+
+        errors = []
+        seen_errors = set()
+        for entry in [primary_entry.get("errors", []), fallback_entry.get("errors", [])]:
+            for err in entry or []:
+                if not isinstance(err, dict):
+                    continue
+                err_key = (err.get("time"), err.get("code"), err.get("message"))
+                if err_key in seen_errors:
+                    continue
+                seen_errors.add(err_key)
+                errors.append(err)
+
+        if errors:
+            merged_entry["errors"] = errors
+
+        merged[acc_id] = merged_entry
+
+    return merged
+
+
+def find_report_fallback_files(file_path: str) -> list[str]:
+    """Return temporary/backup report files matching the main report path."""
+    directory = os.path.dirname(file_path) or "."
+    base_name = os.path.basename(file_path)
+    matches = []
+    for candidate in sorted(glob.glob(os.path.join(directory, f"{base_name}*"))):
+        if os.path.abspath(candidate) == os.path.abspath(file_path):
+            continue
+        if candidate.endswith(('.tmp', '.bak', '.corrupted')) or '.tmp' in candidate or '.bak' in candidate or '.corrupted' in candidate:
+            matches.append(candidate)
+    return matches
 
 # ====================== CUSTOM ALERT HELPERS ======================
 import json

@@ -108,7 +108,6 @@ def create_progress_task(status_msg):
                    ".replyfromcust https://t.me/username/123 | Ini caption kustom!\n"
                    ".replyfromcust 6180883991/205956 | Caption custom via slash link!",
         "note": "✨ Auto-logs ke Log Group. Bypass method mendukung thumbnail.\n"
-                "Caption otomatis menggunakan format blockquote expandable.\n"
                 "Support link: HTTPS (t.me / telegram.me), Slash (ChatID/MsgID) & Telegram Internal (tg://)."
     },
     requires_input=True,
@@ -315,14 +314,9 @@ async def reply_from_handler(client: Client, message: RawMessage):
         Altruix.log(f"📌 [RF DEBUG] PRE-Wrap Caption: {final_caption}", level=20)
         Altruix.log(f"📌 [RF DEBUG] PRE-Wrap Text: {final_text}", level=20)
                     
-        # Wrap all captions/text in blockquote expandable
-        if final_caption:
-            final_caption = f"<blockquote expandable>{final_caption}</blockquote>"
-        if final_text:
-            final_text = f"<blockquote expandable>{final_text}</blockquote>"
-            
-        Altruix.log(f"📌 [RF DEBUG] POST-Wrap Caption: {final_caption}", level=20)
-        Altruix.log(f"📌 [RF DEBUG] POST-Wrap Text: {final_text}", level=20)
+        # Preserve caption/text as-is unless the user explicitly provides formatting.
+        Altruix.log(f"📌 [RF DEBUG] FINAL Caption: {final_caption}", level=20)
+        Altruix.log(f"📌 [RF DEBUG] FINAL Text: {final_text}", level=20)
 
         reply_id = message.reply_to_message.id
 
@@ -533,7 +527,6 @@ async def reply_from_handler(client: Client, message: RawMessage):
                    "✏️ Story dengan caption custom:\n"
                    ".replyfromscust https://t.me/username/s/123 | Ini caption story aesthetic!",
         "note": "✨ Auto-logs ke Log Group. Bypass method mendukung thumbnail.\n"
-                "Caption otomatis menggunakan format blockquote expandable.\n"
                 "Gunakan 'noc' atau 'nocredit' untuk menghilangkan credit source."
     },
     requires_input=True,
@@ -719,9 +712,6 @@ async def reply_from_story_handler(client: Client, message: RawMessage):
             if not no_credit:
                  final_caption = f"📥 <b>Story from</b> @{target_raw}"
 
-        if final_caption:
-            final_caption = f"<blockquote expandable>{final_caption}</blockquote>"
-        
         Altruix.log(f"📌 [Story DEBUG] Final Caption to Send (repr): {repr(final_caption)}", level=20)
         
         try:

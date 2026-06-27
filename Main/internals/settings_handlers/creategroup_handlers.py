@@ -8,10 +8,11 @@ import time
 import random
 import string
 import re
+import json
 import json as _json
 from typing import Optional, Dict
-from pyrogram import Client, filters
-from pyrogram.errors import QueryIdInvalid, MessageNotModified
+from pyrogram import Client, filters, enums
+from pyrogram.errors import FloodWait, QueryIdInvalid, MessageNotModified
 from pyrogram.types import (
     CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton,
     InlineQuery, InlineQueryResultArticle, InputTextMessageContent,
@@ -2622,18 +2623,15 @@ async def creategroup_toggle_handler(c: Client, cb: CallbackQuery):
 # ─── CREATION REPORTS SUBMENU [NEW] ───
 
 def load_creation_report() -> dict:
+    from Main.plugins.userbot.xcreategroup import _load_report_data
     from Main.utils.file_helpers import get_db_path
-    import json
-    import os
-    
+
     file_path = get_db_path("xcreategroup_created_report.json")
-    if os.path.exists(file_path):
-        try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception as e:
-            logger.warning(f"Failed to load creation report json: {e}")
-    return {}
+    try:
+        return _load_report_data(file_path)
+    except Exception as e:
+        logger.warning(f"Failed to load creation report: {e}\n{traceback.format_exc()}")
+        return {}
 
 @Altruix.bot.on_callback_query(filters.regex(r"^creategroup_reports_(\d+)_(\d+)_(\d+)$"))
 @iuser_check
@@ -2708,6 +2706,21 @@ async def creategroup_reports_handler(c: Client, cb: CallbackQuery):
         buttons.append([
             InlineKeyboardButton("📤 Export All Reports", callback_data=f"creategroup_repexp_all_{session_index}_{page}", style=user_style)
         ])
+        buttons.append([
+            InlineKeyboardButton("🔎 Scan This Session Owner", callback_data=f"creategroup_scan_owner_{session_index}_{page}", style=user_style)
+        ])
+        buttons.append([
+            InlineKeyboardButton("🔎 Scan All Sessions Owners", callback_data=f"creategroup_scan_all_sessions_{session_index}_{page}", style=user_style)
+        ])
+        buttons.append([
+            InlineKeyboardButton("🔎 Scan Global Owner Totals", callback_data=f"creategroup_scan_global_{session_index}_{page}", style=user_style)
+        ])
+        buttons.append([
+            InlineKeyboardButton("💾 Save Manual Scan to Report", callback_data=f"creategroup_save_manual_scan_{session_index}_{page}_{report_page}", style=user_style)
+        ])
+        buttons.append([
+            InlineKeyboardButton("🧹 Cleanup Report Files", callback_data=f"creategroup_report_cleanup_confirm_{session_index}_{page}_{report_page}", style=user_style)
+        ])
         
         nav = []
         if report_page > 1:
@@ -2738,6 +2751,487 @@ async def creategroup_reports_handler(c: Client, cb: CallbackQuery):
         logger.error(f"Error in creategroup_reports_handler: {e}\n{traceback.format_exc()}")
         try:
             await cb.answer(f"❌ Error: {e}", show_alert=True)
+        except Exception:
+            pass
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^creategroup_report_cleanup_confirm_(\d+)_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def creategroup_report_cleanup_confirm_handler(c: Client, cb: CallbackQuery):
+    try:
+        await cb.answer()
+        session_index = int(cb.matches[0].group(1))
+        page = int(cb.matches[0].group(2))
+        report_page = int(cb.matches[0].group(3))
+
+        from Main.internals.settings_handlers.custom_alert_handlers import _get_session_user_id
+        session_user_id = _get_session_user_id(session_index)
+        user_style = get_user_button_style(session_user_id)
+
+        text = "<blockquote expandable><b>🧹 Cleanup Report Files</b>\n\nThis action will merge any fallback report files into the main report file and remove the temporary copies. Continue?</blockquote>"
+        buttons = [
+            [
+                InlineKeyboardButton("✅ Yes, Cleanup", callback_data=f"creategroup_report_cleanup_yes_{session_index}_{page}_{report_page}", style=user_style),
+                InlineKeyboardButton("❌ No, Cancel", callback_data=f"creategroup_reports_{session_index}_{page}_{report_page}", style=user_style),
+            ]
+        ]
+        await safe_edit_message_text(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
+    except Exception as e:
+        logger.error(f"Error in creategroup_report_cleanup_confirm_handler: {e}\n{traceback.format_exc()}")
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^creategroup_report_cleanup_yes_(\d+)_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def creategroup_report_cleanup_yes_handler(c: Client, cb: CallbackQuery):
+    try:
+        await cb.answer("Cleaning up report files...", show_alert=False)
+        session_index = int(cb.matches[0].group(1))
+        page = int(cb.matches[0].group(2))
+        report_page = int(cb.matches[0].group(3))
+
+        from Main.internals.settings_handlers.custom_alert_handlers import _get_session_user_id
+        session_user_id = _get_session_user_id(session_index)
+        user_style = get_user_button_style(session_user_id)
+
+        from Main.plugins.userbot.xcreategroup import cleanup_report_fallback_files
+        result = await cleanup_report_fallback_files()
+
+        text = (
+            "<blockquote expandable><b>🧹 Cleanup Report Files</b>\n\n"
+            f"Fallback files found: {result.get('fallback_count', 0)}\n"
+            f"Main report rewritten: {'Yes' if result.get('rewritten') else 'No'}\n"
+            "Temporary report copies were removed where possible.</blockquote>"
+        )
+        buttons = [[InlineKeyboardButton("🔙 Back to Reports", callback_data=f"creategroup_reports_{session_index}_{page}_{report_page}", style=user_style)]]
+        await safe_edit_message_text(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
+    except Exception as e:
+        logger.error(f"Error in creategroup_report_cleanup_yes_handler: {e}\n{traceback.format_exc()}")
+        try:
+            await cb.answer(f"❌ Cleanup failed: {e}", show_alert=True)
+        except Exception:
+            pass
+
+
+def _get_report_totals_for_account(report_data: dict, account_id: Optional[int]) -> tuple[int, int, int]:
+    if not account_id:
+        return 0, 0, 0
+    try:
+        acc_info = report_data.get(str(account_id)) or report_data.get(account_id)
+        if not isinstance(acc_info, dict):
+            return 0, 0, 0
+        created_groups = acc_info.get("created_groups", []) or []
+        total_created = len(created_groups)
+        channels_count = sum(1 for g in created_groups if str(g.get("type", "g")).lower() in {"c", "channel"})
+        groups_count = total_created - channels_count
+        return total_created, groups_count, channels_count
+    except Exception:
+        return 0, 0, 0
+
+
+def _get_combined_count_from_sources(report_data: dict, account_id: Optional[int], scan_assets: list) -> tuple[int, int, int, int]:
+    report_total, report_groups, report_channels = _get_report_totals_for_account(report_data, account_id)
+    scan_total = len(scan_assets or [])
+    scan_ids = {str(item.get("id")) for item in (scan_assets or []) if item.get("id") is not None}
+    report_ids = set()
+    try:
+        acc_info = report_data.get(str(account_id)) or report_data.get(account_id)
+        if isinstance(acc_info, dict):
+            for group in acc_info.get("created_groups", []) or []:
+                gid = group.get("id")
+                if gid is not None:
+                    report_ids.add(str(gid))
+    except Exception:
+        pass
+    combined_total = len(report_ids | scan_ids)
+    return combined_total, report_total, scan_total, report_groups
+
+
+async def _scan_session_owner_dialogs(client: Client) -> tuple[list[dict], int, int, float]:
+    owned_assets = []
+    owned_groups = 0
+    owned_channels = 0
+    start_ts = time.time()
+    async for dialog in client.get_dialogs():
+        chat = dialog.chat
+        if chat.type not in [enums.ChatType.GROUP, enums.ChatType.SUPERGROUP, enums.ChatType.CHANNEL]:
+            continue
+        await asyncio.sleep(0)
+        try:
+            member = await chat.get_member("me")
+            if member.status == enums.ChatMemberStatus.OWNER:
+                asset = {
+                    "id": chat.id,
+                    "title": chat.title,
+                    "username": chat.username,
+                    "type": chat.type,
+                }
+                owned_assets.append(asset)
+                if chat.type == enums.ChatType.CHANNEL:
+                    owned_channels += 1
+                else:
+                    owned_groups += 1
+        except FloodWait as fw:
+            await asyncio.sleep(fw.value + 2)
+            try:
+                member = await chat.get_member("me")
+                if member.status == enums.ChatMemberStatus.OWNER:
+                    asset = {
+                        "id": chat.id,
+                        "title": chat.title,
+                        "username": chat.username,
+                        "type": chat.type,
+                    }
+                    owned_assets.append(asset)
+                    if chat.type == enums.ChatType.CHANNEL:
+                        owned_channels += 1
+                    else:
+                        owned_groups += 1
+            except Exception:
+                pass
+        except Exception:
+            pass
+    elapsed = time.time() - start_ts
+    return owned_assets, owned_groups, owned_channels, elapsed
+
+
+async def _scan_all_sessions_owner_dialogs() -> tuple[list, float]:
+    results = []
+    start_ts = time.time()
+    for index, client in enumerate(Altruix.clients, start=1):
+        if client is None:
+            results.append((index, None, None, None, "Session unavailable"))
+            continue
+        try:
+            assets, groups, channels, elapsed = await _scan_session_owner_dialogs(client)
+            results.append((index, assets, groups, channels, elapsed))
+        except Exception as e:
+            results.append((index, None, None, None, str(e)))
+    return results, time.time() - start_ts
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^creategroup_save_manual_scan_(\d+)_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def creategroup_save_manual_scan_handler(c: Client, cb: CallbackQuery):
+    try:
+        await cb.answer("💾 Saving manual scan into report DB...", show_alert=False)
+        session_index = int(cb.matches[0].group(1))
+        page = int(cb.matches[0].group(2))
+        report_page = int(cb.matches[0].group(3))
+
+        from Main.internals.settings_handlers.custom_alert_handlers import _get_session_user_id
+        session_user_id = _get_session_user_id(session_index)
+        user_style = get_user_button_style(session_user_id)
+
+        if session_index < 1 or session_index > len(Altruix.clients):
+            raise ValueError("Invalid session index")
+
+        client = Altruix.clients[session_index - 1]
+        if client is None:
+            raise ValueError("Session client unavailable")
+
+        await safe_edit_message_text(cb, "🔄 <b>Saving manual scan results into report database...</b>", parse_mode=ParseMode.HTML)
+        assets, groups, channels, elapsed = await _scan_session_owner_dialogs(client)
+        from Main.plugins.userbot.xcreategroup import save_manual_scan_assets_to_report
+
+        me = getattr(client, "me", None) or getattr(client, "myself", None)
+        account_id = getattr(me, "id", None) or session_user_id
+        account_name = " ".join([part for part in [getattr(me, "first_name", None), getattr(me, "last_name", None)] if part]).strip() or f"Session {session_index}"
+        username = getattr(me, "username", None) or ""
+
+        result_data = await save_manual_scan_assets_to_report(
+            account_id=account_id,
+            account_name=account_name,
+            username=username,
+            scan_assets=assets,
+            source_label="manual_scan",
+            session_index=session_index,
+        )
+        entry = result_data.get(str(account_id)) or result_data.get(account_id) or {}
+        saved_count = len(entry.get("created_groups", []) or [])
+
+        text = (
+            f"<b>💾 Manual Scan Saved</b>\n\n"
+            f"• Session: <code>{session_index}</code>\n"
+            f"• Saved entries: <code>{saved_count}</code>\n"
+            f"• Scan time: <code>{round(elapsed, 1)}s</code>\n"
+            f"\n<i>Manual scan assets were merged into the CreateGroup report database without duplicating existing IDs.</i>"
+        )
+        buttons = [[InlineKeyboardButton("🔙 Back to Reports", callback_data=f"creategroup_reports_{session_index}_{page}_{report_page}", style=user_style)]]
+        await safe_edit_message_text(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
+    except Exception as e:
+        logger.error(f"Error in creategroup_save_manual_scan_handler: {e}\n{traceback.format_exc()}")
+        try:
+            await cb.answer(f"❌ Save failed: {e}", show_alert=True)
+        except Exception:
+            pass
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^creategroup_scan_owner_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def creategroup_scan_owner_handler(c: Client, cb: CallbackQuery):
+    try:
+        session_index = int(cb.matches[0].group(1))
+        page = int(cb.matches[0].group(2))
+        from Main.internals.settings_handlers.custom_alert_handlers import _get_session_user_id
+        session_user_id = _get_session_user_id(session_index)
+        user_style = get_user_button_style(session_user_id)
+
+        await cb.answer("🔎 Scanning current session owner dialogs...", show_alert=False)
+        if session_index < 1 or session_index > len(Altruix.clients):
+            raise ValueError("Invalid session index")
+
+        client = Altruix.clients[session_index - 1]
+        if client is None:
+            raise ValueError("Session client unavailable")
+
+        await safe_edit_message_text(cb, "🔄 <b>Scanning current session owner dialogs...</b>", parse_mode=ParseMode.HTML)
+        assets, groups, channels, elapsed = await _scan_session_owner_dialogs(client)
+        report_data = load_creation_report()
+        combined_total, report_total, scan_total, _ = _get_combined_count_from_sources(report_data, session_user_id, assets)
+        total = groups + channels
+
+        text = (
+            f"<b>🔎 Current Session Owner Scan</b>\n\n"
+            f"• Owned Groups: <code>{groups}</code>\n"
+            f"• Owned Channels: <code>{channels}</code>\n"
+            f"• Manual Scan Total: <code>{scan_total}</code>\n"
+            f"• Report DB Total: <code>{report_total}</code>\n"
+            f"• Combined Unique Total: <code>{combined_total}</code>\n"
+            f"• Scan Time: <code>{round(elapsed, 1)}s</code>"
+        )
+        buttons = [[InlineKeyboardButton("🔙 Back to Reports", callback_data=f"creategroup_reports_{session_index}_{page}_1", style=user_style)]]
+        await safe_edit_message_text(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
+    except Exception as e:
+        logger.error(f"Error in creategroup_scan_owner_handler: {e}\n{traceback.format_exc()}")
+        try:
+            await cb.answer(f"❌ Scan failed: {e}", show_alert=True)
+        except Exception:
+            pass
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^creategroup_scan_all_sessions_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def creategroup_scan_all_sessions_handler(c: Client, cb: CallbackQuery):
+    try:
+        session_index = int(cb.matches[0].group(1))
+        page = int(cb.matches[0].group(2))
+        from Main.internals.settings_handlers.custom_alert_handlers import _get_session_user_id
+        session_user_id = _get_session_user_id(session_index)
+        user_style = get_user_button_style(session_user_id)
+
+        await cb.answer("🔎 Scanning all session owners...", show_alert=False)
+        await safe_edit_message_text(cb, "🔄 <b>Scanning all sessions for owner dialogs...</b>", parse_mode=ParseMode.HTML)
+
+        results, elapsed = await _scan_all_sessions_owner_dialogs()
+        report_data = load_creation_report()
+        total_groups = sum(r[2] for r in results if isinstance(r[2], int))
+        total_channels = sum(r[3] for r in results if isinstance(r[3], int))
+        lines = [f"<b>🔎 All Sessions Owner Scan</b>\n\n"]
+        for index, assets, groups, channels, info in results:
+            if groups is None:
+                lines.append(f"• Session {index}: <code>{info}</code>")
+                continue
+            session_user_id = None
+            try:
+                from Main.internals.settings_handlers.custom_alert_handlers import _get_session_user_id
+                session_user_id = _get_session_user_id(index)
+            except Exception:
+                pass
+            combined_total, report_total, scan_total, _ = _get_combined_count_from_sources(report_data, session_user_id, assets or [])
+            lines.append(
+                f"• Session {index}: Groups <code>{groups}</code>, Channels <code>{channels}</code> | "
+                f"Manual <code>{scan_total}</code>, Report DB <code>{report_total}</code>, Combined <code>{combined_total}</code>"
+            )
+        lines.append("")
+        lines.append(f"<b>Total Owned Groups:</b> <code>{total_groups}</code>")
+        lines.append(f"<b>Total Owned Channels:</b> <code>{total_channels}</code>")
+        lines.append(f"<b>Scan Time:</b> <code>{round(elapsed, 1)}s</code>")
+
+        text = "\n".join(lines)
+        buttons = [[InlineKeyboardButton("🔙 Back to Reports", callback_data=f"creategroup_reports_{session_index}_{page}_1", style=user_style)]]
+        await safe_edit_message_text(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
+    except Exception as e:
+        logger.error(f"Error in creategroup_scan_all_sessions_handler: {e}\n{traceback.format_exc()}")
+        try:
+            await cb.answer(f"❌ Scan failed: {e}", show_alert=True)
+        except Exception:
+            pass
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^creategroup_scan_account_(\d+)_(\d+)_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def creategroup_scan_account_handler(c: Client, cb: CallbackQuery):
+    try:
+        session_index = int(cb.matches[0].group(1))
+        page = int(cb.matches[0].group(2))
+        target_account_id = int(cb.matches[0].group(3))
+        detail_page = int(cb.matches[0].group(4))
+
+        from Main.internals.settings_handlers.custom_alert_handlers import _get_session_user_id
+        session_user_id = _get_session_user_id(session_index)
+        user_style = get_user_button_style(session_user_id)
+
+        await cb.answer("🔎 Scanning account owner session...", show_alert=False)
+        await safe_edit_message_text(cb, "🔄 <b>Scanning account owner session...</b>", parse_mode=ParseMode.HTML)
+
+        found_session = await _find_session_index_by_user_id(target_account_id)
+        if not found_session:
+            text = (
+                f"<b>🔎 Scan This Account Group</b>\n\n"
+                f"• Akun ini tidak terhubung dengan session aktif saat ini.\n"
+                f"• Pastikan akun tersebut sedang aktif di salah satu session yang terdaftar."
+            )
+            buttons = [[InlineKeyboardButton("🔙 Back to Details", callback_data=f"creategroup_repdet_{session_index}_{page}_{target_account_id}_{detail_page}", style=user_style)]]
+            return await safe_edit_message_text(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
+
+        client = Altruix.clients[found_session - 1]
+        if client is None:
+            raise ValueError("Session client for account tidak tersedia")
+
+        assets, groups, channels, elapsed = await _scan_session_owner_dialogs(client)
+        report_data = load_creation_report()
+        combined_total, report_total, scan_total, _ = _get_combined_count_from_sources(report_data, target_account_id, assets)
+
+        text = (
+            f"<b>🔎 Scan This Account Group</b>\n\n"
+            f"• Owned Groups: <code>{groups}</code>\n"
+            f"• Owned Channels: <code>{channels}</code>\n"
+            f"• Manual Scan Total: <code>{scan_total}</code>\n"
+            f"• Report DB Total: <code>{report_total}</code>\n"
+            f"• Combined Unique Total: <code>{combined_total}</code>\n"
+            f"• Session Index: <code>{found_session}</code>\n"
+            f"• Scan Time: <code>{round(elapsed, 1)}s</code>"
+        )
+        buttons = [
+            [InlineKeyboardButton("💾 Save Manual Scan to Report", callback_data=f"creategroup_save_manual_scan_account_{session_index}_{page}_{target_account_id}_{detail_page}", style=user_style)],
+            [InlineKeyboardButton("🔙 Back to Details", callback_data=f"creategroup_repdet_{session_index}_{page}_{target_account_id}_{detail_page}", style=user_style)]
+        ]
+        await safe_edit_message_text(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
+    except Exception as e:
+        logger.error(f"Error in creategroup_scan_account_handler: {e}\n{traceback.format_exc()}")
+        try:
+            await cb.answer(f"❌ Scan failed: {e}", show_alert=True)
+        except Exception:
+            pass
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^creategroup_save_manual_scan_account_(\d+)_(\d+)_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def creategroup_save_manual_scan_account_handler(c: Client, cb: CallbackQuery):
+    try:
+        await cb.answer("💾 Saving scanned account groups into report DB...", show_alert=False)
+        session_index = int(cb.matches[0].group(1))
+        page = int(cb.matches[0].group(2))
+        target_account_id = int(cb.matches[0].group(3))
+        detail_page = int(cb.matches[0].group(4))
+
+        from Main.internals.settings_handlers.custom_alert_handlers import _get_session_user_id
+        session_user_id = _get_session_user_id(session_index)
+        user_style = get_user_button_style(session_user_id)
+
+        found_session = await _find_session_index_by_user_id(target_account_id)
+        if not found_session:
+            text = (
+                f"<b>💾 Save Manual Scan to Report</b>\n\n"
+                f"• Tidak ada session aktif yang terhubung dengan akun ini."
+            )
+            buttons = [[InlineKeyboardButton("🔙 Back to Details", callback_data=f"creategroup_repdet_{session_index}_{page}_{target_account_id}_{detail_page}", style=user_style)]]
+            return await safe_edit_message_text(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
+
+        client = Altruix.clients[found_session - 1]
+        if client is None:
+            raise ValueError("Session client for account tidak tersedia")
+
+        await safe_edit_message_text(cb, "🔄 <b>Saving account scan results into report database...</b>", parse_mode=ParseMode.HTML)
+        assets, groups, channels, elapsed = await _scan_session_owner_dialogs(client)
+        from Main.plugins.userbot.xcreategroup import save_manual_scan_assets_to_report
+
+        report_data = load_creation_report()
+        acc_info = report_data.get(str(target_account_id)) or report_data.get(target_account_id) or {}
+        account_name = acc_info.get("account_name") or f"Account {target_account_id}"
+        username = acc_info.get("username") or ""
+
+        result_data = await save_manual_scan_assets_to_report(
+            account_id=target_account_id,
+            account_name=account_name,
+            username=username,
+            scan_assets=assets,
+            source_label="manual_scan",
+            session_index=found_session,
+        )
+        entry = result_data.get(str(target_account_id)) or result_data.get(target_account_id) or {}
+        saved_count = len(entry.get("created_groups", []) or [])
+
+        text = (
+            f"<b>💾 Manual Scan Saved</b>\n\n"
+            f"• Account: <code>{account_name}</code>\n"
+            f"• Session: <code>{found_session}</code>\n"
+            f"• Saved entries: <code>{saved_count}</code>\n"
+            f"• Scan time: <code>{round(elapsed, 1)}s</code>"
+        )
+        buttons = [[InlineKeyboardButton("🔙 Back to Details", callback_data=f"creategroup_repdet_{session_index}_{page}_{target_account_id}_{detail_page}", style=user_style)]]
+        await safe_edit_message_text(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
+    except Exception as e:
+        logger.error(f"Error in creategroup_save_manual_scan_account_handler: {e}\n{traceback.format_exc()}")
+        try:
+            await cb.answer(f"❌ Save failed: {e}", show_alert=True)
+        except Exception:
+            pass
+
+
+@Altruix.bot.on_callback_query(filters.regex(r"^creategroup_scan_global_(\d+)_(\d+)$"))
+@iuser_check
+@log_errors
+async def creategroup_scan_global_handler(c: Client, cb: CallbackQuery):
+    try:
+        session_index = int(cb.matches[0].group(1))
+        page = int(cb.matches[0].group(2))
+        from Main.internals.settings_handlers.custom_alert_handlers import _get_session_user_id
+        session_user_id = _get_session_user_id(session_index)
+        user_style = get_user_button_style(session_user_id)
+
+        await cb.answer("🔎 Running global owner totals scan...", show_alert=False)
+        await safe_edit_message_text(cb, "🔄 <b>Running global owner totals scan...</b>", parse_mode=ParseMode.HTML)
+
+        results, elapsed = await _scan_all_sessions_owner_dialogs()
+        report_data = load_creation_report()
+        aggregate_total = sum((r[2] or 0) + (r[3] or 0) for r in results if isinstance(r[2], int) and isinstance(r[3], int))
+        total_sessions = len(results)
+        report_total = 0
+        combined_total = 0
+        for index, assets, groups, channels, info in results:
+            if assets is None:
+                continue
+            try:
+                from Main.internals.settings_handlers.custom_alert_handlers import _get_session_user_id
+                session_user_id = _get_session_user_id(index)
+            except Exception:
+                session_user_id = None
+            combined, rep_total, scan_total, _ = _get_combined_count_from_sources(report_data, session_user_id, assets or [])
+            report_total += rep_total
+            combined_total += combined
+        text = (
+            f"<b>🌍 Global Owner Totals Scan</b>\n\n"
+            f"• Sessions scanned: <code>{total_sessions}</code>\n"
+            f"• Aggregate owned groups+channels: <code>{aggregate_total}</code>\n"
+            f"• Report DB total: <code>{report_total}</code>\n"
+            f"• Combined unique total: <code>{combined_total}</code>\n"
+            f"• Scan time: <code>{round(elapsed, 1)}s</code>\n"
+            f"\n<i>Note: Combined total uses a unique chat-id union between report database entries and manual owner-scan dialogs.</i>"
+        )
+        buttons = [[InlineKeyboardButton("🔙 Back to Reports", callback_data=f"creategroup_reports_{session_index}_{page}_1", style=user_style)]]
+        await safe_edit_message_text(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
+    except Exception as e:
+        logger.error(f"Error in creategroup_scan_global_handler: {e}\n{traceback.format_exc()}")
+        try:
+            await cb.answer(f"❌ Scan failed: {e}", show_alert=True)
         except Exception:
             pass
 
@@ -2808,6 +3302,9 @@ async def creategroup_report_detail_handler(c: Client, cb: CallbackQuery):
         buttons = [
             [
                 InlineKeyboardButton("📥 Export This Account Log", callback_data=f"creategroup_repexp_acc_{session_index}_{page}_{target_account_id}", style=user_style)
+            ],
+            [
+                InlineKeyboardButton("🔎 Scan This Account Group", callback_data=f"creategroup_scan_account_{session_index}_{page}_{target_account_id}_{detail_page}", style=user_style)
             ]
         ]
         

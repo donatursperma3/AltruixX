@@ -237,6 +237,76 @@ def get_settings_buttons(user_id=None):
         ]
     ]
 
+async def get_cache_manager_buttons(page: int = 1, user_id: int = None):
+    """Build paginated cache manager session buttons."""
+    from Main.utils.file_helpers import get_user_button_style
+    user_style = get_user_button_style(user_id) if user_id else enums.ButtonStyle.PRIMARY
+    sessions_per_page = 6
+
+    if not hasattr(Altruix, 'clients') or not Altruix.clients:
+        return [], 1, 0
+
+    valid_sessions = []
+    for idx, client in enumerate(Altruix.clients):
+        try:
+            me = getattr(client, 'me', None) or getattr(client, 'myself', None)
+            if not me:
+                me = await client.get_me()
+                client.myself = me
+
+            uid = getattr(me, 'id', None)
+            if uid is None:
+                continue
+
+            name = getattr(me, 'first_name', None) or f"Session {idx + 1}"
+            valid_sessions.append((idx, uid, name))
+        except Exception as e:
+            logger.warning(f"Cache manager picker: failed to resolve session at index {idx}: {e}")
+            continue
+
+    total_sessions = len(valid_sessions)
+    if total_sessions == 0:
+        return [], 1, 0
+
+    total_pages = (total_sessions + sessions_per_page - 1) // sessions_per_page
+    if page < 1:
+        page = 1
+    elif page > total_pages:
+        page = total_pages
+
+    start = (page - 1) * sessions_per_page
+    end = min(start + sessions_per_page, total_sessions)
+
+    buttons = []
+    for idx, uid, name in valid_sessions[start:end]:
+        display_name = html.escape(name[:18])
+        buttons.append([
+            InlineKeyboardButton(f"📟 {display_name} - PM Cache", callback_data=f"pmlu_cache_menu_{uid}", style=user_style),
+            InlineKeyboardButton(f"🔔 {display_name} - Mention Cache", callback_data=f"mnt_cache_menu_{uid}", style=user_style)
+        ])
+
+    nav_buttons = []
+    if page > 1:
+        nav_buttons.append(InlineKeyboardButton("« Prev", f"cache_manager_picker_{page - 1}", style=user_style))
+    else:
+        nav_buttons.append(InlineKeyboardButton("·", "noop", style=user_style))
+
+    nav_buttons.append(InlineKeyboardButton(f"Page {page}/{total_pages}", "noop", style=user_style))
+
+    if page < total_pages:
+        nav_buttons.append(InlineKeyboardButton("Next »", f"cache_manager_picker_{page + 1}", style=user_style))
+    else:
+        nav_buttons.append(InlineKeyboardButton("·", "noop", style=user_style))
+
+    buttons.append(nav_buttons)
+    buttons.append([
+        InlineKeyboardButton("First", "cache_manager_picker_1", style=user_style),
+        InlineKeyboardButton("🔙 Back", "configs_menu", style=user_style),
+        InlineKeyboardButton("Last", f"cache_manager_picker_{total_pages}", style=user_style)
+    ])
+
+    return buttons, page, total_pages
+
 # ====================== CORE SETTINGS HANDLERS ======================
 
 @Altruix.bot.on_message(filters.command("settings", "/") & Altruix.is_sudo_filter)
@@ -361,31 +431,33 @@ async def peer_notif_toggle_cb(c: Client, cb: CallbackQuery):
     # Refresh the Bot Controls menu
     await bot_controls_menu_handler(c, cb)
 
-@Altruix.bot.on_callback_query(filters.regex(r"^cache_manager_picker$"))
+@Altruix.bot.on_callback_query(filters.regex(r"^cache_manager_picker(?:_(\d+))?$") )
 @iuser_check
 @log_errors
 async def cache_manager_picker_handler(c: Client, cb: CallbackQuery):
-    """Show session picker for cache manager access."""
+    """Show session picker for cache manager access with pagination."""
     await cb.answer()
-    from Main.utils.file_helpers import get_user_button_style
-    user_style = get_user_button_style(cb.from_user.id)
+    try:
+        page = int(cb.matches[0].group(1)) if cb.matches[0].group(1) else 1
+    except Exception:
+        page = 1
 
-    buttons = []
-    for client in Altruix.clients:
-        if client.me:
-            name = client.me.first_name or "Session"
-            cid = client.me.id
-            buttons.append([
-                InlineKeyboardButton(f"📟 {name} - PM Cache", callback_data=f"pmlu_cache_menu_{cid}", style=user_style),
-                InlineKeyboardButton(f"🔔 {name} - Mention Cache", callback_data=f"mnt_cache_menu_{cid}", style=user_style),
-            ])
-    
+    buttons, current_page, total_pages = await get_cache_manager_buttons(page, user_id=cb.from_user.id)
     if not buttons:
-        buttons.append([InlineKeyboardButton("⚠️ No active sessions", callback_data="configs_menu", style=user_style)])
-    
-    buttons.append([InlineKeyboardButton("🔙 Back", callback_data="configs_menu", style=user_style)])
-    
-    text = "<b>🗃️ Cache Manager</b>\n\nSelect a session and cache type to manage:"
+        from Main.utils.file_helpers import get_user_button_style
+        fallback_style = get_user_button_style(cb.from_user.id)
+        buttons = [[InlineKeyboardButton("⚠️ No active sessions", callback_data="configs_menu", style=fallback_style)]]
+        buttons.append([InlineKeyboardButton("🔙 Back", callback_data="configs_menu", style=fallback_style)])
+
+    if total_pages < 1:
+        total_pages = 1
+
+    text = (
+        "<b>🗃️ Cache Manager</b>\n\n"
+        "Select a session and cache type to manage:\n"
+        f"<i>Page {current_page}/{total_pages}</i>"
+    )
+
     await edit_cb(cb, text, reply_markup=InlineKeyboardMarkup(buttons))
 
 @Altruix.bot.on_callback_query(filters.regex(r"^bot_controls_menu$"))

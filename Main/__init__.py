@@ -223,6 +223,11 @@ except ImportError:
     pass
 
 print_boot_msg("Importing Altruix Client (Loading Libraries)...")
-from .core.client import AltruixClient, Altruix
+try:
+    from .core.client import AltruixClient, Altruix
+except Exception as exc:
+    logging.getLogger(__name__).warning("Failed to import Altruix client at package init: %s", exc)
+    AltruixClient = None
+    Altruix = None
 # Ensure subpackages are exposed for test imports
 from . import core

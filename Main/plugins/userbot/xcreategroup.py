@@ -35,7 +35,11 @@ from pyrogram.types import (
 )
 from pyrogram.enums import ChatType, ChatMemberStatus, ParseMode, ChatAction
 
-from Main import Altruix
+try:
+    from Main import Altruix
+except Exception:
+    Altruix = None
+
 from Main.core.decorators import log_errors, iuser_check
 from Main.core.types.message import Message as AltruixMessage
 from Main.utils.helpers import ChatPrivileges
@@ -51,14 +55,17 @@ logger.setLevel(logging.INFO)
 
 # ==================== KONFIGURASI ====================
 # Dapatkan LOG_CHAT_ID dari config Altruix
-LOG_CHAT_ID = Altruix.log_chat or Altruix.config.LOG_CHAT_ID or Altruix.config.OWNER_USERS_ID
+try:
+    LOG_CHAT_ID = Altruix.log_chat or Altruix.config.LOG_CHAT_ID or Altruix.config.OWNER_USERS_ID
+except Exception:
+    LOG_CHAT_ID = None
 
 # 🔥 PERBAIKAN: Ambil handler dari config, bukan 'hndlr'
 try:
     HANDLER = Altruix.config.HANDLERS
     if isinstance(HANDLER, list):
         HANDLER = HANDLER[0]
-except AttributeError:
+except Exception:
     HANDLER = "."
 
 
@@ -68,7 +75,7 @@ COMPLETED_CREATEGROUP_TASKS: Dict[str, Dict[str, Any]] = {}
 RECOVERY_NOTIFIED = set() # ✅ Anti-Duplicate Guard
 CREATE_LOCK = asyncio.Lock()
 _CACHE_SAVE_LOCK = asyncio.Lock()
-from Main.utils.file_helpers import get_db_path
+from Main.utils.file_helpers import get_db_path, merge_report_data, find_report_fallback_files
 
 STORAGE_FILE = get_db_path("xcreategroup_cache.json")
 PENDING_CONFIRMATIONS = {}
@@ -78,6 +85,46 @@ CONFIRMATION_TTL_SECONDS = 300  # Expire confirmation data after 5 minutes
 CALLBACK_BUSY: Dict[str, float] = {}
 
 
+
+# Deprecated sync _ensure_bot_started – use async version defined later
+
+
+async def _ensure_bot_started(client: Client, bot_identifier: int | str) -> None:
+    """Send /start to a bot and ensure its peer is cached.
+
+    Handles both numeric IDs and usernames. After sending /start we attempt to resolve the
+    peer via ``get_users`` (for usernames) or ``get_chat`` (for IDs) and wait briefly to allow
+    the server to register the conversation. Retries are performed on ``PeerIdInvalid``
+    up to 3 attempts with exponential back‑off.
+    """
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        try:
+            await client.send_message(bot_identifier, "/start")
+            # Resolve the peer to populate the internal storage cache.
+            try:
+                if isinstance(bot_identifier, int):
+                    await client.get_chat(bot_identifier)
+                else:
+                    await client.get_users(bot_identifier)
+            except Exception:
+                # Non‑critical: resolution may have already succeeded.
+                pass
+            # Small pause to give Telegram time to register the peer.
+            await asyncio.sleep(0.5 * attempt)
+            return
+        except PeerIdInvalid as e:
+            logger.debug(f"Auto‑start attempt {attempt} failed for {bot_identifier}: {e}")
+            if attempt == max_retries:
+                logger.warning(f"Auto‑start ultimately failed for {bot_identifier} after {max_retries} attempts.")
+            else:
+                await asyncio.sleep(1 * attempt)
+        except Exception as e:
+            logger.warning(f"Unexpected error during auto‑start of {bot_identifier}: {e}")
+            return
+
+
+# State management untuk task creategroup
 async def _cleanup_pending_confirmations() -> None:
     """Remove stale pending confirmation entries to avoid memory growth."""
     if not PENDING_CONFIRMATIONS:
@@ -385,18 +432,169 @@ async def load_creategroup_cache():
     except Exception as e:
         logger.error(f"[CreateGroup] Error loading cache: {e}")
 
+def _load_report_data(file_path: str) -> dict:
+    data = {}
+    fallback_data = {}
+
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            logger.warning(f"Report file corrupted, attempting fallback load: {traceback.format_exc()}")
+
+    fallback_candidates = find_report_fallback_files(file_path)
+    if fallback_candidates:
+        logger.info(f"[CreateGroup][report] fallback files detected: {len(fallback_candidates)}")
+
+    merged_fallback_data = {}
+    for tmp_path in fallback_candidates:
+        try:
+            with open(tmp_path, "r", encoding="utf-8") as f:
+                fallback_chunk = json.load(f)
+            if fallback_chunk:
+                merged_fallback_data = merge_report_data(merged_fallback_data, fallback_chunk)
+            logger.info(f"[CreateGroup][report] loaded fallback data from {tmp_path}")
+        except Exception:
+            logger.warning(f"Failed to read report fallback file {tmp_path}: {traceback.format_exc()}")
+
+    if merged_fallback_data:
+        data = merge_report_data(data, merged_fallback_data)
+    return data
+
+
+def merge_manual_scan_assets_into_report_data(report_data: dict, account_id: Optional[int], account_name: str, username: str, scan_assets: List[Dict[str, Any]], source_label: str = "manual_scan", session_index: Optional[int] = None) -> tuple[dict, bool]:
+    """Safely merge manual owner-scan assets into the persisted CreateGroup report data without duplicates.
+
+    Returns a tuple of (updated_report_data, changed_flag).
+    """
+    changed = False
+    try:
+        if not isinstance(report_data, dict):
+            report_data = {}
+        if not account_id:
+            return report_data, changed
+
+        acc_key = str(account_id)
+        entry = report_data.get(acc_key)
+        if not isinstance(entry, dict):
+            entry = {
+                "account_name": account_name or "Unknown Account",
+                "username": username or "",
+                "created_groups": [],
+            }
+            report_data[acc_key] = entry
+            changed = True
+        else:
+            entry.setdefault("created_groups", [])
+            if account_name and entry.get("account_name") != account_name:
+                entry["account_name"] = account_name
+                changed = True
+            if username and entry.get("username") != username:
+                entry["username"] = username
+                changed = True
+
+        existing_ids = {str(group.get("id")) for group in entry.get("created_groups", []) if isinstance(group, dict) and group.get("id") is not None}
+
+        for asset in scan_assets or []:
+            if not isinstance(asset, dict):
+                continue
+            gid = asset.get("id")
+            if gid is None:
+                continue
+            gid_key = str(gid)
+            if gid_key in existing_ids:
+                continue
+            entry["created_groups"].append({
+                "task_id": asset.get("task_id") or f"{source_label}:{gid_key}",
+                "name": asset.get("title") or asset.get("name") or "Unnamed",
+                "link": asset.get("link") or "",
+                "id": gid,
+                "type": "c" if str(asset.get("type", "g")).lower() in {"c", "channel"} else "g",
+                "time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                "source": source_label,
+                "session_index": session_index,
+            })
+            existing_ids.add(gid_key)
+            changed = True
+
+        return report_data, changed
+    except Exception as e:
+        logger.error(f"[CreateGroup] Failed to merge manual scan assets into report data: {e}\n{traceback.format_exc()}")
+        return report_data, changed
+
+
+async def save_manual_scan_assets_to_report(account_id: Optional[int], account_name: str, username: str, scan_assets: List[Dict[str, Any]], source_label: str = "manual_scan", session_index: Optional[int] = None) -> dict:
+    """Persist manual owner-scan assets into the CreateGroup report JSON and return the updated report data."""
+    from Main.utils.file_helpers import get_db_path
+
+    file_path = get_db_path("xcreategroup_created_report.json")
+    try:
+        report_data = _load_report_data(file_path)
+        merged, changed = merge_manual_scan_assets_into_report_data(
+            report_data,
+            account_id=account_id,
+            account_name=account_name,
+            username=username,
+            scan_assets=scan_assets,
+            source_label=source_label,
+            session_index=session_index,
+        )
+        if changed:
+            tmp = f"{file_path}.tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(merged, f, indent=2, ensure_ascii=False)
+            os.replace(tmp, file_path)
+            logger.info(f"[CreateGroup] Saved manual scan assets to report DB for account {account_id}.")
+        else:
+            logger.info(f"[CreateGroup] No new manual scan assets to save for account {account_id}.")
+        return merged
+    except Exception as e:
+        logger.error(f"[CreateGroup] Failed to save manual scan assets to report DB: {e}\n{traceback.format_exc()}")
+        return _load_report_data(file_path)
+
+
+async def cleanup_report_fallback_files() -> dict:
+    """Merge fallback report files into the main report file and remove the temporary copies."""
+    from Main.utils.file_helpers import get_db_path
+
+    file_path = get_db_path("xcreategroup_created_report.json")
+    merged_data = _load_report_data(file_path)
+    fallback_candidates = find_report_fallback_files(file_path)
+
+    if fallback_candidates:
+        logger.info(f"[CreateGroup][report] cleaning up {len(fallback_candidates)} fallback report file(s)")
+
+    for tmp_path in fallback_candidates:
+        try:
+            os.remove(tmp_path)
+            logger.info(f"[CreateGroup][report] removed fallback report file {tmp_path}")
+        except Exception as e:
+            logger.warning(f"[CreateGroup][report] failed to remove fallback report file {tmp_path}: {e}")
+
+    if merged_data:
+        try:
+            tmp = f"{file_path}.tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(merged_data, f, indent=2, ensure_ascii=False)
+            os.replace(tmp, file_path)
+            logger.info("[CreateGroup][report] report cleanup completed and main report rewritten")
+        except Exception as e:
+            logger.error(f"[CreateGroup][report] cleanup rewrite failed: {e}")
+
+    return {
+        "file_path": file_path,
+        "fallback_count": len(fallback_candidates),
+        "rewritten": bool(merged_data),
+    }
+
+
 async def save_created_group_to_report(account_id: int, account_name: str, username: str, task_id: str, name: str, link: str, chat_id: int, group_type: str):
     from Main.utils.file_helpers import get_db_path
     
     file_path = get_db_path("xcreategroup_created_report.json")
     try:
-        data = {}
-        if os.path.exists(file_path):
-            with open(file_path, "r", encoding="utf-8") as f:
-                try:
-                    data = json.load(f)
-                except Exception:
-                    logger.warning(f"Report file corrupted, resetting: {traceback.format_exc()}")
+        data = _load_report_data(file_path)
         
         acc_key = str(account_id)
         if acc_key not in data:
@@ -408,6 +606,7 @@ async def save_created_group_to_report(account_id: int, account_name: str, usern
         else:
             data[acc_key]["account_name"] = account_name
             data[acc_key]["username"] = username
+            data[acc_key].setdefault("created_groups", [])
             
         exists = any(g.get("id") == chat_id for g in data[acc_key]["created_groups"])
         if not exists:
@@ -436,13 +635,7 @@ async def save_failed_error_to_report(account_id: int, account_name: str, userna
     import os
     file_path = get_db_path("xcreategroup_created_report.json")
     try:
-        data = {}
-        if os.path.exists(file_path):
-            with open(file_path, "r", encoding="utf-8") as f:
-                try:
-                    data = json.load(f)
-                except Exception:
-                    logger.warning(f"Report file corrupted, resetting: {traceback.format_exc()}")
+        data = _load_report_data(file_path)
 
         acc_key = str(account_id)
         if acc_key not in data:
@@ -453,8 +646,8 @@ async def save_failed_error_to_report(account_id: int, account_name: str, userna
                 "errors": []
             }
         else:
-            # ensure errors key exists
             data[acc_key].setdefault("errors", [])
+            data[acc_key].setdefault("created_groups", [])
             data[acc_key]["account_name"] = account_name
             data[acc_key]["username"] = username
 
@@ -479,14 +672,7 @@ async def sync_existing_created_groups():
     import os
     
     file_path = get_db_path("xcreategroup_created_report.json")
-    report_data = {}
-    if os.path.exists(file_path):
-        try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                report_data = json.load(f)
-        except Exception:
-            pass
-            
+    report_data = _load_report_data(file_path)
     updated = False
     
     def add_grp(acc_id, acc_name, username, task_id, grp):
@@ -2454,7 +2640,7 @@ async def creategroup_loop(
                         logger.debug(f"Gagal update countdown msg: {e}")
                     return msg_obj
 
-                interval = 10
+                interval = 5
                 countdown_msg_log = None
                 countdown_msg_pm = None
 
@@ -2661,12 +2847,14 @@ async def creategroup_loop(
                                 except Exception as e:
                                     await update_group_log(f"❌ Gagal set anonymous admin: {str(e)}")
 
-                            # Invite and Promote Assistant Bot for supergroups/channels
                             if invite_assistant:
+                                # Ensure assistant bot has a private chat (creates peer entry)
+                                await _ensure_bot_started(user_client, assistant.id)
                                 try:
+                                    # Primary attempt: invite assistant bot
                                     await user_client.add_chat_members(created_chat_id, assistant.id)
                                     await user_client.promote_chat_member(
-                                        created_chat_id, 
+                                        created_chat_id,
                                         assistant.id,
                                         privileges=ChatPrivileges(
                                             can_manage_chat=False,
@@ -2674,22 +2862,66 @@ async def creategroup_loop(
                                             can_delete_messages=False,
                                             can_invite_users=False,
                                             can_pin_messages=True,
-                                            can_change_info=False
-                                        )
+                                            can_change_info=False,
+                                        ),
                                     )
-                                    await update_group_log(f"🤖 Asisten bot diundang & di-admin")
-                                    # Welcome message from bot (tanpa info akun)
+                                    await update_group_log("🤖 Asisten bot diundang & di-admin")
+                                    # Welcome message from assistant bot
                                     await bot_client.send_message(
-                                        created_chat_id, 
+                                        created_chat_id,
                                         f"<blockquote expandable>"
-                                        f"🚀 <b>{type_label_full} Initialized!</b>\n"                                 
+                                        f"🚀 <b>{type_label_full} Initialized!</b>\n"
                                         f"━━━━━━━━━━━━━━━━━━━━\n"
                                         f"• <b>Chat ID:</b><code> {created_chat_id}</code>\n"
                                         f"• <b>Status:</b> Active\n\n"
-                                        f"<i>Powered by Altroid-X Engine</i>"
+                                        f"<i>Powered by Altroid‑X Engine</i>"
                                         f"</blockquote>",
-                                        parse_mode=ParseMode.HTML
+                                        parse_mode=ParseMode.HTML,
                                     )
+                                except PeerIdInvalid as pid_err:
+                                    # Fallback: invite main bot if assistant bot ID is invalid
+                                    logger.warning(
+                                        f"Assistant bot invite failed with PeerIdInvalid: {pid_err}. Attempting main bot fallback."
+                                    )
+                                    # Ensure main bot has a private chat
+                                    main_bot = getattr(Altruix.bot, "me", None)
+                                    if main_bot and hasattr(main_bot, "id"):
+                                        await _ensure_bot_started(user_client, main_bot.id)
+                                    try:
+                                        main_bot_id = getattr(Altruix.bot, "me", None)
+                                        if main_bot_id and hasattr(main_bot_id, "id"):
+                                            await user_client.add_chat_members(created_chat_id, main_bot_id.id)
+                                            await user_client.promote_chat_member(
+                                                created_chat_id,
+                                                main_bot_id.id,
+                                                privileges=ChatPrivileges(
+                                                    can_manage_chat=False,
+                                                    can_post_messages=True,
+                                                    can_delete_messages=False,
+                                                    can_invite_users=False,
+                                                    can_pin_messages=True,
+                                                    can_change_info=False,
+                                                ),
+                                            )
+                                            await update_group_log("🤖 Main bot diundang & di-admin (fallback)")
+                                            await bot_client.send_message(
+                                                created_chat_id,
+                                                f"<blockquote expandable>"
+                                                f"⚠️ Assistant bot invite failed; main bot joined as fallback.\n"
+                                                f"• <b>Chat ID:</b><code> {created_chat_id}</code>"
+                                                f"</blockquote>",
+                                                parse_mode=ParseMode.HTML,
+                                            )
+                                        else:
+                                            logger.error("Main bot instance not available for fallback invitation.")
+                                            await update_group_log("❌ Fallback main bot invitation failed: bot unavailable.")
+                                    except Exception as fallback_err:
+                                        logger.error(
+                                            f"Fallback main bot invitation also failed: {fallback_err}\n{traceback.format_exc()}"
+                                        )
+                                        await update_group_log(
+                                            f"❌ Fallback main bot invitation failed: {str(fallback_err)}"
+                                        )
                                 except Exception as ebot:
                                     err_msg = str(ebot)
                                     if "USER_PRIVACY_RESTRICTED" in err_msg:
@@ -2698,7 +2930,6 @@ async def creategroup_loop(
                                         msg = "❌ Gagal undang asisten: Bot tidak dapat diundang"
                                     else:
                                         msg = f"❌ Gagal undang asisten: {err_msg}"
-                                    
                                     logger.warning(f"Gagal undang asisten bot ke {created_chat_id}: {ebot}")
                                     await update_group_log(msg)
 
@@ -3541,6 +3772,7 @@ async def creategroup_loop(
                 "temp_pin": temp_pin,
                 "quote_block": quote_block,
                 "msg_img": msg_img,
+                "msg_vid": msg_vid,
                 "msg_img_album": msg_img_album,
                 "msg_vid_album": msg_vid_album,
                 "invite_assistant": invite_assistant,
