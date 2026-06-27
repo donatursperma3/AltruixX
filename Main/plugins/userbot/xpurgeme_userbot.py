@@ -100,9 +100,11 @@ def get_purgeme_status_text(state):
 
     display_name = f"<a href='{chat_link}'>{chat_name}</a>" if chat_link else f"<b>{chat_name}</b>"
 
+    before_del = state.get("before_del", state.get("total_account_messages", 0))
     header_content = (
         f"<b>Account:</b> <code>{account_name}</code> (<code>{total_msgs}</code> msgs)\n"
         f"<b>Chat:</b> {display_name}\n"
+        f"<b>Before Del:</b> <code>{before_del} msg</code>\n"
         f"<b>Mode:</b> <code>{mode.capitalize()}</code> | <b>Type:</b> <code>{type_display}</code>\n"
         f"<b>Target:</b> <code>{count}</code> messages | <b>Offset:</b> <code>{offset}</code>\n"
         f"<b>Batch:</b> <code>{batch_size}</code> | <b>DelayBc:</b> <code>{int(batch_delay/60)}m</code>"
@@ -133,6 +135,7 @@ def get_purgeme_status_text(state):
         forwarded = state.get("forwarded", 0)
         
         display_name = f"<a href='{chat_link}'>{chat_name}</a>" if chat_link else f"<b>{chat_name}</b>"
+        before_del = state.get("before_del", state.get("total_account_messages", 0))
         fin_text = (
             f"✅ <b>Finished!</b>\n"
             f"━━━━━━━━━━━━━━━━━━\n"
@@ -142,6 +145,7 @@ def get_purgeme_status_text(state):
             f"• <b>Time:</b> <code>{duration}s</code>\n"
             f"• <b>Chat:</b> {display_name}\n"
             f"• <b>Account:</b> <code>{account_name}</code>\n"
+            f"• <b>Before Del:</b> <code>{before_del} msg</code>\n"
             f"━━━━━━━━━━━━━━━━━━\n"
             f"• <b>Mode:</b> <code>{mode.capitalize()}</code> | <b>Type:</b> <code>{type_display}</code>\n"
             f"• <b>Target:</b> <code>{count}</code> | <b>Offset:</b> <code>{offset}</code>\n"
@@ -588,6 +592,7 @@ async def purgeme_cmd(client: Client, message: Message):
             "user_id": user_id,
             "account_name": account_name,
             "total_account_messages": total_account_messages,
+            "before_del": total_account_messages,
             "processed": 0,
             "start_time": 0,
             "dashboard_msg_id": None, 
@@ -1124,6 +1129,7 @@ async def purgeme_cmd(client: Client, message: Message):
             type_display = Altruix.get_string(f"GP_BTN_{suffix}") or suffix
 
         # Reconstruct log_msg as requested (with blockquote)
+        before_del = state.get("before_del", state.get("total_account_messages", 0))
         log_msg = (
             f"<blockquote expandable><b>Userbot Purgeme</b>\n\n"
             f"<b>{final_status}</b>\n"
@@ -1145,6 +1151,7 @@ async def purgeme_cmd(client: Client, message: Message):
             f"• <b>Time:</b> <code>{duration_str}</code>\n"
             f"• <b>Chat:</b> {chat_link_html}\n"
             f"• <b>Account:</b> {acc_link_html}\n"
+            f"• <b>Before Del:</b> <code>{before_del} msg</code>\n"
             f"{'━━━━━━━━━━━━━━━━━━'}\n"
             f"• <b>Mode:</b> <code>{mode.capitalize()}</code> | <b>Type:</b> <code>{type_display}</code>\n"
             f"• <b>Target:</b> <code>{count}</code> | <b>Offset:</b> <code>{offset}</code>\n"

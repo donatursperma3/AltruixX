@@ -3,6 +3,23 @@
 All notable changes to the **Altroid-X** project from version **0.0.10.0959H** to the latest.
 Latest updates are always added at the top (newest → oldest).
 
+# [1.0.288] - 2026-06-14
+
+### 🧹 Purgeme: Before Del Info
+- **Added:** `Before Del` information to the final Purgeme completion report so users can see the message count before deletion began.
+
+---
+
+## [0.0.221-G] - 2026-06-28
+
+### 👥 CreateGroup: Reports Tools Restore & Filter Callback Fix
+- **Fixed:** Restored the `🔎 Scan This Session Owner` action into the Creation Reports `🧰 Tools` submenu so it is available again without breaking the main report view.
+- **Fixed:** Corrected the reports callback routing so filter actions like `All/Newest/Oldest/Limit/Most/Least` no longer crash the reports UI with `invalid literal for int()` errors.
+- **Preserved behavior:** The existing scan, save-to-report, export, cleanup, and report-detail flows remain intact, with the same logging, traceback handling, and config/report persistence paths.
+- **Files changed**: [Main/internals/settings_handlers/creategroup_handlers.py](Main/internals/settings_handlers/creategroup_handlers.py)
+
+---
+
 ## [0.0.221-F] - 2026-06-27
 
 ### 👥 CreateGroup: Save Manual Scan Button on Account Scan Result
@@ -150,6 +167,7 @@ Latest updates are always added at the top (newest → oldest).
 - **Enhanced: Auto-save config includes sender preference**:
   - Config auto-save logic now includes `from_id` field in the saved dictionary whenever a configuration-modifying action is detected (e.g., `pg_set_sender_`, `pg_cnt_`, `pg_mode_`, etc.).
   - Sender changes trigger config persistence immediately, maintaining synchronization between runtime state and persistent storage.
+
 
 - **Implementation & Safety**:
   - Lock is lazily initialized in state if missing, preventing crashes on legacy session resumption.
