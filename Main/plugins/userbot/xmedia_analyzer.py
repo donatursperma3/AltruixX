@@ -187,6 +187,15 @@ async def perform_media_scan(client: Client, status_msg: Message, settings: dict
     batch_ms_count = 0
     start_time = time.time()
     
+    # Resolve human-readable scanner account name for log headers
+    account_name = "Unknown"
+    try:
+        first_name = getattr(client.me, "first_name", "") or ""
+        last_name = getattr(client.me, "last_name", "") or ""
+        account_name = f"{first_name} {last_name}".strip() or getattr(client.me, "username", None) or str(getattr(client.me, "id", "Unknown"))
+    except Exception:
+        account_name = str(getattr(client.me, "id", "Unknown"))
+
     report_mode = settings.get("report_log", "split")
     log_entries = [] # List of strings for split log
     live_log_msgs = {} # part_number -> Message object
@@ -222,6 +231,7 @@ async def perform_media_scan(client: Client, status_msg: Message, settings: dict
             header = (
                 f"🔎 <b>Media Analysis Log — Task #{task_id}{part_label}</b>\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
+                f"• <b>Account:</b> <b>{html.escape(account_name)}</b>\n"
                 f"📊 <b>{chats_scanned}</b> scanned │ <b>{total_count}</b> files\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
             )
@@ -363,8 +373,12 @@ async def perform_media_scan(client: Client, status_msg: Message, settings: dict
                     if report_mode == "split":
                         icon = "✅" if chat_total > 0 else "⏭️"
                         trunc_title = safe_title[:15] + "..." if len(safe_title) > 15 else safe_title
-                        log_entries.append(f"{icon} {chats_matched}. (<code>{chat.id}</code>) : <a href='{link}'>{html.escape(trunc_title)}</a> | <code>{chat_total}</code> files")
-                        await _update_batch_log()
+                        if not settings.get("hide_empty_chats", False) or chat_total > 0:
+                            line_num = len(log_entries) + 1
+                            log_entries.append(f"{icon} {line_num}. (<code>{chat.id}</code>) : <a href='{link}'>{html.escape(trunc_title)}</a> | <code>{chat_total}</code> files")
+                            await _update_batch_log()
+                        else:
+                            await _update_batch_log()
 
                     batch_ch_count += 1
                     if delay_chat > 0: await asyncio.sleep(delay_chat)
@@ -448,6 +462,7 @@ async def perform_media_scan(client: Client, status_msg: Message, settings: dict
              text = (
                  f"✅ <b>Media Analysis Finished — Task #{task_id}</b>\n"
                  f"━━━━━━━━━━━━━━━━━━━━\n"
+                 f"• <b>Account:</b> <b>{html.escape(account_name)}</b>\n"
                  f"• <b>Scanned:</b> <code>{chats_scanned}</code> chats\n"
                  f"• <b>Matched:</b> <code>{chats_matched}</code> target chats\n"
                  f"• <b>Found:</b> <code>{total_count}</code> files\n"

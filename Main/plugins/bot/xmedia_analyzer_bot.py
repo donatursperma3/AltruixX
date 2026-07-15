@@ -175,6 +175,15 @@ async def ma_callback_handler(client: Client, cb: CallbackQuery):
         kb = get_ma_kb(user_id, settings)
         await cb.edit_message_text(text, reply_markup=kb)
  
+    elif data.startswith("ma_toggleempty_"):
+        settings["hide_empty_chats"] = not settings.get("hide_empty_chats", False)
+        await save_ma_settings(user_id, settings)
+        await cb.answer(f"Hide Empty Chats: {'ON' if settings['hide_empty_chats'] else 'OFF'}")
+
+        text = await get_ma_status_text(user_id)
+        kb = get_ma_kb(user_id, settings)
+        await cb.edit_message_text(text, reply_markup=kb)
+ 
     elif data.startswith("ma_reportlog_"):
         settings["report_log"] = "single" if settings.get("report_log", "split") == "split" else "split"
         await save_ma_settings(user_id, settings)

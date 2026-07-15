@@ -3,14 +3,28 @@
 All notable changes to the **Altroid-X** project from version **0.0.10.0959H** to the latest.
 Latest updates are always added at the top (newest → oldest).
 
-# [1.0.288] - 2026-06-14
+## [0.0.221-G] - 2026-06-28
+
+### 🔎 Media Analyzer: Account header in live log
+- **Added:** Account name line to `Media Analysis Log — Task` headers so log entries show which scanner account generated the report.
+- **Improved:** Final summary now also includes the human-readable account name for easier auditing and log tracing.
+- **Files changed**: [Main/plugins/userbot/xmedia_analyzer.py](Main/plugins/userbot/xmedia_analyzer.py)
+
+---
+
+### 🔎 Media Analyzer: Hide empty chats from log list
+- **Added:** `Hide Empty: ON/OFF` toggle to Media Analyzer dashboard so users can hide chats with zero matching media when using split log mode.
+- **Improved:** Split log generation now omits empty chat rows when the setting is enabled, while preserving final report storage and config persistence.
+- **Files changed**: [Main/internals/settings_handlers/media_analyzer.py](Main/internals/settings_handlers/media_analyzer.py), [Main/plugins/bot/xmedia_analyzer_bot.py](Main/plugins/bot/xmedia_analyzer_bot.py), [Main/plugins/userbot/xmedia_analyzer.py](Main/plugins/userbot/xmedia_analyzer.py)
+
+---
+
+## [1.0.288] - 2026-06-14
 
 ### 🧹 Purgeme: Before Del Info
 - **Added:** `Before Del` information to the final Purgeme completion report so users can see the message count before deletion began.
 
 ---
-
-## [0.0.221-G] - 2026-06-28
 
 ### 👥 CreateGroup: Reports Tools Restore & Filter Callback Fix
 - **Fixed:** Restored the `🔎 Scan This Session Owner` action into the Creation Reports `🧰 Tools` submenu so it is available again without breaking the main report view.

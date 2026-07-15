@@ -43,6 +43,8 @@ async def get_ma_settings(user_id):
     blacklist = [int(p) for p in blacklist_str.split(",") if p.replace('-', '').isdigit()]
     
     report_log = await Altruix.config.get_env(f"MA_REPORT_LOG_{user_id}") or DEFAULT_REPORT_LOG
+    hide_empty = await Altruix.config.get_env(f"MA_HIDE_EMPTY_{user_id}") or "0"
+    hide_empty = str(hide_empty) == "1"
     
     return {
         "scope": scope,
@@ -55,7 +57,8 @@ async def get_ma_settings(user_id):
         "batch_msg_delay": b_msg_delay,
         "admin_filter": admin_filter,
         "blacklist": blacklist,
-        "report_log": report_log
+        "report_log": report_log,
+        "hide_empty_chats": hide_empty
     }
 
 async def save_ma_settings(user_id, settings):
@@ -71,6 +74,7 @@ async def save_ma_settings(user_id, settings):
     await Altruix.config.sync_env_to_db(f"MA_ADMIN_FILTER_{user_id}", settings.get("admin_filter", "all"), upsert=True)
     await Altruix.config.sync_env_to_db(f"MA_BLACKLIST_{user_id}", ",".join(map(str, settings.get("blacklist", []))), upsert=True)
     await Altruix.config.sync_env_to_db(f"MA_REPORT_LOG_{user_id}", settings.get("report_log", "split"), upsert=True)
+    await Altruix.config.sync_env_to_db(f"MA_HIDE_EMPTY_{user_id}", "1" if settings.get("hide_empty_chats", False) else "0", upsert=True)
 
 async def get_ma_status_text(user_id):
     """Compiles the descriptive text for the Media Analyzer Dashboard."""
@@ -105,6 +109,7 @@ async def get_ma_status_text(user_id):
         f"<b>Batch/Msg:</b> <code>{settings['batch_msg_size']}ms</code> | <b>BM-Delay:</b> <code>{int(settings['batch_msg_delay']/60)}m</code>\n"
         f"<b>Admin Filter:</b> <code>{settings.get('admin_filter', 'all').upper()}</code>\n"
         f"<b>Report Log:</b> <code>{settings.get('report_log', 'split').upper()}</code>\n"
+        f"<b>Hide Empty:</b> <code>{'ON' if settings.get('hide_empty_chats', False) else 'OFF'}</code>\n"
         f"<b>Blacklisted:</b> <code>{len(settings.get('blacklist', []))} chats</code>\n"
         f"</blockquote>\n"
         f"<i>Adjust settings below and tap Start to begin.</i>"
@@ -132,6 +137,12 @@ def get_ma_kb(user_id, settings):
     adm_f = settings.get("admin_filter", "all").upper()
     kb.append([
         InlineKeyboardButton(f"Adm Filter: {adm_f}", f"ma_toggleadmin_{user_id}", style=user_style)
+    ])
+    
+    # Row: Hide Empty Chat Filter
+    hide_empty = "ON" if settings.get("hide_empty_chats", False) else "OFF"
+    kb.append([
+        InlineKeyboardButton(f"Hide Empty: {hide_empty}", f"ma_toggleempty_{user_id}", style=user_style)
     ])
     
     # Row: Blacklist Management
